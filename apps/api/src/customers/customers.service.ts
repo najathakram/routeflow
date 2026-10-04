@@ -60,6 +60,8 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
+import { omitStaffOnlyCustomerFields, pickSelfServiceFields } from "./self-service-fields";
 import { customerUpdateData } from "./customer-update-data";
 import { assertSafeCustomerNames } from "./customer-name-guard";
 import {
@@ -323,15 +325,20 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return customer;
+    return omitStaffOnlyCustomerFields(customer);
   }
 
-  async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
+  async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return this.update(customer.id, dto);
+    // Self-service: only the customer's own contact fields, whatever the body carries.
+    const updated = await this.update(
+      customer.id,
+      pickSelfServiceFields({ ...dto }) as UpdateCustomerDto,
+    );
+    return omitStaffOnlyCustomerFields(updated);
   }
 
   async getMyStatement(user: JwtPayload) {
@@ -538,6 +545,8 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
+    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
+    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
     return customer;
   }
 

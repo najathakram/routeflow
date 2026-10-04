@@ -66,6 +66,7 @@ import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/port
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtCalendarDate, fmtDate, displayEmail } from "@/lib/formatting";
+import { statementMoney } from "@/lib/customer-statement-display";
 import {
   isSpecialTier,
   getTierPrice,
@@ -151,12 +152,11 @@ import {
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
-import { LedgerTruncationNote } from "./ledger-truncation-note";
+import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { BrandMark } from "@/components/brand";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2466,13 +2466,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               />
               <StatCard
                 label="Open Balance"
-                value={fmt(statement?.outstandingAmount ?? 0)}
+                value={statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                 icon={<TrendingDown className="h-5 w-5" />}
                 className={(statement?.outstandingAmount ?? 0) > 0 ? "border-danger/40" : undefined}
               />
               <StatCard
                 label="Advance Balance"
-                value={fmt(statement?.advanceBalance ?? 0)}
+                value={statementMoney(statement, statementFailed, (x) => x.advanceBalance, fmt)}
                 icon={<DollarSign className="h-5 w-5" />}
               />
             </div>
@@ -3628,6 +3628,18 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             // whole open set), never a count over this tab's 50-row page.
             const outstandingTotal = statement?.outstandingAmount ?? 0;
             const overdueTotal = statement?.overdueAmount ?? 0;
+            const outstandingText = statementMoney(
+              statement,
+              statementFailed,
+              (x) => x.outstandingAmount,
+              fmt,
+            );
+            const overdueText = statementMoney(
+              statement,
+              statementFailed,
+              (x) => x.overdueAmount,
+              fmt,
+            );
             return (
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
@@ -3637,7 +3649,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`mt-1 text-xl font-bold ${outstandingTotal > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {fmt(outstandingTotal)}
+                    {outstandingText}
                   </p>
                 </Card>
                 <Card>
@@ -3647,7 +3659,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`mt-1 text-xl font-bold ${overdueTotal > 0 ? "text-danger" : "text-navy"}`}
                   >
-                    {fmt(overdueTotal)}
+                    {overdueText}
                   </p>
                 </Card>
                 <Card>
@@ -3783,7 +3795,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {fmt(statement?.outstandingAmount ?? 0)}
+                    {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
                   <Button
@@ -3805,7 +3817,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     <DollarSign className="h-4 w-4 text-success" />
                   </div>
                   <p className="text-2xl font-bold text-success">
-                    {fmt(statement?.advanceBalance ?? 0)}
+                    {statementMoney(statement, statementFailed, (x) => x.advanceBalance, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Pre-paid credit available to apply</p>
                   <Button
@@ -3855,208 +3867,11 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               )}
             </div>
 
-            <div className="space-y-4 lg:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy/70 transition-colors hover:bg-surface-raised"
-                  >
-                    Print
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.06)]">
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <BrandMark size={28} />
-                      <span className="text-base font-bold text-navy">RouteFlow</span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-navy/70">Austin, TX · routeflow.io</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold uppercase tracking-wide text-navy">
-                      Statement of Accounts
-                    </p>
-                    <p className="mt-0.5 text-xs text-navy/70">
-                      As of{" "}
-                      {new Date().toLocaleDateString("en-US", {
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mb-6 border-t border-surface-border pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">To</p>
-                  <p className="mt-1 text-sm font-semibold text-navy">{customer.businessName}</p>
-                  {customer.contactName && (
-                    <p className="text-sm text-navy/70">{customer.contactName}</p>
-                  )}
-                  {customer.address && (
-                    <p className="mt-0.5 whitespace-pre-line text-xs text-navy/70">
-                      {customer.address}
-                    </p>
-                  )}
-                </div>
-
-                <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border sm:grid-cols-4">
-                  {[
-                    {
-                      label: "Opening Balance",
-                      value: fmt(0),
-                      valueClass: "text-navy",
-                    },
-                    {
-                      // B110/M1: lifetime totals come from the server's
-                      // DB-side aggregate over the WHOLE invoice/payment
-                      // history, never a reduce over the capped `transactions`
-                      // ledger below (which stops at one page).
-                      label: "Invoiced Amount",
-                      value: fmt(statement?.lifetimeInvoiced ?? 0),
-                      valueClass: "text-navy",
-                    },
-                    {
-                      label: "Amount Received",
-                      value: fmt(statement?.lifetimeReceived ?? 0),
-                      valueClass: "text-success",
-                    },
-                    {
-                      label: "Balance Due",
-                      value: fmt(statement?.outstandingAmount ?? 0),
-                      valueClass:
-                        (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
-                    },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center"
-                    >
-                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                        {item.label}
-                      </span>
-                      <span className={cn("text-base font-bold", item.valueClass)}>
-                        {item.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <LedgerTruncationNote truncated={statement?.transactionsTruncated} />
-
-                {!statement || statement.transactions.length === 0 ? (
-                  <p className="text-sm text-navy/70">No transactions on record.</p>
-                ) : (
-                  <div className="-mx-8 overflow-x-auto">
-                    <table className="w-full min-w-[640px] text-sm">
-                      <thead>
-                        <tr className="bg-[#1B3A5C]">
-                          <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Date
-                          </th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Type
-                          </th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Details
-                          </th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Amount
-                          </th>
-                          <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Remaining
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-surface-border">
-                        {statement.transactions.map((tx, i) => {
-                          // Server rows: INVOICE / CREDIT_NOTE / ADVANCE_PAYMENT
-                          // (payments fold into invoices). `runningBalance` is
-                          // per-row remaining: owed / unused / in wallet.
-                          const isInvoice = tx.type === "INVOICE";
-                          const meta = isInvoice
-                            ? { label: "Invoice", cls: "bg-blue-100 text-blue-700" }
-                            : tx.type === "CREDIT_NOTE"
-                              ? { label: "Credit note", cls: "bg-green-100 text-green-700" }
-                              : { label: "Advance", cls: "bg-purple-100 text-purple-700" };
-                          const remainingLabel = isInvoice
-                            ? "owed"
-                            : tx.type === "CREDIT_NOTE"
-                              ? "unused"
-                              : "in wallet";
-                          return (
-                            <tr
-                              key={tx.id ?? i}
-                              className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}
-                            >
-                              <td className="px-8 py-2.5 text-xs text-navy/70">
-                                {new Date(tx.date).toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <span
-                                  className={cn(
-                                    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
-                                    meta.cls,
-                                  )}
-                                >
-                                  {meta.label}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2.5 text-sm text-navy">
-                                <span className="text-xs text-navy/70">{tx.description}</span>
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-sm">
-                                <span
-                                  className={cn(
-                                    "font-medium",
-                                    isInvoice ? "text-navy" : "text-success",
-                                  )}
-                                >
-                                  {fmt(Math.abs(tx.amount))}
-                                </span>
-                              </td>
-                              <td className="px-8 py-2.5 text-right text-sm">
-                                <span className="font-semibold text-navy">
-                                  {fmt(Math.abs(tx.runningBalance))}
-                                </span>
-                                <span className="ml-1 text-xs text-navy/50">{remainingLabel}</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-surface-border bg-gray-50">
-                          <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">
-                            Balance Due
-                          </td>
-                          <td />
-                          <td
-                            className={cn(
-                              "px-8 py-3 text-right text-sm font-bold",
-                              (statement?.outstandingAmount ?? 0) > 0
-                                ? "text-danger"
-                                : "text-success",
-                            )}
-                          >
-                            {fmt(statement?.outstandingAmount ?? 0)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
+            <CustomerStatementCard
+              customerId={id}
+              statement={statement}
+              statementFailed={statementFailed}
+            />
           </div>
 
           {isRecordPaymentOpen && (

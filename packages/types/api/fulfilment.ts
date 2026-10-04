@@ -1,88 +1,51 @@
-// One table for how an order is fulfilled. The status enum never changes (PENDING, CONFIRMED,
-// OUT_FOR_DELIVERY, DELIVERED ...); what changes per fulfilment METHOD is the WORD for a status, the
-// ordered steps, when the invoice is raised and which notification event fires. Web, mobile and the
-// emails read this table instead of scattering `if (SHIP)` checks.
+// ─── Fulfilment capability (business profiles 1A) — the shared contract ────────────────────
+//
+// `fulfilment_model` and `counter_sales` are free config modes (apps/api feature-registry); the
+// server derives ONE capability answer from them plus the fleet modules, and every client and
+// server rule reads only that answer, never the raw modes. `unset` = today's behavior.
 
-export const FULFILMENT_METHOD_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
-export type FulfilmentMethod = (typeof FULFILMENT_METHOD_VALUES)[number];
+export const FULFILMENT_MODE_VALUES = [
+  "unset",
+  "delivery",
+  "ship",
+  "both",
+  "pickup",
+  "pickup_ship",
+] as const;
+export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
 
-export interface FulfilmentMethodDef {
-  /** Ordered order-status steps this method walks through. */
-  steps: readonly string[];
-  /** The label of each status for this method. ROUTE is today's wording, unchanged. */
-  labels: Readonly<Record<string, string>>;
-  /** Where the invoice is raised: the status that triggers it. SHIP is "SHIPPED" when the business is set
-   *  to shipping (no such enum value yet: it maps onto OUT_FOR_DELIVERY), otherwise DELIVERED. */
-  invoiceAt: "DELIVERED" | "SHIPPED";
-  /** Customer notification event name per status transition. */
-  emailEvents: Readonly<Record<string, string>>;
-}
+export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
+export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
 
-export const FULFILMENT_METHODS: Readonly<Record<FulfilmentMethod, FulfilmentMethodDef>> = {
-  ROUTE: {
-    steps: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"],
-    labels: { OUT_FOR_DELIVERY: "Out for Delivery", DELIVERED: "Delivered" },
-    invoiceAt: "DELIVERED",
-    emailEvents: { OUT_FOR_DELIVERY: "order.out_for_delivery", DELIVERED: "order.delivered" },
-  },
-  SHIP: {
-    steps: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"],
-    labels: { OUT_FOR_DELIVERY: "Shipped", DELIVERED: "Delivered" },
-    invoiceAt: "SHIPPED",
-    emailEvents: { OUT_FOR_DELIVERY: "order.shipped", DELIVERED: "order.delivered" },
-  },
-  PICKUP: {
-    steps: ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"],
-    labels: { OUT_FOR_DELIVERY: "Ready for pickup", DELIVERED: "Picked up" },
-    invoiceAt: "DELIVERED",
-    emailEvents: { OUT_FOR_DELIVERY: "order.ready_for_pickup", DELIVERED: "order.picked_up" },
-  },
-};
+/**
+ * PICKUP is a capability METHOD only; it is NOT a FulfillPath value (the order enum is ROUTE|SHIP).
+ * Pickup routes to the counter path; no client may send fulfillPath "PICKUP" until a migration adds it.
+ */
+export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
 
-/** The word for `status` under `method`; `fallback` (the caller's normal label) for an unlisted status
- *  or an unknown method, so anything outside the table renders exactly as before. */
-export function fulfilmentStatusLabel(
-  method: string | null | undefined,
-  status: string,
-  fallback: string,
-): string {
-  const def = (FULFILMENT_METHODS as Record<string, FulfilmentMethodDef | undefined>)[method ?? ""];
-  return def?.labels[status] ?? fallback;
-}
-
-/** `capabilities.fulfilment` on GET /tenants/me/features: what the account's fulfilment mode allows. */
-export interface FulfilmentCapabilities {
-  /** Methods staff may choose between on an order. More than one = show the picker. */
+/**
+ * `GET /tenants/me/features` -> `capabilities.fulfilment`.
+ * - `methods`: what staff can choose per order; `staffDefault` is the default of those.
+ * - `staffOpensAs`: whether staff "New order" opens as a normal order or the one-step counter.
+ * - `portalMethods` / `portalDefault`: the same for the buyer portal. `[]` / `null` = the buyer gets
+ *   NO choice (UNSET, today): the server applies the customer's default, then ROUTE.
+ * - `counter`: "always" (in-store modes), "optional" (counter_sales on), "off".
+ * - `fleet`: recurring_routes || order_delivery effective. The MODULES are the only truth; no
+ *   mode turns fleet on or off.
+ * - `consistent`: false when the mode is delivery|both and `fleet` is false. Then clients keep
+ *   today's ROUTE/SHIP choice and the platform admin sees a warning.
+ */
+export interface FulfilmentCapability {
   methods: FulfilmentMethod[];
-  /** The method a new order / customer starts with when nothing else decides. */
   staffDefault: FulfilmentMethod;
-  /** Methods a buyer may choose at portal checkout. EMPTY = no buyer choice (today). */
+  staffOpensAs: "order" | "counter";
   portalMethods: FulfilmentMethod[];
   portalDefault: FulfilmentMethod | null;
-  counter: string;
-  /** The account holds a fleet module (recurring_routes or order_delivery). */
+  counter: "always" | "optional" | "off";
   fleet: boolean;
-  consistent?: boolean;
-  staffOpensAs?: string;
+  consistent: boolean;
 }
 
-/** An account with no fulfilment mode set: exactly today's behaviour. */
-export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapabilities = {
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
-  portalMethods: [],
-  portalDefault: null,
-  counter: "off",
-  fleet: true,
-};
-
-/** The method to pre-select for an order/customer: the customer's own saved path first, but only when
- *  the account offers it; otherwise the account's staffDefault. */
-export function preselectFulfilment(
-  caps: Pick<FulfilmentCapabilities, "methods" | "staffDefault">,
-  customerPath?: string | null,
-): FulfilmentMethod {
-  return customerPath && (caps.methods as string[]).includes(customerPath)
-    ? (customerPath as FulfilmentMethod)
-    : caps.staffDefault;
+export interface TenantCapabilities {
+  fulfilment: FulfilmentCapability;
 }
