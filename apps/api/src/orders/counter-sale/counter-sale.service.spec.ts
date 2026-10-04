@@ -99,8 +99,10 @@ describe("CounterSaleService.ring", () => {
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
     prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
-    prisma.invoice.findMany.mockImplementation(async () =>
-      invoices.map((i) => ({ ...i, payments: [...i.payments], invoiceNumber: `N-${i.id}` })),
+    prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
+      invoices
+        .filter((i) => !where?.status?.notIn?.includes(i.status))
+        .map((i) => ({ ...i, payments: [...i.payments], invoiceNumber: `N-${i.id}` })),
     );
 
     const mod = await Test.createTestingModule({
@@ -370,6 +372,33 @@ describe("CounterSaleService.ring", () => {
 
   // ── 7. money ───────────────────────────────────────────────────────────────
   describe("money", () => {
+    it("a VOID sibling invoice of the order is not read back: not the invoice id, not the total, not the balance", async () => {
+      const voided = { ...inv("inv-void", 10, [], 0), status: "VOID" };
+      invoices = [voided, inv("inv-1", 37.25, [], 1)];
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.objectContaining({ amount: 37.25 }),
+      );
+      expect(r).toMatchObject({
+        invoiceId: "inv-1",
+        total: 37.25,
+        paid: 37.25,
+        balanceDue: 0,
+        change: 12.75,
+      });
+    });
+
+    it("a WRITTEN_OFF sibling is excluded too (recordPayment refuses both statuses)", async () => {
+      invoices = [
+        { ...inv("inv-wo", 10, [], 0), status: "WRITTEN_OFF" },
+        inv("inv-1", 37.25, [], 1),
+      ];
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(r).toMatchObject({ invoiceId: "inv-1", total: 37.25, balanceDue: 0 });
+    });
+
     it("CASH 50 on 37.25: pays 37.25, change 12.75, balance 0", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", {
