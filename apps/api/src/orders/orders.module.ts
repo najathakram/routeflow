@@ -31,6 +31,7 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
 import { ReturnsModule } from "../returns/returns.module";
 // WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
 import { PolicyModule } from "../policy/policy.module";
+import { StockAvailabilityService } from "./stock-availability.service";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 
 @Module({
@@ -54,7 +55,7 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
     PolicyModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, ChangeRequestsService, PolicyOversellReader],
+  providers: [OrdersService, ChangeRequestsService, PolicyOversellReader, StockAvailabilityService],
   exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
 })
 export class OrdersModule {}

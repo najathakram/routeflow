@@ -134,7 +134,6 @@ import {
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
-import { getStockAvailability } from "./stock-availability";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -586,23 +585,6 @@ export class OrdersService implements OnApplicationBootstrap {
    * product's price it would price a plain pack line at the Case price (2 boxes at $450 each),
    * and `distinct: productId` would let a newer Case row shadow a real pack override.
    */
-  /** Live stock per line (read-only): `Product.currentStock` + the save path's own oversell resolution. */
-  async getStockAvailability(
-    productIds: string[],
-    user: JwtPayload,
-    mode: "entry" | "edit",
-    customerId?: string | null,
-  ) {
-    return getStockAvailability({
-      productIds,
-      user: { tenantId: (user.tenantId ?? this.prisma.getTenantId()) as string, role: user.role },
-      mode,
-      customerId,
-      products: this.prisma.forTenant().product,
-      oversellReader: this.oversellReader,
-    });
-  }
-
   async getCustomerPriceHistory(
     customerId: string,
   ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {

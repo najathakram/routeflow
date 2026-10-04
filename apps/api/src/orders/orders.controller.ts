@@ -18,6 +18,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
+import { StockAvailabilityService } from "./stock-availability.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -53,6 +54,8 @@ export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
+    // Optional so a spec can build the controller with the first two (it only serves stock-availability).
+    private readonly stockAvailability?: StockAvailabilityService,
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
@@ -431,7 +434,7 @@ export class OrdersController {
     @Query("customerId") customerId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.getStockAvailability(
+    return this.stockAvailability!.get(
       (productIds ?? "").split(",").filter(Boolean),
       user,
       mode === "edit" ? "edit" : "entry",
