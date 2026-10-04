@@ -3058,12 +3058,7 @@ export class InvoicesService {
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
-      pendingMirror: await resolvePendingMirror(
-        this.featureConfig,
-        this.prisma.getTenantId(),
-        inv,
-        inv.order,
-      ),
+      pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 

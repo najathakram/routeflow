@@ -3019,7 +3019,7 @@ describe("OrdersService", () => {
       // Additive-only: the write itself carries no run/driver fields.
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: "ord-1" },
-        data: { status: "OUT_FOR_DELIVERY" },
+        data: { status: "OUT_FOR_DELIVERY", shippedAt: expect.any(Date) },
       });
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
       expect(messagingService.notifyEvent.mock.calls.map((c) => c[0])).toEqual(["ORDER_SHIPPED"]);
