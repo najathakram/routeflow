@@ -536,11 +536,7 @@ export default function BuyerOrderDetailPage() {
   const { data: order, isLoading, isError } = useBuyerOrder(orderId);
   const capabilities = useBuyerSellerCapabilities();
   // Business profiles 1B: unset seller or unreadable capability = today's route view.
-  const travel = orderTravelView(
-    order?.fulfillPath,
-    capabilities.data?.fulfilment,
-    capabilities.isLoading,
-  );
+  const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
   const cancelOrder = useBuyerCancelOrder();
   const updateItems = useBuyerUpdateOrderItems();
 

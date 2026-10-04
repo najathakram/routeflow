@@ -1,7 +1,7 @@
 /**
  * Business profiles 1B — `useBuyerSellerCapabilities`: the buyer reads its active SELLER's
- * fulfilment capability from the buyer-safe `GET /buyer/capabilities` through the buyer client,
- * and never fires without an active seller (no X-Tenant-Slug → a doomed 400). The HTTP client is
+ * buyer-safe fulfilment facts from `GET /buyer/capabilities` through the buyer client, and
+ * never fires without an active seller (no X-Tenant-Slug → a doomed 400). The HTTP client is
  * mocked; TanStack Query runs for real. Fixtures are placeholders.
  */
 import * as React from "react";
@@ -17,18 +17,7 @@ jest.mock("@/lib/buyer-auth", () => ({ getStoredActiveSeller: jest.fn() }));
 const get = buyerApiClient.get as jest.Mock;
 const activeSeller = getStoredActiveSeller as jest.Mock;
 
-const CAPS = {
-  fulfilment: {
-    methods: ["SHIP"],
-    staffDefault: "SHIP",
-    staffOpensAs: "order",
-    portalMethods: ["SHIP"],
-    portalDefault: "SHIP",
-    counter: "off",
-    fleet: false,
-    consistent: true,
-  },
-};
+const CAPS = { portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false };
 
 function wrapper() {
   const client = createTestQueryClient();

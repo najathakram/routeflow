@@ -1,7 +1,7 @@
 import * as React from "react";
 import { screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
-import type { FulfilmentCapability } from "@routeflow/types";
+import type { BuyerSellerCapability } from "@routeflow/types";
 import BuyerOrderDetailPage from "./page";
 
 /**
@@ -51,36 +51,22 @@ jest.mock("@/lib/api/buyer-capabilities", () => ({
   useBuyerSellerCapabilities: () => mockCaps,
 }));
 
-function cap(over: Partial<FulfilmentCapability> = {}): FulfilmentCapability {
-  return {
-    methods: ["SHIP"],
-    staffDefault: "SHIP",
-    staffOpensAs: "order",
-    portalMethods: ["SHIP"],
-    portalDefault: "SHIP",
-    counter: "off",
-    fleet: false,
-    consistent: true,
-    ...over,
-  };
+function cap(over: Partial<BuyerSellerCapability> = {}): BuyerSellerCapability {
+  return { portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false, ...over };
 }
 const SHIP_ONLY = cap();
 const UNSET = cap({
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
   portalMethods: [],
   portalDefault: null,
   fleet: true,
 });
 const BOTH_FLEET = cap({
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
   portalMethods: ["ROUTE", "SHIP"],
   portalDefault: "ROUTE",
   fleet: true,
 });
-const ready = (c: FulfilmentCapability) => ({
-  data: { fulfilment: c },
+const ready = (c: BuyerSellerCapability) => ({
+  data: c,
   isLoading: false,
   isError: false,
 });

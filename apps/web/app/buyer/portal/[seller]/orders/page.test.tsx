@@ -31,18 +31,7 @@ jest.mock("@/lib/api/buyer", () => ({
 // Business profiles 1B: an UNSET seller — this suite pins today's screen.
 jest.mock("@/lib/api/buyer-capabilities", () => ({
   useBuyerSellerCapabilities: () => ({
-    data: {
-      fulfilment: {
-        methods: ["ROUTE", "SHIP"],
-        staffDefault: "ROUTE",
-        staffOpensAs: "order",
-        portalMethods: [],
-        portalDefault: null,
-        counter: "off",
-        fleet: true,
-        consistent: true,
-      },
-    },
+    data: { portalMethods: [], portalDefault: null, fleet: true },
     isLoading: false,
     isError: false,
   }),

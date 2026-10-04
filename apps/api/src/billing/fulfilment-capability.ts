@@ -1,7 +1,4 @@
 import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
-import { BadRequestException } from "@nestjs/common";
-import type { FulfillPath } from "@prisma/client";
-import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
 import { gateVia } from "./feature-registry";
@@ -89,33 +86,4 @@ export async function isFleetHeld(
 ): Promise<boolean> {
   const held = await heldAddonKeys(addonService, featureOverrides, tenantId);
   return FLEET_KEYS.some((k) => held.has(k));
-}
-
-/**
- * Business profiles 1B: the `fulfillPath` a BUYER portal order is created with, from the seller's
- * portal rule. `undefined` means "send none": OrdersService.create then resolves today's
- * `customer.fulfillPath ?? ROUTE`.
- * - An explicit path must be one the portal offers, else the fixed coded 400. An UNSET seller
- *   offers none (portalMethods []), so every explicit path is refused, as the whitelisting
- *   ValidationPipe refused the field before it existed.
- * - No path: the portal default when it is a FulfillPath (ROUTE | SHIP). A PICKUP default, or no
- *   default (unset), sends none: PICKUP is not an order path (packages/types/api/fulfilment.ts).
- */
-export function resolveBuyerFulfillPath(
-  requested: FulfillPath | undefined,
-  portal: Pick<FulfilmentCapability, "portalMethods" | "portalDefault">,
-): FulfillPath | undefined {
-  if (requested !== undefined) {
-    if (!portal.portalMethods.includes(requested)) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.FULFILMENT_PATH_NOT_OFFERED,
-        fulfillPath: requested,
-        offered: [...portal.portalMethods],
-        message: "This seller doesn't offer that delivery method for portal orders.",
-      });
-    }
-    return requested;
-  }
-  const d = portal.portalDefault;
-  return d === "ROUTE" || d === "SHIP" ? d : undefined;
 }

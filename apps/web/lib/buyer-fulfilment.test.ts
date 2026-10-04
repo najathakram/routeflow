@@ -1,4 +1,4 @@
-import type { FulfilmentCapability } from "@routeflow/types";
+import type { BuyerSellerCapability } from "@routeflow/types";
 import {
   NO_FLEET_STEP_LABELS,
   SHIP_STEP_LABELS,
@@ -17,22 +17,10 @@ import {
  * fulfilment capability (`GET /buyer/capabilities`). An unset seller (portalDefault null), or a
  * capability that could not be read, is today's screen exactly.
  */
-function cap(over: Partial<FulfilmentCapability> = {}): FulfilmentCapability {
-  return {
-    methods: ["SHIP"],
-    staffDefault: "SHIP",
-    staffOpensAs: "order",
-    portalMethods: ["SHIP"],
-    portalDefault: "SHIP",
-    counter: "off",
-    fleet: false,
-    consistent: true,
-    ...over,
-  };
+function cap(over: Partial<BuyerSellerCapability> = {}): BuyerSellerCapability {
+  return { portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false, ...over };
 }
 const UNSET_NO_FLEET = cap({
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
   portalMethods: [],
   portalDefault: null,
   fleet: false,
@@ -40,8 +28,6 @@ const UNSET_NO_FLEET = cap({
 const UNSET_FLEET = { ...UNSET_NO_FLEET, fleet: true };
 const SHIP_ONLY = cap();
 const BOTH_FLEET = cap({
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
   portalMethods: ["ROUTE", "SHIP"],
   portalDefault: "ROUTE",
   fleet: true,

@@ -1,5 +1,5 @@
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
-import type { FulfilmentCapability } from "@routeflow/types";
+import type { BuyerSellerCapability } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AddonService } from "./addon.service";
 import { FeatureConfigService } from "./feature-config.service";
@@ -7,9 +7,10 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { deriveFulfilmentCapability, isFleetHeld } from "./fulfilment-capability";
 
 /**
- * Business profiles 1B: the fulfilment capability for a tenant OTHER than the caller's staff
- * session, i.e. a buyer's seller. The same derivation `GET /tenants/me/features` serves
- * (`deriveFulfilmentCapability` over the stored modes and the ONE fleet resolver).
+ * Business profiles 1B: what a BUYER may know about its seller's fulfilment — the portal methods,
+ * the portal default and whether the seller runs a fleet. The same derivation
+ * `GET /tenants/me/features` serves (`deriveFulfilmentCapability` over the stored mode and the ONE
+ * fleet resolver), trimmed to the buyer-safe fields.
  */
 @Injectable()
 export class FulfilmentCapabilityService {
@@ -19,32 +20,13 @@ export class FulfilmentCapabilityService {
     private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
-  /** A failed mode read is `unset`: today's behaviour, never a 5xx. */
-  private mode(tenantId: string, key: string): Promise<string> {
-    return this.featureConfig.getEffectiveMode(tenantId, key).catch(() => "unset");
-  }
-
   /**
-   * The buyer portal's ORDER rule. Portal methods come from the mode alone, so this never reads
-   * the fleet modules: a buyer order can't fail on a fleet read it doesn't need.
+   * A failed mode read is `unset` (today's screens). A failed fleet read is the existing 503,
+   * never a guessed `fleet: false`.
    */
-  async portal(
-    tenantId: string,
-  ): Promise<Pick<FulfilmentCapability, "portalMethods" | "portalDefault">> {
-    const mode = await this.mode(tenantId, "fulfilment_model");
-    const { portalMethods, portalDefault } = deriveFulfilmentCapability({
-      mode,
-      counterSales: "unset",
-      fleet: false,
-    });
-    return { portalMethods, portalDefault };
-  }
-
-  /** The full capability. A failed fleet read is the existing 503 (never a guessed fleet=false). */
-  async forTenant(tenantId: string): Promise<FulfilmentCapability> {
-    const [mode, counterSales, fleet] = await Promise.all([
-      this.mode(tenantId, "fulfilment_model"),
-      this.mode(tenantId, "counter_sales"),
+  async forBuyer(tenantId: string): Promise<BuyerSellerCapability> {
+    const [mode, fleet] = await Promise.all([
+      this.featureConfig.getEffectiveMode(tenantId, "fulfilment_model").catch(() => "unset"),
       isFleetHeld(this.addons, this.featureOverrides, tenantId).catch(() => {
         throw new ServiceUnavailableException({
           code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
@@ -52,6 +34,12 @@ export class FulfilmentCapabilityService {
         });
       }),
     ]);
-    return deriveFulfilmentCapability({ mode, counterSales, fleet });
+    // counter_sales never changes the portal fields, so it is not read.
+    const { portalMethods, portalDefault } = deriveFulfilmentCapability({
+      mode,
+      counterSales: "unset",
+      fleet,
+    });
+    return { portalMethods, portalDefault, fleet };
   }
 }

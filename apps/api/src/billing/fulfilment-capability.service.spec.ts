@@ -7,22 +7,22 @@ import { BuyerSellerContextGuard } from "../buyer/guards/buyer-seller-context.gu
 import { BuyerTenantInterceptor } from "../buyer/buyer-tenant.interceptor";
 
 /**
- * Business profiles 1B: the buyer portal reads its SELLER's fulfilment capability. The staff
- * answer (`GET /tenants/me/features`) needs a staff JWT, so the buyer gets a minimal,
- * seller-scoped `GET /buyer/capabilities` that returns the fulfilment capability and nothing else.
+ * Business profiles 1B: the buyer portal reads its SELLER's fulfilment facts. The staff answer
+ * (`GET /tenants/me/features`) needs a staff JWT and carries staff fields, so the buyer gets a
+ * seller-scoped `GET /buyer/capabilities` that returns EXACTLY { portalMethods, portalDefault,
+ * fleet } — no `methods`, `staffDefault`, `staffOpensAs`, `counter` or `consistent`.
  */
+const BUYER_KEYS = ["fleet", "portalDefault", "portalMethods"];
+
 function makeService(opts: {
   mode?: string;
-  counterSales?: string;
   held?: string[];
   modeFails?: boolean;
   fleetFails?: boolean;
 }) {
   const getEffectiveMode = jest.fn(async (_t: string, key: string) => {
     if (opts.modeFails) throw new Error("db down");
-    if (key === "fulfilment_model") return opts.mode ?? "unset";
-    if (key === "counter_sales") return opts.counterSales ?? "unset";
-    return "unset";
+    return key === "fulfilment_model" ? (opts.mode ?? "unset") : "on";
   });
   const addons = {
     getActiveAddons: jest.fn(async () => {
@@ -36,59 +36,55 @@ function makeService(opts: {
     addons,
     overrides,
   ) as FulfilmentCapabilityService;
-  return { svc, getEffectiveMode, addons };
+  return { svc, getEffectiveMode };
 }
 
-describe("FulfilmentCapabilityService.forTenant (the same derivation /tenants/me/features serves)", () => {
-  it("a shipping-only seller without fleet modules: SHIP only, no fleet, consistent", async () => {
+describe("FulfilmentCapabilityService.forBuyer", () => {
+  it("returns exactly the three buyer-safe keys", async () => {
+    const { svc } = makeService({ mode: "both", held: ["order_delivery"] });
+    expect(Object.keys(await svc.forBuyer("t1")).sort()).toEqual(BUYER_KEYS);
+  });
+
+  it("a shipping-only seller without fleet modules: SHIP only, no fleet", async () => {
     const { svc } = makeService({ mode: "ship" });
-    expect(await svc.forTenant("t1")).toEqual({
-      methods: ["SHIP"],
-      staffDefault: "SHIP",
-      staffOpensAs: "order",
+    expect(await svc.forBuyer("t1")).toEqual({
       portalMethods: ["SHIP"],
       portalDefault: "SHIP",
-      counter: "off",
       fleet: false,
-      consistent: true,
     });
   });
 
   it("fleet comes from the modules alone (order_delivery held → fleet true)", async () => {
     const { svc } = makeService({ mode: "both", held: ["order_delivery"] });
-    const cap = await svc.forTenant("t1");
-    expect(cap.fleet).toBe(true);
-    expect(cap.portalMethods).toEqual(["ROUTE", "SHIP"]);
+    expect(await svc.forBuyer("t1")).toEqual({
+      portalMethods: ["ROUTE", "SHIP"],
+      portalDefault: "ROUTE",
+      fleet: true,
+    });
   });
 
   it("an unset seller is today: no portal choice", async () => {
     const { svc } = makeService({ held: ["recurring_routes"] });
-    const cap = await svc.forTenant("t1");
-    expect(cap.portalMethods).toEqual([]);
-    expect(cap.portalDefault).toBeNull();
-    expect(cap.fleet).toBe(true);
+    expect(await svc.forBuyer("t1")).toEqual({
+      portalMethods: [],
+      portalDefault: null,
+      fleet: true,
+    });
+  });
+
+  it("never reads counter_sales (it never changes the portal fields)", async () => {
+    const { svc, getEffectiveMode } = makeService({ mode: "ship" });
+    await svc.forBuyer("t1");
+    expect(getEffectiveMode.mock.calls.map((c) => c[1])).toEqual(["fulfilment_model"]);
   });
 
   it("a failed mode read is unset; a failed fleet read is the 503 FEATURES_UNAVAILABLE", async () => {
-    expect((await makeService({ modeFails: true }).svc.forTenant("t1")).portalDefault).toBeNull();
-    const p = makeService({ mode: "ship", fleetFails: true }).svc.forTenant("t1");
+    expect((await makeService({ modeFails: true }).svc.forBuyer("t1")).portalDefault).toBeNull();
+    const p = makeService({ mode: "ship", fleetFails: true }).svc.forBuyer("t1");
     await expect(p).rejects.toBeInstanceOf(ServiceUnavailableException);
     await p.catch((e: ServiceUnavailableException) =>
       expect(e.getResponse()).toMatchObject({ code: "FEATURES_UNAVAILABLE" }),
     );
-  });
-});
-
-describe("FulfilmentCapabilityService.portal (what a buyer order reads)", () => {
-  it("reads the mode only, never the fleet modules (an order never fails on a fleet read)", async () => {
-    const { svc, addons } = makeService({ mode: "ship", fleetFails: true });
-    expect(await svc.portal("t1")).toEqual({ portalMethods: ["SHIP"], portalDefault: "SHIP" });
-    expect(addons.getActiveAddons).not.toHaveBeenCalled();
-  });
-
-  it("returns only the two portal fields", async () => {
-    const { svc } = makeService({ mode: "both" });
-    expect(Object.keys(await svc.portal("t1")).sort()).toEqual(["portalDefault", "portalMethods"]);
   });
 });
 
@@ -101,15 +97,17 @@ describe("GET /buyer/capabilities", () => {
     expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler())).toEqual([BuyerTenantInterceptor]);
   });
 
-  it("returns ONLY the fulfilment capability of the buyer's active seller", async () => {
+  it("the body is EXACTLY { portalMethods, portalDefault, fleet } for the active seller", async () => {
     const { svc } = makeService({ mode: "ship" });
-    const forTenant = jest.spyOn(svc, "forTenant");
+    const forBuyer = jest.spyOn(svc, "forBuyer");
     const controller = Object.create(BuyerController.prototype);
     (controller as any).fulfilmentCapability = svc;
     const body = await handler().call(controller, { tenantId: "tenant-ship", customerId: "c1" });
-    expect(Object.keys(body)).toEqual(["fulfilment"]);
-    expect(body.fulfilment.portalMethods).toEqual(["SHIP"]);
-    expect(body.fulfilment.fleet).toBe(false);
-    expect(forTenant).toHaveBeenCalledWith("tenant-ship");
+    expect(Object.keys(body).sort()).toEqual(BUYER_KEYS);
+    for (const staffField of ["methods", "staffDefault", "staffOpensAs", "counter", "consistent"]) {
+      expect(body).not.toHaveProperty(staffField);
+    }
+    expect(body).toEqual({ portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false });
+    expect(forBuyer).toHaveBeenCalledWith("tenant-ship");
   });
 });

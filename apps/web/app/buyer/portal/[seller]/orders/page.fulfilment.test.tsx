@@ -50,18 +50,7 @@ jest.mock("@/lib/api/buyer-capabilities", () => ({
 }));
 
 const fulfilment = (portalDefault: string | null, fleet: boolean) => ({
-  data: {
-    fulfilment: {
-      methods: ["SHIP"],
-      staffDefault: "SHIP",
-      staffOpensAs: "order",
-      portalMethods: portalDefault ? [portalDefault] : [],
-      portalDefault,
-      counter: "off",
-      fleet,
-      consistent: true,
-    },
-  },
+  data: { portalMethods: portalDefault ? [portalDefault] : [], portalDefault, fleet },
   isLoading: false,
   isError: false,
 });

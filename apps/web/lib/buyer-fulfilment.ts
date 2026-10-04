@@ -1,4 +1,4 @@
-import type { FulfilmentCapability } from "@routeflow/types";
+import type { BuyerSellerCapability } from "@routeflow/types";
 
 /**
  * Business profiles 1B — what a buyer sees about how an order travels, decided from the SELLER's
@@ -21,19 +21,19 @@ export const SHIP_STEP_LABELS = ["Confirmed", "Shipped", "Delivered"] as const;
 export const NO_FLEET_STEP_LABELS = ["Pending", "Confirmed", "Delivered"] as const;
 
 export function isConfiguredSeller(
-  cap: FulfilmentCapability | null | undefined,
-): cap is FulfilmentCapability {
+  cap: BuyerSellerCapability | null | undefined,
+): cap is BuyerSellerCapability {
   return !!cap && cap.portalDefault !== null;
 }
 
 /** Route / driver / ETA wording: today's for unset or unread; a configured seller needs a fleet. */
-export function sellerShowsRouteWording(cap: FulfilmentCapability | null | undefined): boolean {
+export function sellerShowsRouteWording(cap: BuyerSellerCapability | null | undefined): boolean {
   return !isConfiguredSeller(cap) || cap.fleet;
 }
 
 export function orderTravelView(
   fulfillPath: string | null | undefined,
-  cap: FulfilmentCapability | null | undefined,
+  cap: BuyerSellerCapability | null | undefined,
   capLoading: boolean,
 ): BuyerOrderTravelView {
   if (capLoading) return "loading";
@@ -90,7 +90,7 @@ export function buyerStatusLabel(o: ShipFields, view: BuyerOrderTravelView): str
  */
 export function buyerListStatusLabel(
   status: string,
-  cap: FulfilmentCapability | null | undefined,
+  cap: BuyerSellerCapability | null | undefined,
 ): string | null {
   return sellerShowsRouteWording(cap) ? null : buyerStatusLabel({ status }, "none");
 }

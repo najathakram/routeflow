@@ -72,9 +72,9 @@ export default function BuyerOrdersPage() {
   // Business profiles 1B: a configured seller without a fleet has no delivery run, so no
   // "Out for Delivery" filter or label. Unset / unread / loading = today's tabs and labels.
   const { data: capabilities } = useBuyerSellerCapabilities();
-  const showsRoute = sellerShowsRouteWording(capabilities?.fulfilment);
+  const showsRoute = sellerShowsRouteWording(capabilities);
   const statusLabel = (status: string) =>
-    buyerListStatusLabel(status, capabilities?.fulfilment) ?? formatStatus(status);
+    buyerListStatusLabel(status, capabilities) ?? formatStatus(status);
   const {
     data: result,
     isLoading,

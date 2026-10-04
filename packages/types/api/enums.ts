@@ -434,14 +434,6 @@ export const ORDER_STATUS_VALUES = [
 ] as const;
 export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
 
-/**
- * Prisma `FulfillPath` — how an order reaches the customer (business profiles 1B: the buyer portal
- * branches on it to show a shipment instead of route tracking). `…Value`, like `OrderStatusValue`:
- * `../index.ts` still exports a hand-written legacy TS enum named `FulfillPath`.
- */
-export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP"] as const;
-export type FulfillPathValue = (typeof FULFILL_PATH_VALUES)[number];
-
 /** Prisma `ItemStatus` — an order line's fulfilment status (#2703). */
 export const ITEM_STATUS_VALUES = [
   "PENDING",

@@ -7,7 +7,6 @@ import type {
   ChangeRequestType,
   CheckStatus,
   CreditNoteStatus,
-  FulfillPathValue,
   InvoiceStatus,
   InvoiceTreatment,
   ItemStatus,
@@ -376,8 +375,12 @@ export interface BuyerOrder extends BuyerOrderListItem {
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
-  /** Business profiles 1B: SHIP orders show a shipment (carrier + tracking), never a route. */
-  fulfillPath: FulfillPathValue;
+  /**
+   * Business profiles 1B: SHIP orders show a shipment (carrier + tracking), never a route. The
+   * server's `FulfillPath` ("ROUTE" | "SHIP"); narrows to the shared `FULFILL_PATH_VALUES` type
+   * once that export lands (feat/fulfil-path-pickup) — no hand-typed mirror here (L-072).
+   */
+  fulfillPath: string;
   /** Free-text carrier label and tracking number, set when the seller ships the order. */
   shippingCarrier: string | null;
   shippingTrackingNumber: string | null;
