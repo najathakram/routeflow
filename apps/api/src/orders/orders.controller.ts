@@ -14,6 +14,7 @@ import {
   ConflictException,
   Logger,
   ServiceUnavailableException,
+  Optional,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
@@ -55,7 +56,7 @@ export class OrdersController {
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
     // Optional so a spec can build the controller with the first two (it only serves stock-availability).
-    private readonly stockAvailability?: StockAvailabilityService,
+    @Optional() private readonly stockAvailability?: StockAvailabilityService,
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
