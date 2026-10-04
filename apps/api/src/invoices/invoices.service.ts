@@ -116,6 +116,7 @@ import {
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
+  preflightBulkPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -5880,6 +5881,7 @@ export class InvoicesService {
         include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
       });
 
+      const plans: Array<{ inv: typeof invoice; localMap: Map<string, number> }> = [];
       for (const inv of targetInvoices) {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
@@ -5888,10 +5890,11 @@ export class InvoicesService {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }
-        if (localMap.size > 0) {
-          await applyToInvoice(inv, localMap);
-        }
+        if (localMap.size > 0) plans.push({ inv, localMap });
       }
+      // B1031: judge every target BEFORE writing any, so a bad line on invoice N never leaves 1..N-1 re-priced.
+      preflightBulkPriceAdjustment(plans, isTaxExempt);
+      for (const { inv, localMap } of plans) await applyToInvoice(inv, localMap);
     }
 
     return this.prisma.forTenant().invoice.findUnique({

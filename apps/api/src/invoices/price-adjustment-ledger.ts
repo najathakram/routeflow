@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
   computeCategoryTax,
@@ -7,6 +7,7 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { sumConfirmed } from "./payment-predicates";
 
 /**
@@ -105,7 +106,47 @@ export function buildPriceAdjustmentUpdates(args: {
     }
     updates.push({ id: item.id, data });
   }
+  // B1031: the SAME guard create() and update() run, over the lines THIS re-price writes (a stored line it
+  // leaves alone is not re-judged, SA-640): `newPrice * multiplier - lineDiscount` below zero stored a
+  // negative line subtotal and lowered the invoice total. Pure, so it also covers the in-transaction call.
+  assertNoNegativeLineSubtotal(
+    updates.map((u) => ({
+      description: items.find((i) => i.id === u.id)?.description ?? "item",
+      subtotal: u.data.subtotal,
+    })),
+  );
   return updates;
+}
+
+/**
+ * B1031: the bulk scope (ALL_CUSTOMER_SINCE) re-prices several invoices, each in its OWN transaction, so a
+ * refusal found on invoice N would leave invoices 1..N-1 already re-priced. Judge every target first, from
+ * the lines as read, writing nothing; a refusal names the invoice. The in-transaction build re-judges the
+ * lines re-read under the Invoice lock, so a race can still refuse, never store a negative line.
+ */
+export function preflightBulkPriceAdjustment(
+  plans: ReadonlyArray<{
+    inv: { invoiceNumber?: string | null; items: any[] };
+    localMap: Map<string, number>;
+  }>,
+  isTaxExempt: boolean,
+): void {
+  for (const { inv, localMap } of plans) {
+    try {
+      buildPriceAdjustmentUpdates({
+        items: inv.items,
+        localPriceMap: localMap,
+        categoriesById: new Map(),
+        unitsPerBoxByProduct: new Map(),
+        isTaxExempt,
+      });
+    } catch (e) {
+      if (e instanceof BadRequestException) {
+        throw new BadRequestException(`Invoice ${inv.invoiceNumber ?? ""}: ${e.message}`.trim());
+      }
+      throw e;
+    }
+  }
 }
 
 /**
