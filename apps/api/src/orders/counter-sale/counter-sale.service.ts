@@ -241,8 +241,10 @@ export class CounterSaleService {
     const paid = roundMoney(sumConfirmed(payments));
     const balanceDue = Math.max(0, roundMoney(total - paid));
     const method = dto.payment.method;
-    const settled = method === "ON_ACCOUNT" || balanceDue <= 0; // balanceDue is already in cents
     const firstTender = payments.find(isTender);
+    // Recorded = nothing was asked of the till (on account / nothing owing) or a tender is STORED (a partial
+    // included: its balanceDue stays open on purpose).
+    const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || !!firstTender;
     // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
     const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
     const tendered = dto.payment.amount;

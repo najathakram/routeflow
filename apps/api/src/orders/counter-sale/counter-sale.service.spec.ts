@@ -344,8 +344,25 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
-    it("CASH short of the total: the sale stands (open invoice), 201 paymentRecorded:false TENDER_SHORT, no payment", async () => {
-      const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
+    it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
+      const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
+        amount: 20,
+        method: "CASH",
+        reference: undefined,
+      });
+      expect(r).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        paymentRecorded: true,
+        paymentId: "pay-inv-1",
+      });
+      expect(r.change).toBeUndefined();
+      expect(r.paymentErrorCode).toBeUndefined();
+    });
+
+    it("a zero CASH tender: the sale stands (open invoice), 201 paymentRecorded:false TENDER_SHORT, no payment", async () => {
+      const r = await service.ring(named({ method: "CASH", amount: 0 }) as never, staff);
       expect(recordPayment).not.toHaveBeenCalled();
       expect(r).toMatchObject({
         paymentRecorded: false,
@@ -423,13 +440,26 @@ describe("CounterSaleService.ring", () => {
       expect(first.replayed).toBeUndefined();
     });
 
-    it("a replay after a refused tender finishes the sale when retried with a corrected payment", async () => {
-      await service.ring(named({ method: "CASH", amount: 30 }) as never, staff, "k");
+    it("a replay after a refused (zero) tender finishes the sale when retried with a corrected payment", async () => {
+      await service.ring(named({ method: "CASH", amount: 0 }) as never, staff, "k");
       expect(recordPayment).not.toHaveBeenCalled();
       replay = true;
       const retry = await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k");
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(retry).toMatchObject({ paymentRecorded: true, paid: 37.25, replayed: true });
+    });
+
+    it("a replay after a PARTIAL payment records nothing more and reports what is stored", async () => {
+      await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      replay = true;
+      const again = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(again).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        paymentRecorded: true,
+        replayed: true,
+      });
     });
 
     it("paymentRecorded on a replay comes from what is STORED, not from this call", async () => {

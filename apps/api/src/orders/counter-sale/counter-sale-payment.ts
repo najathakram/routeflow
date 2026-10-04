@@ -58,14 +58,13 @@ export function planCounterPayment(input: {
   const balance = roundMoney(input.balance);
   if (input.method === "ON_ACCOUNT" || balance <= 0) return { kind: "none" };
   const tendered = roundMoney(input.amount ?? balance);
-  if (tendered < balance) {
-    return { kind: "refuse", code: API_ERROR_CODES.COUNTER_TENDER_SHORT };
-  }
+  if (tendered <= 0) return { kind: "refuse", code: API_ERROR_CODES.COUNTER_TENDER_SHORT };
   // Cash may exceed the balance (the till gives change); a card or check cannot be charged over it.
   if (tendered > balance && input.method !== "CASH") {
     return { kind: "refuse", code: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL };
   }
-  return { kind: "pay", amount: balance, tendered };
+  // Below the balance is a PARTIAL payment of exactly what was tendered (no change); the rest stays open.
+  return { kind: "pay", amount: Math.min(tendered, balance), tendered };
 }
 
 /** Spread one payment over a mixed regulated order's sibling invoices, oldest first. */
