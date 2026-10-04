@@ -16,6 +16,7 @@
  */
 import { ConflictException, Logger } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -111,9 +112,9 @@ export function assertCarrierOrderNotInTransit(order: {
   fulfillPath: FulfillPath;
 }): void {
   if (order.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP) {
-    throw new ConflictException(
-      "This order has shipped and is with the carrier, so it can't be cancelled (its stock would be " +
-        "put back while the parcel is still out). Record a return when it comes back instead.",
-    );
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CANCEL,
+      message: "This order is already with the carrier. Use a return instead of cancelling.",
+    });
   }
 }

@@ -261,7 +261,11 @@ describe("E-c / L6 / E-b decisions", () => {
   it("L6: a SHIP order out with the carrier is refused with a 409; everything else is unchanged", () => {
     expect(() =>
       assertCarrierOrderNotInTransit({ status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" }),
-    ).toThrow(/with the carrier/);
+    ).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_CANCEL" }),
+      }),
+    );
     for (const o of [
       { status: "OUT_FOR_DELIVERY", fulfillPath: "ROUTE" },
       { status: "CONFIRMED", fulfillPath: "SHIP" },
