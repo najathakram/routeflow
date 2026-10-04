@@ -35,7 +35,9 @@ import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess } from "@/lib/api/addons";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -306,6 +308,8 @@ export default function OrdersPage() {
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  // REG-B2: cancelling voids the orders' linked invoices, so the bulk bar asks first.
+  const [cancelConfirm, setCancelConfirm] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
@@ -328,7 +332,8 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
-  const updateStatus = useUpdateOrderStatus();
+  // The bulk cancel shows its own single summary toast — no per-order global error toasts.
+  const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
   // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen;
   // below md there isn't enough vertical room for the toolbar above it AND the dock's own
@@ -349,6 +354,7 @@ export default function OrdersPage() {
     setSelectMode(false);
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
   };
 
   const handleBulkCancel = async () => {
@@ -367,6 +373,7 @@ export default function OrdersPage() {
       toast({ title: "Failed to cancel some orders", variant: "error" });
     } finally {
       setIsCancelling(false);
+      setCancelConfirm(false);
     }
   };
 
@@ -415,6 +422,7 @@ export default function OrdersPage() {
   React.useEffect(() => {
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     page,
@@ -555,7 +563,14 @@ export default function OrdersPage() {
         });
       }
     } catch (err) {
-      toast({ title: "Export failed", description: (err as Error).message, variant: "error" });
+      toast({
+        title: "Export failed",
+        description: genericToastCopy(
+          err,
+          "The orders export couldn't be created. Check the filters, then try again.",
+        ),
+        variant: "error",
+      });
     } finally {
       setIsExporting(false);
     }
@@ -619,7 +634,7 @@ export default function OrdersPage() {
           </button>
           <span className="h-[18px] w-px bg-white/20" />
           <button
-            onClick={handleBulkCancel}
+            onClick={() => setCancelConfirm(true)}
             disabled={isCancelling}
             className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
           >
@@ -1274,6 +1289,20 @@ export default function OrdersPage() {
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
         onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
+      />
+
+      {/* REG-B2: the bulk bar's Cancel used to fire the cancel for every selected order on the
+          first click. Cancelling voids each order's linked invoices, so ask first — fixed copy
+          (a per-order impact preview would be N requests; the server still refuses a paid or
+          delivered order and that surfaces as the generic failure toast). */}
+      <ConfirmDialog
+        open={cancelConfirm}
+        onClose={() => setCancelConfirm(false)}
+        onConfirm={handleBulkCancel}
+        loading={isCancelling}
+        title={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}?`}
+        description="The linked invoices will be voided. Orders that have been paid or delivered can't be cancelled."
+        confirmLabel={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}`}
       />
     </div>
   );
