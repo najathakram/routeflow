@@ -58,7 +58,8 @@ export class FeatureConfigService {
    * separate grant surface (`gate.via` "none"/"guard"/"service", or unregistered) has nothing
    * left to check — treated as held, matching how those keys behave everywhere else.
    */
-  private async can(tenantId: string, key: string): Promise<boolean> {
+  /** Public for BusinessProfileService's plan (the same verdict, never a second resolver). */
+  async can(tenantId: string, key: string): Promise<boolean> {
     const override = await this.featureOverrides.get(tenantId, key);
     if (override === "GRANT") return true;
     if (override === "DENY") return false;

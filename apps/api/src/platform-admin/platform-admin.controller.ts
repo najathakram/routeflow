@@ -51,6 +51,14 @@ import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BusinessProfileService } from "../billing/business-profile.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { ApplyBusinessProfileDto } from "./dto/apply-business-profile.dto";
+import type {
+  BusinessProfileApplyResponse,
+  BusinessProfileListResponse,
+  BusinessProfilePreviewResponse,
+} from "@routeflow/types";
 
 @ApiTags("platform-admin")
 @ApiBearerAuth()
@@ -69,6 +77,8 @@ export class PlatformAdminController {
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
     private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
+    private readonly businessProfiles: BusinessProfileService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   @Get("stats")
@@ -679,6 +689,83 @@ export class PlatformAdminController {
       overrideId,
     });
     return result;
+  }
+
+  // ─── Business profiles ─────────────────────────────────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard: tenant roles are refused.
+
+  @Get("business-profiles")
+  @ApiOperation({ summary: "The business profiles a platform admin can apply to a tenant" })
+  listBusinessProfiles(): BusinessProfileListResponse {
+    return this.businessProfiles.list();
+  }
+
+  @Post("tenants/:id/business-profile/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "What applying a business profile would change for this tenant — writes nothing",
+  })
+  previewBusinessProfile(
+    @Param("id") id: string,
+    @Body() dto: ApplyBusinessProfileDto,
+  ): Promise<BusinessProfilePreviewResponse> {
+    return this.businessProfiles.preview(id, dto.profile);
+  }
+
+  /**
+   * Confirm. The plan is recomputed HERE from the tenant's current state (never trusted from the
+   * client) and validated whole before the first write. Writes go through the existing audited
+   * paths only — this controller's own override create/revoke and `FeatureConfigService.set` —
+   * in the order grants → modes → denies, because `set()` checks the fleet rule against the SAVED
+   * state: delivery needs the fleet granted first, and a fleet is denied only after the mode has
+   * moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
+   * transaction: a mid-way failure leaves the steps already written, each audited, and a re-apply
+   * completes the rest.
+   */
+  @Post("tenants/:id/business-profile")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Apply a business profile to a tenant (audited; idempotent)" })
+  async applyBusinessProfile(
+    @Param("id") id: string,
+    @Body() dto: ApplyBusinessProfileDto,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<BusinessProfileApplyResponse> {
+    const resolved = await this.businessProfiles.plan(id, dto.profile);
+    const reason = dto.reason?.trim() || resolved.reason;
+    const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
+
+    const applyOverrides = async (effect: "GRANT" | "DENY") => {
+      for (const o of resolved.plan.overrides) {
+        if (o.effect !== effect || o.action === "skip") continue;
+        if (o.action === "replace") {
+          await this.revokeFeatureOverride(id, resolved.revokeOverrideIds[o.featureKey], admin);
+        }
+        await this.createFeatureOverride(
+          id,
+          { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
+          admin,
+        );
+      }
+    };
+    await applyOverrides("GRANT");
+    for (const m of resolved.plan.modes) {
+      await this.featureConfig.set(id, m.key, m.to, reason, admin.sub);
+    }
+    await applyOverrides("DENY");
+
+    this.authority.invalidate(id);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
+      profile: resolved.profile.key,
+      reason,
+      plan: resolved.plan,
+      summary: resolved.summary,
+    });
+    return {
+      profile: resolved.profile.key as BusinessProfileApplyResponse["profile"],
+      plan: resolved.plan,
+      changed,
+      summary: resolved.summary,
+    };
   }
 
   // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
