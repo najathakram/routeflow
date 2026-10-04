@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import DashboardPage from "./page";
 
 // REG-B1015: a KPI whose query failed (or never answered) rendered as $0.00 / 0, indistinguishable from
@@ -27,7 +27,8 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
 }));
 
-type Mode = "ok" | "loading" | "error";
+type Mode = "ok" | "loading" | "error" | "empty";
+const mockRefetch = jest.fn();
 let mode: Mode = "ok";
 // A tenant with 250 PENDING, 30 CONFIRMED and 5 OUT_FOR_DELIVERY orders: far past the old 100 cap.
 const TOTALS: Record<string, number> = {
@@ -41,7 +42,7 @@ const state = () =>
   mode === "loading"
     ? { data: undefined, isLoading: true, isError: false }
     : mode === "error"
-      ? { data: undefined, isLoading: false, isError: true }
+      ? { data: undefined, isLoading: false, isError: true, refetch: mockRefetch }
       : null;
 const page = (total: number, rows: unknown[] = []) => ({
   data: { data: rows, meta: { total, page: 1, limit: rows.length || 1, totalPages: 1 } },
@@ -77,13 +78,15 @@ jest.mock("@/lib/api/finance", () => ({
     },
 }));
 jest.mock("@/lib/api/invoices", () => ({
-  useInvoices: () => state() ?? page(7),
+  useInvoices: () => state() ?? (mode === "empty" ? page(0, []) : page(7)),
 }));
 jest.mock("@/lib/api/routes", () => ({ useRouteRuns: () => state() ?? page(3) }));
 jest.mock("@/lib/api/drivers", () => ({
   useDrivers: (p: { status?: string }) => state() ?? (p?.status === "ACTIVE" ? page(41) : page(60)),
 }));
-jest.mock("@/lib/api/products", () => ({ useProducts: () => state() ?? page(9) }));
+jest.mock("@/lib/api/products", () => ({
+  useProducts: () => state() ?? (mode === "empty" ? page(0, []) : page(9)),
+}));
 
 // The StatCard label (the uppercase <p>), not a panel heading of the same words.
 const tile = (label: string) =>
@@ -142,5 +145,32 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
     renderWithProviders(<DashboardPage />);
     expect(screen.queryAllByText("Today's Revenue")).toHaveLength(0);
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
+  // The panels below the tiles: a FAILED request must not read as the good-news empty state.
+  it("a failed overdue / low-stock request says so with a retry, never the all-clear text", () => {
+    mode = "error";
+    renderWithProviders(<DashboardPage />);
+
+    expect(screen.getByText("Couldn't load overdue invoices")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load low stock items")).toBeInTheDocument();
+    expect(screen.queryByText("No overdue invoices")).not.toBeInTheDocument();
+    expect(screen.queryByText("All stock levels healthy")).not.toBeInTheDocument();
+
+    const retries = screen.getAllByRole("button", { name: /retry/i });
+    expect(retries.length).toBeGreaterThanOrEqual(2);
+    mockRefetch.mockClear();
+    retries.forEach((b) => fireEvent.click(b));
+    expect(mockRefetch).toHaveBeenCalledTimes(retries.length);
+  });
+
+  it("a SUCCESSFUL empty response keeps the all-clear text (and no error copy)", () => {
+    mode = "empty";
+    renderWithProviders(<DashboardPage />);
+
+    expect(screen.getByText("No overdue invoices")).toBeInTheDocument();
+    expect(screen.getByText("All stock levels healthy")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load overdue invoices")).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load low stock items")).not.toBeInTheDocument();
   });
 });

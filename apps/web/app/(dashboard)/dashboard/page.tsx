@@ -282,16 +282,39 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 /** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
 const UNKNOWN_KPI = "—";
 
+/**
+ * A panel whose OWN request failed: fixed copy and a retry, never the good-news empty state
+ * ("No overdue invoices" / "All stock levels healthy"), which is only for a successful empty response.
+ */
+function PanelLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-5 py-5" role="alert">
+      <div className="flex items-center gap-3">
+        <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
+        <p className="text-sm font-semibold text-navy">{message}</p>
+      </div>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
 
 function OverdueInvoicesPanel({
   invoices,
   totalCount,
   isLoading,
+  failed = false,
+  onRetry,
 }: {
   invoices: Invoice[];
   totalCount: number;
   isLoading: boolean;
+  /** The request failed and there is no earlier good answer to show. */
+  failed?: boolean;
+  onRetry?: () => void;
 }) {
   if (isLoading) {
     return (
@@ -323,7 +346,12 @@ function OverdueInvoicesPanel({
         </Link>
       </div>
 
-      {invoices.length === 0 ? (
+      {failed ? (
+        <PanelLoadError
+          message="Couldn't load overdue invoices"
+          onRetry={onRetry ?? (() => undefined)}
+        />
+      ) : invoices.length === 0 ? (
         <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <div>
@@ -382,10 +410,15 @@ function LowStockPanel({
   products,
   total,
   isLoading,
+  failed = false,
+  onRetry,
 }: {
   products: Product[];
   total: number;
   isLoading: boolean;
+  /** The request failed and there is no earlier good answer to show. */
+  failed?: boolean;
+  onRetry?: () => void;
 }) {
   if (isLoading) {
     return (
@@ -417,7 +450,12 @@ function LowStockPanel({
         </Link>
       </div>
 
-      {products.length === 0 ? (
+      {failed ? (
+        <PanelLoadError
+          message="Couldn't load low stock items"
+          onRetry={onRetry ?? (() => undefined)}
+        />
+      ) : products.length === 0 ? (
         <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <p className="text-sm font-semibold text-success">All stock levels healthy</p>
@@ -629,15 +667,22 @@ export default function DashboardPage() {
     { page: 1, limit: 1, status: "ACTIVE" },
     { ...POLL, enabled: routesAccess },
   );
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
-    { isActive: true, stockStatus: "LOW", limit: 5 },
-    POLL,
-  );
+  const {
+    data: lowStockData,
+    isLoading: lowStockLoading,
+    isError: lowStockError,
+    refetch: refetchLowStock,
+  } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 }, POLL);
   const { data: financeData, isLoading: financeLoading } = useFinanceDashboard({
     ...POLL,
     enabled: readsBusinessData,
   });
-  const { data: overdueData, isLoading: overdueLoading } = useInvoices(
+  const {
+    data: overdueData,
+    isLoading: overdueLoading,
+    isError: overdueError,
+    refetch: refetchOverdue,
+  } = useInvoices(
     { isOverdue: true, limit: 5, sortBy: "dueDate", sortOrder: "asc" },
     { ...POLL, enabled: readsBusinessData },
   );
@@ -954,6 +999,8 @@ export default function DashboardPage() {
             invoices={overdueInvoices}
             totalCount={overdueCount ?? 0}
             isLoading={overdueLoading}
+            failed={overdueError && !overdueData}
+            onRetry={() => void refetchOverdue()}
           />
         </div>
       )}
@@ -1100,6 +1147,8 @@ export default function DashboardPage() {
                 products={lowStockProducts}
                 total={lowStockTotal ?? 0}
                 isLoading={lowStockLoading}
+                failed={lowStockError && !lowStockData}
+                onRetry={() => void refetchLowStock()}
               />
             </div>
           )}
