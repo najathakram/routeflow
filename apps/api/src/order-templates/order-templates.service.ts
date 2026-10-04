@@ -36,6 +36,7 @@ import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
+import { assertPositiveTemplateQty } from "./template-qty";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 
@@ -158,6 +159,7 @@ export class OrderTemplatesService {
 
   async create(dto: CreateOrderTemplateDto, creator?: { role: string; userId: string } | null) {
     if (!dto.customerId) throw new BadRequestException("customerId is required");
+    assertPositiveTemplateQty(dto.items); // before any read or write
     // REG-B131: a removed (soft-deleted) customer is not a standing-order target either — the cron
     // already skips their templates, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -208,6 +210,7 @@ export class OrderTemplatesService {
     dto: UpdateOrderTemplateDto,
     editor?: { role: string; userId: string } | null,
   ) {
+    assertPositiveTemplateQty(dto.items); // before any read or write
     await this.findOne(id);
     const include = {
       items: { include: { product: { select: { id: true, name: true, unit: true } } } },
@@ -347,6 +350,7 @@ export class OrderTemplatesService {
   // ─── Item management ─────────────────────────────────────────────────────────
 
   async addItem(templateId: string, dto: AddTemplateItemDto, editor?: { role: string } | null) {
+    assertPositiveTemplateQty([dto]); // before any read or write
     await this.findOne(templateId);
     const product = await this.prisma
       .forTenant()
@@ -555,6 +559,7 @@ export class OrderTemplatesService {
     /** WS9: the caller's resolved boolean for a manual run (default = isStaffRole, today's value). */
     allowOversellArg?: boolean,
   ) {
+    assertPositiveTemplateQty(template.items); // a stored or bypassed quantity never reaches an order or stock
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
     // instead SKIPS the banned line(s), still orders the rest, notifies once and marks each banned template
     // line suspended until it is edited or lifted; only an all-banned template orders nothing (and is then
