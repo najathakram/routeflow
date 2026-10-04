@@ -5,7 +5,6 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
-  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -20,7 +19,6 @@ import {
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
-import { WRITABLE_FULFILL_PATHS } from "../writable-fulfill-paths";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
@@ -112,12 +110,12 @@ export class CreateOrderDto {
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
   /**
-   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall
-   * back to the customer's own default (`create()` resolves
-   * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
+   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall back to the
+   * customer's own default. The DTO accepts every FulfillPath; `create()` resolves it against the
+   * business's capability (resolve-fulfil-path.ts), which refuses PICKUP where pickup is not offered.
    */
   @IsOptional()
-  @IsIn(WRITABLE_FULFILL_PATHS)
+  @IsEnum(FulfillPath)
   fulfillPath?: FulfillPath;
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */

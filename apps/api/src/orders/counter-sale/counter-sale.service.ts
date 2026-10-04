@@ -9,7 +9,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -23,28 +23,9 @@ import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
 } from "./fulfilment-capability-reader";
-import {
-  allocateOldestFirst,
-  assertPaymentShape,
-  planCounterPayment,
-  toPrismaMethod,
-} from "./counter-sale-payment";
+import { assertPaymentShape } from "./counter-sale-payment";
+import { recordTender, tenderFigures, type InvoiceRow } from "./tender";
 import { WalkInCustomerService } from "./walk-in-customer";
-
-type InvoiceRow = {
-  id: string;
-  invoiceNumber?: string;
-  total: unknown;
-  payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
-};
-
-/**
- * A payment the counter itself took (cash / card / check): not a credit-note or advance application.
- * scan-ok: draft-payment-not-void — a replay asks "was a tender already recorded?", and a VOIDED one
- * does not count; the counter never writes a DRAFT payment (recordPayment's default status is PAID).
- */
-const isTender = (p: { method?: string; status?: string }) =>
-  p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE";
 
 /**
  * POST /orders/counter-sale (SA-655): ONE staff call that rings an over-the-counter sale as a
@@ -155,38 +136,15 @@ export class CounterSaleService {
 
     // 5. The tender, against what is STORED now.
     let invoices = await this.readInvoices(orderId);
-    let planError: string | undefined;
-    const method = dto.payment.method;
-    if (method !== "ON_ACCOUNT" && !invoices.some((i) => (i.payments ?? []).some(isTender))) {
-      const balances = invoices.map((i) => ({
-        id: i.id,
-        balance: remainingCapacity(Number(i.total), i.payments),
-      }));
-      const plan = planCounterPayment({
-        method,
-        amount: dto.payment.amount,
-        balance: roundMoney(balances.reduce((s, b) => s + b.balance, 0)),
-      });
-      if (plan.kind === "refuse") {
-        planError = plan.code;
-      } else if (plan.kind === "pay") {
-        try {
-          for (const part of allocateOldestFirst(balances, plan.amount)) {
-            await this.invoices.recordPayment(part.invoiceId, {
-              amount: part.amount,
-              method: toPrismaMethod(method)!,
-              reference: dto.payment.reference,
-            } as never);
-          }
-        } catch (e) {
-          this.logger.warn(
-            `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
-          );
-          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
-        }
-        invoices = await this.readInvoices(orderId);
-      }
-    }
+    const tender = await recordTender(
+      this.invoices,
+      invoices,
+      dto.payment,
+      this.logger,
+      `counter sale ${orderId}`,
+    );
+    if (tender.attempted) invoices = await this.readInvoices(orderId);
+    const planError = tender.planError;
 
     return this.respond(dto, order, invoices, replayed, planError);
   }
@@ -222,7 +180,7 @@ export class CounterSaleService {
     });
   }
 
-  /** Every figure comes from the stored invoices/payments; `change` is display-only (no money row). */
+  /** Every figure comes from the stored invoices/payments (tender.ts); `change` is display-only (no money row). */
   private respond(
     dto: CounterSaleDto,
     order: { id: string; orderNumber: string | null } | null,
@@ -236,35 +194,12 @@ export class CounterSaleService {
         "The sale was created but its invoice could not be found. Open the order from the orders list.",
       );
     }
-    const payments = invoices.flatMap((i) => i.payments ?? []);
-    const total = roundMoney(invoices.reduce((s, i) => s + Number(i.total), 0));
-    const paid = roundMoney(sumConfirmed(payments));
-    const balanceDue = Math.max(0, roundMoney(total - paid));
-    const method = dto.payment.method;
-    const firstTender = payments.find(isTender);
-    // Recorded = nothing was asked of the till (on account / nothing owing) or a tender is STORED (a partial
-    // included: its balanceDue stays open on purpose).
-    const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || !!firstTender;
-    // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
-    const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
-    const tendered = dto.payment.amount;
-    const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
-    const change = method === "CASH" && settled && owed > 0 ? owed : undefined;
-
     return {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
       invoiceNumber: first.invoiceNumber ?? "",
-      total,
-      paid,
-      balanceDue,
-      ...(change != null ? { change } : {}),
-      ...(firstTender ? { paymentId: firstTender.id } : {}),
-      paymentRecorded: settled,
-      ...(!settled
-        ? { paymentErrorCode: planError ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
-        : {}),
+      ...tenderFigures(invoices, dto.payment, planError),
       ...(replayed ? { replayed: true } : {}),
     };
   }

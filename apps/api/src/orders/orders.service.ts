@@ -63,6 +63,8 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { isPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
+import { OptionalCapabilityReader, resolveCreateFulfilPath } from "./resolve-fulfil-path";
+import type { FulfilmentCapabilityReader } from "./counter-sale/fulfilment-capability-reader";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
@@ -254,6 +256,7 @@ export class OrdersService implements OnApplicationBootstrap {
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    @OptionalCapabilityReader() private readonly fulfilReader?: FulfilmentCapabilityReader,
   ) {}
 
   /**
@@ -1608,11 +1611,10 @@ export class OrdersService implements OnApplicationBootstrap {
       select: { pricingTier: true, fulfillPath: true },
     });
     const defaultTier = customerRecord?.pricingTier ?? 1;
-    // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
-    // fall back to the customer's own default, else ROUTE (byte-identical to
-    // today for every existing order/customer, which default to ROUTE too).
+    // Capability-aware (resolve-fulfil-path.ts, SA-655); unset = today: dto, customer default, ROUTE.
     const fulfillPath =
-      options.fulfillPath ?? dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+      options.fulfillPath ??
+      (await resolveCreateFulfilPath(this.fulfilReader, this.prisma, user, dto, customerRecord));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.

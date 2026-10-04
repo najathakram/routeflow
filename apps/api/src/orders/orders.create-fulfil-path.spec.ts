@@ -9,6 +9,7 @@ import { ConfigService } from "@nestjs/config";
 import { OrdersService } from "./orders.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { FULFILMENT_CAPABILITY_READER } from "./counter-sale/fulfilment-capability-reader";
 import type { FulfilmentCapability } from "./counter-sale/capability-shape";
@@ -75,6 +76,8 @@ describe("OrdersService.create — capability-aware fulfil path", () => {
         if (token === PrismaService) return prisma;
         if (token === ConfigService) return { get: jest.fn().mockReturnValue(0.1) };
         if (token === EntitlementsService) return { hasFlag: jest.fn().mockResolvedValue(true) };
+        if (token === PromotionsService)
+          return { activeForCatalog: jest.fn().mockResolvedValue([]) };
         if (token === FULFILMENT_CAPABILITY_READER && withReader) return reader;
         return autoMock();
       })
@@ -148,7 +151,7 @@ describe("OrdersService.create — capability-aware fulfil path", () => {
     it("staff: no request and the customer's ROUTE default resolve PICKUP", async () => {
       await service.create(body(), staff, { skipAutoMerge: true });
       expect(written()).toBe("PICKUP");
-      expect(reader.get).toHaveBeenCalledWith("t-1");
+      expect(reader.get).toHaveBeenCalledWith(prisma.getTenantId());
     });
     it("staff: an old client's hard-sent ROUTE still resolves PICKUP", async () => {
       await service.create(body({ fulfillPath: "ROUTE" }), staff, { skipAutoMerge: true });

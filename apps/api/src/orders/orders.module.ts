@@ -36,6 +36,9 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+// SA-655 pickup mode: POST /orders/:id/pickup-complete hands an order-ahead PICKUP order over at the till.
+import { PickupCompleteController } from "./counter-sale/pickup-complete.controller";
+import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
 import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
@@ -61,12 +64,13 @@ import {
     ReturnsModule,
     PolicyModule,
   ],
-  controllers: [OrdersController, CounterSaleController],
+  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
   providers: [
     OrdersService,
     ChangeRequestsService,
     PolicyOversellReader,
     CounterSaleService,
+    PickupCompleteService,
     WalkInCustomerService,
     // TODO(#3188): bind a reader over deriveFulfilmentCapability instead of the "unset = today" default.
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

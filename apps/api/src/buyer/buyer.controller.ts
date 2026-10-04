@@ -730,6 +730,7 @@ export class BuyerController {
       urgent: dto.urgent,
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
+      ...(dto.fulfillPath ? { fulfillPath: dto.fulfillPath } : {}),
     };
     const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
     // Newly-created order may share a customer with pre-existing PENDINGs —

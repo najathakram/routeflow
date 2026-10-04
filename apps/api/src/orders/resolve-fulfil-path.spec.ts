@@ -162,38 +162,35 @@ describe("resolveCreateFulfilPath (the async edge create() calls)", () => {
   const reader = (cap: FulfilmentCapability | undefined) => ({
     get: jest.fn().mockResolvedValue(cap),
   });
+  const tenant = { getTenantId: () => "t-1" };
+  const resolve = (
+    r: { get: jest.Mock } | undefined,
+    role: string,
+    dto: { fulfillPath?: FulfillPath } = {},
+    customer?: { fulfillPath?: FulfillPath },
+  ) => resolveCreateFulfilPath(r, tenant, { role }, dto, customer);
 
   it("no reader (a spec or module that never bound one) = unset = today", async () => {
-    await expect(
-      resolveCreateFulfilPath(undefined, "t-1", { role: "OPERATOR", customerDefault: SHIP }),
-    ).resolves.toBe(SHIP);
-    await expect(resolveCreateFulfilPath(undefined, "t-1", { role: "OPERATOR" })).resolves.toBe(
-      ROUTE,
-    );
+    await expect(resolve(undefined, "OPERATOR", {}, { fulfillPath: SHIP })).resolves.toBe(SHIP);
+    await expect(resolve(undefined, "OPERATOR")).resolves.toBe(ROUTE);
   });
 
   it("a reader that yields nothing is treated as unset", async () => {
-    await expect(
-      resolveCreateFulfilPath(reader(undefined), "t-1", { role: "CUSTOMER" }),
-    ).resolves.toBe(ROUTE);
+    await expect(resolve(reader(undefined), "CUSTOMER")).resolves.toBe(ROUTE);
   });
 
   it("reads the capability of the caller's tenant", async () => {
     const r = reader(CAPS.pickup);
-    await expect(resolveCreateFulfilPath(r, "t-1", { role: "OPERATOR" })).resolves.toBe(PICKUP);
+    await expect(resolve(r, "OPERATOR")).resolves.toBe(PICKUP);
     expect(r.get).toHaveBeenCalledWith("t-1");
   });
 
   it("CUSTOMER is the buyer actor; every other role is staff", async () => {
     const r = reader(CAPS.pickup);
-    await expect(
-      resolveCreateFulfilPath(r, "t-1", { role: "CUSTOMER", requested: SHIP }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      resolveCreateFulfilPath(r, "t-1", { role: "OPERATOR", requested: SHIP }),
-    ).resolves.toBe(SHIP);
-    await expect(
-      resolveCreateFulfilPath(r, "t-1", { role: "DRIVER", requested: ROUTE }),
-    ).resolves.toBe(PICKUP);
+    await expect(resolve(r, "CUSTOMER", { fulfillPath: SHIP })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(resolve(r, "OPERATOR", { fulfillPath: SHIP })).resolves.toBe(SHIP);
+    await expect(resolve(r, "DRIVER", { fulfillPath: ROUTE })).resolves.toBe(PICKUP);
   });
 });
