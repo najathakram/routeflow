@@ -109,11 +109,11 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
   it("an OPERATOR's reads stay enabled and the Recent Orders card still renders", () => {
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
-    // Unset account: the ONLY disabled reads are the two SHIP-filtered shipping-tile reads.
+    // Unset account: the ONLY disabled reads are the three SHIP-filtered shipping-tile reads.
     const disabled = reads.filter((r) => r.options?.enabled === false);
-    expect(disabled.length).toBe(2);
+    expect(disabled.length).toBe(3);
     expect(disabled.every(isShipTile)).toBe(true);
-    expect(reads.filter(isShipTile).length).toBe(2);
+    expect(reads.filter(isShipTile).length).toBe(3);
     expect(screen.getByText("Recent Orders")).toBeInTheDocument();
     expect(
       screen.queryByText(/plan doesn't include routes or deliveries/i),
@@ -125,13 +125,13 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
     for (const r of reads) expect(r.options?.enabled).not.toBe(false);
-    expect(reads.filter(isShipTile).length).toBe(2);
+    expect(reads.filter(isShipTile).length).toBe(3);
 
     reads.length = 0;
     authUser = { role: "DRIVER" };
     renderWithProviders(<DashboardPage />);
     const tiles = reads.filter(isShipTile);
-    expect(tiles.length).toBe(2);
+    expect(tiles.length).toBe(3);
     for (const r of reads) expect(r.options?.enabled).toBe(false);
   });
 });

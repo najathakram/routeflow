@@ -6,24 +6,21 @@ import { CreateOrderModal } from "./CreateOrderModal";
 // other account, including one with no fleet modules, keeps the "Delivery route / Ship via carrier"
 // toggle exactly as before.
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
-let ship = false;
+// `caps` = capabilities.fulfilment (undefined = UNSET: loading, an older API, no fulfilment mode set).
+let caps: Record<string, unknown> | undefined;
+const account = (over: Record<string, unknown>) => ({
+  methods: ["SHIP"],
+  staffDefault: "SHIP",
+  staffOpensAs: "order",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: false,
+  consistent: true,
+  ...over,
+});
 jest.mock("@/lib/tenant-features", () => ({
-  useTenantFeatures: () => ({
-    data: ship
-      ? {
-          capabilities: {
-            fulfilment: {
-              methods: ["SHIP"],
-              staffDefault: "SHIP",
-              portalMethods: [],
-              portalDefault: null,
-              counter: "off",
-              fleet: false,
-            },
-          },
-        }
-      : undefined,
-  }),
+  useTenantFeatures: () => ({ data: caps ? { capabilities: { fulfilment: caps } } : undefined }),
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
@@ -65,19 +62,54 @@ jest.mock("@/lib/api-client", () => ({
 }));
 jest.mock("@/lib/barcode-resolve", () => ({ resolveProductByCode: jest.fn() }));
 
-describe("CreateOrderModal — fulfilment toggle (SHIP mode)", () => {
+const route = () => screen.queryByRole("button", { name: "Delivery route" });
+const ship = () => screen.queryByRole("button", { name: "Ship via carrier" });
+
+describe("CreateOrderModal — fulfilment toggle", () => {
   it("ship mode: no Fulfillment toggle", () => {
-    ship = true;
+    caps = account({});
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(screen.queryByRole("button", { name: "Delivery route" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ship via carrier" })).not.toBeInTheDocument();
+    expect(route()).not.toBeInTheDocument();
+    expect(ship()).not.toBeInTheDocument();
     expect(screen.queryByText("Fulfillment")).not.toBeInTheDocument();
   });
 
-  it("not ship mode (today's UI, unchanged): the toggle is there", () => {
-    ship = false;
+  it("not set (today's UI, unchanged): the toggle is there", () => {
+    caps = undefined;
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(screen.getByRole("button", { name: "Delivery route" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ship via carrier" })).toBeInTheDocument();
+    expect(route()).toBeInTheDocument();
+    expect(ship()).toBeInTheDocument();
+  });
+
+  it("F-c: pickup mode shows no toggle and offers no 'Delivery route'", () => {
+    caps = account({ methods: ["PICKUP"], staffDefault: "PICKUP", counter: "always" });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(route()).not.toBeInTheDocument();
+    expect(screen.queryByText("Fulfillment")).not.toBeInTheDocument();
+  });
+
+  it("F-c: pickup_ship has only the methods it has: no hard-coded 'Delivery route'", () => {
+    caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(route()).not.toBeInTheDocument();
+  });
+
+  it("a delivery + ship account (both) keeps both choices", () => {
+    caps = account({
+      methods: ["ROUTE", "SHIP"],
+      staffDefault: "ROUTE",
+      portalMethods: ["ROUTE", "SHIP"],
+      fleet: true,
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(route()).toBeInTheDocument();
+    expect(ship()).toBeInTheDocument();
+  });
+
+  it("F-a: consistent=false (delivery mode whose fleet is gone) keeps today's ROUTE/SHIP toggle", () => {
+    caps = account({ methods: ["ROUTE"], staffDefault: "ROUTE", fleet: false, consistent: false });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(route()).toBeInTheDocument();
+    expect(ship()).toBeInTheDocument();
   });
 });

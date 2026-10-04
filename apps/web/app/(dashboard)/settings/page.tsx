@@ -1962,9 +1962,11 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch.
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch, EXCEPT while
+  // it is already ON, so it can still be turned off.
   const { fleet: hasFleet } = useFleetAccess();
-  const canToggleDriver = hasFleet && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
+  const canToggleDriver =
+    (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {

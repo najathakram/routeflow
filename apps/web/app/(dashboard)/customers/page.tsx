@@ -49,6 +49,7 @@ import {
 } from "@/lib/api/customers";
 import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
+import { useFleetAccess } from "@/lib/api/addons";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -168,7 +169,12 @@ export default function CustomersPage() {
   const regulatedFilter = urlFilters.regulated;
   // REG-B156: URL-synced like status/regulated, and sent to the server (see
   // customersQueryParams) instead of filtering client-side over one page.
-  const unassignedFilter = urlFilters.unassigned;
+  // Fleet-off: there are no routes to be unassigned from, so the filter (and ?unassigned=1) is inert.
+  const { fleet } = useFleetAccess();
+  const unassignedFilter = fleet && urlFilters.unassigned;
+  React.useEffect(() => {
+    if (!fleet && urlFilters.unassigned) setUrlFilter("unassigned", false);
+  }, [fleet, urlFilters.unassigned, setUrlFilter]);
   // REG-B170: an explicit trash view — never mixed with live customers.
   const removedFilter = urlFilters.removed;
   const [typeFilter, setTypeFilter] = React.useState("");
@@ -879,26 +885,28 @@ export default function CustomersPage() {
             </div>
           )}
 
-          {/* Unassigned only toggle chip */}
-          <button
-            onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
-            className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              unassignedFilter
-                ? "border-brand-500 bg-brand-50 text-brand-600"
-                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
-            )}
-          >
-            <span
+          {/* Unassigned only toggle chip (fleet accounts only) */}
+          {fleet && (
+            <button
+              onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
               className={cn(
-                "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
-                unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                unassignedFilter
+                  ? "border-brand-500 bg-brand-50 text-brand-600"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
             >
-              {unassignedFilter && "✓"}
-            </span>
-            Unassigned only
-          </button>
+              <span
+                className={cn(
+                  "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
+                  unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                )}
+              >
+                {unassignedFilter && "✓"}
+              </span>
+              Unassigned only
+            </button>
+          )}
 
           {/* REG-B170: removed (soft-deleted) customers trash view */}
           <button
@@ -1140,8 +1148,9 @@ export default function CustomersPage() {
         }
       >
         <p className="text-sm text-navy/70">
-          Deactivating <strong>{deactivatingCustomer?.name}</strong> will hide them from route
-          assignment and they will no longer be able to log in.
+          Deactivating <strong>{deactivatingCustomer?.name}</strong> will{" "}
+          {fleet ? "hide them from route assignment and they will" : "mean they"} no longer be able
+          to log in.
         </p>
       </Modal>
 

@@ -33,7 +33,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess } from "@/lib/api/addons";
-import { useOrderStatusLabel } from "@/lib/fulfilment-caps";
+import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -74,11 +74,7 @@ function orderStatusLabel(status: string): string {
 
 // ─── Fulfillment filter options ───────────────────────────────────────────────
 
-const FULFILLMENT_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "All Fulfillment" },
-  { value: "ROUTE", label: "Delivery route" },
-  { value: "SHIP", label: "Ship via carrier" },
-];
+const FULFILLMENT_LABEL = { ROUTE: "Delivery route", SHIP: "Ship via carrier" } as const;
 
 // ─── Date column ──────────────────────────────────────────────────────────────
 
@@ -253,6 +249,8 @@ export default function OrdersPage() {
     // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
     // excluded from trip/route dispatch) — same URL-chip treatment as status.
     fulfillPath: "",
+    // Dashboard shipping cards: "no-tracking" (shipped, no tracking number) | "week" (shipped in the last 7 days).
+    shipView: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
@@ -260,6 +258,14 @@ export default function OrdersPage() {
   const dateTo = (urlFilters.dateTo as string) ?? "";
   const productIdFilter = (urlFilters.productId as string) ?? "";
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
+  const shipView = (urlFilters.shipView as string) ?? "";
+  const shipParams = {
+    hasTracking: shipView === "no-tracking" ? (false as const) : undefined,
+    shippedFrom:
+      shipView === "week"
+        ? new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+        : undefined,
+  };
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
   // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
@@ -336,6 +342,8 @@ export default function OrdersPage() {
   // Status words come from the shared fulfilment table (display only): per ORDER by its fulfillPath,
   // and the account's default method for the filters below.
   const statusLabel = useOrderStatusLabel();
+  // The fulfilment filter lists only the paths the account offers (plus an active URL filter).
+  const fulfilMethods = useStaffFulfilment().formMethods;
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
     label: statusLabel(String(v.filters.status ?? ""), v.label),
@@ -424,6 +432,7 @@ export default function OrdersPage() {
     dateTo,
     productIdFilter,
     fulfillPathFilter,
+    shipView,
     debouncedCustomerSearch,
   ]);
 
@@ -460,7 +469,8 @@ export default function OrdersPage() {
             !dateFrom &&
             !dateTo &&
             !productIdFilter &&
-            !fulfillPathFilter
+            !fulfillPathFilter &&
+            !shipView
           );
         }
         return keys.every(
@@ -486,6 +496,7 @@ export default function OrdersPage() {
     deliveryDateTo: dateTo || undefined,
     productId: productIdFilter || undefined,
     fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+    ...shipParams,
     search: debouncedCustomerSearch || undefined,
     page,
     limit,
@@ -536,6 +547,7 @@ export default function OrdersPage() {
           deliveryDateTo: dateTo || undefined,
           productId: productIdFilter || undefined,
           fulfillPath: fulfillPathFilter || undefined,
+          ...shipParams,
           search: debouncedCustomerSearch || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
@@ -817,7 +829,15 @@ export default function OrdersPage() {
         </div>
         <div className="w-44">
           <Select
-            options={FULFILLMENT_OPTIONS}
+            options={[
+              { value: "", label: "All Fulfillment" },
+              ...Array.from(new Set([...fulfilMethods, fulfillPathFilter].filter(Boolean))).map(
+                (m) => ({
+                  value: m,
+                  label: FULFILLMENT_LABEL[m as "ROUTE" | "SHIP"] ?? m,
+                }),
+              ),
+            ]}
             value={fulfillPathFilter}
             onChange={(e) => setFilter("fulfillPath", e.target.value)}
           />
@@ -912,6 +932,7 @@ export default function OrdersPage() {
           dateTo ||
           productIdFilter ||
           fulfillPathFilter ||
+          shipView ||
           customerSearch) && (
           <button
             onClick={() => {
@@ -944,6 +965,7 @@ export default function OrdersPage() {
           dateTo ||
           productIdFilter ||
           fulfillPathFilter ||
+          shipView ||
           customerSearch ? (
             <EmptyState
               variant="orders"
@@ -1045,7 +1067,7 @@ export default function OrdersPage() {
                     />
                     {order.fulfillPath === "SHIP" && (
                       <span
-                        title="Shipped by supplier/carrier — won't appear on delivery routes"
+                        title="Shipped by supplier/carrier"
                         className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
                       >
                         <Truck className="h-3 w-3" aria-hidden />
@@ -1208,7 +1230,7 @@ export default function OrdersPage() {
                           />
                           {order.fulfillPath === "SHIP" && (
                             <span
-                              title="Shipped by supplier/carrier — won't appear on delivery routes"
+                              title="Shipped by supplier/carrier"
                               className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
                             >
                               <Truck className="h-3 w-3" aria-hidden />

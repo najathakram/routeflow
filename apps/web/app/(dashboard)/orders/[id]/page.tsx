@@ -32,7 +32,6 @@ import {
   Button,
   Card,
   Modal,
-  Select,
   cn,
   TAP_TARGET,
   useToast,
@@ -3390,11 +3389,13 @@ export default function OrderDetailPage() {
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
-              {staffFulfilment.choice && (
+              {(staffFulfilment.choice ||
+                !staffFulfilment.formMethods.includes(order.fulfillPath)) && (
                 <OrderFulfilmentRow
                   orderId={order.id}
                   fulfillPath={order.fulfillPath}
                   locked={fulfillPathLocked}
+                  offered={staffFulfilment.formMethods}
                 />
               )}
               {order.orderDate && (

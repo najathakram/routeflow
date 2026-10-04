@@ -1,50 +1,63 @@
 import { renderHook } from "@testing-library/react";
 import { useFleetAccess } from "./addons";
 
-// fleet = the server's capabilities.fulfilment.fleet when present, else routes||delivery from the add-ons.
-// Fails OPEN (fleet UI) while unknown, so a tenant is never stripped on a guess.
-let addons: { data?: { addons: string[] }; isLoading: boolean; isSuccess: boolean };
+// fleet-off ONLY when the fulfilment model was explicitly SET and the server says there is no fleet.
+// Every other tenant (UNSET, inconsistent, loading/errored answer, an older API) keeps every surface.
 let features: unknown;
-jest.mock("./tobacco", () => ({ useTenantAddons: () => addons }));
 jest.mock("../tenant-features", () => ({ useTenantFeatures: () => ({ data: features }) }));
 
-const ok = (list: string[]) => ({ data: { addons: list }, isLoading: false, isSuccess: true });
+const caps = (over: Record<string, unknown>) => ({
+  capabilities: {
+    fulfilment: {
+      methods: ["SHIP"],
+      staffDefault: "SHIP",
+      staffOpensAs: "order",
+      portalMethods: [],
+      portalDefault: null,
+      counter: "off",
+      fleet: false,
+      consistent: true,
+      ...over,
+    },
+  },
+});
+const fleet = () => renderHook(() => useFleetAccess()).result.current.fleet;
 
 describe("useFleetAccess", () => {
   beforeEach(() => {
     features = undefined;
   });
 
-  it.each([
-    [["recurring_routes"], true],
-    [["order_delivery"], true],
-    [["recurring_routes", "order_delivery"], true],
-    [["sales_agents"], false],
-    [[], false],
-  ])("add-ons %j (no capabilities) -> fleet %s", (list, expected) => {
-    addons = ok(list as string[]);
-    expect(renderHook(() => useFleetAccess()).result.current).toEqual({
-      fleet: expected,
-      loading: false,
+  it("M4: an UNSET tenant with no fleet module keeps today's nav (fleet true), whatever its modules", () => {
+    // the UNSET shape: ROUTE/SHIP both offered, ROUTE default, no buyer choice
+    features = caps({
+      methods: ["ROUTE", "SHIP"],
+      staffDefault: "ROUTE",
+      counter: "off",
+      fleet: false,
     });
+    expect(fleet()).toBe(true);
   });
 
-  it("the server's capabilities.fulfilment.fleet wins over the add-ons", () => {
-    addons = ok(["recurring_routes"]);
-    features = { capabilities: { fulfilment: { fleet: false } } };
-    expect(renderHook(() => useFleetAccess()).result.current.fleet).toBe(false);
-    addons = ok([]);
-    features = { capabilities: { fulfilment: { fleet: true } } };
-    expect(renderHook(() => useFleetAccess()).result.current.fleet).toBe(true);
+  it("an explicit ship-only account with no fleet IS fleet-off", () => {
+    features = caps({});
+    expect(fleet()).toBe(false);
   });
 
-  it("fails open while loading or when the add-ons fetch errored", () => {
-    addons = { data: undefined, isLoading: true, isSuccess: false };
-    expect(renderHook(() => useFleetAccess()).result.current).toEqual({
-      fleet: true,
-      loading: true,
-    });
-    addons = { data: undefined, isLoading: false, isSuccess: false };
-    expect(renderHook(() => useFleetAccess()).result.current.fleet).toBe(true);
+  it("an explicit ship-only account that holds a fleet module keeps the fleet surfaces", () => {
+    features = caps({ fleet: true });
+    expect(fleet()).toBe(true);
+  });
+
+  it("F-a: consistent=false (a delivery/both mode whose fleet is gone) reads as UNSET: today's UI", () => {
+    features = caps({ methods: ["ROUTE"], staffDefault: "ROUTE", fleet: false, consistent: false });
+    expect(fleet()).toBe(true);
+  });
+
+  it("fails open while loading, on an error, or on an older API without the block", () => {
+    features = undefined;
+    expect(fleet()).toBe(true);
+    features = { capabilities: {} };
+    expect(fleet()).toBe(true);
   });
 });

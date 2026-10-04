@@ -289,21 +289,6 @@ function shipCount(q: { data?: { meta?: { total?: number } } }): string | number
   return typeof n === "number" && Number.isFinite(n) ? n : "—";
 }
 
-/** Shipped orders (SHIP, out for delivery) still missing a tracking number. Counted over the 100 newest
- *  rows: exact when the server total fits in that page, else labelled "100+" rather than guessed. */
-function shippedNoTracking(q: {
-  data?: {
-    data?: Array<{ shippingTrackingNumber?: string | null }>;
-    meta?: { total?: number };
-  };
-}): string | number {
-  const rows = q.data?.data;
-  const total = q.data?.meta?.total;
-  if (!rows || typeof total !== "number") return "—";
-  const missing = rows.filter((o) => !o.shippingTrackingNumber).length;
-  return total > rows.length ? `${missing}+` : missing;
-}
-
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
 
 function OverdueInvoicesPanel({
@@ -629,8 +614,18 @@ export default function DashboardPage() {
     { status: "CONFIRMED", fulfillPath: "SHIP", page: 1, limit: 1 },
     { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
   );
-  const shippedQ = useOrders(
-    { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", page: 1, limit: 100 },
+  // Exact server totals via `meta.total` at limit 1 (hasTracking / shippedFrom are server filters), so the
+  // cards and the lists they link to always agree.
+  const noTrackingQ = useOrders(
+    { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", hasTracking: false, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  const weekAgo = React.useMemo(
+    () => new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10),
+    [],
+  );
+  const shippedWeekQ = useOrders(
+    { fulfillPath: "SHIP", shippedFrom: weekAgo, page: 1, limit: 1 },
     { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
   );
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
@@ -842,11 +837,22 @@ export default function DashboardPage() {
                 className="cursor-pointer transition-shadow hover:shadow-md"
               />
             </Link>
-            <Link href="/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP" className="block">
+            <Link
+              href="/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP&shipView=no-tracking"
+              className="block"
+            >
               <StatCard
                 label="Shipped, no tracking"
-                value={shippedNoTracking(shippedQ)}
+                value={shipCount(noTrackingQ)}
                 icon={<AlertTriangle className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
+              <StatCard
+                label="Shipped this week"
+                value={shipCount(shippedWeekQ)}
+                icon={<Truck className="h-5 w-5" />}
                 className="cursor-pointer transition-shadow hover:shadow-md"
               />
             </Link>

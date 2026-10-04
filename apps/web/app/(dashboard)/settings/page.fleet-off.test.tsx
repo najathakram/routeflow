@@ -8,6 +8,7 @@ import SettingsPage from "./page";
 // keep both exactly as before.
 let tab = "users";
 let fleet = true;
+let mockMe: Record<string, unknown> = { id: "me", role: "TENANT_ADMIN" };
 jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(`tab=${tab}`),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -42,7 +43,7 @@ jest.mock("@/lib/api/users", () => ({
 }));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
-    get: jest.fn().mockResolvedValue({ data: { id: "me", role: "TENANT_ADMIN" } }),
+    get: jest.fn().mockImplementation(async () => ({ data: mockMe })),
     post: jest.fn(),
     patch: jest.fn(),
     delete: jest.fn(),
@@ -57,6 +58,7 @@ const roleOptions = (dialog: ReturnType<typeof within>) =>
 describe("Settings — fleet-off clean UI", () => {
   beforeEach(() => {
     tab = "users";
+    mockMe = { id: "me", role: "TENANT_ADMIN" };
   });
 
   it("fleet-OFF: Add User offers no Driver role", async () => {
@@ -84,6 +86,14 @@ describe("Settings — fleet-off clean UI", () => {
     unmount();
 
     fleet = true;
+    renderWithProviders(<SettingsPage />);
+    expect(await screen.findByText("Act as driver")).toBeInTheDocument();
+  });
+
+  it("M4: fleet-OFF but Act as driver is already ON: the switch stays so it can be turned off", async () => {
+    tab = "account";
+    fleet = false;
+    mockMe = { id: "me", role: "TENANT_ADMIN", canActAsDriver: true };
     renderWithProviders(<SettingsPage />);
     expect(await screen.findByText("Act as driver")).toBeInTheDocument();
   });

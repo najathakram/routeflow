@@ -202,7 +202,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // Fulfilment capabilities: the picker shows only when more than one method is on offer, and a NEW
   // customer starts on the account default (ROUTE for an account with no fulfilment mode).
   const staffFulfilment = useStaffFulfilment();
-  const newCustomerPath = staffFulfilment.staffDefault as "ROUTE" | "SHIP";
+  const newCustomerPath = staffFulfilment.formDefault;
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -239,6 +239,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
+
+  // The fulfilment capability can arrive AFTER the modal opened: re-seed a NEW customer's default then,
+  // so a ship-only account never keeps the ROUTE the form was first seeded with (the picker is hidden).
+  React.useEffect(() => {
+    if (isOpen && !initialData && staffFulfilment.known) setValue("fulfillPath", newCustomerPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffFulfilment.known, newCustomerPath]);
 
   const apiError = (createCustomer.error || updateCustomer.error) as Error | null;
   // B956: the form scrolls inside the modal, so a banner at the top is out of view after the address
@@ -313,7 +320,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: data.fulfillPath || staffFulfilment.staffDefault,
+          fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
           notes: data.notes,
           addresses: [
             {
@@ -361,7 +368,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: data.fulfillPath || "ROUTE",
+          fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
           notes: data.notes,
         },
         {
@@ -601,16 +608,14 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
               <div className="space-y-1">
                 <Select
                   label="Default fulfillment"
-                  options={[
-                    { value: "ROUTE", label: "Delivery route" },
-                    { value: "SHIP", label: "Ship via carrier" },
-                  ]}
+                  options={staffFulfilment.formMethods.map((m) => ({
+                    value: m,
+                    label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
+                  }))}
                   register={register("fulfillPath")}
                 />
                 {watch("fulfillPath") === "SHIP" && (
-                  <p className="text-[11px] leading-snug text-navy/70">
-                    Ships via carrier — won&apos;t appear on delivery routes.
-                  </p>
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
                 )}
               </div>
             )}

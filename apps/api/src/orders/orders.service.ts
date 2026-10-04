@@ -15,7 +15,6 @@ import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibil
 import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
-import { resolveFulfillPath } from "../common/fulfill-path-default";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
@@ -135,6 +134,7 @@ import {
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -246,7 +246,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
-    @Optional() readonly featureConfig?: FeatureConfigService,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -355,8 +355,6 @@ export class OrdersService implements OnApplicationBootstrap {
       urgent,
       page = 1,
       limit = 20,
-      deliveryDateFrom,
-      deliveryDateTo,
       fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
@@ -400,12 +398,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
     // key at all (every existing order stays visible either way).
     if (fulfillPath) where.fulfillPath = fulfillPath;
-    if (deliveryDateFrom || deliveryDateTo) {
-      where.requestedDeliveryDate = {
-        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
-        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
-      };
-    }
+    Object.assign(where, dateAndShipmentFilters(query));
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().order.findMany({
@@ -1600,9 +1593,10 @@ export class OrdersService implements OnApplicationBootstrap {
       select: { pricingTier: true, fulfillPath: true },
     });
     const defaultTier = customerRecord?.pricingTier ?? 1;
-    // The explicit dto value wins; else a ship-mode tenant (fulfilment_model) gets SHIP, else the
-    // customer's own default, else ROUTE (today's chain for every non-ship tenant).
-    const fulfillPath = await resolveFulfillPath(this, dto, customerRecord, user);
+    // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
+    // fall back to the customer's own default, else ROUTE (byte-identical to
+    // today for every existing order/customer, which default to ROUTE too).
+    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.

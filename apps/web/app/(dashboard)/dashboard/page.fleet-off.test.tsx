@@ -52,16 +52,15 @@ const page = (total: number, rows: unknown[] = []) => ({
   isError: false,
 });
 jest.mock("@/lib/api/orders", () => ({
-  useOrders: (p: { status?: string; fulfillPath?: string }) => {
-    if (p?.fulfillPath === "SHIP" && p?.status === "OUT_FOR_DELIVERY")
-      return {
-        data: {
-          data: [{ shippingTrackingNumber: "1Z" }, { shippingTrackingNumber: null }, {}],
-          meta: { total: 3 },
-        },
-        isLoading: false,
-        isError: false,
-      };
+  // Exact server totals (limit 1): hasTracking=false and shippedFrom are SERVER filters.
+  useOrders: (p: {
+    status?: string;
+    fulfillPath?: string;
+    hasTracking?: boolean;
+    shippedFrom?: string;
+  }) => {
+    if (p?.hasTracking === false) return page(2);
+    if (p?.shippedFrom) return page(9);
     if (p?.fulfillPath === "SHIP" && p?.status === "CONFIRMED") return page(7);
     return page(3);
   },
@@ -108,7 +107,9 @@ describe("Dashboard — fleet-off clean UI", () => {
     ship = true;
     renderWithProviders(<DashboardPage />);
 
-    expect(tileLabels()).toEqual(expect.arrayContaining(["Ready to ship", "Shipped, no tracking"]));
+    expect(tileLabels()).toEqual(
+      expect.arrayContaining(["Ready to ship", "Shipped, no tracking", "Shipped this week"]),
+    );
     const tile = (label: string) =>
       screen
         .getAllByText(label)
@@ -120,7 +121,11 @@ describe("Dashboard — fleet-off clean UI", () => {
     );
     expect(tile("Shipped, no tracking")).toHaveTextContent("2");
     expect(tile("Shipped, no tracking").getAttribute("href")).toBe(
-      "/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP",
+      "/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP&shipView=no-tracking",
+    );
+    expect(tile("Shipped this week")).toHaveTextContent("9");
+    expect(tile("Shipped this week").getAttribute("href")).toBe(
+      "/orders?fulfillPath=SHIP&shipView=week",
     );
   });
 
@@ -130,6 +135,7 @@ describe("Dashboard — fleet-off clean UI", () => {
     renderWithProviders(<DashboardPage />);
     expect(tileLabels()).not.toContain("Ready to ship");
     expect(tileLabels()).not.toContain("Shipped, no tracking");
+    expect(tileLabels()).not.toContain("Shipped this week");
   });
 
   it("fleet-OFF with a ship-mode account: Out for Delivery reads Shipped", () => {

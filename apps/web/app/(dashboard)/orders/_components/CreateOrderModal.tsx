@@ -431,7 +431,7 @@ export function CreateOrderModal({
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
-  const fulfillPath = (watch("fulfillPath") ?? staffFulfilment.staffDefault) as "ROUTE" | "SHIP";
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
@@ -1096,7 +1096,11 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath });
+    reset({
+      notes: p.notes ?? "",
+      urgent: !!p.urgent,
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
+    });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -1111,7 +1115,7 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: p.fulfillPath ?? "ROUTE",
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -1248,7 +1252,7 @@ export function CreateOrderModal({
         items: itemsForSubmit,
         notes: data.notes,
         urgent: data.urgent,
-        fulfillPath: data.fulfillPath || staffFulfilment.staffDefault,
+        fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
@@ -1648,10 +1652,7 @@ export function CreateOrderModal({
                               // effect) so hydrating a parked draft's own
                               // fulfillPath — via the same setSelectedCustomer call
                               // below — is never clobbered by this default.
-                              setValue(
-                                "fulfillPath",
-                                staffFulfilment.pick(c.fulfillPath) as "ROUTE" | "SHIP",
-                              );
+                              setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
                               setCustomerSearch("");
                               setDebouncedCustomerSearch("");
                             }}
@@ -2108,35 +2109,22 @@ export function CreateOrderModal({
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setValue("fulfillPath", "ROUTE")}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      fulfillPath === "ROUTE"
-                        ? "bg-navy text-white"
-                        : "text-navy/70 hover:text-navy",
-                    )}
-                  >
-                    Delivery route
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setValue("fulfillPath", "SHIP")}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      fulfillPath === "SHIP"
-                        ? "bg-navy text-white"
-                        : "text-navy/70 hover:text-navy",
-                    )}
-                  >
-                    Ship via carrier
-                  </button>
+                  {staffFulfilment.formMethods.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setValue("fulfillPath", m)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === m ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
+                    </button>
+                  ))}
                 </div>
                 {fulfillPath === "SHIP" && (
-                  <p className="text-[11px] leading-snug text-navy/70">
-                    Ships via carrier — won&apos;t appear on delivery routes.
-                  </p>
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
                 )}
               </div>
             )}

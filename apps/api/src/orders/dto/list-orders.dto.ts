@@ -31,4 +31,8 @@ export class ListOrdersDto {
   @IsOptional()
   @IsEnum(FulfillPath)
   fulfillPath?: FulfillPath;
+  /** Orders shipped on/after this instant (`shippedAt`, stamped by the ship transition). */
+  @IsOptional() @IsDateString() shippedFrom?: string;
+  /** `false` = only orders with NO tracking number yet; `true` = only those that have one. */
+  @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() hasTracking?: boolean;
 }

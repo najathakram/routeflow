@@ -209,6 +209,10 @@ export function useOrders(
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /** Shipped on/after this date (`shippedAt`): the "Shipped this week" card + its list. */
+    shippedFrom?: string;
+    /** `false` = only orders with no tracking number yet ("Shipped, no tracking"). */
+    hasTracking?: boolean;
     /**
      * B144: composes with `customerId` and role scope (never swallowed by
      * either) — matches against order number OR the customer's business

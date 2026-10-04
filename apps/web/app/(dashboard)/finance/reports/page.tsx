@@ -2313,7 +2313,16 @@ function FinanceReportsContent() {
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeReport = searchParams.get("report") ?? "sales-by-customer";
+  const requestedReport = searchParams.get("report") ?? "sales-by-customer";
+  // A fleet-off account that opens the Sales by Driver report by direct URL gets the default report.
+  const activeReport =
+    !fleet && requestedReport === "sales-by-driver" ? "sales-by-customer" : requestedReport;
+  React.useEffect(() => {
+    if (activeReport === requestedReport) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("report", activeReport);
+    router.replace(`/finance/reports?${params.toString()}`);
+  }, [activeReport, requestedReport, router, searchParams]);
   const contextCustomerId = searchParams.get("customerId") ?? undefined;
   const contextCategoryId = searchParams.get("categoryId") ?? undefined;
 

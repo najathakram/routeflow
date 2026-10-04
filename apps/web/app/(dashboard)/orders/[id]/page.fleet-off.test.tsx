@@ -8,6 +8,8 @@ import OrderDetailPage from "./page";
  * "Shipped") instead of "Out for Delivery". Every other account sees exactly today's screen.
  */
 let ship = false;
+// override of the order's own path (a ROUTE order created before the account switched to shipping)
+let orderPath: "ROUTE" | "SHIP" | undefined;
 const get = jest.fn();
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "o1" }),
@@ -53,7 +55,7 @@ const order = (status: string) => ({
   customer: { id: "cust-9", businessName: "Acme Retail" },
   status,
   // the page words the buttons per ORDER: a ship-mode account's orders are SHIP orders
-  fulfillPath: ship ? "SHIP" : "ROUTE",
+  fulfillPath: orderPath ?? (ship ? "SHIP" : "ROUTE"),
   urgent: false,
   subtotal: 10,
   tax: 0,
@@ -73,7 +75,10 @@ const open = async (status: string) => {
   await screen.findByText("ORD-1");
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  orderPath = undefined;
+});
 
 describe("order detail — SHIP mode", () => {
   it("ship mode, CONFIRMED: Mark shipped, no Fulfillment row", async () => {
@@ -96,5 +101,21 @@ describe("order detail — SHIP mode", () => {
     await open("OUT_FOR_DELIVERY");
     expect(screen.getAllByText("Shipped").length).toBeGreaterThan(0);
     expect(screen.queryByText("Out for Delivery")).not.toBeInTheDocument();
+  });
+
+  it("S3: a ROUTE order in a ship-only account is not stranded: the Fulfillment row is shown so it can be moved to SHIP", async () => {
+    ship = true;
+    orderPath = "ROUTE";
+    await open("CONFIRMED");
+    expect(await screen.findByText("Fulfillment")).toBeInTheDocument();
+    const select = screen.getByDisplayValue("Delivery route") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["ROUTE", "SHIP"]);
+  });
+
+  it("a SHIP order in a ship-only account keeps no Fulfillment row (unchanged)", async () => {
+    ship = true;
+    orderPath = "SHIP";
+    await open("CONFIRMED");
+    expect(screen.queryByText("Fulfillment")).not.toBeInTheDocument();
   });
 });

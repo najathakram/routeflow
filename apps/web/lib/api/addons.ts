@@ -4,7 +4,7 @@ import {
   RECURRING_ROUTES_ADDON,
 } from "@routeflow/types";
 import { useTenantAddons } from "./tobacco";
-import { useTenantFeatures } from "../tenant-features";
+import { isUnsetCapabilities, useFulfilmentCaps } from "../fulfilment-caps";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 //
@@ -88,21 +88,17 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
 
 // ─── Fleet (any dispatch feature at all) ──────────────────────────────────────
 //
-// A tenant is FLEET-OFF when it holds neither recurring_routes nor order_delivery: it ships by carrier
-// only, so the route / driver / delivery-run surfaces are noise (fleet-off clean UI). Fleet-ON tenants
-// see exactly the UI they always did. FAILS OPEN: while the addons fetch is loading or errored
-// (`resolved` false) `fleet` is true, so a tenant is never shown a stripped-down UI on an unknown answer
-// (the same rule RouteGuard uses). Display-only: never a server gate.
+// A tenant is FLEET-OFF only when its fulfilment model was explicitly SET and the server says it holds
+// neither recurring_routes nor order_delivery (`capabilities.fulfilment.fleet`): it ships by carrier only,
+// so the route / driver / delivery-run surfaces are noise (fleet-off clean UI). Every other tenant sees
+// exactly the UI it always did: an UNSET tenant (no fulfilment mode) keeps every surface whatever its
+// module state, and so does an inconsistent one (`consistent === false`), a loading or errored answer,
+// and an older API without the block (all of which read as the UNSET capability). Display-only: never a
+// server gate.
 export function useFleetAccess(): { fleet: boolean; loading: boolean } {
-  // The server's own answer wins when present: `capabilities.fulfilment.fleet`.
-  const features = useTenantFeatures().data as
-    { capabilities?: { fulfilment?: { fleet?: boolean } } } | undefined;
-  const serverFleet = features?.capabilities?.fulfilment?.fleet;
-  const routes = useRoutesAccess();
-  const delivery = useDeliveryAccess();
-  const resolved = routes.resolved && delivery.resolved;
-  if (typeof serverFleet === "boolean") return { fleet: serverFleet, loading: false };
-  return { fleet: !resolved || routes.enabled || delivery.enabled, loading: !resolved };
+  const caps = useFulfilmentCaps();
+  if (isUnsetCapabilities(caps)) return { fleet: true, loading: false };
+  return { fleet: caps.fleet, loading: false };
 }
 
 // ─── MSRP on invoices (display-only suggested retail price) ───────────────────

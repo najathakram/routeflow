@@ -10,10 +10,14 @@ export function OrderFulfilmentRow({
   orderId,
   fulfillPath,
   locked,
+  offered,
 }: {
   orderId: string;
   fulfillPath: "ROUTE" | "SHIP";
   locked: boolean;
+  /** The ROUTE/SHIP paths the account offers. The order's own path is always listed too, so an order
+   *  stranded on a path the account no longer offers (a ROUTE order in a ship-only account) can be moved. */
+  offered?: Array<"ROUTE" | "SHIP">;
 }) {
   const { toast } = useToast();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
@@ -23,10 +27,12 @@ export function OrderFulfilmentRow({
       <dd className="flex flex-col items-end gap-0.5">
         <div className="w-40">
           <Select
-            options={[
-              { value: "ROUTE", label: "Delivery route" },
-              { value: "SHIP", label: "Ship via carrier" },
-            ]}
+            options={Array.from(new Set([fulfillPath, ...(offered ?? ["ROUTE", "SHIP"])])).map(
+              (m) => ({
+                value: m,
+                label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
+              }),
+            )}
             value={fulfillPath}
             disabled={locked || patchFulfillPath.isPending}
             title={
@@ -49,9 +55,7 @@ export function OrderFulfilmentRow({
           />
         </div>
         {fulfillPath === "SHIP" && (
-          <span className="text-[11px] text-navy/50">
-            Ships via carrier — won&apos;t appear on delivery routes.
-          </span>
+          <span className="text-[11px] text-navy/50">Ships via carrier.</span>
         )}
       </dd>
     </div>

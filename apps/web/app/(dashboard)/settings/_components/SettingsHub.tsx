@@ -15,6 +15,7 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
+import { useFleetAccess } from "@/lib/api/addons";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 
@@ -103,7 +104,7 @@ const GROUPS: HubGroup[] = [
   {
     key: "orders",
     title: "Orders & stock",
-    blurb: "How orders, routes and bills are handled day to day.",
+    blurb: "How orders, stock and bills are handled day to day.",
     icon: Truck,
     items: [
       {
@@ -228,10 +229,13 @@ function routeDefaultsMatches(q: string): boolean {
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+  // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
+  const { fleet } = useFleetAccess();
 
   const canShow = React.useCallback(
-    (item: HubItem) => (item.show === "admin" ? isAdmin : true),
-    [isAdmin],
+    (item: HubItem) =>
+      item.href === ROUTE_DEFAULTS_HREF && !fleet ? false : item.show === "admin" ? isAdmin : true,
+    [isAdmin, fleet],
   );
 
   const q = query.trim().toLowerCase();
@@ -345,7 +349,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || routeDefaultsMatches(q)) && (
+      {fleet && (!q || routeDefaultsMatches(q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
         </div>
