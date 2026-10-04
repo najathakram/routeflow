@@ -65,9 +65,13 @@ export function AnchoredPopover({
     };
   }, [anchor, width, host]);
 
+  // Focus once the panel is measured and VISIBLE: a browser ignores focus() on a
+  // `visibility: hidden` element, so focusing at mount left focus on the trigger (Tab then went to
+  // the chips row, never the popover's actions).
+  const placed = pos !== null;
   React.useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-  }, []);
+    if (placed) ref.current?.focus({ preventScroll: true });
+  }, [placed]);
 
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -101,6 +105,7 @@ export function AnchoredPopover({
         left: pos?.left ?? 0,
         visibility: pos ? "visible" : "hidden",
         width: Math.min(width, window.innerWidth - 16),
+        maxWidth: "calc(100vw - 32px)",
         maxHeight: "70vh",
         overflowY: "auto",
       }}

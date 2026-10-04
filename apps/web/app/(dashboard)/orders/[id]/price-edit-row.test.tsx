@@ -101,7 +101,7 @@ describe("PriceEditRow price history (order edit)", () => {
 
     await user.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    await user.click(within(dialog).getByRole("button", { name: "Use this price $13.50" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use this price ($13.50)" }));
     expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe("13.50");
     // the SPECIAL line's existing rule: a changed price needs a documented reason
     expect(screen.getByPlaceholderText("reason (required)")).toBeRequired();

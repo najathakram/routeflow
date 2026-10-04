@@ -58,7 +58,7 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
-    year: "2-digit",
+    ...(new Date(iso).getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
   });
 }
 
@@ -153,6 +153,7 @@ function PanelBody({
   const [compare, setCompare] = React.useState(false);
   const [active, setActive] = React.useState(0);
   const bodyRef = React.useRef<HTMLDivElement>(null);
+  // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
   React.useEffect(() => bodyRef.current?.focus({ preventScroll: true }), []);
   const units = React.useMemo(() => {
     const seen: string[] = [];
@@ -322,12 +323,14 @@ function PanelBody({
       </div>
 
       <table className="w-full text-left">
-        <thead>
+        <thead className="hidden sm:table-header-group">
           <tr className="text-[10px] uppercase tracking-wide text-navy/50">
             <th className="py-1 font-medium">Date</th>
             <th className="py-1 font-medium">Price</th>
-            {data.costVisible && <th className="py-1 font-medium">Avg cost</th>}
-            {data.costVisible && <th className="py-1 font-medium">Margin</th>}
+            {data.costVisible && (
+              <th className="hidden py-1 font-medium sm:table-cell">Avg cost</th>
+            )}
+            {data.costVisible && <th className="hidden py-1 font-medium sm:table-cell">Margin</th>}
             <th className="py-1 font-medium">Qty</th>
             <th className="py-1 font-medium">Invoice / Order</th>
             <th className="py-1" />
@@ -339,48 +342,56 @@ function PanelBody({
               key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
               aria-selected={i === active}
               onMouseEnter={() => setActive(i)}
-              className={cn("border-t border-surface-border", i === active && "bg-brand-50/60")}
+              className={cn(
+                "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                i === active && "bg-brand-50/60",
+              )}
             >
-              <td className="py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
+              <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
               <td className="py-1 pr-2 font-mono text-navy">
                 {fmt(r.unitPrice)}
                 {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                  <span className="ml-1 rounded bg-sunken px-1 text-[9px] uppercase text-navy/50">
+                  <span className="ml-1 rounded bg-sunken px-1 text-[10px] uppercase text-navy/50">
                     {PRICE_TYPE_TAG[r.priceType]}
                   </span>
                 )}
               </td>
               {data.costVisible && (
-                <td className="py-1 pr-2 font-mono text-navy/70">{costCell(r.avgCostAtSale)}</td>
+                <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
+                  {costCell(r.avgCostAtSale)}
+                </td>
               )}
               {data.costVisible && (
-                <td className="py-1 pr-2 font-mono text-navy/70">{marginCell(r)}</td>
+                <td className="hidden py-1 pr-2 font-mono text-navy/70 sm:table-cell">
+                  {marginCell(r)}
+                </td>
               )}
               <td className="py-1 pr-2 text-navy/70">
                 {r.qty} {r.unitLabel}
               </td>
-              <td className="py-1 pr-2 text-navy/70">
+              <td className="whitespace-nowrap py-1 pr-2 text-navy/70">
                 {r.source === "INVOICE" ? (
                   (r.invoiceNumber ?? r.orderNumber)
                 ) : (
                   <>
                     {r.orderNumber}
-                    <span className="ml-1 rounded bg-amber-50 px-1 text-[9px] text-amber-700 ring-1 ring-amber-200">
+                    <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
                       not invoiced yet
                     </span>
                   </>
                 )}
               </td>
-              <td className="py-1 text-right">
+              <td className="w-full py-1 text-right sm:w-auto">
                 <button
                   type="button"
                   disabled={!canUse(r)}
                   title={canUse(r) ? undefined : "A different unit than this line"}
-                  aria-label={`Use this price ${fmt(r.unitPrice)}`}
+                  aria-label={`Use this price (${fmt(r.unitPrice)})`}
                   onClick={() => onUse(r.unitPrice)}
-                  className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="min-h-[44px] w-full whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:w-auto"
                 >
-                  Use this price
+                  <span className="sm:hidden">Use</span>
+                  <span className="hidden sm:inline">Use this price</span>
                 </button>
               </td>
             </tr>
@@ -414,16 +425,17 @@ function Panel({
 }) {
   const q = usePriceHistory(customerId, productId, true);
   return (
-    <AnchoredPopover anchor={anchor} onClose={onClose} label="Price history" width={420}>
+    <AnchoredPopover anchor={anchor} onClose={onClose} label="Price history" width={520}>
       {q.isLoading ? (
         <Skeleton />
       ) : q.isError || !q.data ? (
         <div role="alert" className="space-y-2 text-xs text-navy">
+          <p className="text-sm font-semibold">Price history · {productName}</p>
           <p>Couldn&apos;t load price history.</p>
           <button
             type="button"
             onClick={() => void q.refetch()}
-            className="rounded px-2 py-1 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50"
+            className="min-h-11 rounded px-2 py-1 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 sm:min-h-0"
           >
             Retry
           </button>
@@ -528,8 +540,19 @@ export function PriceHistoryButton({
         aria-expanded={open}
         title={ready ? "Price history (Alt+H)" : "Choose a customer and a product first"}
         onClick={() => setOpen((v) => !v)}
+        // The host form (order builder) swallows every Enter; handle Enter/Space here and stop them so
+        // the trigger opens by keyboard. Space's click fires on keyup in some browsers: swallow that too.
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (!e.repeat) setOpen((v) => !v);
+        }}
+        onKeyUp={(e) => {
+          if (e.key === " ") e.preventDefault();
+        }}
         className={cn(
-          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40",
+          "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:min-w-0",
           className,
         )}
       >
@@ -587,7 +610,7 @@ export function PriceChips({
           type="button"
           aria-label={`Use last price ${fmt(r.unitPrice)} from ${fmtDate(r.date)}`}
           onClick={() => onUsePrice(r.unitPrice)}
-          className="rounded-full bg-sunken px-1.5 py-0.5 text-[10px] text-navy/70 ring-1 ring-surface-border hover:bg-brand-50 hover:text-brand-700"
+          className="min-h-8 rounded-full bg-sunken px-1.5 py-0.5 text-[10px] text-navy/70 ring-1 ring-surface-border hover:bg-brand-50 hover:text-brand-700 sm:min-h-0"
         >
           {fmt(r.unitPrice)} · {fmtDate(r.date)}
         </button>

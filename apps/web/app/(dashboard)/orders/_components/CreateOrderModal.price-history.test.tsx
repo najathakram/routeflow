@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, fireEvent, within } from "@/test-utils/render";
+import { renderWithProviders, screen, fireEvent, within, waitFor } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
@@ -256,9 +256,32 @@ describe("CreateOrderModal - price history button (real onTapPrice configuration
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Price history" }));
     const panel = await screen.findByRole("dialog", { name: "Price history" });
-    await user.click(await within(panel).findByRole("button", { name: "Use this price $9.00" }));
+    await user.click(await within(panel).findByRole("button", { name: "Use this price ($9.00)" }));
 
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
     expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
   });
+
+  const openReadyLine = async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    capturedOnScan!("111");
+    await screen.findByText("Widget");
+    await pickCustomer("Acme Foods");
+    await screen.findByText("$8.00 / each");
+    return {
+      user: userEvent.setup(),
+      trigger: await screen.findByRole("button", { name: "Price history" }),
+    };
+  };
+
+  it.each([["{Enter}"], [" "]])(
+    "key %j on the trigger opens the popover (form never eats it)",
+    async (key) => {
+      const { user, trigger } = await openReadyLine();
+      trigger.focus();
+      expect(trigger).toHaveFocus();
+      await user.keyboard(key);
+      expect(await screen.findByRole("dialog", { name: "Price history" })).toBeInTheDocument();
+    },
+  );
 });

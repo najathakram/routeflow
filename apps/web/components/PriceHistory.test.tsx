@@ -155,7 +155,7 @@ describe("PriceHistoryButton — popover behaviour", () => {
     renderButton();
     const user = await openPanel();
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    await user.click(within(dialog).getByRole("button", { name: "Use this price $13.50" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use this price ($13.50)" }));
     expect(onUsePrice).toHaveBeenCalledTimes(1);
     expect(onUsePrice).toHaveBeenCalledWith(13.5);
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
@@ -274,7 +274,7 @@ describe("PriceHistoryButton — units are never mixed", () => {
     expect(within(dialog).queryByText("INV-0002")).not.toBeInTheDocument();
     expect(within(dialog).getAllByText("$0.65").length).toBeGreaterThan(0);
     // a piece price may not be applied to a line entered by the case
-    expect(within(dialog).getByRole("button", { name: "Use this price $0.65" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Use this price ($0.65)" })).toBeDisabled();
   });
 
   it("opens on the piece unit when the line is entered by the piece", async () => {
@@ -287,7 +287,7 @@ describe("PriceHistoryButton — units are never mixed", () => {
         "true",
       ),
     );
-    expect(within(dialog).getByRole("button", { name: "Use this price $0.65" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Use this price ($0.65)" })).toBeEnabled();
   });
 });
 
@@ -362,7 +362,7 @@ describe("LineItemRow wiring", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    await user.click(within(dialog).getByRole("button", { name: "Use this price $13.50" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use this price ($13.50)" }));
     expect(pick).toHaveBeenCalledWith(13.5);
   });
 
@@ -389,5 +389,84 @@ describe("LineItemRow wiring", () => {
       }),
     );
     expect(screen.getByRole("button", { name: "Price history" })).toBeEnabled();
+  });
+});
+
+describe("PriceHistoryButton — narrow screens and keyboard", () => {
+  it("caps the popover to the viewport and stacks/wraps each row's action", async () => {
+    renderButton();
+    await openPanel();
+    const panel = await screen.findByRole("dialog", { name: "Price history" });
+    expect(panel.style.maxWidth).toBe("calc(100vw - 32px)");
+    const use = await within(panel).findByRole("button", { name: /Use this price \(\$14\.00\)/ });
+    expect(use.className).toMatch(/min-h-\[44px\]/);
+    const row = use.closest("tr")!;
+    expect(row.className).toMatch(/flex-wrap/);
+  });
+
+  it("moves focus into the popover so Tab reaches every enabled action; Esc refocuses", async () => {
+    renderButton();
+    const user = await openPanel();
+    const panel = await screen.findByRole("dialog", { name: "Price history" });
+    await within(panel).findByText(/Price history · Sample Cola 24pk/);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    const buttons = within(panel)
+      .getAllByRole("button", { name: /Use this price/ })
+      .filter((b) => !(b as HTMLButtonElement).disabled);
+    const seen = new Set<Element>();
+    for (let i = 0; i < 20; i += 1) {
+      await user.tab();
+      seen.add(document.activeElement!);
+    }
+    for (const b of buttons) expect(seen.has(b)).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByLabelText("price input")).toHaveFocus());
+  });
+});
+
+describe("PriceHistoryButton — focus timing", () => {
+  it("never focuses the popover while it is still visibility:hidden (a browser ignores that focus)", async () => {
+    const seen: string[] = [];
+    const orig = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (this: HTMLElement, ...a: []) {
+      const pop = this.closest<HTMLElement>('[aria-label="Price history"][role="dialog"]');
+      if (pop) seen.push(pop.style.visibility);
+      return orig.apply(this, a);
+    };
+    try {
+      renderButton();
+      await openPanel();
+      await screen.findByText(/Price history · Sample Cola 24pk/);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen).not.toContain("hidden");
+    } finally {
+      HTMLElement.prototype.focus = orig;
+    }
+  });
+});
+
+describe("PriceHistoryButton — small-screen layout classes", () => {
+  it("short Use label keeps the money-formatted accessible name; cost columns hide below sm", async () => {
+    renderButton();
+    await openPanel();
+    const panel = await screen.findByRole("dialog", { name: "Price history" });
+    const use = (await within(panel).findAllByRole("button", { name: /Use this price \(\$/ }))[0];
+    expect(use).toHaveAttribute(
+      "aria-label",
+      expect.stringMatching(/^Use this price \(\$\d+\.\d{2}\)$/),
+    );
+    expect(use.querySelector("span.sm\\:hidden")).toHaveTextContent("Use");
+    const th = within(panel).getByText("Avg cost");
+    expect(th.className).toMatch(/hidden/);
+    expect(th.className).toMatch(/sm:table-cell/);
+    expect(screen.getByRole("button", { name: "Price history" }).className).toMatch(/min-h-11/);
+  });
+
+  it("the error state shows the same title as the other states", async () => {
+    mockGet.mockRejectedValue(new Error("boom"));
+    renderButton();
+    await openPanel();
+    expect(await screen.findByText(/Price history · Sample Cola 24pk/)).toBeInTheDocument();
+    expect(screen.getByText(/Couldn.t load price history/)).toBeInTheDocument();
   });
 });

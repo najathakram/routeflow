@@ -325,7 +325,7 @@ export function LineItemRow({
           {historyButton && (
             <div className="mt-0.5 flex items-center gap-1 text-[10px] text-navy/60">
               {historyButton}
-              <span>Price history</span>
+              <span className="hidden whitespace-nowrap sm:inline">Price history</span>
               <PriceChips
                 customerId={customerPriceHistory?.customerId}
                 productId={li.productId || null}
