@@ -5,7 +5,8 @@ import {
   ORDER_DELIVERY_ADDON,
   RECURRING_ROUTES_ADDON,
 } from "@routeflow/types";
-import { isFleetOff } from "../fleet-labels";
+import { isFleetOff, isShipMode } from "../fleet-labels";
+import { useTenantFeatures } from "../tenant-features";
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
@@ -173,6 +174,12 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
  * BOTH are positively resolved as off — fails open while loading/offline, so a fleet surface is never hidden on
  * an unknown answer. Labels ("Shipped") and fleet entry points read this; see lib/fleet-labels.ts.
  */
+/** Shipping labels key on fulfilment_model === "ship" only; unset / loading = today's labels. */
+export function useShipMode(): boolean {
+  return isShipMode(useTenantFeatures().data?.modes);
+}
+
+/** HIDING only (dispatch / Routes / Fleet / Drivers) — never a label gate. */
 export function useFleetOff(): boolean {
   return isFleetOff(useRoutesAccess(), useDeliveryAccess());
 }

@@ -185,10 +185,10 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
 export function statusActions(
   status: OrderStatus,
   fulfillPath: "ROUTE" | "SHIP" = "ROUTE",
-  fleetOff = false,
+  shipMode = false,
 ): StatusAction[] {
   const actions = routeStatusActions(status);
-  if (fulfillPath !== "SHIP") return fleetOff ? fleetOffRelabel(actions, status) : actions;
+  if (fulfillPath !== "SHIP") return shipMode ? shipModeRelabel(actions, status) : actions;
   return actions
     .filter((a) => a.toStatus !== "PARTIALLY_DELIVERED")
     .map((a) => {
@@ -202,11 +202,11 @@ export function statusActions(
 }
 
 /**
- * Fleet OFF (no recurring_routes / order_delivery): the out-the-door status is "Shipped". Relabels ONLY the
+ * Ship mode (modes.fulfilment_model === "ship", NOT fleet-off): the out-the-door status is "Shipped". Relabels ONLY the
  * shipping-shaped actions, in place — every `toStatus` (and "Partial delivery") is kept, so each button still
  * passes `canTransitionOrder`. Unlike SHIP it drops nothing: this is a label gate, not a flow change.
  */
-function fleetOffRelabel(actions: StatusAction[], status: OrderStatus): StatusAction[] {
+function shipModeRelabel(actions: StatusAction[], status: OrderStatus): StatusAction[] {
   return actions.map((a) => {
     if (a.toStatus === "OUT_FOR_DELIVERY") {
       return status === "PARTIALLY_DELIVERED"

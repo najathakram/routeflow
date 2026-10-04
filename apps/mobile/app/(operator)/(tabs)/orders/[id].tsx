@@ -70,8 +70,8 @@ import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
-import { fleetOffStatusLabel } from "../../../../lib/fleet-labels";
-import { useFleetOff } from "../../../../lib/api/addons";
+import { shipStatusLabel } from "../../../../lib/fleet-labels";
+import { useShipMode } from "../../../../lib/api/addons";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -81,7 +81,7 @@ function formatCurrency(n: number | string | undefined): string {
 
 function statusPill(
   status: string,
-  fleetOff = false,
+  shipMode = false,
 ): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
   label: string;
@@ -94,7 +94,7 @@ function statusPill(
     case "CONFIRMED":
       return { variant: "brand", label: "Confirmed" };
     case "OUT_FOR_DELIVERY":
-      return { variant: "brand", label: fleetOffStatusLabel(status, "Out for delivery", fleetOff) };
+      return { variant: "brand", label: shipStatusLabel(status, "Out for delivery", shipMode) };
     case "PARTIALLY_DELIVERED":
       return { variant: "orange", label: "Partial delivery" };
     case "DELIVERED":
@@ -108,7 +108,7 @@ function statusPill(
 
 export default function OrderDetailScreen() {
   const router = useRouter();
-  const fleetOff = useFleetOff();
+  const shipMode = useShipMode();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
   // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
@@ -188,12 +188,12 @@ export default function OrderDetailScreen() {
     );
   }
 
-  const s = statusPill(order.status, fleetOff);
+  const s = statusPill(order.status, shipMode);
   // `AdminOrder.status` is a plain string (server-shaped payload); `order-actions`
   // pins its signature to the narrower `OrderStatus` union so a typo'd status
   // string is caught at the call site instead of silently falling through to
   // the switch's `default: []`.
-  const actions = statusActions(order.status as OrderStatus, order.fulfillPath, fleetOff);
+  const actions = statusActions(order.status as OrderStatus, order.fulfillPath, shipMode);
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -309,7 +309,7 @@ export default function OrderDetailScreen() {
           // open with the text intact so the reason isn't retyped.
           setReasonFor(null);
           showToast(
-            `Order ${fleetOffStatusLabel(action.toStatus, action.toStatus.toLowerCase().replace(/_/g, " "), fleetOff).toLowerCase()}`,
+            `Order ${shipStatusLabel(action.toStatus, action.toStatus.toLowerCase().replace(/_/g, " "), shipMode).toLowerCase()}`,
           );
           refetch();
           // Post-delivery: offer to send the invoice (any path into DELIVERED).

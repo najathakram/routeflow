@@ -264,8 +264,8 @@ describe("map parity — mirrors the server's universal one-step demotion (2026-
   });
 });
 
-describe("statusActions — fleet OFF relabels the out-the-door actions to Shipped (labels only)", () => {
-  it("fleetOff:false is byte-identical for every status and both fulfilment paths", () => {
+describe("statusActions — ship mode relabels the out-the-door actions to Shipped (labels only)", () => {
+  it("shipMode:false is byte-identical for every status and both fulfilment paths", () => {
     for (const st of ALL_STATUSES) {
       expect(statusActions(st, "ROUTE", false)).toEqual(statusActions(st, "ROUTE"));
       expect(statusActions(st, "SHIP", false)).toEqual(statusActions(st, "SHIP"));
@@ -294,7 +294,7 @@ describe("statusActions — fleet OFF relabels the out-the-door actions to Shipp
     expect(back?.confirmMessage).toBe("Revert back to Shipped?");
   });
 
-  it("no label or confirm text mentions 'out for delivery' / 'send for delivery' when fleet is off", () => {
+  it("no label or confirm text mentions 'out for delivery' / 'send for delivery' when ship mode is on", () => {
     for (const st of ALL_STATUSES) {
       for (const a of statusActions(st, "ROUTE", true)) {
         expect(`${a.label} ${a.confirmMessage ?? ""}`).not.toMatch(

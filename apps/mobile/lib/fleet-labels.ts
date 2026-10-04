@@ -1,7 +1,7 @@
 /**
  * Mobile fleet-OFF (owner ruling 2026-10-04 — operator side only). A tenant with NEITHER fleet module
- * (`recurring_routes`, `order_delivery`) has no routes, trips or drivers, so the out-the-door order status is a
- * hand-off, not a delivery: it reads "Shipped". LABELS AND GATES ONLY — order statuses and their transitions
+ * (`recurring_routes`, `order_delivery`) has its fleet surfaces HIDDEN (`isFleetOff`). The "Shipped" labels
+ * are a separate axis: `isShipMode` (fulfilment_model === "ship"). LABELS AND GATES ONLY — order statuses and their transitions
  * are never changed here. Pure (no react-query / api-client imports) so mobile's node-only Jest can pin it.
  */
 
@@ -21,12 +21,20 @@ export function isFleetOff(routes: ModuleAccess, delivery: ModuleAccess): boolea
   return routes.resolved && delivery.resolved && !routes.enabled && !delivery.enabled;
 }
 
-/** The label for an order status: the out-the-door status reads "Shipped" when fleet is off. */
-export function fleetOffStatusLabel(status: string, baseLabel: string, fleetOff: boolean): string {
-  return fleetOff && status === "OUT_FOR_DELIVERY" ? fleetShippedLabel : baseLabel;
+/**
+ * SHIPPING semantics key ONLY on the tenant's `modes.fulfilment_model === "ship"` (SA-649 R3) — NEVER on
+ * fleet-off. An unset mode (or still loading / unknown) with fleet off must look exactly like today.
+ */
+export function isShipMode(modes?: Record<string, string> | null): boolean {
+  return modes?.fulfilment_model === "ship";
+}
+
+/** The label for an order status: the out-the-door status reads "Shipped" in ship mode. */
+export function shipStatusLabel(status: string, baseLabel: string, shipMode: boolean): string {
+  return shipMode && status === "OUT_FOR_DELIVERY" ? fleetShippedLabel : baseLabel;
 }
 
 /** Orders-list status chip labels that depend on fleet (every other chip is fleet-independent). */
 export const STATUS_FILTER_LABELS = {
-  OUT_FOR_DELIVERY: (fleetOff: boolean) => (fleetOff ? fleetShippedLabel : "Out"),
+  OUT_FOR_DELIVERY: (shipMode: boolean) => (shipMode ? fleetShippedLabel : "Out"),
 } as const;

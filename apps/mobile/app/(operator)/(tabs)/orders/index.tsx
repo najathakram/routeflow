@@ -15,7 +15,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomer, useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 import { useProduct } from "../../../../lib/api/products";
-import { useDeliveryAccess, useFleetOff } from "../../../../lib/api/addons";
+import { useDeliveryAccess, useShipMode } from "../../../../lib/api/addons";
 import { STATUS_FILTER_LABELS } from "../../../../lib/fleet-labels";
 import { useTripDraftStore } from "../../../../lib/trip-draft";
 import { DraftStrip } from "../../../../components/DraftStrip";
@@ -42,20 +42,20 @@ const STATUS_FILTERS = [
 type StatusFilter = (typeof STATUS_FILTERS)[number]["id"];
 
 /** The chips for this tenant: the OUT_FOR_DELIVERY chip reads "Shipped" when fleet is off (lib/fleet-labels). */
-function statusChips(fleetOff: boolean) {
+function statusChips(shipMode: boolean) {
   return STATUS_FILTERS.map((f) =>
     f.id === "OUT_FOR_DELIVERY"
-      ? { ...f, label: STATUS_FILTER_LABELS.OUT_FOR_DELIVERY(fleetOff) }
+      ? { ...f, label: STATUS_FILTER_LABELS.OUT_FOR_DELIVERY(shipMode) }
       : f,
   );
 }
 
-function filterByLabel(label: string, fleetOff: boolean): StatusFilter {
-  return (statusChips(fleetOff).find((f) => f.label === label)?.id ?? "ALL") as StatusFilter;
+function filterByLabel(label: string, shipMode: boolean): StatusFilter {
+  return (statusChips(shipMode).find((f) => f.label === label)?.id ?? "ALL") as StatusFilter;
 }
 
-function labelForFilter(id: StatusFilter, fleetOff: boolean): string {
-  return statusChips(fleetOff).find((f) => f.id === id)?.label ?? "All";
+function labelForFilter(id: StatusFilter, shipMode: boolean): string {
+  return statusChips(shipMode).find((f) => f.id === id)?.label ?? "All";
 }
 
 function statusPill(status: string): {
@@ -115,7 +115,7 @@ export default function OrdersListScreen() {
   // `resolved` — the same composed access hook (operator)/_layout.tsx uses
   // to gate the /trips route itself (DELIVERY_SECTIONS).
   const { enabled: deliveryEnabled } = useDeliveryAccess();
-  const fleetOff = useFleetOff();
+  const shipMode = useShipMode();
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const setTripOrderIds = useTripDraftStore((s) => s.setOrderIds);
@@ -216,9 +216,9 @@ export default function OrdersListScreen() {
       ) : null}
 
       <FilterChipRow
-        chips={statusChips(fleetOff).map((f) => ({ label: f.label }))}
-        value={labelForFilter(filter, fleetOff)}
-        onChange={(label) => setFilter(filterByLabel(label, fleetOff))}
+        chips={statusChips(shipMode).map((f) => ({ label: f.label }))}
+        value={labelForFilter(filter, shipMode)}
+        onChange={(label) => setFilter(filterByLabel(label, shipMode))}
       />
 
       {/* Parked drafts (PR-3) — renders nothing when there are none. */}

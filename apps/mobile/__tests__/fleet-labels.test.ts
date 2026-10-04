@@ -5,9 +5,10 @@
  * transitions are untouched. Pure logic (mobile Jest is node-only), pinned here and in order-actions.test.ts.
  */
 import {
-  fleetOffStatusLabel,
+  shipStatusLabel,
   fleetShippedLabel,
   isFleetOff,
+  isShipMode,
   STATUS_FILTER_LABELS,
 } from "../lib/fleet-labels";
 
@@ -31,12 +32,10 @@ describe("isFleetOff — only a POSITIVELY resolved 'neither module' is fleet-of
   });
 });
 
-describe("fleetOffStatusLabel — the out-the-door status reads Shipped", () => {
+describe("shipStatusLabel — ship mode only", () => {
   it("OUT_FOR_DELIVERY -> Shipped when fleet is off; everything else keeps its own label", () => {
-    expect(fleetOffStatusLabel("OUT_FOR_DELIVERY", "Out for delivery", true)).toBe("Shipped");
-    expect(fleetOffStatusLabel("OUT_FOR_DELIVERY", "Out for delivery", false)).toBe(
-      "Out for delivery",
-    );
+    expect(shipStatusLabel("OUT_FOR_DELIVERY", "Out for delivery", true)).toBe("Shipped");
+    expect(shipStatusLabel("OUT_FOR_DELIVERY", "Out for delivery", false)).toBe("Out for delivery");
     for (const s of [
       "DRAFT",
       "PENDING",
@@ -45,7 +44,7 @@ describe("fleetOffStatusLabel — the out-the-door status reads Shipped", () => 
       "DELIVERED",
       "CANCELLED",
     ]) {
-      expect(fleetOffStatusLabel(s, `base-${s}`, true)).toBe(`base-${s}`);
+      expect(shipStatusLabel(s, `base-${s}`, true)).toBe(`base-${s}`);
     }
   });
   it("the helper text names the new label", () => {
@@ -57,5 +56,23 @@ describe("STATUS_FILTER_LABELS — the orders-list chip", () => {
   it("the OUT_FOR_DELIVERY chip is 'Out' with a fleet and 'Shipped' without one", () => {
     expect(STATUS_FILTER_LABELS.OUT_FOR_DELIVERY(false)).toBe("Out");
     expect(STATUS_FILTER_LABELS.OUT_FOR_DELIVERY(true)).toBe("Shipped");
+  });
+});
+
+describe("isShipMode — labels key on fulfilment_model === 'ship' ONLY, never on fleet-off", () => {
+  it("only an explicit 'ship' counts", () => {
+    expect(isShipMode({ fulfilment_model: "ship" })).toBe(true);
+    for (const m of ["unset", "route", "mixed", ""]) {
+      expect(isShipMode({ fulfilment_model: m })).toBe(false);
+    }
+  });
+  it("unset / missing / loading modes -> today's labels (fleet-off or not)", () => {
+    expect(isShipMode(undefined)).toBe(false);
+    expect(isShipMode(null)).toBe(false);
+    expect(isShipMode({})).toBe(false);
+    expect(shipStatusLabel("OUT_FOR_DELIVERY", "Out for delivery", isShipMode({}))).toBe(
+      "Out for delivery",
+    );
+    expect(STATUS_FILTER_LABELS.OUT_FOR_DELIVERY(isShipMode(undefined))).toBe("Out");
   });
 });
