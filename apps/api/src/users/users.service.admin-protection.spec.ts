@@ -209,6 +209,32 @@ describe("UsersService: admin account protection", () => {
     });
   });
 
+  describe("updateUser (username normalization mirrors email)", () => {
+    it("a padded copy of the SAME username on an admin row is allowed and not written", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      prisma.user.update.mockResolvedValue({ id: "t1", username: "owner" } as any);
+      await expect(
+        service.updateUser("t1", { username: " owner " } as any, "op", "OPERATOR" as any),
+      ).resolves.toBeDefined();
+      const data = (prisma.user.update.mock.calls[0][0] as any).data;
+      expect(data).not.toHaveProperty("username");
+    });
+    it("a padded REAL username change on an admin row by an OPERATOR is still refused", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(
+        service.updateUser("t1", { username: " renamed " } as any, "op", "OPERATOR" as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("a non-admin target's padded new username is stored trimmed", async () => {
+      prisma.user.findUnique.mockResolvedValue(OPERATOR_TARGET as any);
+      prisma.user.update.mockResolvedValue({ id: "o1", username: "newname" } as any);
+      await service.updateUser("o1", { username: "  newname " } as any, "op", "OPERATOR" as any);
+      const data = (prisma.user.update.mock.calls[0][0] as any).data;
+      expect(data.username).toBe("newname");
+    });
+  });
+
   describe("callers other than a TENANT_ADMIN", () => {
     it("a SUPER_ADMIN caller is refused on an admin target", async () => {
       prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);

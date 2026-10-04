@@ -210,8 +210,10 @@ export class UsersService {
     const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
     const emailEdit =
       !!normalizedEmail && normalizedEmail !== (user.email ?? "").trim().toLowerCase();
+    // Login matches usernames EXACTLY (findByUsername), so only padding is normalized: trim, never lowercase.
+    const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
     const usernameEdit =
-      dto.username !== undefined && dto.username.trim() !== (user.username ?? "").trim();
+      normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
     if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
 
     // Prevent changing role of TENANT_ADMIN users
@@ -236,8 +238,13 @@ export class UsersService {
     const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
-    const { email: _ignoredEmail, ...dtoWithoutEmail } = dto;
-    const data = emailChanged ? { ...dtoWithoutEmail, email: normalizedEmail } : dtoWithoutEmail;
+    // Email and username keys are omitted unless they actually changed; a change writes the normalized value.
+    const { email: _ignoredEmail, username: _ignoredUsername, ...dtoRest } = dto;
+    const data = {
+      ...dtoRest,
+      ...(emailChanged ? { email: normalizedEmail } : {}),
+      ...(usernameEdit ? { username: normalizedUsername } : {}),
+    };
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
       data,
