@@ -2,41 +2,21 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
+import type {
+  PriceHistoryResponse as ApiPriceHistoryResponse,
+  PriceHistoryRow,
+  PriceHistorySource,
+  PriceHistorySummary,
+} from "@routeflow/types";
+
+export type { PriceHistoryRow, PriceHistorySource, PriceHistorySummary };
+
 /**
  * GET /customers/:customerId/products/:productId/price-history — what THIS customer has paid for
  * THIS product (invoiced sales, plus open not-yet-invoiced orders, labelled separately). Staff only.
- *
- * The contract lives in `@routeflow/types` (`packages/types/api/price-history.ts`, builder D's PR);
- * these identical local types switch to that import once it lands.
+ * The contract is `@routeflow/types` (price-history.ts); `references` / `aggregate` are the v1.1
+ * extension (builder F), optional until that API lands.
  */
-export type PriceHistorySource = "INVOICE" | "OPEN_ORDER";
-
-export interface PriceHistoryRow {
-  date: string;
-  source: PriceHistorySource;
-  unitPrice: number;
-  unitLabel: string;
-  unitsPerBox: number | null;
-  qty: number;
-  boxes: number | null;
-  pieces: number | null;
-  avgCostAtSale: number | null;
-  invoiceId: string | null;
-  invoiceNumber: string | null;
-  orderId: string;
-  orderNumber: string;
-  priceType: string | null;
-}
-
-export interface PriceHistorySummary {
-  unitLabel: string;
-  last: number | null;
-  low: number | null;
-  high: number | null;
-  qtySold: number;
-  currentAvgCost: number | null;
-}
-
 export interface PriceHistoryReferences {
   listPrice: number | null;
   tierPrice: number | null;
@@ -53,16 +33,7 @@ export interface PriceHistoryAggregate {
   unitLabel: string;
 }
 
-export interface PriceHistoryResponse {
-  customerId: string;
-  customerName: string;
-  productId: string;
-  productName: string;
-  /** False for a caller who may not see cost: every cost field is then null and the UI hides it. */
-  costVisible: boolean;
-  rows: PriceHistoryRow[];
-  summaries: PriceHistorySummary[];
-  /** v1.1 (builder F); absent until that API lands. */
+export interface PriceHistoryResponse extends ApiPriceHistoryResponse {
   references?: PriceHistoryReferences;
   aggregate?: PriceHistoryAggregate | null;
 }
