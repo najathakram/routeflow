@@ -43,6 +43,7 @@ import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { UpdateOrderTemplateDto } from "../order-templates/dto/update-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
@@ -1001,7 +1002,7 @@ export class BuyerController {
   @ApiOperation({ summary: "Update a standing order template (e.g. pause/resume)" })
   async updateTemplate(
     @Param("id") id: string,
-    @Body() dto: { isActive?: boolean },
+    @Body() dto: UpdateOrderTemplateDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
     const template = await this.prisma
