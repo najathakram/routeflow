@@ -111,8 +111,8 @@ export class UsersController {
   @Post(":id/unlock")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  unlock(@Param("id") id: string) {
-    return this.usersService.unlockUser(id);
+  unlock(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.unlockUser(id, user.role);
   }
 
   @Patch(":id/admin")
@@ -126,7 +126,7 @@ export class UsersController {
   @Patch(":id/driver-permit")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  toggleDriverPermit(@Param("id") id: string) {
-    return this.usersService.toggleDriverPermit(id);
+  toggleDriverPermit(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.toggleDriverPermit(id, user.role);
   }
 }

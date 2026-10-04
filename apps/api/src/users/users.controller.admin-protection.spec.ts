@@ -7,6 +7,8 @@ describe("UsersController: admin account protection wiring", () => {
     resetPassword: jest.fn().mockResolvedValue({ tempPassword: "x" }),
     changeStatus: jest.fn().mockResolvedValue({ id: "t1" }),
     updateUser: jest.fn().mockResolvedValue({ id: "t1" }),
+    unlockUser: jest.fn().mockResolvedValue({ id: "t1" }),
+    toggleDriverPermit: jest.fn().mockResolvedValue({ id: "t1" }),
   };
   const controller = new UsersController(service as any);
   const operator = { sub: "op1", username: "op", role: UserRole.OPERATOR } as any;
@@ -35,5 +37,11 @@ describe("UsersController: admin account protection wiring", () => {
       "op",
       UserRole.OPERATOR,
     );
+  });
+  it("unlock and driver-permit pass the caller's role", async () => {
+    await controller.unlock("t1", operator);
+    expect(service.unlockUser).toHaveBeenCalledWith("t1", UserRole.OPERATOR);
+    await controller.toggleDriverPermit("t1", admin);
+    expect(service.toggleDriverPermit).toHaveBeenCalledWith("t1", UserRole.TENANT_ADMIN);
   });
 });

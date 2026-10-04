@@ -204,7 +204,11 @@ export class UsersService {
   ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    if (dto.email !== undefined) this.assertMayChangeAccount(user, callerRole);
+    // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
+    // edit form always sends both, so an unchanged value must pass.
+    const emailEdit = dto.email ? dto.email.trim().toLowerCase() !== user.email : false;
+    const usernameEdit = dto.username !== undefined && dto.username !== user.username;
+    if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
@@ -357,9 +361,10 @@ export class UsersService {
     }
   }
 
-  async unlockUser(userId: string) {
+  async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { failedLoginAttempts: 0, lockedUntil: null },
@@ -412,9 +417,10 @@ export class UsersService {
     });
   }
 
-  async toggleDriverPermit(userId: string) {
+  async toggleDriverPermit(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new BadRequestException("Driver permit can only be assigned to operators.");
     }

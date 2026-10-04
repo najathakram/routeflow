@@ -141,4 +141,78 @@ describe("UsersService: admin account protection", () => {
       ).resolves.toBeDefined();
     });
   });
+
+  describe("updateUser (only an ACTUAL change of email or username is guarded)", () => {
+    it("an OPERATOR cannot change a TENANT_ADMIN's username: 403 and nothing is written", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(
+        service.updateUser("t1", { username: "renamed" } as any, "op", "OPERATOR" as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("an OPERATOR sending the UNCHANGED email and username on an admin row is allowed (the web form always sends them)", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      prisma.user.update.mockResolvedValue({
+        id: "t1",
+        username: "owner",
+        email: "owner@acme.example",
+        role: "TENANT_ADMIN",
+      } as any);
+      await expect(
+        service.updateUser(
+          "t1",
+          { email: "  Owner@Acme.example ", username: "owner" } as any,
+          "op",
+          "OPERATOR" as any,
+        ),
+      ).resolves.toBeDefined();
+    });
+    it("an OPERATOR changing the email on an admin row is still refused", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(
+        service.updateUser(
+          "t1",
+          { email: "x@acme.example", username: "owner" } as any,
+          "op",
+          "OPERATOR" as any,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe("unlockUser", () => {
+    it("an OPERATOR cannot clear a TENANT_ADMIN's lockout: 403 and nothing is written", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(service.unlockUser("t1", "OPERATOR" as any)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("a TENANT_ADMIN can unlock a TENANT_ADMIN; an OPERATOR can unlock an OPERATOR", async () => {
+      prisma.user.update.mockResolvedValue({} as any);
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(service.unlockUser("t1", "TENANT_ADMIN" as any)).resolves.toMatchObject({
+        unlocked: true,
+      });
+      prisma.user.findUnique.mockResolvedValue(OPERATOR_TARGET as any);
+      await expect(service.unlockUser("o1", "OPERATOR" as any)).resolves.toMatchObject({
+        unlocked: true,
+      });
+    });
+  });
+
+  describe("toggleDriverPermit", () => {
+    it("an OPERATOR cannot toggle a TENANT_ADMIN's driver permit: 403 and nothing is written", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...ADMIN_TARGET, canActAsDriver: false } as any);
+      await expect(service.toggleDriverPermit("t1", "OPERATOR" as any)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("a TENANT_ADMIN can toggle their own permit", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...ADMIN_TARGET, canActAsDriver: true } as any);
+      prisma.user.update.mockResolvedValue({ id: "t1" } as any);
+      await expect(service.toggleDriverPermit("t1", "TENANT_ADMIN" as any)).resolves.toBeDefined();
+    });
+  });
 });
