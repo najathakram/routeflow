@@ -93,8 +93,14 @@ export function AnchoredPopover({
         maxHeight: "70vh",
         overflowY: "auto",
       }}
-      className="z-[300] rounded-lg border border-surface-border bg-white p-3 shadow-modal outline-none motion-safe:animate-[ph-fade_120ms_ease-out]"
+      className="z-[300] rounded-lg border border-surface-border bg-white p-3 shadow-modal outline-none ph-pop"
     >
+      {/* Quick fade-in; skipped for reduced motion. (Local style: app/globals.css is byte-pinned.) */}
+      <style>
+        {
+          "@media (prefers-reduced-motion: no-preference){.ph-pop{animation:ph-fade 120ms ease-out}}@keyframes ph-fade{from{opacity:0}to{opacity:1}}"
+        }
+      </style>
       {children}
     </div>,
     document.body,
