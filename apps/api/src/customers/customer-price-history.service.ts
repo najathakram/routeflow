@@ -465,7 +465,7 @@ export class CustomerPriceHistoryService {
       where: {
         tenantId,
         customerId: { not: customerId },
-        status: REAL_INVOICE_STATUSES,
+        status: ISSUED_STATUSES,
         issueDate: { gte: since },
         items: { some: { productId } },
       },
@@ -548,7 +548,7 @@ export class CustomerPriceHistoryService {
       where: {
         tenantId,
         customerId,
-        status: REAL_INVOICE_STATUSES,
+        status: ISSUED_STATUSES,
         items: { some: { productId: { in: ids } } },
       },
       orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
