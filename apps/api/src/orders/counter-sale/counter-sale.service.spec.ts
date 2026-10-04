@@ -132,6 +132,8 @@ describe("CounterSaleService.ring", () => {
       const e = await errorOf(service.ring(named({ method: "CASH" }) as never, staff));
       expect(e.getStatus()).toBe(403);
       expect(e.getResponse().code).toBe("COUNTER_SALES_DISABLED");
+      // Approved copy: the switch is back-office controlled, so it never points users to settings.
+      expect(e.getResponse().message).toBe("Counter sales are not turned on for this business.");
       expect(createSale).not.toHaveBeenCalled();
       expect(recordPayment).not.toHaveBeenCalled();
       expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();

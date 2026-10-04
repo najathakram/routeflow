@@ -97,7 +97,7 @@ export class CounterSaleService {
     if (!counterSaleGate(cap)) {
       throw new ForbiddenException({
         code: API_ERROR_CODES.COUNTER_SALES_DISABLED,
-        message: "Counter sales are not enabled for this business",
+        message: "Counter sales are not turned on for this business.",
       });
     }
 
