@@ -52,22 +52,47 @@ export function assertNoNegativeLineSubtotal(items: ReadonlyArray<LineSubtotalLi
 }
 
 /**
- * B1030: the invoice-level totals guard `InvoicesService.create()` ran inline (a discount larger than the
- * subtotal, and a negative total), extracted so `update()` runs the SAME two checks, with the same
- * messages, on both of its paths (the items rewrite and the discount/shipping-only recompute). Without
- * them PATCH {discount: 100} on a $10 invoice stored a total of -90.
+ * B1030 (SA-651): the invoice-level totals guard `InvoicesService.create()` ran inline (a discount larger
+ * than the subtotal, and a negative total), extracted so `update()` runs the SAME two checks, with the same
+ * messages, on both of its paths (the items rewrite and the discount/shipping-only recompute). Without them
+ * PATCH {discount: 100} on a $10 invoice stored a total of -90.
+ *
+ * `create()` calls it strict (no `before`). `update()` passes the invoice's STORED totals as `before`, which
+ * applies the NOT-WORSE rule on legacy data: an invoice that is ALREADY insane may still be saved while the
+ * edit does not make it worse (its total does not go down and discount minus subtotal does not go up), so an
+ * improvement or a no-change save is never blocked; only sane -> insane, or insane -> worse, is refused.
  */
-export function assertInvoiceTotalsSane(t: {
-  discount: number;
-  subtotal: number;
-  total: number;
-}): void {
-  if (t.discount > t.subtotal) {
+export function assertInvoiceTotalsSane(
+  after: { discount: number; subtotal: number; total: number },
+  before?: { discount: number; subtotal: number; total: number },
+): void {
+  const insane = (t: { discount: number; subtotal: number; total: number }) =>
+    t.discount > t.subtotal || t.total < 0;
+  if (!insane(after)) return;
+  if (before && insane(before)) {
+    const EPS = 1e-9;
+    const worse =
+      after.total < before.total - EPS ||
+      after.discount - after.subtotal > before.discount - before.subtotal + EPS;
+    if (!worse) return;
+  }
+  if (after.discount > after.subtotal) {
     throw new BadRequestException(
-      `Invoice discount (${t.discount}) cannot exceed subtotal (${t.subtotal}).`,
+      `Invoice discount (${after.discount}) cannot exceed subtotal (${after.subtotal}).`,
     );
   }
-  if (t.total < 0) {
-    throw new BadRequestException(`Invoice total cannot be negative (calculated: ${t.total}).`);
-  }
+  throw new BadRequestException(`Invoice total cannot be negative (calculated: ${after.total}).`);
+}
+
+/** The STORED totals of an invoice row (Prisma Decimals arrive as objects), the `before` of the NOT-WORSE rule. */
+export function storedInvoiceTotals(
+  row: { discount?: unknown; subtotal?: unknown; total?: unknown } | null | undefined,
+): { discount: number; subtotal: number; total: number } | undefined {
+  return row
+    ? {
+        discount: Number(row.discount ?? 0),
+        subtotal: Number(row.subtotal ?? 0),
+        total: Number(row.total ?? 0),
+      }
+    : undefined;
 }
