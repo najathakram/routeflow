@@ -647,10 +647,15 @@ export class OrderTemplatesService {
       const inactiveIds = [...new Set(inactive.map((i) => i.productId))];
       if (template.items.length === 0) {
         // unattended and nothing left to order: no order will follow, so suspend, deactivate the
-        // template once (the cron no longer selects it) and tell both sides once, now
-        await this.suspendInactiveLines(template, inactiveIds);
-        await this.deactivateForRestriction(template, "NO_ACTIVE_PRODUCTS");
-        await this.notifySkippedInactiveLines(template, inactiveCount, names).catch(() => {});
+        // template once (the cron no longer selects it) and tell both sides ONCE, now, in one notice
+        // that says it was deactivated and covers any banned line suspended earlier in this same run.
+        const suspended = await this.suspendInactiveLines(template, inactiveIds);
+        if (suspended > 0) {
+          await this.deactivateForRestriction(template, "NO_ACTIVE_PRODUCTS");
+          await this.notifyDeactivatedNoOrderableLines(template, banNote, inactiveCount, names);
+        }
+        // already told (or a concurrent run owns the notice): the caller must not notify the ban again
+        if (ctx) ctx.ban = null;
         return null;
       }
       inactiveNotice = { count: inactiveCount, names, productIds: inactiveIds };
@@ -878,16 +883,22 @@ export class OrderTemplatesService {
     if (inactiveNotice) {
       // Suspension and notice both follow the commit, so a run that fails never leaves a silent
       // suspension behind; a failure to suspend must not fail the placed order (it just re-skips next run).
-      await this.suspendInactiveLines(template, inactiveNotice.productIds).catch((err) =>
-        this.logger.warn(
-          `B1025: could not suspend inactive lines on template ${template.id}: ${String(err)}`,
-        ),
+      // Only the run that actually wrote the suspension audits and notifies: a manual Reorder racing the
+      // 06:00 cron (both read the lines unsuspended) must not announce the same lines twice.
+      const suspended = await this.suspendInactiveLines(template, inactiveNotice.productIds).catch(
+        (err) => {
+          this.logger.warn(
+            `B1025: could not suspend inactive lines on template ${template.id}: ${String(err)}`,
+          );
+          return 0;
+        },
       );
-      await this.notifySkippedInactiveLines(
-        template,
-        inactiveNotice.count,
-        inactiveNotice.names,
-      ).catch(() => {});
+      if (suspended > 0)
+        await this.notifySkippedInactiveLines(
+          template,
+          inactiveNotice.count,
+          inactiveNotice.names,
+        ).catch(() => {});
     }
 
     // If the customer already had PENDING orders, fold the newly-created one
@@ -977,16 +988,19 @@ export class OrderTemplatesService {
   private async suspendInactiveLines(
     template: { id: string },
     productIds: string[],
-  ): Promise<void> {
-    await this.prisma.tenantTransaction(async (tx) => {
-      await tx.orderTemplateItem.updateMany({
-        where: { templateId: template.id, productId: { in: productIds } },
+  ): Promise<number> {
+    return this.prisma.tenantTransaction(async (tx) => {
+      // `suspendedAt: null`: only a line nobody has suspended yet is written, audited or announced.
+      const { count } = await tx.orderTemplateItem.updateMany({
+        where: { templateId: template.id, productId: { in: productIds }, suspendedAt: null },
         data: { suspendedAt: new Date(), suspendedReason: "PRODUCT_INACTIVE" },
       });
-      await this.auditInTx(tx, "order-template.line-suspended", template.id, null, {
-        reason: "PRODUCT_INACTIVE",
-        productIds,
-      });
+      if (count > 0)
+        await this.auditInTx(tx, "order-template.line-suspended", template.id, null, {
+          reason: "PRODUCT_INACTIVE",
+          productIds,
+        });
+      return count as number;
     });
   }
 
@@ -1032,6 +1046,38 @@ export class OrderTemplatesService {
     await this.notifyOperators(
       `Standing order "${template.name}" skipped ${skippedCount} deactivated product(s)${what}. Edit the template to remove or replace them.`,
     );
+  }
+
+  /**
+   * B1025 / #3110 review: an unattended run ended with NO orderable line because the remaining products are
+   * deactivated (possibly after banned lines were suspended in the same run). ONE notice, truthful about the
+   * outcome: the standing order was DEACTIVATED, and "edit the template" does not bring it back.
+   */
+  private async notifyDeactivatedNoOrderableLines(
+    template: { customerId: string; name: string },
+    ban: { count: number; names: string } | null,
+    inactiveCount: number,
+    inactiveNames: string,
+  ): Promise<void> {
+    const parts = [
+      ban && ban.count > 0 ? `${ban.count} under a selling restriction (${ban.names})` : "",
+      inactiveCount > 0 ? `${inactiveCount} deactivated (${inactiveNames})` : "",
+    ].filter(Boolean);
+    const what = parts.join(" and ");
+    try {
+      await this.notifications
+        .sendToCustomer(
+          template.customerId,
+          "Standing order not sent",
+          `"${template.name}" was not sent: nothing on it can be sold right now. Contact your supplier.`,
+        )
+        .catch(() => {});
+      await this.notifyOperators(
+        `"${template.name}" was not generated and is deactivated: every line is unavailable (${what}). It will not run again until you reactivate it, after restoring the products and lifting the suspended lines.`,
+      );
+    } catch {
+      /* best-effort */
+    }
   }
 
   private async notifySkippedRegulatedLines(

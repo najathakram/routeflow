@@ -40,10 +40,12 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
+  let checkLinesSellable: jest.Mock;
   const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    checkLinesSellable = jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] });
     notifications = {
       sendToCustomer: jest.fn().mockResolvedValue(1),
       sendToUser: jest.fn().mockResolvedValue(1),
@@ -72,7 +74,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
           provide: SellingRestrictionsService,
           useValue: {
             assertLinesSellable: jest.fn().mockResolvedValue(undefined),
-            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+            checkLinesSellable,
           },
         },
       ],
@@ -120,9 +122,17 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
       items: tpl.items.map((i: any) => ({ ...i })),
     }));
     prisma.orderTemplateItem.updateMany.mockImplementation(async ({ where, data }: any) => {
+      // like Postgres: only the rows matching the WHERE (incl. `suspendedAt: null`) are written
+      let count = 0;
       for (const i of tpl.items)
-        if (where.productId.in.includes(i.productId)) Object.assign(i, data);
-      return { count: 1 };
+        if (
+          where.productId.in.includes(i.productId) &&
+          (!("suspendedAt" in where) || i.suspendedAt === where.suspendedAt)
+        ) {
+          Object.assign(i, data);
+          count++;
+        }
+      return { count };
     });
     prisma.orderTemplateItem.findFirst.mockImplementation(
       async ({ where }: any) => tpl.items.find((i: any) => i.id === where.id) ?? null,
@@ -342,5 +352,64 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     expect(tpl.isActive).toBe(true);
     expect(tpl.items[0].suspendedAt).toBeNull();
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+  });
+
+  // ─── Opus review of #3110: one honest notice, and no double notice on a race ────────────────
+
+  it("a banned line plus all-inactive lines gives ONE notice, and it says DEACTIVATED", async () => {
+    setup([
+      { id: "p-banned", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+    checkLinesSellable.mockResolvedValue({
+      outcome: "BLOCK",
+      reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "r1" }],
+    });
+    const template = await prisma.orderTemplate.findUnique();
+    const ctx: { ban: { count: number; names: string } | null } = { ban: null };
+
+    await (service as any).createOrderFromTemplate(template, true, true, ctx);
+
+    expect(tpl.isActive).toBe(false);
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToCustomer.mock.calls[0][2]).toMatch(/not sent/i);
+    expect(notifications.sendToUser.mock.calls[0][1].body).toMatch(/deactivated/i);
+    expect(notifications.sendToUser.mock.calls[0][1].body).toMatch(/Banned Cola/);
+    // the cron's `finally` must not send a SECOND notice ("still active") for the ban
+    expect(ctx.ban).toBeNull();
+  });
+
+  it("an all-inactive deactivation tells the operator how to bring the standing order back", async () => {
+    setup([{ id: "p-gone", isActive: false }]);
+    const template = await prisma.orderTemplate.findUnique();
+
+    await (service as any).createOrderFromTemplate(template, true, true, { ban: null });
+
+    const body = notifications.sendToUser.mock.calls[0][1].body;
+    expect(body).toMatch(/deactivated/i);
+    expect(body).toMatch(/reactivate/i);
+    expect(body).not.toMatch(/edit the template/i);
+  });
+
+  it("a stale concurrent run that loses the suspension race audits and notifies nothing", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+    // both the 06:00 cron and a manual Reorder read the template BEFORE either suspended the line
+    const stale = await prisma.orderTemplate.findUnique();
+
+    await (service as any).createOrderFromTemplate(stale, true, true, { ban: null });
+    notifications.sendToCustomer.mockClear();
+    notifications.sendToUser.mockClear();
+    prisma.auditLog.create.mockClear();
+    await (service as any).createOrderFromTemplate(stale, true, true, { ban: null });
+
+    expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+    expect(
+      auditActions().filter(([a]: [string]) => a === "order-template.line-suspended"),
+    ).toHaveLength(0);
   });
 });
