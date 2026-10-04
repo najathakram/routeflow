@@ -154,6 +154,10 @@
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
 //                    stays open on account; the same Idempotency-Key retried with a corrected payment finishes it). A tender BELOW
 //                    the balance is not an error: it records a PARTIAL payment (`paymentRecorded: true`, `balanceDue` > 0, no change).
+//   Pickup mode (SA-655 PR-2) — `body.code`: 400 FULFIL_METHOD_NOT_OFFERED (a buyer order asked for a fulfilment method the
+//                    business's portal does not offer, e.g. SHIP or ROUTE from an in-store business); POST /orders/:id/pickup-complete:
+//                    400 PICKUP_ONLY (the order is not a PICKUP order), 409 PICKUP_NOT_READY (still PENDING/DRAFT or CANCELLED). Its payment
+//                    refusals reuse the counter-sale codes above (`paymentErrorCode` of a 200 whose pickup committed but whose payment did not).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -330,6 +334,9 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
+  PICKUP_ONLY: "PICKUP_ONLY",
+  PICKUP_NOT_READY: "PICKUP_NOT_READY",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
