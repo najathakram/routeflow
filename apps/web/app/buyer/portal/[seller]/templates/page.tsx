@@ -147,7 +147,7 @@ export default function BuyerTemplatesPage() {
   const sellerSlug = params.seller as string;
 
   const { data: result, isLoading, isError } = useBuyerTemplates();
-  const reorder = useBuyerReorder();
+  const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
   // The standing order awaiting review: a tap on Reorder Now only OPENS the review sheet; the

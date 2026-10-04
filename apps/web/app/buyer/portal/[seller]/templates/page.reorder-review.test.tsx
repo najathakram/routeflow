@@ -8,6 +8,7 @@ import BuyerTemplatesPage from "./page";
  * order is placed from the sheet's "Place order" button and never before it.
  */
 const mutateAsync = jest.fn();
+const mockUseBuyerReorder = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
@@ -54,7 +55,10 @@ let mockCatalog: Array<Record<string, unknown>> = [
 
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerTemplates: () => ({ data: { data: [template], meta: { total: 1 } }, isLoading: false }),
-  useBuyerReorder: () => ({ mutateAsync, isPending: false }),
+  useBuyerReorder: (...a: unknown[]) => {
+    mockUseBuyerReorder(...a);
+    return { mutateAsync, isPending: false };
+  },
   useBuyerProducts: () => ({
     isLoading: false,
     isError: false,
@@ -173,5 +177,12 @@ describe("buyer standing orders — Reorder Now review", () => {
     expect(dialog.queryByText("$0.00")).not.toBeInTheDocument();
     expect(dialog.queryByText(/estimated total/i)).not.toBeInTheDocument();
     expect(dialog.getByRole("alert")).toHaveTextContent(/can be priced here/i);
+  });
+
+  it("the reorder mutation opts out of the global error toast, so a failure shows ONE message (the sheet's)", async () => {
+    const user = userEvent.setup();
+    render(<BuyerTemplatesPage />);
+    await screen.findAllByRole("button", { name: /reorder now/i });
+    expect(mockUseBuyerReorder).toHaveBeenCalledWith({ localErrorToast: true });
   });
 });

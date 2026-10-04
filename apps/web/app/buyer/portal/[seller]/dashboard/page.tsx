@@ -82,7 +82,7 @@ function StandingOrdersPanel({
   templates: BuyerOrderTemplate[];
   isLoading: boolean;
 }) {
-  const reorder = useBuyerReorder();
+  const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
   // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
   // "Place order" button, never from the tap itself.
   const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);

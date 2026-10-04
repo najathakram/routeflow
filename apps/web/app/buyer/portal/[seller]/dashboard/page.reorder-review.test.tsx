@@ -8,6 +8,7 @@ import BuyerDashboardPage from "./page";
  * review (lines + total); the order is placed from "Place order" and never before it.
  */
 const mutateAsync = jest.fn();
+const mockUseBuyerReorder = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
@@ -66,7 +67,10 @@ jest.mock("@/lib/api/buyer", () => ({
   }),
   useBuyerTemplates: () => ({ data: { data: [template], meta: { total: 1 } }, isLoading: false }),
   useBuyerShelf: () => ({ data: undefined }),
-  useBuyerReorder: () => ({ mutateAsync, isPending: false }),
+  useBuyerReorder: (...a: unknown[]) => {
+    mockUseBuyerReorder(...a);
+    return { mutateAsync, isPending: false };
+  },
   useBuyerProducts: () => ({
     isLoading: false,
     isError: false,
@@ -119,5 +123,12 @@ describe("buyer dashboard — Standing Orders Reorder review", () => {
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
 
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("the reorder mutation opts out of the global error toast, so a failure shows ONE message (the sheet's)", async () => {
+    const user = userEvent.setup();
+    render(<BuyerDashboardPage />);
+    await screen.findAllByRole("button", { name: /^reorder$/i });
+    expect(mockUseBuyerReorder).toHaveBeenCalledWith({ localErrorToast: true });
   });
 });
