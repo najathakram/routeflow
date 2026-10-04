@@ -1786,7 +1786,9 @@ export class SubscriptionMutationService {
       } else {
         // A DECREASE (or any non-manual change) never re-prices: it reverses at the row's OWN price
         // (a $0 row books nothing). The owner is told to reduce the invoice only if it was invoiced.
-        priceSnapshot = stored;
+        // UNBILLED (a pilot / Stripe not configured): nothing is billed, so ANY change stores snapshot 0
+        // and books no revenue (a legacy non-zero snapshot is withdrawn, never grown).
+        priceSnapshot = mode === "UNBILLED" ? 0 : stored;
         if (mode === "MANUAL" && stored > 0) {
           manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP, kind: "reduce" };
         }

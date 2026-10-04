@@ -829,6 +829,50 @@ describe("N2 — manual tenant: re-price only on an increase; a decrease reverse
   });
 });
 
+describe("G2 — an UNBILLED tenant's quantity change on a legacy non-zero row books no revenue", () => {
+  const legacy = (quantity: number) => ({
+    id: "a1",
+    addonKey: "CUSTOMER_PACK_100",
+    sku: "CUSTOMER_PACK_100",
+    active: true,
+    quantity,
+    priceSnapshot: 12,
+    stripeItemId: null,
+  });
+  const PILOT = { ...ACTIVE_SUB, stripeSubId: null };
+  const bookedDeltas = (events: any) =>
+    events.emit.mock.calls
+      .filter((c: any[]) =>
+        [BILLING_EVENTS.ADDON_ENABLED, BILLING_EVENTS.ADDON_DISABLED].includes(c[1]),
+      )
+      .map((c: any[]) => c[3]?.amountDelta);
+
+  it("G2: raising 1 -> 3 stores snapshot 0 and never books a POSITIVE delta (the old revenue is reversed)", async () => {
+    const { svc, getRow, events, stripeClient } = make({ sub: PILOT, addonRow: legacy(1) });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(getRow()).toMatchObject({ quantity: 3, priceSnapshot: 0 });
+    // 0 x 3 - 12 x 1: unbilled revenue withdrawn, none added (the event type follows the QUANTITY
+    // direction, so a quantity raise is typed ADDON_ENABLED even though its amount is negative).
+    expect(bookedDeltas(events)).toEqual([-12]);
+    expect(bookedDeltas(events).every((d: number) => d <= 0)).toBe(true);
+  });
+
+  it("G2: lowering 3 -> 2 stores snapshot 0 as well (no re-pricing in either direction)", async () => {
+    const { svc, getRow, events } = make({ sub: PILOT, addonRow: legacy(3) });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+    expect(getRow()).toMatchObject({ quantity: 2, priceSnapshot: 0 });
+    expect(bookedDeltas(events)).toEqual([-36]);
+  });
+
+  it("G2: Stripe not configured behaves the same (UNBILLED)", async () => {
+    const { svc, getRow, events } = make({ stripeConfigured: false, addonRow: legacy(1) });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+    expect(getRow()).toMatchObject({ priceSnapshot: 0 });
+    expect(enabledDeltas(events).every((d: number) => d <= 0)).toBe(true); // never a positive booking
+  });
+});
+
 describe("(c) manual tenant disable raises a 'stop invoicing' platform notice", () => {
   const priced = {
     id: "a1",
