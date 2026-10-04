@@ -8,7 +8,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureConfigService } from "./feature-config.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
-import { FULFILMENT_MODE_VALUES } from "@routeflow/types";
+import { FULFILMENT_MODE_VALUES, COUNTER_SALES_MODE_VALUES } from "@routeflow/types";
 
 /**
  * Business profiles 1A: `fulfilment_model` is a free configuration row ("how do orders reach
@@ -26,14 +26,24 @@ describe("fulfilment_model registry row", () => {
     expect(r!.billing).toEqual({ skus: [], selfService: false });
   });
 
-  it("offers unset / delivery / ship / both, and pickup reserved but unavailable", () => {
+  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship, all available", () => {
     const modes = row()!.config!.modes;
-    expect(Object.keys(modes)).toEqual(["unset", "delivery", "ship", "both", "pickup"]);
+    expect(Object.keys(modes)).toEqual([
+      "unset",
+      "delivery",
+      "ship",
+      "both",
+      "pickup",
+      "pickup_ship",
+    ]);
     expect(modes.unset.label).toBe("Not configured (today's behavior)");
     expect(modes.unset.available).toBe(true);
-    for (const m of ["delivery", "ship", "both"]) expect(modes[m].available).toBe(true);
-    expect(modes.pickup.available).toBe(false);
-    expect(modes.pickup.lifecycle).toBe("proposed");
+    for (const m of ["delivery", "ship", "both", "pickup", "pickup_ship"]) {
+      expect(modes[m].available).toBe(true);
+      expect(modes[m].lifecycle).toBe("ga");
+    }
+    expect(modes.pickup.label).toBe("In store only");
+    expect(modes.pickup_ship.label).toBe("In store + shipping");
   });
 
   it("the shared FULFILMENT_MODE_VALUES list equals the registry's modes (no hand-typed mirror drift)", () => {
@@ -125,9 +135,30 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("pickup is refused as unavailable", async () => {
+  it("pickup and pickup_ship are ALLOWED with the fleet off (no fleet requirement)", async () => {
+    hasAddon.mockResolvedValue(false);
+    await service.set("t1", "fulfilment_model", "pickup", "r", "admin-1");
+    await service.set("t1", "fulfilment_model", "pickup_ship", "r", "admin-1");
+    expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("an unknown mode is refused", async () => {
     await expect(
-      service.set("t1", "fulfilment_model", "pickup", "r", "admin-1"),
+      service.set("t1", "fulfilment_model", "martian", "r", "admin-1"),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("counter_sales registry row", () => {
+  const r = () => FEATURE_REGISTRY.find((f) => f.key === "counter_sales");
+  it("is a free config row: unset (today) or on", () => {
+    expect(r()).toBeDefined();
+    expect(r()!.config?.fallbackMode).toBe("unset");
+    expect(Object.keys(r()!.config!.modes)).toEqual(["unset", "on"]);
+    expect(r()!.defaultGranted).toBe(true);
+    expect(r()!.billing).toEqual({ skus: [], selfService: false });
+  });
+  it("the shared COUNTER_SALES_MODE_VALUES list equals the registry's modes", () => {
+    expect([...COUNTER_SALES_MODE_VALUES]).toEqual(Object.keys(r()!.config!.modes));
   });
 });

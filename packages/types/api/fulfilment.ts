@@ -1,0 +1,45 @@
+// ─── Fulfilment capability (business profiles 1A) — the shared contract ────────────────────
+//
+// `fulfilment_model` and `counter_sales` are free config modes (apps/api feature-registry); the
+// server derives ONE capability answer from them plus the fleet modules, and every client and
+// server rule reads only that answer, never the raw modes. `unset` = today's behavior.
+
+export const FULFILMENT_MODE_VALUES = [
+  "unset",
+  "delivery",
+  "ship",
+  "both",
+  "pickup",
+  "pickup_ship",
+] as const;
+export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
+
+export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
+export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
+
+export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
+
+/**
+ * `GET /tenants/me/features` -> `capabilities.fulfilment`.
+ * - `methods`: what staff can choose per order; `staffDefault` is the default of those.
+ * - `staffOpensAs`: whether staff "New order" opens as a normal order or the one-step counter.
+ * - `portalMethods` / `portalDefault`: the same for the buyer portal.
+ * - `counter`: "always" (in-store modes), "optional" (counter_sales on), "off".
+ * - `fleet`: recurring_routes || order_delivery effective. The MODULES are the only truth; no
+ *   mode turns fleet on or off.
+ * - `consistent`: false when the mode is delivery|both and `fleet` is false.
+ */
+export interface FulfilmentCapability {
+  methods: FulfilmentMethod[];
+  staffDefault: FulfilmentMethod;
+  staffOpensAs: "order" | "counter";
+  portalMethods: FulfilmentMethod[];
+  portalDefault: FulfilmentMethod;
+  counter: "always" | "optional" | "off";
+  fleet: boolean;
+  consistent: boolean;
+}
+
+export interface TenantCapabilities {
+  fulfilment: FulfilmentCapability;
+}

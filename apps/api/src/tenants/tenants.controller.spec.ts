@@ -109,17 +109,19 @@ describe("TenantsController.getMyFeatures — SA-138 policy modes carrier", () =
     const { controller, policies } = build(modes);
     const result = await controller.getMyFeatures({ tenantId: "t1" } as unknown as JwtPayload);
     // Business profiles 1A: today's answer plus exactly the one new key (unset = today).
-    expect(result.modes).toEqual({ ...modes, fulfilment_model: "unset" });
+    expect(result.modes).toEqual({ ...modes, fulfilment_model: "unset", counter_sales: "unset" });
     expect(policies.effectiveForClient).toHaveBeenCalledWith("t1");
   });
 });
 
-// Business profiles 1A (SA-649 R1): `capability.fleet` comes from the MODULES only (the same
-// effective addon resolution /tenants/me/addons uses); the fulfilment mode never turns fleet on or
-// off, and a delivery/both mode with no fleet module reports consistent:false.
-describe("TenantsController.getMyFeatures — fulfilment_model + capability (R1)", () => {
+// Business profiles 1A (SA-649 R1/R3): `capabilities.fulfilment` is the ONE derived answer. The
+// fleet flag comes from the MODULES only; no mode turns fleet on or off. The full mode x
+// counter_sales x fleet table is pinned on the helper (fulfilment-capability.spec.ts); this block
+// pins the controller wiring and "unset = today".
+describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfilment", () => {
   function build(opts: {
-    mode: string;
+    mode?: string;
+    counterSales?: string;
     addons?: string[];
     overrides?: Map<string, "GRANT" | "DENY">;
     policyModes?: Record<string, string>;
@@ -141,7 +143,15 @@ describe("TenantsController.getMyFeatures — fulfilment_model + capability (R1)
     const featureOverrides = {
       allActive: jest.fn().mockResolvedValue(opts.overrides ?? new Map()),
     } as any;
-    const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(opts.mode) } as any;
+    const featureConfig = {
+      getEffectiveMode: jest
+        .fn()
+        .mockImplementation((_t: string, key: string) =>
+          Promise.resolve(
+            key === "fulfilment_model" ? (opts.mode ?? "unset") : (opts.counterSales ?? "unset"),
+          ),
+        ),
+    } as any;
     const controller = new TenantsController(
       {} as any,
       {} as any,
@@ -155,88 +165,71 @@ describe("TenantsController.getMyFeatures — fulfilment_model + capability (R1)
   }
   const caller = { tenantId: "t1" } as unknown as JwtPayload;
 
-  it("UNSET (every existing tenant): the answer is today's plus the new mode key and capability", async () => {
-    const { controller } = build({ mode: "unset", policyModes: { "orders.x": "amend" } });
+  it("UNSET (every existing tenant): today's answer plus the new mode keys and capability", async () => {
+    const { controller } = build({ policyModes: { "orders.x": "amend" } });
     const r = await controller.getMyFeatures(caller);
-    expect(r.modes).toEqual({ "orders.x": "amend", fulfilment_model: "unset" });
+    expect(r.modes).toEqual({
+      "orders.x": "amend",
+      fulfilment_model: "unset",
+      counter_sales: "unset",
+    });
     expect(r.served).toEqual(["flag.x"]);
-    expect(r.capability).toEqual({
+    expect(r.capabilities.fulfilment).toEqual({
+      methods: ["ROUTE", "SHIP"],
+      staffDefault: "ROUTE",
+      staffOpensAs: "order",
+      portalMethods: ["ROUTE", "SHIP"],
+      portalDefault: "ROUTE",
+      counter: "off",
       fleet: false,
-      fulfilment: null,
       consistent: true,
-      inconsistentModes: [],
     });
   });
 
-  it.each([
-    // [mode, fleet module held?, expected fleet, fulfilment, consistent]
-    ["unset", false, false, null, true],
-    ["unset", true, true, null, true],
-    ["ship", false, false, "ship", true],
-    ["ship", true, true, "ship", true],
-    ["delivery", false, false, "delivery", false],
-    ["delivery", true, true, "delivery", true],
-    ["both", false, false, "both", false],
-    ["both", true, true, "both", true],
-  ] as const)(
-    "mode %s with fleet module held=%s -> fleet %s, fulfilment %s, consistent %s",
-    async (mode, held, fleet, fulfilment, consistent) => {
-      const { controller } = build({ mode, addons: held ? ["order_delivery"] : [] });
-      const r = await controller.getMyFeatures(caller);
-      expect(r.capability.fleet).toBe(fleet);
-      expect(r.capability.fulfilment).toBe(fulfilment);
-      expect(r.capability.consistent).toBe(consistent);
-      expect(r.capability.inconsistentModes).toEqual(consistent ? [] : ["fulfilment_model"]);
-    },
-  );
-
   it("fleet is true for EITHER module, via addon row or a GRANT override, and a DENY wins", async () => {
-    expect(
-      (
-        await build({ mode: "unset", addons: ["recurring_routes"] }).controller.getMyFeatures(
-          caller,
-        )
-      ).capability.fleet,
-    ).toBe(true);
-    expect(
-      (
-        await build({
-          mode: "unset",
-          overrides: new Map([["order_delivery", "GRANT"]]),
-        }).controller.getMyFeatures(caller)
-      ).capability.fleet,
-    ).toBe(true);
-    expect(
-      (
-        await build({
-          mode: "both",
-          addons: ["recurring_routes", "order_delivery"],
-          overrides: new Map([
-            ["recurring_routes", "DENY"],
-            ["order_delivery", "DENY"],
-          ]),
-        }).controller.getMyFeatures(caller)
-      ).capability,
-    ).toEqual({
-      fleet: false,
-      fulfilment: "both",
-      consistent: false,
-      inconsistentModes: ["fulfilment_model"],
+    const fleet = async (o: Parameters<typeof build>[0]) =>
+      (await build(o).controller.getMyFeatures(caller)).capabilities.fulfilment;
+    expect((await fleet({ addons: ["recurring_routes"] })).fleet).toBe(true);
+    expect((await fleet({ overrides: new Map([["order_delivery", "GRANT"]]) })).fleet).toBe(true);
+    const denied = await fleet({
+      mode: "both",
+      addons: ["recurring_routes", "order_delivery"],
+      overrides: new Map([
+        ["recurring_routes", "DENY"],
+        ["order_delivery", "DENY"],
+      ]),
     });
+    expect(denied.fleet).toBe(false);
+    expect(denied.consistent).toBe(false);
+  });
+
+  it("a hand-set delivery with no fleet module reports fleet:false, consistent:false (R1)", async () => {
+    const r = await build({ mode: "delivery" }).controller.getMyFeatures(caller);
+    expect(r.capabilities.fulfilment.fleet).toBe(false);
+    expect(r.capabilities.fulfilment.consistent).toBe(false);
+  });
+
+  it("pickup_ship + counter_sales on: counter is always (in-store beats optional)", async () => {
+    const r = await build({ mode: "pickup_ship", counterSales: "on" }).controller.getMyFeatures(
+      caller,
+    );
+    expect(r.capabilities.fulfilment.counter).toBe("always");
+    expect(r.capabilities.fulfilment.methods).toEqual(["PICKUP", "SHIP"]);
   });
 
   it("reads ONLY the caller's tenant (cross-tenant)", async () => {
-    const { controller, featureConfig, addonService } = build({ mode: "unset" });
+    const { controller, featureConfig, addonService } = build({});
     await controller.getMyFeatures({ tenantId: "t9" } as unknown as JwtPayload);
     expect(featureConfig.getEffectiveMode).toHaveBeenCalledWith("t9", "fulfilment_model");
+    expect(featureConfig.getEffectiveMode).toHaveBeenCalledWith("t9", "counter_sales");
     expect(addonService.getActiveAddons).toHaveBeenCalledWith("t9");
   });
 
   it("a mode-read failure falls back to unset (today), never a 5xx", async () => {
-    const { controller, featureConfig } = build({ mode: "unset" });
+    const { controller, featureConfig } = build({});
     featureConfig.getEffectiveMode.mockRejectedValue(new Error("db blip"));
     const r = await controller.getMyFeatures(caller);
     expect(r.modes.fulfilment_model).toBe("unset");
-    expect(r.capability.fulfilment).toBeNull();
+    expect(r.capabilities.fulfilment.staffDefault).toBe("ROUTE");
   });
 });

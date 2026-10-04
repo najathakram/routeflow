@@ -104,6 +104,7 @@ const FEATURE_REGISTRY_MIRROR = [
   ["mixed_packs", "none", "none", false, []],
   ["routes_dispatch", "none", "none", true, []],
   ["fulfilment_model", "none", "none", true, []],
+  ["counter_sales", "none", "none", true, []],
 ].map(([key, via, state, defaultGranted, billingSkus]) => ({
   key,
   via,

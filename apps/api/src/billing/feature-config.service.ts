@@ -11,7 +11,7 @@ import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
-import { FLEET_KEYS } from "./tenant-capability";
+import { FLEET_KEYS } from "./fulfilment-capability";
 import { FeatureConfigStore } from "./feature-config.store";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 

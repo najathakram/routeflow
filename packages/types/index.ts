@@ -162,7 +162,7 @@ export * from "./api/invoices";
 export * from "./api/crm";
 export * from "./api/checks";
 export * from "./api/features";
-export * from "./api/profiles";
+export * from "./api/fulfilment";
 export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";

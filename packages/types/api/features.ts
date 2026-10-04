@@ -7,7 +7,7 @@
 // the convention this follows. `EntitlementsMode` is NOT a Prisma enum: it's the value of the
 // system-config key `entitlements.mode` (audited admin PUT), not a DB column.
 
-import type { TenantCapability } from "./profiles";
+import type { TenantCapabilities } from "./fulfilment";
 
 export const FEATURE_SOURCE_VALUES = [
   "OVERRIDE_DENY",
@@ -87,8 +87,8 @@ export interface TenantEffectiveFeaturesResponse {
 }
 
 export interface TenantFeaturesResponse {
-  /** Business profiles 1A: the capability answer; `fleet` comes from the modules only. */
-  capability: TenantCapability;
+  /** Business profiles 1A: the derived capability answers; clients read these, never raw modes. */
+  capabilities: TenantCapabilities;
   /** The old enforcement path's verdict, per key that path actually covers — byte-identical
    *  to `getSubscription().flags` (same gateVia filter, PREPIN, dark courtesy, and LITE). */
   served: string[];
