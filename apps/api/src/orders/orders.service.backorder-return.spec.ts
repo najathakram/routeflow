@@ -21,6 +21,10 @@ const PRODUCT = {
   trackedCategoryId: null,
   trackedSubcategoryId: null,
   isActive: true,
+  // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+  kind: "STANDARD",
+  portalVisible: true,
+  parent: null,
 };
 type H = Awaited<ReturnType<typeof buildOversellOrders>>;
 const write = (n: number) => ({ backorderByProduct: new Map([["prod-1", n]]) });
