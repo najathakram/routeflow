@@ -12,7 +12,10 @@ import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
-import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
+import {
+  assertInvoiceTotalsSane,
+  assertNoNegativeLineSubtotal,
+} from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { recomputeInvoiceStatus } from "./invoice-status";
@@ -426,15 +429,9 @@ export class InvoicesService {
     const taxTotal = roundMoney(regularTax + categoryTaxTotal);
     const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
 
-    // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
-    if (invDiscount > subtotal) {
-      throw new BadRequestException(
-        `Invoice discount (${invDiscount}) cannot exceed subtotal (${subtotal}).`,
-      );
-    }
-    if (total < 0) {
-      throw new BadRequestException(`Invoice total cannot be negative (calculated: ${total}).`);
-    }
+    // Validate invoice-level discount doesn't exceed subtotal and total is non-negative — B1030:
+    // shared with update(), which runs the same two checks on both of its paths.
+    assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total });
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
@@ -3146,6 +3143,7 @@ export class InvoicesService {
           invDiscount,
           shipping,
         );
+        assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }); // B1030: before any write
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3243,12 +3241,14 @@ export class InvoicesService {
       );
       const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
       const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
+      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+      assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }); // B1030: before any write
       recalcData = {
         subtotal,
         taxAmount: taxTotal,
         discount: invDiscount,
         shippingFee: shipping,
-        total: roundMoney(subtotal - invDiscount + shipping + taxTotal),
+        total,
       };
     }
 
