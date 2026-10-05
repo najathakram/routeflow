@@ -1,3 +1,5 @@
+import type { API_ERROR_CODES } from "./error-codes";
+
 // ─── Invoice KPI summary (B12) ─────────────────────────────────────────────
 //
 // `GET /invoices/kpi-summary?today=YYYY-MM-DD` — the invoices page's six KPI
@@ -12,4 +14,38 @@ export interface InvoiceKpiSummary {
   dueIn30: number;
   avgDays: number;
   awaitingConfirmationCount: number;
+}
+
+// ─── Bulk price adjustment refusals (B1051 / B1058) ────────────────────────
+//
+// `POST /invoices/:id/price-adjustment` with scope ALL_CUSTOMER_SINCE. Two structured bodies the invoice
+// page renders from fixed copy (B980: never the server `message`):
+//   400 PRICE_ADJUSTMENT_OVERPAYS — the pre-flight found invoices the re-price would leave overpaid
+//        (confirmed payments above the new total). Collected across the whole batch; NOTHING was written.
+//   409 PRICE_ADJUSTMENT_PARTIAL — a race stopped the run after >= 1 invoice committed. `applied` are
+//        invoice ids; exactly one of `refused` (that invoice was refused in its transaction) or `syncFailed`
+//        (that invoice committed, then its order-totals sync threw; it is also in `applied`) is present;
+//        `skipped` were never attempted. Re-running the same request finishes them.
+
+export interface PriceAdjustmentOverpaidInvoice {
+  invoiceId: string;
+  invoiceNumber: string | null;
+  paid: number;
+  newTotal: number;
+  overpaidBy: number;
+}
+
+export interface PriceAdjustmentOverpaysBody {
+  code: typeof API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS;
+  message: string;
+  overpaid: PriceAdjustmentOverpaidInvoice[];
+}
+
+export interface PriceAdjustmentPartialBody {
+  code: typeof API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL;
+  message: string;
+  applied: string[];
+  refused?: { invoiceId: string; invoiceNumber: string | null; code: string; message: string };
+  syncFailed?: { invoiceId: string; invoiceNumber: string | null };
+  skipped: string[];
 }

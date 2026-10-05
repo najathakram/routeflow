@@ -5899,6 +5899,7 @@ export class InvoicesService {
         },
         // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
         include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }], // B1058: applied / skipped follow a stable order
       });
 
       const plans: Array<{ inv: typeof invoice; localMap: Map<string, number> }> = [];
@@ -5912,8 +5913,8 @@ export class InvoicesService {
         }
         if (localMap.size > 0) plans.push({ inv, localMap });
       }
-      // B1031: judge every target BEFORE writing any, so a bad line on invoice N never leaves 1..N-1 re-priced.
-      preflightBulkPriceAdjustment(plans, isTaxExempt);
+      // B1031/B1058: judge every target (bad line, totals, overpayment) BEFORE writing any.
+      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant());
       // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
       await applyBulkPriceAdjustment(plans, applyToInvoice);
     }
