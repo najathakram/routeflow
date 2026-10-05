@@ -36,3 +36,18 @@ export function useCreateCounterSale() {
     },
   });
 }
+
+/**
+ * `GET /orders/counter-sale/by-key/:key`: did a sale get written under this Idempotency-Key? 200 = the sale
+ * (`replayed: true`), 404 COUNTER_SALE_NOT_FOUND = never written. A mutation (an imperative, on-demand check), not a cache.
+ */
+export function useCounterSaleByKey() {
+  return useMutation({
+    mutationFn: (idempotencyKey: string) =>
+      apiClient
+        .get<CounterSaleResponse>(
+          `/orders/counter-sale/by-key/${encodeURIComponent(idempotencyKey)}`,
+        )
+        .then((r) => r.data),
+  });
+}

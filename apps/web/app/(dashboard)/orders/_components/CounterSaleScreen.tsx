@@ -15,7 +15,11 @@ import type {
 import { apiClient } from "@/lib/api-client";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { useCounterSaleGate, useCreateCounterSale } from "@/lib/api/counter-sale";
+import {
+  useCounterSaleByKey,
+  useCounterSaleGate,
+  useCreateCounterSale,
+} from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_OUTCOME_UNKNOWN_COPY,
@@ -24,6 +28,7 @@ import {
   cartTotals,
   changeDue,
   counterSaleErrorCopy,
+  isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
   parseScanField,
@@ -66,6 +71,7 @@ export function CounterSaleScreen() {
   const router = useRouter();
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
+  const lookupSale = useCounterSaleByKey();
   const scanRef = React.useRef<HTMLInputElement>(null);
   // One Idempotency-Key per SALE. It lives until a DEFINITIVE answer (any 2xx, or a 4xx that proves nothing was written) or a
   // reset; after a 5xx / network error / timeout the outcome is UNKNOWN, the sale is locked and "Try again" re-sends this same
@@ -74,6 +80,7 @@ export function CounterSaleScreen() {
     key: string;
     dto: CounterSaleRequest;
     next: boolean;
+    unknown: boolean; // true once an attempt came back UNKNOWN: from then on only a 2xx or the lookup's 404 settles it
   } | null>(null);
   // The total the clerk SAW (the client estimate) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef(0);
@@ -203,11 +210,13 @@ export function CounterSaleScreen() {
     refocus();
   }
 
-  // Sends one attempt. A definitive answer (2xx / a refusal that proves nothing was written) releases the key; anything
-  // else keeps it and locks the sale as "outcome unknown".
+  // Sends one attempt. A 2xx releases the key. A FIRST attempt's refusal that proves nothing was written releases it too.
+  // Anything else, and ANY failure once an attempt is already unknown (the first try may have committed), keeps the key and
+  // locks the sale as "outcome unknown".
   const send = async (attempt: {
     key: string;
     dto: CounterSaleRequest;
+    unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
@@ -215,11 +224,12 @@ export function CounterSaleScreen() {
       setOutcomeUnknown(false);
       return res;
     } catch (err) {
-      if (isDefinitiveCounterSaleRefusal(err)) {
+      if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         setOutcomeUnknown(false);
         setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
       } else {
+        attempt.unknown = true;
         setError("");
         setOutcomeUnknown(true);
       }
@@ -254,9 +264,21 @@ export function CounterSaleScreen() {
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       },
     };
-    attemptRef.current = { key: newIdempotencyKey(), dto, next };
+    attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
     estimateRef.current = totals.total;
     return send(attemptRef.current);
+  };
+
+  // A sale the server confirmed: print once, then the receipt (or, for "next", a fresh sale when nothing needs the clerk's eyes).
+  const finishSale = (res: CounterSaleResponse, next: boolean) => {
+    if (autoPrint) window.print(); // once per completed sale, before any reset
+    // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
+    // (whose own "New sale" starts the next one). The same holds when the server's total is not the estimate the clerk
+    // collected on: its receipt shows first.
+    const unpaid = res.paymentRecorded === false || res.balanceDue > 0;
+    const totalDiffers = roundMoney(res.total) !== roundMoney(estimateRef.current);
+    if (next && !unpaid && !totalDiffers) resetSale();
+    else setReceipt(res);
   };
 
   const completeSale = async (next: boolean, retry = false) => {
@@ -266,14 +288,33 @@ export function CounterSaleScreen() {
       if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
       const res = await complete(next);
       if (!res) return;
-      if (autoPrint) window.print(); // once per completed sale, before any reset
-      // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
-      // (whose own "New sale" starts the next one).
-      // The same holds when the server's total is not the estimate the clerk collected on: its receipt shows first.
-      const unpaid = res.paymentRecorded === false || res.balanceDue > 0;
-      const totalDiffers = roundMoney(res.total) !== roundMoney(estimateRef.current);
-      if (next && !unpaid && !totalDiffers) resetSale();
-      else setReceipt(res);
+      finishSale(res, next);
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  // "Check sale status": ask the server whether a sale exists under the held key. A sale shows its receipt; ONLY a 404
+  // COUNTER_SALE_NOT_FOUND unlocks the cart (the next submit then mints a new key); every other answer keeps the lock.
+  const checkSaleStatus = async () => {
+    const attempt = attemptRef.current;
+    if (!attempt || submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      let res: CounterSaleResponse;
+      try {
+        res = await lookupSale.mutateAsync(attempt.key);
+      } catch (err) {
+        if (isCounterSaleNotFound(err)) {
+          attemptRef.current = null;
+          setOutcomeUnknown(false);
+          refocus();
+        }
+        return;
+      }
+      attemptRef.current = null;
+      setOutcomeUnknown(false);
+      finishSale(res, attempt.next);
     } finally {
       submittingRef.current = false;
     }
@@ -586,8 +627,18 @@ export function CounterSaleScreen() {
         >
           <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void completeSale(false, true)} disabled={createSale.isPending}>
+            <Button
+              onClick={() => void completeSale(false, true)}
+              disabled={createSale.isPending || lookupSale.isPending}
+            >
               Try again
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void checkSaleStatus()}
+              disabled={createSale.isPending || lookupSale.isPending}
+            >
+              Check sale status
             </Button>
             <Link href="/orders" className="text-brand-700 underline">
               Check recent sales

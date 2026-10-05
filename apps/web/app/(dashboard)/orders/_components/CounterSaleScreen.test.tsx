@@ -42,9 +42,11 @@ jest.mock("@/lib/api-client", () => ({
 
 let gate: Record<string, unknown> = {};
 const mutateAsync = jest.fn();
+const lookupAsync = jest.fn();
 jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => gate,
   useCreateCounterSale: () => ({ mutateAsync, isPending: false }),
+  useCounterSaleByKey: () => ({ mutateAsync: lookupAsync, isPending: false }),
 }));
 
 const printSpy = jest.fn();
@@ -487,12 +489,116 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(keyOfCall(2)).toBe(keyOfCall(0));
     });
 
-    it("a definitive answer to Try again clears the banner and unlocks (a 409 here)", async () => {
-      await goUnknown({ response: { status: 503 } });
-      mutateAsync.mockRejectedValueOnce({ response: { status: 409 } });
-      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
-      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    it.each([
+      ["a 403 (the fail-closed gate)", { response: { status: 403, data: {} } }],
+      ["a 429", { response: { status: 429 } }],
+      ["an uncoded 409", { response: { status: 409 } }],
+      ["a 400", { response: { status: 400 } }],
+    ])(
+      "once UNKNOWN, a refusal to Try again (%s) keeps the lock, the key and the banner, and never says 'Nothing was charged'",
+      async (_l, refusal) => {
+        await goUnknown({ response: { status: 503 } });
+        mutateAsync.mockRejectedValueOnce(refusal);
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(await screen.findByTestId("counter-outcome-unknown")).toHaveTextContent(
+          "We couldn't confirm the sale. Check recent sales before trying again.",
+        );
+        expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+        expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
+        expect(keyOfCall(1)).toBe(keyOfCall(0));
+        expect(keyOfCall(2)).toBe(keyOfCall(0));
+      },
+    );
+
+    it.each([
+      "COUNTER_SALE_ORDER_CHANGED",
+      "IDEMPOTENCY_KEY_OTHER_ORDER",
+      "IDEMPOTENCY_KEY_CART_MISMATCH",
+    ])("a first-attempt 409 %s is an unknown outcome (the order exists)", async (code) => {
+      const banner = await goUnknown({ response: { status: 409, data: { code } } });
+      expect(banner).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+    });
+
+    it("the banner offers exactly Try again, Check sale status and Check recent sales", async () => {
+      const banner = await goUnknown({ response: { status: 503 } });
+      const actions = [...banner.querySelectorAll("button, a")].map((el) => el.textContent);
+      expect(actions).toEqual(["Try again", "Check sale status", "Check recent sales"]);
+    });
+
+    describe("Check sale status (GET /orders/counter-sale/by-key/:key)", () => {
+      const sale = {
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.5,
+        paid: 20,
+        balanceDue: 0,
+        change: 17.5,
+        paymentRecorded: true,
+        replayed: true,
+      };
+      const check = () =>
+        fireEvent.click(screen.getByRole("button", { name: "Check sale status" }));
+
+      it("a 404 COUNTER_SALE_NOT_FOUND unlocks the cart, and the next submit uses a NEW key", async () => {
+        await goUnknown({ response: { status: 503 } });
+        lookupAsync.mockRejectedValueOnce({
+          response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+        });
+        check();
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(lookupAsync).toHaveBeenCalledWith(keyOfCall(0));
+        expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+        expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "$20" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+      });
+
+      it("a 200 sale shows its receipt and clears the banner (and prints once with auto-print on)", async () => {
+        window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+        mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+        renderWithProviders(<CounterSaleScreen />);
+        await waitFor(() =>
+          expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+        );
+        await fillCola();
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        await screen.findByTestId("counter-outcome-unknown");
+        lookupAsync.mockResolvedValueOnce(sale);
+        check();
+        expect(await screen.findByTestId("counter-sale-receipt")).toHaveTextContent("INV-1");
+        expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+        expect(printSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        ["a 404 without the code", { response: { status: 404 } }],
+        ["a 403", { response: { status: 403 } }],
+        ["a 429", { response: { status: 429 } }],
+        ["a 500", { response: { status: 500 } }],
+        ["a network error", new Error("Network Error")],
+      ])("%s keeps the lock and the banner", async (_l, failure) => {
+        await goUnknown({ response: { status: 503 } });
+        lookupAsync.mockRejectedValueOnce(failure);
+        check();
+        await waitFor(() => expect(lookupAsync).toHaveBeenCalledTimes(1));
+        expect(await screen.findByTestId("counter-outcome-unknown")).toHaveTextContent(
+          "We couldn't confirm the sale. Check recent sales before trying again.",
+        );
+        expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+        expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).toBe(keyOfCall(0));
+      });
     });
 
     it("Try again that succeeds shows the receipt and clears the banner", async () => {

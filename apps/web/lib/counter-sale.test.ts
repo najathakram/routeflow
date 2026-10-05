@@ -5,6 +5,7 @@ import {
   changeDue,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
   paymentMethodOptions,
@@ -223,6 +224,31 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
     expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
     expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
     expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged/i);
+  });
+  it.each([
+    "COUNTER_SALE_ORDER_CHANGED",
+    "IDEMPOTENCY_KEY_OTHER_ORDER",
+    "IDEMPOTENCY_KEY_CART_MISMATCH",
+  ])("a 409 %s means the order exists: unknown outcome, never 'nothing was charged'", (code) => {
+    const err = { response: { status: 409, data: { code } } };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
+  it("only a 404 COUNTER_SALE_NOT_FOUND from the by-key lookup is 'not found'", () => {
+    expect(
+      isCounterSaleNotFound({
+        response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+      }),
+    ).toBe(true);
+    for (const err of [
+      { response: { status: 404 } },
+      { response: { status: 404, data: { code: "OTHER" } } },
+      { response: { status: 403, data: { code: "COUNTER_SALE_NOT_FOUND" } } },
+      { response: { status: 500 } },
+      new Error("Network Error"),
+      null,
+    ])
+      expect(isCounterSaleNotFound(err)).toBe(false);
   });
   it("any OTHER 409 stays a definitive refusal", () => {
     for (const data of [undefined, {}, { code: "WALK_IN_OPEN_CREDIT" }]) {

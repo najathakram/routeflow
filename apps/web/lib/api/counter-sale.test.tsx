@@ -1,10 +1,13 @@
 import * as React from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
+import { useCounterSaleByKey, useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
 
 const post = jest.fn();
-jest.mock("../api-client", () => ({ apiClient: { post: (...a: unknown[]) => post(...a) } }));
+const get = jest.fn();
+jest.mock("../api-client", () => ({
+  apiClient: { post: (...a: unknown[]) => post(...a), get: (...a: unknown[]) => get(...a) },
+}));
 let features: { data?: unknown; isLoading?: boolean; isError?: boolean } = { data: undefined };
 jest.mock("../tenant-features", () => ({ useTenantFeatures: () => features }));
 
@@ -75,5 +78,21 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
     expect(
       gateFor({ data: { capabilities: { fulfilment: { counter: "always" } } } }),
     ).toMatchObject({ showButton: true, opensAsCounter: true });
+  });
+});
+
+describe("useCounterSaleByKey: GET /orders/counter-sale/by-key/:key", () => {
+  beforeEach(() => get.mockReset());
+
+  it("looks the held key up and returns the sale body", async () => {
+    const body = { orderId: "o1", replayed: true };
+    get.mockResolvedValue({ data: body });
+    const { result } = renderHook(() => useCounterSaleByKey(), { wrapper });
+    let res: unknown;
+    await act(async () => {
+      res = await result.current.mutateAsync("key abc/1");
+    });
+    expect(get).toHaveBeenCalledWith("/orders/counter-sale/by-key/key%20abc%2F1");
+    expect(res).toEqual(body);
   });
 });

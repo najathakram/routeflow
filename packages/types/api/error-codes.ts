@@ -342,6 +342,15 @@ export const API_ERROR_CODES = {
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  /**
+   * 404 on `GET /orders/counter-sale/by-key/:key`: no sale was ever written under that Idempotency-Key. The ONLY answer
+   * (besides a 2xx sale) after which a till may drop the key and ring the sale again.
+   */
+  COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /** 409: the Idempotency-Key already belongs to a different order. The order EXISTS: an UNKNOWN outcome for the till. */
+  IDEMPOTENCY_KEY_OTHER_ORDER: "IDEMPOTENCY_KEY_OTHER_ORDER",
+  /** 409: the Idempotency-Key was used with a different cart. The order EXISTS: an UNKNOWN outcome for the till. */
+  IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

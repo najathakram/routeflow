@@ -163,19 +163,33 @@ export const COUNTER_OUTCOME_UNKNOWN_COPY =
 
 const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
 
+/** 409 codes that mean the order EXISTS (the key was already used): an unknown outcome, never a refusal. */
+const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
+  API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
+  API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
+  API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+]);
+
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
- * handler runs). Every other failure (5xx, network, timeout, 408) is an UNKNOWN outcome: the Idempotency-Key must survive
- * it and the sale must not be edited. A 409 COUNTER_SALE_ORDER_CHANGED is the exception among the 4xx: the sale EXISTS
- * (its order changed after it was written), so it is unknown too, never "nothing was charged".
+ * handler runs), and only for a FIRST attempt: once an attempt has been UNKNOWN, no refusal is definitive (the first try may
+ * have committed); only a 2xx or the by-key lookup's 404 COUNTER_SALE_NOT_FOUND settles it. Every other failure (5xx,
+ * network, timeout, 408) is unknown, and so is a 409 whose code says the order exists.
  */
 export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
   const res = (
     err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
   )?.response;
-  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED)
-    return false;
+  if (res?.status === 409 && ORDER_EXISTS_CODES.has(res.data?.code)) return false;
   return typeof res?.status === "number" && DEFINITIVE_REFUSALS.has(res.status);
+}
+
+/** The by-key lookup's one definitive "no": a 404 with COUNTER_SALE_NOT_FOUND. Any other failure proves nothing. */
+export function isCounterSaleNotFound(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+  )?.response;
+  return res?.status === 404 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_NOT_FOUND;
 }
 
 /**
@@ -191,8 +205,8 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
-  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED)
-    return COUNTER_OUTCOME_UNKNOWN_COPY; // the sale exists
+  if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
+    return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
