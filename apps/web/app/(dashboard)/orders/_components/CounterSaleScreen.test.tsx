@@ -446,6 +446,73 @@ describe("CounterSaleScreen: API contract wiring", () => {
     });
   });
 
+  describe("Complete & next sale never hides an unpaid sale", () => {
+    const unpaid = {
+      orderId: "o1",
+      orderNumber: "ORD-1",
+      invoiceId: "inv-9",
+      invoiceNumber: "INV-9",
+      total: 2.5,
+      paid: 0,
+      balanceDue: 2.5,
+      paymentRecorded: false,
+      paymentErrorCode: "PAYMENT_WRITE_FAILED",
+    };
+    const partlyPaid = { ...unpaid, paid: 1, balanceDue: 1.5, paymentRecorded: true };
+    const completeAndNext = async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    };
+
+    it("paymentRecorded false: the receipt with the not-recorded panel shows, the cart is not reset", async () => {
+      mutateAsync.mockResolvedValue(unpaid);
+      await completeAndNext();
+      expect(await screen.findByTestId("counter-sale-receipt")).toBeInTheDocument();
+      expect(screen.getByTestId("counter-payment-not-recorded")).toBeInTheDocument();
+      expect(screen.getByText(/Cola/)).toBeInTheDocument();
+      expect(screen.queryByText("No items yet.")).toBeNull();
+      expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
+    });
+
+    it("balanceDue > 0 (payment recorded): the receipt with the balance due shows, not reset", async () => {
+      mutateAsync.mockResolvedValue(partlyPaid);
+      await completeAndNext();
+      expect(await screen.findByTestId("counter-sale-receipt")).toBeInTheDocument();
+      expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$1.50");
+      expect(screen.queryByText("No items yet.")).toBeNull();
+    });
+
+    it("the receipt's own New sale button then starts the next sale (fresh walk-in, new key)", async () => {
+      mutateAsync.mockResolvedValue(unpaid);
+      await completeAndNext();
+      fireEvent.click(await screen.findByRole("button", { name: "New sale" }));
+      expect(await screen.findByText("No items yet.")).toBeInTheDocument();
+      expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+      expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
+    });
+
+    it("auto-print still fires exactly once for the unpaid sale", async () => {
+      window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+      mutateAsync.mockResolvedValue(unpaid);
+      renderWithProviders(<CounterSaleScreen />);
+      await waitFor(() =>
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+      );
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      await screen.findByTestId("counter-sale-receipt");
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("fully paid still resets as before", async () => {
+      await completeAndNext();
+      await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
+      expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
+    });
+  });
+
   describe("payment not recorded", () => {
     beforeEach(() => {
       mutateAsync.mockResolvedValue({

@@ -265,7 +265,10 @@ export function CounterSaleScreen() {
       const res = await complete(next);
       if (!res) return;
       if (autoPrint) window.print(); // once per completed sale, before any reset
-      if (next) resetSale();
+      // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
+      // (whose own "New sale" starts the next one).
+      const unpaid = res.paymentRecorded === false || res.balanceDue > 0;
+      if (next && !unpaid) resetSale();
       else setReceipt(res);
     } finally {
       submittingRef.current = false;
