@@ -165,6 +165,26 @@ describeDb("tenant-scoped unique lookups on a real two-tenant database", () => {
       });
     });
 
+    it("two unique lookups on the same model in the same tick (batched) answer independently", async () => {
+      await withDb(async (db) => {
+        // Prisma may batch same-tick unique reads into one query; the injected tenant filter
+        // must still yield [own row, null], in that order and in both argument orders.
+        const [own, foreign] = await Promise.all([
+          db.customer.findUnique({ where: { id: a.customerId }, select: { id: true } }),
+          db.customer.findUnique({ where: { id: b.customerId }, select: { id: true } }),
+        ]);
+        expect(own).toEqual({ id: a.customerId });
+        expect(foreign).toBeNull();
+
+        const [foreign2, own2] = await Promise.all([
+          db.customer.findUnique({ where: { id: b.customerId }, select: { id: true } }),
+          db.customer.findUnique({ where: { id: a.customerId }, select: { id: true } }),
+        ]);
+        expect(foreign2).toBeNull();
+        expect(own2).toEqual({ id: a.customerId });
+      });
+    });
+
     it("a non-tenant model is unaffected", async () => {
       await withDb(async (db) => {
         const row = await db.platformConfig.findUnique({ where: { key: platformKey } });
