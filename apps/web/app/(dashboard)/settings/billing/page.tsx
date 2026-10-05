@@ -6,6 +6,7 @@ import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "
 import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit";
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
@@ -96,6 +97,11 @@ const ADDON_REFUSED_COPY =
 // UNBILLED on a tenant that is not on a trial: no Stripe subscription yet, so nothing is charged
 // online. Neutral on purpose (never a "free" promise, never an internal label).
 const NOT_BILLED_ONLINE_COPY = "Not billed online yet; your account manager will set up billing.";
+// Interim checkout gate (SA-690): the API refuses a trial tenant's checkout while an unbilled
+// self-serve add-on is on (ADDON_BILLING_PENDING_CHECKOUT), so the TRIAL enable sheet says so up
+// front. DROP this line when SA-690 Option A removes the gate.
+const TRIAL_CARD_GATE_COPY =
+  "Turn it off before adding your card, or contact support to set it up.";
 const CHECKOUT_FAILED_COPY = "We couldn't start checkout. Nothing was changed. Please try again.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
@@ -159,7 +165,8 @@ function EnableAddonSheet({
   trial: boolean;
   busy: boolean;
   error: EnableAddonError;
-  onConfirm: () => void;
+  /** Confirmed; `monthly` is the fresh preview figure the sheet showed (for the success toast). */
+  onConfirm: (monthly?: number) => void;
   onClose: () => void;
 }) {
   const preview = useProrationPreview(addon?.sku ?? null);
@@ -192,13 +199,23 @@ function EnableAddonSheet({
       open={addon != null}
       onClose={onClose}
       title={addon ? `Enable ${addon.name}?` : "Enable add-on"}
-      className="max-w-sm"
+      className={DIALOG_FIT}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button
+            variant="secondary"
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={onClose}
+            disabled={busy}
+          >
             Cancel
           </Button>
-          <Button onClick={onConfirm} loading={busy} disabled={!ready || busy}>
+          <Button
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={() => onConfirm(p?.monthly)}
+            loading={busy}
+            disabled={!ready || busy}
+          >
             Enable add-on
           </Button>
         </>
@@ -249,11 +266,14 @@ function EnableAddonSheet({
             <p>Added to your plan. It will appear on your next invoice from us.</p>
           )}
           {fresh && !blocked && mode === "UNBILLED" && (
-            <p>
-              {trial
-                ? `Free during your trial, then ${formatMoney(p.monthly)}/mo`
-                : NOT_BILLED_ONLINE_COPY}
-            </p>
+            <>
+              <p>
+                {trial
+                  ? `Free during your trial, then ${formatMoney(p.monthly)}/mo`
+                  : NOT_BILLED_ONLINE_COPY}
+              </p>
+              {trial && <p>{TRIAL_CARD_GATE_COPY}</p>}
+            </>
           )}
           {error === "failed" && (
             <p role="alert" className="text-red-700">
@@ -273,10 +293,12 @@ export default function BillingSettingsPage() {
   const sub = useSubscription();
   const usage = useUsage();
   const plans = usePlans();
-  const cancel = useCancelSubscription();
+  // Cancel / End trial / Disable toast their own fixed failure copy for every error, so the global
+  // generic toast would only stack a second one on top.
+  const cancel = useCancelSubscription({ localErrorToast: true });
   const resume = useResumeSubscription();
   const enable = useEnableAddon();
-  const disable = useDisableAddon();
+  const disable = useDisableAddon({ localErrorToast: true });
   const checkout = useCreateCheckout();
   const [endTrialOpen, setEndTrialOpen] = React.useState(false);
   const [cancelOpen, setCancelOpen] = React.useState(false);
@@ -300,7 +322,7 @@ export default function BillingSettingsPage() {
     }
   };
 
-  const confirmEnable = () => {
+  const confirmEnable = (shownMonthly?: number) => {
     const addon = enableTarget;
     if (!addon) return;
     setEnableError(null);
@@ -317,7 +339,9 @@ export default function BillingSettingsPage() {
               ? "It will appear on your next invoice from us."
               : out?.billing === "UNBILLED"
                 ? sub.data?.status === "TRIAL"
-                  ? "Free during your trial."
+                  ? shownMonthly != null
+                    ? `Free during your trial, then ${formatMoney(shownMonthly)}/mo.`
+                    : "Free during your trial."
                   : NOT_BILLED_ONLINE_COPY
                 : out?.proratedNow != null
                   ? `Prorated ${formatMoney(out.proratedNow)} this cycle.`
@@ -481,9 +505,15 @@ export default function BillingSettingsPage() {
               <span className="text-sm font-medium text-slate-700">
                 {s.planName} · {money(s.monthlyPrice)}/mo
               </span>
-              <Button loading={checkout.isPending} onClick={startCheckout}>
-                Complete payment
-              </Button>
+              {isAdmin ? (
+                <Button loading={checkout.isPending} onClick={startCheckout}>
+                  Complete payment
+                </Button>
+              ) : (
+                <span className="text-xs text-slate-500">
+                  Only a workspace admin can complete payment.
+                </span>
+              )}
             </div>
           )}
           <div className="flex items-center gap-2">

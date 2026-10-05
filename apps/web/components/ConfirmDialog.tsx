@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@routeflow/ui/web";
+import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 
 // ─── ConfirmDialog ─────────────────────────────────────────────────────────────
 // Lightweight wrapper around Modal for simple yes/no destructive confirmations.
@@ -38,13 +39,23 @@ export function ConfirmDialog({
       open={open}
       onClose={onClose}
       title={title}
-      className="max-w-sm"
+      className={DIALOG_FIT}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={loading}>
+          <Button
+            variant="secondary"
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={onClose}
+            disabled={loading}
+          >
             {cancelLabel}
           </Button>
-          <Button variant={variant} onClick={onConfirm} loading={loading}>
+          <Button
+            variant={variant}
+            className={DIALOG_FOOTER_BUTTON}
+            onClick={onConfirm}
+            loading={loading}
+          >
             {confirmLabel}
           </Button>
         </>

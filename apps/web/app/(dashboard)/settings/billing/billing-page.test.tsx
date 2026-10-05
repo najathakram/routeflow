@@ -258,6 +258,24 @@ describe("BillingSettingsPage — Complete payment (WP9, R2.5/R2.8)", () => {
     );
   });
 
+  it("an OPERATOR sees the price line but no Complete payment button, and a read-only note", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockSubscriptionView = subscriptionView({
+      planKey: "LITE",
+      planName: "Lite",
+      status: "READ_ONLY",
+      monthlyPrice: 99,
+      paymentRequired: true,
+    });
+
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByText("Lite · $99/mo")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete payment" })).toBeNull();
+    expect(screen.getByText("Only a workspace admin can complete payment.")).toBeVisible();
+    expect(mockCheckoutMutate).not.toHaveBeenCalled();
+  });
+
   it("an ACTIVE tenant (paymentRequired false) never sees Complete payment or the price line", async () => {
     mockSubscriptionView = subscriptionView({
       planKey: "STARTER",
@@ -435,6 +453,19 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     return { user, dialog: within(await screen.findByRole("dialog")) };
   };
 
+  it("the Enable sheet fits a 390px screen: 44px footer buttons and 16px side gutters (sm and up unchanged)", async () => {
+    const { dialog } = await openEnableSheet();
+    for (const name of ["Cancel", "Enable add-on"]) {
+      const cls = dialog.getByRole("button", { name }).className;
+      expect(cls).toMatch(/(^|\s)min-h-11(\s|$)/);
+      expect(cls).toMatch(/(^|\s)sm:min-h-0(\s|$)/);
+    }
+    const sheet = screen.getByRole("dialog").className;
+    expect(sheet).toContain("max-w-[calc(100vw-2rem)]");
+    expect(sheet).toContain("sm:max-w-sm");
+    expect(sheet).not.toMatch(/(^|\s)max-w-sm(\s|$)/);
+  });
+
   it("STRIPE: labels the figure an ESTIMATE ('About $24.50 this cycle'), never a charge", async () => {
     const { dialog } = await openEnableSheet();
     expect(dialog.getByText("About $24.50 this cycle")).toBeInTheDocument();
@@ -502,9 +533,34 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, monthly: 55 });
     const { dialog } = await openEnableSheet();
     expect(dialog.getByText("Free during your trial, then $55.00/mo")).toBeInTheDocument();
-    expect(dialog.queryByText(/\$50\.00|\$24\.50|card|invoice/i)).toBeNull();
+    expect(dialog.queryByText(/\$50\.00|\$24\.50|invoice/i)).toBeNull();
     expect(dialog.queryByText(NOT_BILLED_COPY)).toBeNull();
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
+  });
+
+  // The interim checkout gate (SA-690): a trial tenant with an unbilled add-on cannot add a card
+  // until it is off, so the sheet says so up front. Drop this line when SA-690 Option A lifts the gate.
+  const CHECKOUT_GATE_LINE =
+    "Turn it off before adding your card, or contact support to set it up.";
+
+  it("TRIAL + UNBILLED: the sheet also says to turn it off before adding a card", async () => {
+    mockSubscriptionView = trialSubscription();
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(CHECKOUT_GATE_LINE)).toBeInTheDocument();
+  });
+
+  it("ACTIVE + UNBILLED never shows the card-gate line", async () => {
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null });
+    const first = await openEnableSheet();
+    expect(first.dialog.queryByText(CHECKOUT_GATE_LINE)).toBeNull();
+  });
+
+  it("TRIAL + REFUSED (a BLOCKED sheet) never shows the card-gate line", async () => {
+    mockSubscriptionView = trialSubscription();
+    withPreview(refused(API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN));
+    const { dialog } = await openEnableSheet();
+    expect(dialog.queryByText(CHECKOUT_GATE_LINE)).toBeNull();
   });
 
   it("ACTIVE + UNBILLED (no Stripe subscription): neutral 'Not billed online yet' copy and no amount", async () => {
@@ -523,7 +579,20 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     );
     const { user, dialog } = await openEnableSheet();
     await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
-    expect(await screen.findByText("Free during your trial.")).toBeInTheDocument();
+    expect(await screen.findByText("Free during your trial, then $49.00/mo.")).toBeInTheDocument();
+  });
+
+  it("UNBILLED on a TRIAL: the toast quotes the fresh preview monthly the sheet showed, not the catalog", async () => {
+    mockSubscriptionView = trialSubscription();
+    mockPlansAddons = [{ ...ADDON, monthlyPrice: 50 }];
+    withPreview({ billing: "UNBILLED", billed: false, monthly: 55 });
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onSuccess?.({ proratedNow: 0, billing: "UNBILLED" }),
+    );
+    const { user, dialog } = await openEnableSheet();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(await screen.findByText("Free during your trial, then $55.00/mo.")).toBeInTheDocument();
+    expect(screen.queryByText(/50\.00/)).toBeNull();
   });
 
   it("UNBILLED on an ACTIVE tenant: the success toast uses the neutral copy", async () => {
@@ -756,6 +825,62 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
       await screen.findByText("We couldn't cancel your subscription. Nothing was changed."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/sk_live_detail/)).toBeNull();
+  });
+
+  it("Disable that fails shows fixed failure copy, never the server's text", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", monthly: 49 }] as never,
+    });
+    mockDisableMutate.mockReset();
+    mockDisableMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onError?.(
+        Object.assign(new Error("Request failed"), {
+          response: { status: 500, data: { message: "stripe internal sk_live_detail" } },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Disable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Disable add-on" }));
+
+    expect(
+      await screen.findByText("We couldn't turn this add-on off. Nothing was changed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Route Plus not disabled")).toBeInTheDocument();
+    expect(screen.queryByText(/sk_live_detail/)).toBeNull();
+    expect(screen.queryByText("History kept read-only.")).toBeNull();
+  });
+
+  it("End trial that fails shows fixed failure copy, never the server's text", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+    mockCancelMutate.mockReset();
+    mockCancelMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onError?.(
+        Object.assign(new Error("Request failed"), {
+          response: { status: 500, data: { message: "stripe internal sk_live_detail" } },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /end trial/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "End trial" }));
+
+    expect(
+      await screen.findByText("We couldn't end your trial. Nothing was changed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Trial not ended")).toBeInTheDocument();
+    expect(screen.queryByText(/sk_live_detail/)).toBeNull();
+    expect(screen.queryByText("Trial ended")).toBeNull();
   });
 
   // ── (a) Enable / Disable / Cancel are TENANT_ADMIN actions; an OPERATOR gets a read-only note ──

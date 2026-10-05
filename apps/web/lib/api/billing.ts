@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AddonBillingMode, EnableAddonResult, SubscriptionView } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type AddonBillingMode,
+  type EnableAddonResult,
+  type SubscriptionView,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 export type { SubscriptionView };
@@ -202,13 +207,42 @@ export function useQuote() {
   });
 }
 
-function useBillingMutation<TBody, TResult = unknown>(fn: (b: TBody) => Promise<TResult>) {
+/** `localErrorToast`: the settings page renders its own error UI for this mutation, so the app-wide
+ *  generic error toast (mutation-error-toast.ts) must not stack on top of it. `true` = the page owns
+ *  every error; a predicate = it owns only the errors it matches (the rest keep the global toast). */
+type LocalErrorToast = boolean | ((error: unknown) => boolean);
+
+function useBillingMutation<TBody, TResult = unknown>(
+  fn: (b: TBody) => Promise<TResult>,
+  localErrorToast?: LocalErrorToast,
+) {
   const qc = useQueryClient();
   return useMutation<TResult, Error, TBody>({
     mutationFn: fn,
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    meta: localErrorToast ? { localErrorToast } : undefined,
   });
 }
+
+/** The `code` of an API error body (`response.data.code`), never the status. */
+export function apiErrorCodeOf(error: unknown): string | undefined {
+  const code = (error as { response?: { data?: { code?: unknown } } } | undefined)?.response?.data
+    ?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** A refused Complete payment checkout the billing page words itself (ADDON_BILLING_PENDING_CHECKOUT). */
+export const isMappedCheckoutError = (error: unknown): boolean =>
+  apiErrorCodeOf(error) === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT;
+
+/** A refused add-on enable the confirm sheet words itself (annual plan, or already in the plan). */
+export const isMappedEnableAddonError = (error: unknown): boolean => {
+  const code = apiErrorCodeOf(error);
+  return (
+    code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED ||
+    code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
+  );
+};
 
 export function useSubscribe() {
   return useBillingMutation<QuoteInput>((body) =>
@@ -228,9 +262,11 @@ export function useDowngrade() {
   );
 }
 
-export function useCancelSubscription() {
-  return useBillingMutation<void>(() =>
-    apiClient.post("/billing/subscription/cancel").then((r) => r.data),
+/** `localErrorToast`: the caller toasts its own fixed failure copy (Cancel, End trial). */
+export function useCancelSubscription(options?: { localErrorToast?: boolean }) {
+  return useBillingMutation<void>(
+    () => apiClient.post("/billing/subscription/cancel").then((r) => r.data),
+    options?.localErrorToast,
   );
 }
 
@@ -248,6 +284,8 @@ export function useResumeSubscription() {
 export function useCreateCheckout() {
   return useMutation<{ checkoutUrl: string }, Error, void>({
     mutationFn: () => apiClient.post("/billing/subscription/checkout").then((r) => r.data),
+    // The page words a refused checkout (ADDON_BILLING_PENDING_CHECKOUT) inline; no second toast.
+    meta: { localErrorToast: isMappedCheckoutError },
     onSuccess: (r) => {
       window.location.assign(r.checkoutUrl);
     },
@@ -255,15 +293,19 @@ export function useCreateCheckout() {
 }
 
 export function useEnableAddon() {
+  // The sheet words the two refusals it maps inline; every other failure keeps the global toast.
   return useBillingMutation<{ sku: string; quantity?: number }, EnableAddonResult>(
     ({ sku, quantity }) =>
       apiClient.post(`/billing/addons/${sku}/enable`, { quantity }).then((r) => r.data),
+    isMappedEnableAddonError,
   );
 }
 
-export function useDisableAddon() {
-  return useBillingMutation<{ sku: string }>(({ sku }) =>
-    apiClient.post(`/billing/addons/${sku}/disable`).then((r) => r.data),
+/** `localErrorToast`: the caller toasts its own fixed failure copy. */
+export function useDisableAddon(options?: { localErrorToast?: boolean }) {
+  return useBillingMutation<{ sku: string }>(
+    ({ sku }) => apiClient.post(`/billing/addons/${sku}/disable`).then((r) => r.data),
+    options?.localErrorToast,
   );
 }
 
