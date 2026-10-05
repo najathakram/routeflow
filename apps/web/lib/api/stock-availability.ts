@@ -43,8 +43,8 @@ export function useStockAvailability(args: {
 }
 
 /**
- * The view for one line, or `undefined` when there is nothing honest to show (an unlisted line,
- * a failed lookup, a product the server did not return) - the server stays the authority on save.
+ * The view for one line, or `undefined` when there is nothing honest to show (an unlisted line, a
+ * named-unit line, a failed lookup, a product the server did not return) - the server stays the authority on save.
  */
 export function stockViewForLine(
   q: { data?: StockAvailability; isError: boolean; isFetching: boolean },
@@ -57,6 +57,8 @@ export function stockViewForLine(
   savedPieces?: number,
 ): LineStockView | undefined {
   if (line.isUnlisted || !line.productId) return undefined;
+  // A named-unit line ("Case" of 12) counts units while the stock is in PIECES: no honest comparison here.
+  if (line.unitLabel) return undefined;
   if (q.isError && !q.data) return undefined;
   const item = q.data?.items?.find((i) => i.productId === line.productId);
   if (!item) return q.isFetching || !q.data ? { state: "loading" } : undefined;
