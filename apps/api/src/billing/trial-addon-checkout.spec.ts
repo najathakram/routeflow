@@ -12,10 +12,23 @@
  * subscription's items. Stripe objects are shaped like the pinned API 2026-08-26.dahlia ones the
  * sandbox returns (see local-assets/stripe-optA/RESULTS.md).
  */
-const mockWithAdvisoryLock = jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
-  acquired: true as const,
-  value: await fn(),
-}));
+/** A keyed mutex, like the real advisory lock: callers on one key run one at a time, in arrival order. */
+const lockTails = new Map<string, Promise<unknown>>();
+const mockWithAdvisoryLock = jest.fn(async (opts: { key: string }, fn: () => Promise<unknown>) => {
+  const prior = lockTails.get(opts.key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((res) => (release = res));
+  lockTails.set(
+    opts.key,
+    prior.then(() => mine),
+  );
+  await prior;
+  try {
+    return { acquired: true as const, value: await fn() };
+  } finally {
+    release();
+  }
+});
 class MockLockTimeoutError extends Error {}
 class MockLockUnavailableError extends Error {}
 jest.mock("../common/db-locks", () => ({
@@ -165,6 +178,10 @@ interface Opts {
   storedCustomer?: string | null;
   /** The customer on the Stripe subscription the completion retrieves (default cus_1). */
   subCustomer?: string;
+  /** The retrieved subscription's status (default active). */
+  subStatus?: string;
+  /** A DOWNGRADE snapshot taken after the session was created (the stale-checkout branch). */
+  newerDowngrade?: boolean;
 }
 
 function make(opts: Opts = {}) {
@@ -190,6 +207,7 @@ function make(opts: Opts = {}) {
     ...opts.baseSub,
   };
   const rows = opts.rows ?? [];
+  let customerSeq = 0;
 
   // ── in-memory TenantAddon table ───────────────────────────────────────────────────────────────
   const matches = (r: any, where: any): boolean => {
@@ -271,7 +289,7 @@ function make(opts: Opts = {}) {
   const stripeSubObject = () => ({
     id: "sub_1",
     object: "subscription",
-    status: "active",
+    status: opts.subStatus ?? "active",
     customer: opts.subCustomer ?? "cus_1",
     items: { object: "list", data: stripeItems.map((i) => ({ ...i })) },
   });
@@ -279,7 +297,10 @@ function make(opts: Opts = {}) {
     isConfigured: true,
     client,
     getSubscription: jest.fn(async () => stripeSubObject()),
-    createCustomer: jest.fn().mockResolvedValue({ id: "cus_new" }),
+    createCustomer: jest.fn(async () => {
+      await new Promise((r) => setImmediate(r)); // a real network hop: lets a concurrent caller interleave
+      return { id: `cus_new${++customerSeq}` };
+    }),
   } as any;
 
   // ── ledger + transaction ───────────────────────────────────────────────────────────────────────
@@ -313,7 +334,11 @@ function make(opts: Opts = {}) {
   };
   const prisma: any = {
     tenant: {
-      findUnique: jest.fn(async () => ({ ...tenant, subscription: { ...sub } })),
+      findUnique: jest.fn(async () => ({
+        ...tenant,
+        subscription: { ...sub },
+        config: { businessName: "Acme Foods" },
+      })),
     },
     tenantSubscription: {
       findUnique: jest.fn(async () => ({ ...sub })),
@@ -323,11 +348,14 @@ function make(opts: Opts = {}) {
       }),
     },
     tenantAddon,
+    user: { findFirst: jest.fn().mockResolvedValue({ email: "admin@acme.test" }) },
     auditLog: {
       findFirst: jest.fn().mockResolvedValue(opts.alreadyApplied ? { id: "audit1" } : null),
       create: jest.fn().mockResolvedValue({}),
     },
-    tenantFeatureConfigSnapshot: { findFirst: jest.fn().mockResolvedValue(null) },
+    tenantFeatureConfigSnapshot: {
+      findFirst: jest.fn().mockResolvedValue(opts.newerDowngrade ? { id: "snap-newer" } : null),
+    },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
 
@@ -367,6 +395,7 @@ function make(opts: Opts = {}) {
       unit_amount: interval === "year" ? 99000 : 9900,
     })),
   } as any;
+  const billingNotification = { notifyCheckoutPlanNotApplied: jest.fn() } as any;
   const billing = new BillingService(
     prisma,
     stripe,
@@ -374,7 +403,7 @@ function make(opts: Opts = {}) {
     { invalidate: jest.fn() } as any,
     events,
     pricing,
-    { notifyCheckoutPlanNotApplied: jest.fn() } as any,
+    billingNotification,
     planTransition,
     mutations,
   );
@@ -415,6 +444,7 @@ function make(opts: Opts = {}) {
     stripeItems,
     events,
     entitlements,
+    billingNotification,
     session,
     completed,
     ledger,
@@ -425,6 +455,7 @@ function make(opts: Opts = {}) {
 const ADDON_TYPES = [BILLING_EVENTS.ADDON_ENABLED, BILLING_EVENTS.ADDON_DISABLED];
 
 beforeEach(() => {
+  lockTails.clear();
   mockWithAdvisoryLock.mockClear();
   seq = 0;
 });
@@ -1212,6 +1243,86 @@ describe("SA-690 completion — the customer must be the tenant's, flag on or of
     expect(errorLog).toHaveBeenCalled(); // still logged every time
   });
 
+  describe("nothing is written BEFORE the customer check — not even the stale-downgrade bookkeeping", () => {
+    /**
+     * The flag-ON guard lets two shapes through (no customer on file; a stored customer equal to the
+     * session's while the subscription's differs). With a newer DOWNGRADE snapshot the stale branch
+     * used to write its audit row and email the tenant's admins before the customer was checked.
+     */
+    const staleWrites = (h: ReturnType<typeof make>) =>
+      h.prisma.auditLog.create.mock.calls.filter(
+        (c: any[]) => c[0]?.data?.action === "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE",
+      );
+
+    it.each([
+      [
+        "a forged session (the session's customer is not the stored one)",
+        { subCustomer: "cus_attacker" },
+        { customer: "cus_attacker" },
+      ],
+      ["no customer on file for the tenant", { storedCustomer: null }, {}],
+      [
+        "the stored customer equals the session's but the SUBSCRIPTION's differs",
+        { subCustomer: "cus_2" },
+        {},
+      ],
+    ] as const)(
+      "flag ON + a newer DOWNGRADE + %s: no STALE row, no email, resolves",
+      async (_n, opts, extra) => {
+        const h = make({
+          flagOn: true,
+          newerDowngrade: true,
+          rows: rowsOf(),
+          items: itemsOf(),
+          ...opts,
+        });
+
+        await expect(h.completed(h.session({ ...extra }))).resolves.toBeUndefined();
+
+        expect(staleWrites(h)).toEqual([]);
+        expect(h.billingNotification.notifyCheckoutPlanNotApplied).not.toHaveBeenCalled();
+        expectUntouched(h);
+      },
+    );
+
+    it("control: a VERIFIED stale checkout still records the STALE row and tells the admins (the branch is unchanged)", async () => {
+      const h = make({ flagOn: true, newerDowngrade: true, rows: rowsOf(), items: itemsOf() });
+      await h.completed();
+      expect(staleWrites(h)).toHaveLength(1);
+      expect(h.billingNotification.notifyCheckoutPlanNotApplied).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("a refusal says whether Stripe has already CHARGED for the subscription", () => {
+    const trailOf = (h: ReturnType<typeof make>) =>
+      h.tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data.meta)[0];
+
+    it.each([
+      ["active", true],
+      ["trialing", true],
+      ["incomplete", false],
+      ["past_due", false],
+      ["canceled", false],
+    ] as const)("subscription status %s -> chargedButNotRecorded %s", async (status, charged) => {
+      const h = make({ rows: rowsOf(), items: itemsOf(), subCustomer: "cus_2", subStatus: status });
+      await h.completed();
+      expect(trailOf(h)).toMatchObject({
+        chargedButNotRecorded: charged,
+        subscriptionStatus: status,
+      });
+      expect(errorLog.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+        charged ? "CHARGED but not recorded" : "not charged",
+      );
+    });
+
+    it("the flag-ON refusals carry it too (unknown tenant)", async () => {
+      const h = make({ flagOn: true, rows: rowsOf(), items: itemsOf() });
+      h.prisma.tenant.findUnique.mockResolvedValue(null);
+      await h.completed();
+      expect(trailOf(h)).toMatchObject({ reason: "unknown_tenant", chargedButNotRecorded: true });
+    });
+  });
+
   it("a verified checkout is untouched by the gate (stored = session = subscription customer)", async () => {
     const h = make({ rows: rowsOf(), items: itemsOf() });
     await h.completed();
@@ -1352,6 +1463,41 @@ describe("OPEN QUESTION (SA ruling): admin-granted self-serve add-ons on a trial
     });
     await h.completed();
     expect(h.rows[0]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("ensureStripeCustomer is serialized per tenant (the billing advisory lock, never an in-process one)", () => {
+  it("two concurrent checkouts for a tenant with no customer create ONE Stripe customer, and both sessions use it", async () => {
+    const h = make({ rows: [], storedCustomer: null });
+
+    await Promise.all([
+      h.billing.createCheckoutSession("t1", "month"),
+      h.billing.createCheckoutSession("t1", "month"),
+    ]);
+
+    expect(h.stripe.createCustomer).toHaveBeenCalledTimes(1);
+    const customers = h.client.checkout.sessions.create.mock.calls.map((c: any[]) => c[0].customer);
+    expect(customers).toEqual(["cus_new1", "cus_new1"]);
+    expect(h.sub.stripeCustomerId).toBe("cus_new1");
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "billing", key: "customer:t1" }),
+      expect.any(Function),
+    );
+  });
+
+  it("a tenant that already has a customer takes no lock and creates nothing", async () => {
+    const h = make({ rows: [] });
+    await h.billing.ensureStripeCustomer("t1");
+    expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+    expect(mockWithAdvisoryLock).not.toHaveBeenCalled();
+  });
+
+  it("a lock that cannot be had is a 503 and creates nothing", async () => {
+    const h = make({ rows: [], storedCustomer: null });
+    mockWithAdvisoryLock.mockRejectedValueOnce(new MockLockTimeoutError("lock_timeout"));
+    await expect(h.billing.ensureStripeCustomer("t1")).rejects.toMatchObject({ status: 503 });
+    expect(h.stripe.createCustomer).not.toHaveBeenCalled();
   });
 });
 

@@ -5,9 +5,11 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
+import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -259,36 +261,67 @@ export class BillingService {
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
-    // Already has a Stripe customer?
+    // Already has a Stripe customer? (the common case: no lock, no write)
     if (tenant.subscription?.stripeCustomerId) {
       return tenant.subscription.stripeCustomerId;
     }
 
-    // Find admin email for the Stripe customer record
-    const adminUser = await this.prisma.user.findFirst({
-      where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
-      select: { email: true },
-    });
+    // Two concurrent checkouts for a tenant with no customer yet would each create one, and the second
+    // upsert would orphan the first in Stripe. Serialize the create-and-store per tenant on the shared
+    // billing advisory lock (cross-replica; never an in-process lock) and re-read the stored customer
+    // INSIDE it, so the second caller finds the first's customer and creates nothing.
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: `customer:${tenantId}`, mode: "wait", waitMs: 10_000 },
+        async () => {
+          const stored = await this.prisma.tenantSubscription.findUnique({
+            where: { tenantId },
+            select: { stripeCustomerId: true },
+          });
+          if (stored?.stripeCustomerId) return stored.stripeCustomerId;
 
-    const customer = await this.stripe.createCustomer({
-      email: adminUser?.email ?? `tenant-${tenantId}@routeflow.app`,
-      name: tenant.config?.businessName ?? tenant.name ?? tenant.slug,
-      metadata: { tenantId, slug: tenant.slug },
-    });
+          // Find admin email for the Stripe customer record
+          const adminUser = await this.prisma.user.findFirst({
+            where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
+            select: { email: true },
+          });
 
-    // Upsert the subscription record with the Stripe customer ID
-    await this.prisma.tenantSubscription.upsert({
-      where: { tenantId },
-      create: {
-        tenantId,
-        stripeCustomerId: customer.id,
-        currentPlan: tenant.plan ?? "STARTER",
-      },
-      update: { stripeCustomerId: customer.id },
-    });
+          const customer = await this.stripe.createCustomer({
+            email: adminUser?.email ?? `tenant-${tenantId}@routeflow.app`,
+            name: tenant.config?.businessName ?? tenant.name ?? tenant.slug,
+            metadata: { tenantId, slug: tenant.slug },
+          });
 
-    this.logger.log(`Created Stripe customer ${customer.id} for tenant ${tenantId}`);
-    return customer.id;
+          // Upsert the subscription record with the Stripe customer ID
+          await this.prisma.tenantSubscription.upsert({
+            where: { tenantId },
+            create: {
+              tenantId,
+              stripeCustomerId: customer.id,
+              currentPlan: tenant.plan ?? "STARTER",
+            },
+            update: { stripeCustomerId: customer.id },
+          });
+
+          this.logger.log(`Created Stripe customer ${customer.id} for tenant ${tenantId}`);
+          return customer.id as string;
+        },
+      );
+      if (!result.acquired) {
+        throw new ServiceUnavailableException(
+          `Could not serialise the Stripe customer for tenant ${tenantId} — lock unavailable`,
+        );
+      }
+      return result.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        this.logger.error(`Stripe customer lock unavailable for tenant ${tenantId}: ${e.message}`);
+        throw new ServiceUnavailableException(
+          `Could not serialise the Stripe customer for tenant ${tenantId} — retry shortly`,
+        );
+      }
+      throw e;
+    }
   }
 
   // ─── Checkout Session ──────────────────────────────────────────────────────
@@ -762,7 +795,9 @@ export class BillingService {
       `checkout.session.completed NOT APPLIED for tenant ${tenantId} (session ${session.id ?? "?"}): ` +
         `the customer is not the tenant's — stored ${storedCustomer ?? "(none)"}, ` +
         `session ${sessionCustomer ?? "(none)"}, subscription ${subscriptionCustomer ?? "(none)"} ` +
-        `(subscription ${trail.subscriptionId ?? "?"}, add-on items ${trail.addonItemIds.join(",") || "none"})`,
+        `(subscription ${trail.subscriptionId ?? "?"} ${trail.subscriptionStatus ?? "?"} — ` +
+        `${trail.chargedButNotRecorded ? "CHARGED but not recorded: refund or reconcile" : "not charged"}, ` +
+        `add-on items ${trail.addonItemIds.join(",") || "none"})`,
     );
     await this.recordCheckoutRefusal(session, stored ? tenantId : null, {
       reason: storedCustomer ? "customer_mismatch" : "customer_not_on_file",
@@ -788,6 +823,10 @@ export class BillingService {
       addonItemIds: checkoutAddonItems(stripeSub)
         .map((i) => i.itemId)
         .sort(),
+      // Stripe has ALREADY taken (or will take, for a trial) the money for a subscription in one of
+      // these states while nothing here was recorded: an operator has to refund or reconcile it.
+      subscriptionStatus: typeof stripeSub?.status === "string" ? stripeSub.status : null,
+      chargedButNotRecorded: stripeSub?.status === "active" || stripeSub?.status === "trialing",
     };
   }
 
@@ -867,6 +906,15 @@ export class BillingService {
       existingOverride?.priceOverrideMonthly != null ||
       existingOverride?.priceOverrideAnnual != null;
 
+    // SA-690: for every session — flag on or off — the customer must be the tenant's before ANYTHING
+    // below is written or read for it: not the plan, not an add-on item, not even the stale-downgrade
+    // audit row and admin email further down (see checkoutCustomerVerified). The flag-on guard below
+    // is NOT enough on its own: it lets a tenant with no customer on file, and a stored customer that
+    // matches the session's while the subscription's differs, straight through.
+    if (!(await this.checkoutCustomerVerified(session, tenantId, existingOverride, stripeSub))) {
+      return;
+    }
+
     // Lane B A2 / B593: the plan being LEFT is the stored subscription key, else the legacy
     // `Tenant.plan` (the same fallback every plan path uses). Only a checkout that names a plan can
     // move it; a replay of the same webhook resolves to the same rank -> the hook does nothing.
@@ -924,11 +972,6 @@ export class BillingService {
         });
         if (processed) {
           this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
-          if (
-            !(await this.checkoutCustomerVerified(session, tenantId, existingOverride, stripeSub))
-          ) {
-            return;
-          }
           // SA-690: the add-on adoption is idempotent (a row that already holds its item books
           // nothing) and runs on a redelivery too — an earlier attempt may have applied the plan
           // and then failed on Stripe before adopting, and a retry that skipped it would leave the
@@ -977,12 +1020,6 @@ export class BillingService {
           }
         }
       }
-    }
-
-    // SA-690: for every session — flag on or off — the customer must be the tenant's before ANYTHING
-    // below is written or any add-on item is touched (see checkoutCustomerVerified).
-    if (!(await this.checkoutCustomerVerified(session, tenantId, existingOverride, stripeSub))) {
-      return;
     }
 
     const transition =

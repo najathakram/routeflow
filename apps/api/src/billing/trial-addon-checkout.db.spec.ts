@@ -476,6 +476,47 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     }
   });
 
+  it("two concurrent ensureStripeCustomer calls (no customer yet) create ONE Stripe customer under the billing lock", async () => {
+    seq += 1;
+    const slug = assertTestTenant(`qa-optA-${run}-${seq}`, "trial-addon-checkout.db.spec.ts");
+    const tenant = await prisma.tenant.create({
+      data: { slug, name: slug, class: TenantClass.PRODUCTION, status: TenantStatus.TRIAL },
+    });
+    tenantIds.push(tenant.id);
+    await prisma.tenantSubscription.create({ data: { tenantId: tenant.id, discount: 0 } as any });
+    let n = 0;
+    const stripe = {
+      isConfigured: true,
+      createCustomer: jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 50)); // a real network hop: the other caller interleaves here
+        return { id: `cus_qa_${run}_${++n}` };
+      }),
+    } as any;
+    const billing = new BillingService(
+      prisma as any,
+      stripe,
+      stub(),
+      { invalidate: jest.fn() } as any,
+      new BillingEventService(prisma as any),
+      stub(),
+      stub(),
+      planTransitionStub(false),
+      stub(),
+    );
+
+    const ids = await Promise.all([
+      billing.ensureStripeCustomer(tenant.id),
+      billing.ensureStripeCustomer(tenant.id),
+    ]);
+
+    expect(stripe.createCustomer).toHaveBeenCalledTimes(1);
+    expect(ids[0]).toBe(ids[1]);
+    expect(
+      (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: tenant.id } }))
+        .stripeCustomerId,
+    ).toBe(ids[0]);
+  });
+
   it("(a) a row switched off before completion: its item is deleted with prorations, only the crossing is booked", async () => {
     const r = await rig({
       rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2, active: false }],
