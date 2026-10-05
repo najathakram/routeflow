@@ -1,7 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
-import { CounterSaleScreen } from "./CounterSaleScreen";
+import { CounterSaleScreen, toSaleItem } from "./CounterSaleScreen";
 
 /**
  * Counter sale (walk-in pickup): the one screen. The API is mocked at the module boundary. Pins: Walk-in default, On account
@@ -21,6 +21,7 @@ const WATER_CASE = {
   unit: "case",
   unitsPerBox: 12,
 };
+const ONE_PACK = { id: "p-one", name: "Single", pricePerUnit: 1, unit: "each", unitsPerBox: 1 };
 let productFor: Record<string, unknown> = {};
 jest.mock("@/lib/api/products", () => ({
   useProducts: (params: { search?: string; scanCode?: string }, opts?: { enabled?: boolean }) => {
@@ -55,7 +56,7 @@ beforeEach(() => {
   window.localStorage.clear();
   window.print = printSpy;
   customersFor = [];
-  productFor = { "012345678905": COLA, WATER: WATER_CASE };
+  productFor = { "012345678905": COLA, WATER: WATER_CASE, ONE: ONE_PACK };
   gate = {
     showButton: true,
     opensAsCounter: true,
@@ -755,6 +756,63 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
       await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
+    });
+  });
+
+  describe("the wire line carries {boxes, pieces, qty} the way the server normalises it", () => {
+    const line = (over: Record<string, unknown>) => ({
+      tempId: "t",
+      productId: "p",
+      name: "N",
+      unitPrice: 1,
+      qty: 1,
+      ...over,
+    });
+    it("a unitsPerBox=1 product sends its qty (never boxes alone, which the server reads as 0)", () => {
+      expect(toSaleItem(line({ unitsPerBox: 1, boxes: 3, pieces: 0, qty: 3 }))).toEqual({
+        productId: "p",
+        qty: 3,
+      });
+    });
+    it("a boxed product with boxes only sends boxes, pieces 0 and the integer piece count", () => {
+      expect(toSaleItem(line({ unitsPerBox: 12, boxes: 2, pieces: 0, qty: 24 }))).toEqual({
+        productId: "p",
+        boxes: 2,
+        pieces: 0,
+        qty: 24,
+      });
+    });
+    it("a boxed product with pieces only sends boxes 0, the pieces and the piece count", () => {
+      expect(toSaleItem(line({ unitsPerBox: 12, boxes: 0, pieces: 5, qty: 5 }))).toEqual({
+        productId: "p",
+        boxes: 0,
+        pieces: 5,
+        qty: 5,
+      });
+    });
+    it("pieces that roll over a box are normalised (13 pieces of a 12-pack = 1 box + 1 piece)", () => {
+      expect(toSaleItem(line({ unitsPerBox: 12, boxes: 0, pieces: 13, qty: 13 }))).toEqual({
+        productId: "p",
+        boxes: 1,
+        pieces: 1,
+        qty: 13,
+      });
+    });
+    it("a plain product sends qty only", () => {
+      expect(toSaleItem(line({ qty: 4 }))).toEqual({ productId: "p", qty: 4 });
+    });
+    it("end to end: a scanned unitsPerBox=1 product and a boxed one post consistent lines", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("ONE");
+      await scan("WATER");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$13.00"));
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+      expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
+        { productId: "p-one", qty: 1 },
+        { productId: "p-water", boxes: 1, pieces: 0, qty: 12 },
+      ]);
     });
   });
 

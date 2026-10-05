@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn } from "@routeflow/ui/web";
-import { getTierPrice, roundMoney } from "@routeflow/pricing";
+import { getTierPrice, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -61,11 +61,22 @@ interface PickedCustomer {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-/** The wire item for one line: a boxed product sends boxes/pieces, a plain one a qty; the server prices it. */
-export const toSaleItem = (l: SaleLine): CounterSaleItem =>
-  l.unitsPerBox
-    ? { productId: l.productId, boxes: l.boxes ?? 0, pieces: l.pieces ?? 0 }
-    : { productId: l.productId, qty: l.qty };
+/**
+ * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product
+ * (unitsPerBox > 1) sends `{boxes, pieces, qty}` with `qty` the integer piece count; anything else (no pack, or a pack of 1,
+ * which has no box/piece split) sends `qty` alone. Boxes without a qty is what the server reads as 0.
+ */
+export const toSaleItem = (l: SaleLine): CounterSaleItem => {
+  const n = normalizeBoxesPieces({
+    boxes: l.boxes,
+    pieces: l.pieces,
+    qty: l.qty,
+    unitsPerBox: l.unitsPerBox,
+  });
+  return n.boxes === null || n.pieces === null
+    ? { productId: l.productId, qty: n.qty }
+    : { productId: l.productId, boxes: n.boxes, pieces: n.pieces, qty: n.qty };
+};
 
 export function CounterSaleScreen() {
   const router = useRouter();
