@@ -4,6 +4,8 @@
  * Harness copied from unit-picker-mount.test.tsx.
  */
 import * as React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { EditableLineItems, type EditItemState } from "./page";
@@ -123,11 +125,7 @@ describe("order edit page - price history button", () => {
   });
 
   it("hunt2 F6 wiring: the order page hands EditableLineItems the order's own id", () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const src: string = require("fs").readFileSync(
-      require("path").join(__dirname, "page.tsx"),
-      "utf8",
-    );
+    const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
     const call = src.slice(
       src.indexOf("<EditableLineItems"),
       src.indexOf("/>", src.indexOf("<EditableLineItems")),
