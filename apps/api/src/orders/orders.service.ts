@@ -75,6 +75,12 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
+import {
+  findActiveOrderImpl,
+  sameFulfilPathAsWinner,
+  unshipped,
+  type MergeSearchOpts,
+} from "./merge-candidates";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
@@ -622,31 +628,11 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
-  /**
-   * Find the most recent active (DRAFT/PENDING) order for a customer.
-   * Used by the buyer portal to merge new items into an existing order.
-   */
-  async findActiveOrder(customerId: string, opts: { forMerge?: boolean } = {}) {
-    // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
-    // do NOT propose them as a merge target. The next operator-initiated create for
-    // the same customer should still see no "active" order to merge into.
-    return this.prisma.forTenant().order.findFirst({
-      where: {
-        customerId,
-        status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
-        skipAutoMerge: false,
-        // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
-        ...(opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
-      },
-      include: {
-        lineItems: {
-          where: { status: { not: ItemStatus.CANCELLED } },
-          include: { product: { select: { id: true, name: true, unit: true } } },
-        },
-        customer: { select: { id: true, businessName: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  /** The most recent active (DRAFT/PENDING) order for a customer: see `merge-candidates.ts`. */
+  async findActiveOrder(customerId: string, opts: MergeSearchOpts = {}) {
+    // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
+    const guard = opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {};
+    return findActiveOrderImpl(this.prisma, customerId, opts, guard);
   }
 
   /**
@@ -713,7 +699,7 @@ export class OrdersService implements OnApplicationBootstrap {
           waitMs: 20_000,
         },
         async () => {
-          const pendingOrders = await this.prisma.forTenant().order.findMany({
+          const pending = await this.prisma.forTenant().order.findMany({
             where: {
               customerId,
               status: OrderStatus.PENDING,
@@ -736,6 +722,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
+          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending)); // a SHIP order never folds into a ROUTE one
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -981,7 +968,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
         async () => {
-          const orders = await this.prisma.forTenant().order.findMany({
+          const found = await this.prisma.forTenant().order.findMany({
             where: { customerId, status: OrderStatus.PENDING },
             include: {
               lineItems: {
@@ -993,6 +980,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
+          const orders = sameFulfilPathAsWinner(unshipped(found)); // never fold a SHIP order into a ROUTE one
           if (orders.length <= 1) return orders[0] ?? null;
           unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),

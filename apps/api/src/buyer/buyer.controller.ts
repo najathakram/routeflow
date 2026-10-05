@@ -577,8 +577,10 @@ export class BuyerController {
           // and only the sweep/force paths (no client attached) take the service's 20s wait.
           { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
           async () => {
+            // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
+              mergeAs: {},
             });
             if (!activeOrder) return null;
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over

@@ -112,8 +112,11 @@ export class OrdersController {
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
     if (isStaff && dto.customerId) {
+      // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
+      const mergeAs = { explicit: dto.fulfillPath };
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
         forMerge: true,
+        mergeAs,
       });
       if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
@@ -173,6 +176,7 @@ export class OrdersController {
               async () => {
                 const current = await this.ordersService.findActiveOrder(dto.customerId!, {
                   forMerge: true,
+                  mergeAs,
                 });
                 // The in-lock re-read is AUTHORITATIVE. A null here means the pre-lock snapshot
                 // is stale — the request that held this lock before us merged that order away or
