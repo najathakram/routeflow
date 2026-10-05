@@ -8,6 +8,7 @@ import type {
   InlineReturnLinesRequest,
   LineComponentView,
   PriceType,
+  OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
@@ -99,6 +100,8 @@ export interface Order {
   shippedAt?: string | null;
   /** P5-08: append-only edit history (one row per pre-dispatch edit). */
   revisions?: OrderRevision[];
+  /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;
