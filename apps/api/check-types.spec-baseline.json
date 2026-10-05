@@ -38,7 +38,6 @@
   "src/orders/orders.update-items-restrictions.spec.ts": 1,
   "src/orders/unit-line-build.spec.ts": 1,
   "src/orders/unit-line-edit.spec.ts": 1,
-  "src/platform-admin/platform-admin.controller.override-requires.spec.ts": 1,
   "src/platform-admin/platform-admin.service.spec.ts": 1,
   "src/prisma/prisma-isolation.spec.ts": 3,
   "src/products/line-units.spec.ts": 1,

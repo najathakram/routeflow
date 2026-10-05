@@ -261,7 +261,9 @@ describe("E-c / L6 / E-b decisions", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { isFirstShipment } = require("./shipment-notifications");
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { assertCarrierOrderNotInTransit } = require("./order-status-invoicing");
+  const { carrierCancelBlockedReason, throwIfWithCarrier } = require("./order-status-invoicing");
+  const assertCarrierOrderNotInTransit = async (fc: unknown, t: string, o: unknown) =>
+    throwIfWithCarrier(await carrierCancelBlockedReason(fc, t, o));
 
   it("E-c: the first ship is a first shipment; an unmark + re-ship (shippedAt kept) is not", () => {
     expect(isFirstShipment({ shippedAt: null })).toBe(true);
