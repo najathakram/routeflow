@@ -1,7 +1,12 @@
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { Prisma } from "@prisma/client";
-import { PrismaService, getTenantModelNames, isTenantModel } from "./prisma.service";
+import {
+  PrismaService,
+  assertTenantModelSet,
+  getTenantModelNames,
+  isTenantModel,
+} from "./prisma.service";
 
 // Unique lookups (`findUnique` / `findUniqueOrThrow`) on a tenant-scoped model carry the
 // tenant filter inside the query itself, in BOTH tenancy layers (the `forTenant()` `$extends`
@@ -147,6 +152,27 @@ describe("tenant model set (derived from the generated client)", () => {
     expect(isTenantModel("NoSuchModel")).toBe(false);
     expect(isTenantModel("")).toBe(false);
   });
+});
+
+describe("boot-time tenant model set assertion (fail closed)", () => {
+  const full = () => new Set(getTenantModelNames());
+
+  it("accepts the real derived set", () => {
+    expect(() => assertTenantModelSet(full())).not.toThrow();
+  });
+
+  it("throws on an empty set", () => {
+    expect(() => assertTenantModelSet(new Set())).toThrow(/tenant guard/);
+  });
+
+  it.each(["Customer", "customer", "Order", "Invoice", "invoice"])(
+    "throws when %s is missing",
+    (name) => {
+      const names = full();
+      names.delete(name);
+      expect(() => assertTenantModelSet(names)).toThrow(/tenant guard/);
+    },
+  );
 });
 
 describe.each([

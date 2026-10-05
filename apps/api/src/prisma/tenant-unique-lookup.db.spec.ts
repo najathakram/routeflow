@@ -79,7 +79,7 @@ describeDb("tenant-scoped unique lookups on a real two-tenant database", () => {
   afterAll(async () => {
     for (const f of [a, b]) {
       if (!f) continue;
-      await raw.tenantAddon.deleteMany({ where: { id: f.addonId } });
+      await raw.tenantAddon.deleteMany({ where: { tenantId: f.tenantId } });
       await raw.customer.deleteMany({ where: { id: f.customerId } });
       await raw.user.deleteMany({ where: { id: f.userId } });
       await raw.tenant.deleteMany({ where: { id: f.tenantId } });
@@ -182,6 +182,31 @@ describeDb("tenant-scoped unique lookups on a real two-tenant database", () => {
         ]);
         expect(foreign2).toBeNull();
         expect(own2).toEqual({ id: a.customerId });
+      });
+    });
+
+    it("upsert keyed by a foreign id never touches the foreign row", async () => {
+      await withDb(async (db) => {
+        // The own-tenant upsert still works (update branch).
+        await db.tenantAddon.upsert({
+          where: { id: a.addonId },
+          create: { addonKey: "qa_unique_lookup_other" },
+          update: { quantity: 7 },
+        });
+        expect((await raw.tenantAddon.findUnique({ where: { id: a.addonId } }))?.quantity).toBe(7);
+
+        // A foreign id must not be updated; whether the guarded upsert resolves or rejects,
+        // the foreign row is never written to.
+        await db.tenantAddon
+          .upsert({
+            where: { id: b.addonId },
+            create: { addonKey: "qa_unique_lookup_third" },
+            update: { quantity: 99 },
+          })
+          .catch(() => undefined);
+        const foreign = await raw.tenantAddon.findUnique({ where: { id: b.addonId } });
+        expect(foreign?.quantity).toBe(1);
+        expect(foreign?.tenantId).toBe(b.tenantId);
       });
     });
 

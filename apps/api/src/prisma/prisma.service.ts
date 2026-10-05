@@ -49,6 +49,24 @@ export function isTenantModel(model: string): boolean {
 }
 
 /**
+ * Fail closed at boot: if the derived tenant-model set is empty or misses a model that is known
+ * to be tenant-scoped, the guard would silently leave unique lookups unscoped, so refuse to load.
+ */
+const EXPECTED_TENANT_MODELS = ["Customer", "Order", "Invoice"];
+export function assertTenantModelSet(names: ReadonlySet<string>): void {
+  const missing = EXPECTED_TENANT_MODELS.flatMap((m) => [
+    m,
+    m.charAt(0).toLowerCase() + m.slice(1),
+  ]).filter((m) => !names.has(m));
+  if (names.size === 0 || missing.length > 0) {
+    throw new Error(
+      `tenant guard: derived tenant-model set is incomplete (size ${names.size}, missing: ${missing.join(", ") || "-"})`,
+    );
+  }
+}
+assertTenantModelSet(getTenantModelNames());
+
+/**
  * ONE implementation of the `findUnique` / `findUniqueOrThrow` tenant guard, shared by the
  * `forTenant()` extension and the `tenantTransaction` proxy so the two layers cannot drift.
  *
@@ -230,17 +248,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                     : { ...args.data, tenantId };
                   args = { ...args, data };
                 } else if (method === "upsert") {
-                  // `where` is deliberately NOT tenant-scoped here: Prisma compiles an
-                  // extra non-unique filter in an upsert `where` into the
-                  // `ON CONFLICT DO UPDATE … WHERE` predicate, so a row whose `tenantId`
-                  // column is NULL (legacy `PaymentCounter` rows, created before the
-                  // create-side injection landed) makes the upsert resolve `null` and the
-                  // caller 500s. Scoping `where` needs (1) a null guard throwing
-                  // `tenantNotFound` and (2) a backfill migration for legacy rows —
-                  // tracked follow-on; today every tx-proxy upsert caller keys on the
-                  // tenant id or a compound unique, so the gap is unexploited.
+                  // Same scoping as the `forTenant()` extension: the tenant filter rides in
+                  // `where` (tenant models only), so an upsert keyed by a foreign row's id
+                  // can neither update nor read it.
+                  const where = isTenantModel(modelName) ? { ...args.where, tenantId } : args.where;
                   args = {
                     ...args,
+                    where,
                     create: { ...args.create, tenantId },
                   };
                 }
