@@ -594,7 +594,7 @@ export class BuyerController {
             // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
-              mergeAs: {},
+              mergeAs: { audience: "buyer" },
             });
             if (!activeOrder) return null;
             // B1094: the fold writes ABSOLUTE totals, so a retry that serialized behind the submit that
@@ -803,7 +803,8 @@ export class BuyerController {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         ctx.customerId,
-        { buyerInitiated: true },
+        // focusOrderId: only the new order's path folds, so `merged` is never another path's pair
+        { buyerInitiated: true, focusOrderId: created.id },
         // POST-COMMIT: never wait — see the sibling sweep above.
         { lockMode: "try" },
       );

@@ -10,8 +10,8 @@ jest.mock("../common/db-locks", () => ({
 
 import { FulfillPath } from "@prisma/client";
 import {
+  assertNoBackdatedMerge,
   effectiveFulfilPath,
-  incomingFulfilPath,
   mergeCandidateWhere,
   sameFulfilPathAsWinner,
 } from "./merge-candidates";
@@ -52,32 +52,38 @@ describe("merge-candidates (pure)", () => {
     expect(effectiveFulfilPath({ fulfillPath: null })).toBe("ROUTE");
   });
 
-  it("sameFulfilPathAsWinner keeps only the winner's path (the first, most recent)", () => {
+  it("sameFulfilPathAsWinner: the first path with MORE THAN ONE order folds; the others are left alone", () => {
     const ship = order("s", FulfillPath.SHIP);
     const route = order("r", FulfillPath.ROUTE);
+    const route2 = order("r2", FulfillPath.ROUTE);
     const ship2 = order("s2", FulfillPath.SHIP);
     expect(sameFulfilPathAsWinner([ship, route, ship2]).map((o) => o.id)).toEqual(["s", "s2"]);
-    expect(sameFulfilPathAsWinner([route, ship, ship2]).map((o) => o.id)).toEqual(["r"]);
+    expect(sameFulfilPathAsWinner([route, ship, ship2]).map((o) => o.id)).toEqual(["s", "s2"]);
+    // [SHIP newest, ROUTE, ROUTE]: the ROUTE pair still merges, the SHIP order is untouched
+    expect(sameFulfilPathAsWinner([ship, route, route2]).map((o) => o.id)).toEqual(["r", "r2"]);
+    // no path holds two: just the winner (a no-op fold)
+    expect(sameFulfilPathAsWinner([ship, route]).map((o) => o.id)).toEqual(["s"]);
     expect(sameFulfilPathAsWinner([route]).map((o) => o.id)).toEqual(["r"]);
     expect(sameFulfilPathAsWinner([])).toEqual([]);
+  });
+
+  it("M2: with a focus order, exactly the focus order's path group, never another path's pair", () => {
+    const ship = order("s", FulfillPath.SHIP);
+    const route = order("r", FulfillPath.ROUTE);
+    const route2 = order("r2", FulfillPath.ROUTE);
+    // the new SHIP order is alone on its path: it comes back alone, the ROUTE pair is left for the sweep
+    expect(sameFulfilPathAsWinner([ship, route, route2], "s").map((o) => o.id)).toEqual(["s"]);
+    expect(sameFulfilPathAsWinner([ship, route, route2], "r2").map((o) => o.id)).toEqual([
+      "r",
+      "r2",
+    ]);
+    // a focus that is not a candidate (skipAutoMerge, shipped): fold nothing for this caller
+    expect(sameFulfilPathAsWinner([route, route2], "gone")).toEqual([]);
   });
 
   it("mergeCandidateWhere adds the path only when one is given", () => {
     expect(mergeCandidateWhere(FulfillPath.SHIP)).toEqual({ fulfillPath: "SHIP" });
     expect(mergeCandidateWhere(undefined)).toEqual({});
-  });
-
-  it("incomingFulfilPath: an explicit path wins, else the customer's stored path, else ROUTE", async () => {
-    const prisma = (stored: unknown) =>
-      ({
-        forTenant: () => ({ customer: { findFirst: jest.fn().mockResolvedValue(stored) } }),
-      }) as any;
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "ROUTE" }), "c", FulfillPath.SHIP)).toBe(
-      "SHIP",
-    );
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "SHIP" }), "c")).toBe("SHIP");
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "ROUTE" }), "c")).toBe("ROUTE");
-    expect(await incomingFulfilPath(prisma(null), "c")).toBe("ROUTE");
   });
 });
 
@@ -108,6 +114,47 @@ describe("OrdersService merge entry points", () => {
     expect(h.prisma.orderItem.create).toHaveBeenCalled();
   });
 
+  it("the sweep: [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP order", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("ship-1", FulfillPath.SHIP, true),
+      order("route-2", FulfillPath.ROUTE),
+      order("route-1", FulfillPath.ROUTE, true),
+    ]);
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    const creates = h.prisma.orderItem.create.mock.calls.map((c: any) => c[0].data.orderId);
+    expect(creates).toEqual(["route-2"]); // folded into the ROUTE winner; ship-1's line went nowhere
+  });
+
+  it("M2: a post-create sweep with the new order alone on its path folds nothing and returns THAT order", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("ship-new", FulfillPath.SHIP, true),
+      order("route-2", FulfillPath.ROUTE),
+      order("route-1", FulfillPath.ROUTE, true),
+    ]);
+    const out = await h.service.mergeAllPendingForCustomer("cust-1", { focusOrderId: "ship-new" });
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled(); // the ROUTE pair waits for the hourly sweep
+    expect(out).toMatchObject({ id: "ship-new" }); // never route-2 posing as "the created order"
+  });
+
+  it("M2: a post-create sweep whose new order is not a candidate returns null (caller keeps its order)", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("route-2", FulfillPath.ROUTE),
+      order("route-1", FulfillPath.ROUTE, true),
+    ]);
+    const out = await h.service.mergeAllPendingForCustomer("cust-1", { focusOrderId: "ship-new" });
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(out).toBeNull();
+  });
+
+  it("two SHIP orders (a ship-only business's standing order + an earlier one) DO merge", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("ship-2", FulfillPath.SHIP),
+      order("ship-1", FulfillPath.SHIP, true),
+    ]);
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    expect(h.prisma.orderItem.create).toHaveBeenCalled();
+  });
+
   it("forceConsolidateCustomer: a SHIP order never folds into a ROUTE order either", async () => {
     h.prisma.order.findMany.mockResolvedValue([
       order("route-1", FulfillPath.ROUTE),
@@ -129,6 +176,36 @@ describe("OrdersService merge entry points", () => {
     // no mergeAs (a display read): no path filter at all
     await h.service.findActiveOrder("cust-1");
     expect(h.prisma.order.findFirst.mock.calls[2][0].where).not.toHaveProperty("fulfillPath");
+  });
+
+  it("ship-mode tenant, stored ROUTE customer, explicit ROUTE: the candidate search runs on SHIP (the ONE resolver)", async () => {
+    (h.service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+    h.prisma.order.findFirst.mockResolvedValue(null);
+    h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
+    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { explicit: "ROUTE" } });
+    expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "SHIP" });
+    // a buyer cart in the same tenant: the portal default
+    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { audience: "buyer" } });
+    expect(h.prisma.order.findFirst.mock.calls[1][0].where).toMatchObject({ fulfillPath: "SHIP" });
+  });
+
+  it("an unset tenant is byte-identical: the search follows the customer's stored path", async () => {
+    (h.service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("unset") };
+    h.prisma.order.findFirst.mockResolvedValue(null);
+    h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
+    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: {} });
+    expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "ROUTE" });
+  });
+
+  it("the backdated-order refusal looks for the same merge target (same path only)", async () => {
+    h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
+    h.prisma.order.findFirst.mockResolvedValue({ id: "open-1" });
+    await expect(
+      assertNoBackdatedMerge(h.service as any, "cust-1", FulfillPath.SHIP),
+    ).rejects.toThrow(/open order/);
+    expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "SHIP" });
+    h.prisma.order.findFirst.mockResolvedValue(null);
+    await expect(assertNoBackdatedMerge(h.service as any, "cust-1")).resolves.toBeUndefined();
   });
 
   it("X1: an already-shipped order is NEVER merged away (a SHIP-into-SHIP fold would delete it and its shippedAt)", async () => {

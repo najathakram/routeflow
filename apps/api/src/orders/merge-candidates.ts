@@ -11,8 +11,10 @@
  *
  * No new lock: the callers' `withAdvisoryLock("order-merge")` stays the only one.
  */
+import { BadRequestException } from "@nestjs/common";
 import { FulfillPath, ItemStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
+import { resolveFulfilPath, type FulfilPathDeps } from "./fulfil-path-resolver";
 
 /** An order's path; a row with none (never the case in production: the column is NOT NULL) is ROUTE. */
 export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): FulfillPath {
@@ -28,13 +30,32 @@ export function unshipped<T extends { shippedAt?: Date | null }>(orders: T[]): T
   return orders.filter((o) => !o.shippedAt);
 }
 
-/** The orders that may fold together: those on the SAME path as the winner (the first, most recent). */
-export function sameFulfilPathAsWinner<T extends { fulfillPath?: FulfillPath | null }>(
+/**
+ * The orders that fold together in one pass.
+ *  - With `focusId` (a post-create sweep): exactly the focus order's path group, so the sweep's winner is
+ *    always the order the caller just created (or what it folded into), never another path's pair; a
+ *    focus that is not a candidate folds nothing.
+ *  - Without (the hourly sweep, force-consolidate): the first path (most recent first) that has MORE THAN
+ *    ONE order, so [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP
+ *    order; with no path holding two, just the winner (the most recent), a no-op fold.
+ * Orders on other paths are left exactly as they are (the next sweep takes the next pair).
+ */
+export function sameFulfilPathAsWinner<T extends { id?: string; fulfillPath?: FulfillPath | null }>(
   orders: T[],
+  focusId?: string,
 ): T[] {
+  const byPath = new Map<FulfillPath, T[]>();
+  for (const o of orders) {
+    const path = effectiveFulfilPath(o);
+    byPath.set(path, [...(byPath.get(path) ?? []), o]);
+  }
+  if (focusId) {
+    // not a candidate itself (skipAutoMerge, already shipped, ...): fold nothing for this caller
+    const focus = orders.find((o) => o.id === focusId);
+    return focus ? byPath.get(effectiveFulfilPath(focus))! : [];
+  }
   if (orders.length <= 1) return orders;
-  const winnerPath = effectiveFulfilPath(orders[0]);
-  return orders.filter((o) => effectiveFulfilPath(o) === winnerPath);
+  return [...byPath.values()].find((g) => g.length > 1) ?? [orders[0]];
 }
 
 /** The `where` fragment that limits a merge-target search to the incoming order's path. */
@@ -43,27 +64,32 @@ export function mergeCandidateWhere(fulfillPath?: FulfillPath): { fulfillPath?: 
 }
 
 /**
- * The path an incoming order will carry: the one it asks for, else the customer's stored default
- * (ROUTE when there is none). This is the pre-merge candidate search's input; the order-create resolver
- * must agree with it (a single place to change when the resolution rules change).
+ * The path an incoming order will carry, resolved EXACTLY as order create resolves it (the caller passes
+ * the shared resolver, `fulfil-path-resolver.ts`): the pre-merge candidate search and the create can
+ * never disagree about which path an order is on.
  */
-export async function incomingFulfilPath(
+export type ResolveIncomingPath = (
+  explicit: FulfillPath | null | undefined,
+  stored: FulfillPath | null | undefined,
+) => Promise<FulfillPath>;
+
+async function incomingFulfilPath(
   prisma: Pick<PrismaService, "forTenant">,
   customerId: string,
-  explicit?: FulfillPath | null,
+  explicit: FulfillPath | null | undefined,
+  resolve: ResolveIncomingPath,
 ): Promise<FulfillPath> {
-  if (explicit) return explicit;
   const customer = await prisma
     .forTenant()
     .customer.findFirst({ where: { id: customerId }, select: { fulfillPath: true } });
-  return effectiveFulfilPath(customer ?? {});
+  return resolve(explicit, customer?.fulfillPath);
 }
 
 export interface MergeSearchOpts {
   /** A merge-target search: exclude orders a merge must not touch (unit-aware lines). */
   forMerge?: boolean;
   /** The incoming order's path: `explicit` when it asked for one, else the customer's stored path. */
-  mergeAs?: { explicit?: FulfillPath | null };
+  mergeAs?: { explicit?: FulfillPath | null; audience?: "staff" | "buyer" };
 }
 
 /**
@@ -77,11 +103,19 @@ export async function findActiveOrderImpl(
   opts: MergeSearchOpts = {},
   /** units_v1: the caller's guard fragment (a unit-aware order is never a merge target). */
   mergeGuard: object = {},
+  /** The shared resolver's inputs (`fulfil-path-resolver.ts`): the incoming path resolves EXACTLY as create's. */
+  fulfilDeps: FulfilPathDeps = { tenantId: null },
 ) {
+  const resolve: ResolveIncomingPath = (explicit, stored) =>
+    resolveFulfilPath(fulfilDeps, {
+      explicit,
+      stored,
+      audience: opts.mergeAs?.audience ?? "staff",
+    });
   // `mergeAs`: the caller is about to fold an incoming order in; resolve ITS path (explicit, else the
   // customer's stored one) and only consider orders on the same path.
   const fulfillPath = opts.mergeAs
-    ? await incomingFulfilPath(prisma, customerId, opts.mergeAs.explicit)
+    ? await incomingFulfilPath(prisma, customerId, opts.mergeAs.explicit, resolve)
     : undefined;
   // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
   // do NOT propose them as a merge target. The next operator-initiated create for
@@ -105,4 +139,21 @@ export async function findActiveOrderImpl(
     },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/**
+ * A backdated order is refused while an open order it would MERGE into exists (an auto-merge folds into the
+ * existing order, whose own business date stays authoritative). "Would merge into" = same fulfil path, the
+ * same `mergeAs` rule the create's own merge search uses.
+ */
+export async function assertNoBackdatedMerge(
+  orders: { findActiveOrder(customerId: string, opts: MergeSearchOpts): Promise<unknown> },
+  customerId: string,
+  explicit?: FulfillPath | null,
+): Promise<void> {
+  if (await orders.findActiveOrder(customerId, { forMerge: true, mergeAs: { explicit } })) {
+    throw new BadRequestException(
+      "This customer has an open order. Enter a backdated order as a separate order.",
+    );
+  }
 }

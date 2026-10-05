@@ -157,12 +157,19 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("pickup and pickup_ship are refused as not available yet (SA-671 M1) — nothing is written", async () => {
-    hasAddon.mockResolvedValue(false);
-    for (const mode of ["pickup", "pickup_ship"]) {
-      await expect(service.set("t1", "fulfilment_model", mode, "r", "admin-1")).rejects.toThrow(
-        `"${mode}" is not available for "fulfilment_model"`,
-      );
+  it("pickup and pickup_ship are refused as not available yet (SA-671 M1, SA-666) whatever the fleet — nothing is written", async () => {
+    for (const fleet of [false, true]) {
+      hasAddon.mockResolvedValue(fleet);
+      for (const mode of ["pickup", "pickup_ship"]) {
+        const err = await service.set("t1", "fulfilment_model", mode, "r", "admin-1").then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as Error).message).toContain(
+          `"${mode}" is not available for "fulfilment_model"`,
+        );
+      }
     }
     expect(upsert).not.toHaveBeenCalled();
   });

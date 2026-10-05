@@ -75,7 +75,9 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
+import { resolveFulfilPath } from "./fulfil-path-resolver";
 import {
+  assertNoBackdatedMerge,
   findActiveOrderImpl,
   sameFulfilPathAsWinner,
   unshipped,
@@ -629,11 +631,19 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
+  private fulfilDeps() {
+    return {
+      featureConfig: this.featureConfig,
+      tenantId: this.prisma.getTenantId(),
+      logger: this.logger,
+    };
+  }
+
   /** The most recent active (DRAFT/PENDING) order for a customer: see `merge-candidates.ts`. */
   async findActiveOrder(customerId: string, opts: MergeSearchOpts = {}) {
     // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
     const guard = opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {};
-    return findActiveOrderImpl(this.prisma, customerId, opts, guard);
+    return findActiveOrderImpl(this.prisma, customerId, opts, guard, this.fulfilDeps());
   }
 
   /**
@@ -681,7 +691,7 @@ export class OrdersService implements OnApplicationBootstrap {
    */
   async mergeAllPendingForCustomer(
     customerId: string,
-    options: { buyerInitiated?: boolean } = {},
+    options: { buyerInitiated?: boolean; focusOrderId?: string } = {},
     opts?: {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
@@ -723,7 +733,8 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
-          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending)); // a SHIP order never folds into a ROUTE one
+          // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
+          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending), options.focusOrderId);
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -1556,12 +1567,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      const mergeTarget = await this.findActiveOrder(customerId, { forMerge: true });
-      if (mergeTarget) {
-        throw new BadRequestException(
-          "This customer has an open order. Enter a backdated order as a separate order.",
-        );
-      }
+      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1592,7 +1598,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
     // fall back to the customer's own default, else ROUTE (byte-identical to
     // today for every existing order/customer, which default to ROUTE too).
-    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+    const fulfillPath = await resolveFulfilPath(this.fulfilDeps(), {
+      explicit: dto.fulfillPath,
+      stored: customerRecord?.fulfillPath,
+      audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+    });
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.
