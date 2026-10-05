@@ -2,9 +2,15 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { PLAN_KEYS } from "@routeflow/types";
+import { PLAN_KEYS, type BusinessProfileKey, type BusinessProfileSummary } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
+import {
+  applyBusinessProfile,
+  fetchBusinessProfiles,
+} from "@/lib/platform-admin/business-profiles";
+import { BusinessProfileChoices } from "../[id]/_features/BusinessProfileChoices";
+import { profileErrorCopy } from "../[id]/_features/profile-errors";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
@@ -39,6 +45,14 @@ export default function AdminCreateTenantPage() {
   const [plans, setPlans] = React.useState<PlanCatalogEntry[]>([]);
   const [plansLoading, setPlansLoading] = React.useState(true);
   const [plansUnavailable, setPlansUnavailable] = React.useState(false);
+  // Business profile: "" = none (the account starts exactly as before). The create API takes no profile, so a chosen
+  // one is applied to the new tenant right after the create succeeds.
+  const [profiles, setProfiles] = React.useState<BusinessProfileSummary[] | null>(null);
+  const [profilesFailed, setProfilesFailed] = React.useState(false);
+  const [profile, setProfile] = React.useState<BusinessProfileKey | "">("");
+  const [profileResult, setProfileResult] = React.useState<
+    { status: "applied"; label: string } | { status: "failed"; message: string } | null
+  >(null);
 
   // The plan list is catalog-driven (GROWTH/SCALE ship without a web release), but the server
   // only accepts a PLAN_KEYS member (create-tenant.dto.ts's @IsIn(PLAN_KEYS)) — a legacy or
@@ -75,6 +89,20 @@ export default function AdminCreateTenantPage() {
     };
   }, []);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchBusinessProfiles()
+      .then((list) => {
+        if (!cancelled) setProfiles(list);
+      })
+      .catch(() => {
+        if (!cancelled) setProfilesFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const onChange =
     (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
@@ -85,6 +113,7 @@ export default function AdminCreateTenantPage() {
     setIsLoading(true);
     setError(null);
     setSuccess(null);
+    setProfileResult(null);
     try {
       // Omit a blank password: the API then sets none and the welcome email carries a
       // single-use set-password link (#2439) — no password is ever generated or shown.
@@ -92,6 +121,28 @@ export default function AdminCreateTenantPage() {
       if (!payload.adminPassword) delete payload.adminPassword;
       const res = await superAdminClient.post("/platform-admin/tenants", payload);
       setSuccess(res.data);
+      // Its own try/catch: once the account exists, a failed profile must not read as "Failed to create tenant".
+      if (profile && res.data?.id) {
+        try {
+          await applyBusinessProfile(res.data.id, profile);
+          setProfileResult({
+            status: "applied",
+            label: profiles?.find((p) => p.key === profile)?.label ?? "",
+          });
+        } catch (applyErr: unknown) {
+          const reason = profileErrorCopy(applyErr, "");
+          setProfileResult({
+            status: "failed",
+            message: [
+              "The account was created, but its business profile was not applied.",
+              reason,
+              "Apply it from the tenant's Setup tab.",
+            ]
+              .filter(Boolean)
+              .join(" "),
+          });
+        }
+      }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message;
@@ -167,6 +218,20 @@ export default function AdminCreateTenantPage() {
                 >
                   {success.payUrl}
                 </a>
+              </div>
+            )}
+            {profileResult?.status === "applied" && (
+              <p className="mt-3 text-sm text-green-300" data-testid="profile-applied">
+                Business profile applied{profileResult.label ? `: ${profileResult.label}` : ""}.
+              </p>
+            )}
+            {profileResult?.status === "failed" && (
+              <div
+                className="mt-3 rounded-lg bg-amber-900/40 p-3 ring-1 ring-amber-700"
+                data-testid="profile-apply-failed"
+                role="alert"
+              >
+                <p className="text-sm text-amber-300">{profileResult.message}</p>
               </div>
             )}
             <div className="mt-3 flex gap-3">
@@ -343,6 +408,36 @@ export default function AdminCreateTenantPage() {
               </p>
             )}
           </div>
+
+          {/* Business profile (optional) */}
+          {profilesFailed ? (
+            <p className="text-xs text-amber-400">
+              Business profiles could not be loaded. You can set one later from the tenant&apos;s
+              Setup tab.
+            </p>
+          ) : (
+            profiles && (
+              <div className="flex flex-col gap-1.5">
+                <BusinessProfileChoices
+                  profiles={profiles}
+                  value={profile}
+                  onChange={setProfile}
+                  name="create-tenant-profile"
+                  legend="Business profile"
+                  disabled={isLoading}
+                  noneOption={{
+                    label: "Set up later",
+                    description:
+                      "Start with no business profile. Choose one from the tenant's Setup tab whenever you are ready.",
+                  }}
+                />
+                <p className="text-xs text-slate-400">
+                  A profile is applied right after the account is created. Its fleet and shipping
+                  features can be changed later in the Setup tab.
+                </p>
+              </div>
+            )
+          )}
 
           {/* Submit */}
           <button

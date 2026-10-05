@@ -17,6 +17,7 @@ import { DisabledHint } from "../../../_components/DisabledHint";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
+import { SetupSection } from "./_features/SetupSection";
 import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
 import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
@@ -99,7 +100,7 @@ interface AuditLogEntry {
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
-  { key: "addons", label: "Addons & Features", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "addons", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
   { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
@@ -1058,9 +1059,11 @@ function BillingTab({
   );
 }
 
-// ─── Addons Tab ────────────────────────────────────────────────────────────────
+// ─── Setup Tab ─────────────────────────────────────────────────────────────────
+// The tab key stays "addons" (it is internal); the label is "Setup": the tenant's current setup in plain English,
+// the business-profile picker, then the feature console and the per-feature overrides.
 
-function AddonsTab({
+function SetupTab({
   tenant,
   onAction,
   actionLoading,
@@ -1070,10 +1073,19 @@ function AddonsTab({
   actionLoading: string | null;
 }) {
   const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
+  // Bumped when a business profile changed this tenant's setup: the console and the overrides list remount and reload.
+  const [setupVersion, setSetupVersion] = React.useState(0);
 
   return (
     <>
+      <SetupSection
+        tenantId={tenant.id}
+        version={setupVersion}
+        onApplied={() => setSetupVersion((v) => v + 1)}
+      />
+
       <FeatureConsole
+        key={`console-${setupVersion}`}
         tenant={tenant}
         tenantLabel={tenant.businessName ?? tenant.slug}
         onChangePlan={(plan) => onAction("change-plan", { plan })}
@@ -1081,12 +1093,16 @@ function AddonsTab({
         onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
       />
 
-      <FeatureOverridesSection ref={overridesRef} tenant={tenant} />
+      <FeatureOverridesSection
+        key={`overrides-${setupVersion}`}
+        ref={overridesRef}
+        tenant={tenant}
+      />
     </>
   );
 }
 
-// ─── Feature Overrides (within the Addons & Features tab) ─────────────────────
+// ─── Feature Overrides (within the Setup tab) ─────────────────────────────────
 
 interface FeatureOverrideRow {
   id: string;
@@ -1922,7 +1938,7 @@ export default function AdminTenantDetailPage() {
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
       {activeTab === "addons" && (
-        <AddonsTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+        <SetupTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
       )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
       {activeTab === "snapshots" && <ConfigSnapshotsTab tenantId={tenant.id} />}

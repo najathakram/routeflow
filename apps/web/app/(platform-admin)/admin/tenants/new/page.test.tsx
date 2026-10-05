@@ -1,8 +1,10 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
+import { API_ERROR_CODES } from "@routeflow/types";
 import AdminCreateTenantPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
+import { PROFILES_FIXTURE } from "../[id]/_features/__fixtures__/profiles.fixtures";
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -11,6 +13,13 @@ jest.mock("@/lib/admin-api", () => ({
 }));
 
 const mockFetchPlanCatalog = jest.fn();
+const mockFetchProfiles = jest.fn();
+const mockApplyProfile = jest.fn();
+
+jest.mock("@/lib/platform-admin/business-profiles", () => ({
+  fetchBusinessProfiles: () => mockFetchProfiles(),
+  applyBusinessProfile: (tenantId: string, profile: string) => mockApplyProfile(tenantId, profile),
+}));
 
 jest.mock("@/lib/api/platform-pricing", () => ({
   fetchPlanCatalog: () => mockFetchPlanCatalog(),
@@ -26,6 +35,11 @@ function planEntry(planKey: string, sortOrder: number) {
     sortOrder,
   };
 }
+
+beforeEach(() => {
+  mockFetchProfiles.mockResolvedValue(PROFILES_FIXTURE);
+  mockApplyProfile.mockResolvedValue({});
+});
 
 describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)", () => {
   beforeEach(() => {
@@ -280,5 +294,135 @@ describe("B956 create-tenant refused business name", () => {
       await screen.findByText("Business name can't start with =, +, -, @ or a tab/line break."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/businessName must not start/)).not.toBeInTheDocument();
+  });
+});
+
+// Business profiles: a new account can start with one. The create API takes no `profile`, so the page creates the
+// tenant first and then applies the profile to the new id (a brand-new tenant pays for nothing, so there is no
+// billing to preview). A failed apply never hides the fact that the account WAS created.
+describe("create-tenant business profile", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchProfiles.mockResolvedValue(PROFILES_FIXTURE);
+    mockApplyProfile.mockResolvedValue({});
+    mockFetchPlanCatalog.mockResolvedValue({ version: 1, effectiveAt: null, plans: [] });
+  });
+
+  function fillForm() {
+    fireEvent.change(screen.getByLabelText(/slug/i), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText(/business name/i), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByLabelText(/admin email/i), {
+      target: { value: "o@acme.example" },
+    });
+    fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+  }
+  function submit() {
+    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+  }
+
+  it("offers the four profiles (in-store ones disabled) plus 'set up later', defaulting to none", async () => {
+    render(<AdminCreateTenantPage />);
+    expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Shipping wholesaler/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /In-store \+ shipping retailer/ })).toBeDisabled();
+    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    expect(screen.getByRole("radio", { name: /Set up later/ })).toBeChecked();
+  });
+
+  it("without a profile: creates the tenant with no profile field and applies nothing", async () => {
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "t1", slug: "acme" },
+    });
+    render(<AdminCreateTenantPage />);
+    await screen.findByRole("radio", { name: /Delivery distributor/ });
+    fillForm();
+    submit();
+    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    const [, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
+    expect(payload).not.toHaveProperty("profile");
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+
+  it("with a profile: creates first (the create API takes no profile), then applies it to the new tenant", async () => {
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "new-tenant-id", slug: "acme" },
+    });
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
+    fillForm();
+    submit();
+    expect(
+      await screen.findByText("Business profile applied: Shipping wholesaler."),
+    ).toBeInTheDocument();
+    const [url, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
+    expect(url).toBe("/platform-admin/tenants");
+    expect(payload).not.toHaveProperty("profile");
+    expect(mockApplyProfile).toHaveBeenCalledTimes(1);
+    expect(mockApplyProfile).toHaveBeenCalledWith("new-tenant-id", "shipping_wholesaler");
+  });
+
+  it("a failed create applies no profile", async () => {
+    (superAdminClient.post as jest.Mock).mockRejectedValueOnce(new Error("boom"));
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
+    fillForm();
+    submit();
+    await screen.findByText("Failed to create tenant");
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+
+  it("a failed profile apply still reports the created account, with fixed copy and where to retry", async () => {
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "t9", slug: "acme" },
+    });
+    mockApplyProfile.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed"), {
+        response: {
+          status: 400,
+          data: {
+            code: API_ERROR_CODES.BUSINESS_PROFILE_UNAVAILABLE,
+            message: "RAW SERVER TEXT should never show",
+          },
+        },
+      }),
+    );
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Delivery distributor/ }));
+    fillForm();
+    submit();
+    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    const alert = await screen.findByTestId("profile-apply-failed");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveTextContent(
+      "The account was created, but its business profile was not applied.",
+    );
+    expect(alert).toHaveTextContent(
+      "That business profile is not available yet. In-store profiles open when counter sales launch.",
+    );
+    expect(alert).toHaveTextContent("Apply it from the tenant's Setup tab.");
+    expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
+    expect(screen.getByRole("link", { name: "View tenant" })).toHaveAttribute(
+      "href",
+      "/admin/tenants/t9",
+    );
+  });
+
+  it("a profile list that cannot load says so and the form still creates a tenant", async () => {
+    mockFetchProfiles.mockRejectedValue(new Error("down"));
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "t1", slug: "acme" },
+    });
+    render(<AdminCreateTenantPage />);
+    expect(
+      await screen.findByText(
+        "Business profiles could not be loaded. You can set one later from the tenant's Setup tab.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    fillForm();
+    submit();
+    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,10 @@ import { REGISTRY_FIXTURE } from "./_features/__fixtures__/registry.fixtures";
 import { EFFECTIVE_FIXTURE } from "./_features/__fixtures__/effective.fixtures";
 import { diffsFixture } from "./_features/__fixtures__/diffs.fixtures";
 import { previewFixture } from "./_features/__fixtures__/preview.fixtures";
+import {
+  PROFILES_FIXTURE,
+  shippingPreviewWithBilling,
+} from "./_features/__fixtures__/profiles.fixtures";
 
 const TENANT_ID = "tenant-1";
 
@@ -79,6 +83,9 @@ const OVERRIDES_REGISTRY_OPTION_FIXTURE = REGISTRY_FIXTURE.map((r) => ({
 }));
 
 const mockPost = jest.fn();
+const mockProfilePreview = jest.fn();
+const mockProfileApply = jest.fn();
+let fulfilmentModeValue = "delivery";
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -90,6 +97,12 @@ jest.mock("@/lib/admin-api", () => ({
       if (/\/feature-overrides$/.test(url)) return Promise.resolve({ data: [] });
       if (/\/features\/registry$/.test(url))
         return Promise.resolve({ data: OVERRIDES_REGISTRY_OPTION_FIXTURE });
+      if (/\/platform-admin\/business-profiles$/.test(url))
+        return Promise.resolve({ data: { profiles: PROFILES_FIXTURE } });
+      if (/\/feature-config\/fulfilment_model$/.test(url))
+        return Promise.resolve({ data: { value: fulfilmentModeValue } });
+      if (/\/feature-config\/counter_sales$/.test(url))
+        return Promise.resolve({ data: { value: "unset" } });
       if (new RegExp(`/tenants/${TENANT_ID}$`).test(url))
         return Promise.resolve({ data: tenantFixture() });
       return Promise.resolve({ data: [] });
@@ -99,6 +112,8 @@ jest.mock("@/lib/admin-api", () => ({
         callOrder.push("create");
         return mockPost(url, body);
       }
+      if (/\/business-profile\/preview$/.test(url)) return mockProfilePreview(url, body);
+      if (/\/business-profile$/.test(url)) return mockProfileApply(url, body);
       return Promise.resolve({ data: {} });
     }),
     patch: jest.fn().mockResolvedValue({ data: {} }),
@@ -117,9 +132,9 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
 jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
 
-async function gotoAddonsTab() {
+async function gotoSetupTab() {
   render(<TenantDetailPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Addons & Features" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Setup" }));
   await screen.findByText("compliance");
 }
 
@@ -138,6 +153,9 @@ beforeEach(() => {
   mockFetchDiffs.mockResolvedValue(diffsFixture(TENANT_ID));
   mockFetchMode.mockResolvedValue({ mode: "shadow" });
   mockPost.mockResolvedValue({ data: {} });
+  mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
+  mockProfileApply.mockResolvedValue({ data: {} });
+  fulfilmentModeValue = "delivery";
   tenantOverrides = {};
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
@@ -150,7 +168,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
       }),
     );
 
-    await gotoAddonsTab();
+    await gotoSetupTab();
 
     const tobaccoRow = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
     fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Customise/ }));
@@ -283,5 +301,60 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     const select = await screen.findByRole("combobox", { name: "Plan" });
     await waitFor(() => expect(optionValues(select)).toEqual([...PLAN_KEYS]));
     expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
+  });
+});
+
+describe("Tenant detail page — the Setup tab (business profiles)", () => {
+  it("names the tab Setup (not 'Addons & Features')", async () => {
+    render(<TenantDetailPage />);
+    expect(await screen.findByRole("button", { name: "Setup" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Addons & Features" })).not.toBeInTheDocument();
+  });
+
+  it("opens with the plain-English current setup, then the profile picker, then the feature console", async () => {
+    await gotoSetupTab();
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Own delivery: orders go out on the business's own trucks"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Counter sales")).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeDisabled();
+    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    // The existing feature console is still there, below.
+    expect(screen.getByText("compliance")).toBeInTheDocument();
+  });
+
+  it("previews with the API's change list, then Confirm applies once and the setup reloads", async () => {
+    await gotoSetupTab();
+    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(mockProfilePreview).toHaveBeenCalledWith(
+      `/platform-admin/tenants/${TENANT_ID}/business-profile/preview`,
+      { profile: "shipping_wholesaler" },
+    );
+    expect(mockProfileApply).not.toHaveBeenCalled();
+    expect(
+      within(dialog).getByText(
+        "At-door payment collection will be switched off and its billing stopped",
+      ),
+    ).toBeInTheDocument();
+
+    const registryCalls = mockFetchRegistry.mock.calls.length;
+    fulfilmentModeValue = "ship";
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(mockProfileApply).toHaveBeenCalledTimes(1));
+    expect(mockProfileApply).toHaveBeenCalledWith(
+      `/platform-admin/tenants/${TENANT_ID}/business-profile`,
+      { profile: "shipping_wholesaler" },
+    );
+    expect(
+      await screen.findByText("Ship by carrier: orders are shipped, not delivered"),
+    ).toBeInTheDocument();
+    // The feature console behind it reloaded too.
+    await waitFor(() => expect(mockFetchRegistry.mock.calls.length).toBeGreaterThan(registryCalls));
   });
 });
