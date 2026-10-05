@@ -41,6 +41,8 @@ function fakeTenant(start: {
   comped?: string[];
   /** The add-on whose (existing) disable fails, e.g. Stripe unavailable. */
   disableFails?: string;
+  /** A config key whose (existing) set() rejects — a DB blip after billing was stopped. */
+  setFails?: string;
   modes?: Record<string, string>;
 }) {
   let seq = 0;
@@ -53,7 +55,10 @@ function fakeTenant(start: {
     expiresAt: null,
   }));
   const addons = new Set([...(start.addons ?? []), ...(start.comped ?? [])]);
-  const failing = { key: start.disableFails as string | undefined };
+  const failing = {
+    key: start.disableFails as string | undefined,
+    setKey: start.setFails as string | undefined,
+  };
   const paid = new Set(start.addons ?? []);
   const modes: Record<string, string> = {
     fulfilment_model: "unset",
@@ -110,6 +115,7 @@ function fakeTenant(start: {
       effective: modes[key],
     })),
     set: jest.fn(async (_t: string, key: string, mode: string) => {
+      if (key === failing.setKey) throw new Error("connection terminated unexpectedly");
       if (key === "fulfilment_model" && (mode === "delivery" || mode === "both")) {
         if (!FLEET.some(can)) {
           throw new ConflictException({ code: "FULFILMENT_MODE_NEEDS_FLEET", key, mode });
@@ -181,6 +187,7 @@ function fakeTenant(start: {
   return {
     failNoMore: () => {
       failing.key = undefined;
+      failing.setKey = undefined;
     },
     controller,
     svc,
@@ -501,6 +508,8 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
           alreadyDisabled: [...before],
         });
         expect(body.message).toContain(`Already switched off with billing stopped: ${named}.`);
+        expect(body).not.toHaveProperty("cause"); // no server text in the body (SA)
+        expect(body.failedStep).toEqual({ step: "billing", key: failing });
         // the disables that ran are exactly the earlier ones; no mode / override write followed
         expect(t.writes).toEqual(before.map((k) => `disable ${k}`));
         expect(t.state().modes.fulfilment_model).toBe("delivery");
@@ -547,6 +556,66 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
     t.addonService.disableAddon.mockClear();
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+});
+
+describe("SA MUST: a failure AFTER a successful billing disable returns the SAME coded 503", () => {
+  it("disable ok, then set() rejects → 503 BUSINESS_PROFILE_BILLING_FAILED naming what was stopped and the failing step; a second confirm completes with NO further billing call", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    const body = err.getResponse();
+    expect(body).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      alreadyDisabled: ["recurring_routes"],
+      failedStep: { step: "mode", key: "fulfilment_model" },
+    });
+    expect(body).not.toHaveProperty("cause");
+    expect(JSON.stringify(body)).not.toContain("connection terminated"); // no server text
+    expect(body.message).toContain("Already switched off with billing stopped: Recurring routes.");
+    expect(t.writes).toEqual(["disable recurring_routes"]);
+
+    // the admin retries
+    t.failNoMore();
+    t.writes.length = 0;
+    t.addonService.disableAddon.mockClear();
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+    expect(t.writes).toEqual(["mode fulfilment_model=ship"]);
+    expect(t.state().modes.fulfilment_model).toBe("ship");
+  });
+
+  it("a failing override write after a disable is reported the same way, naming the override step", async () => {
+    const t = fakeTenant({
+      addons: ["recurring_routes"],
+      overrides: { order_delivery: "GRANT" },
+      modes: { fulfilment_model: "delivery" },
+    });
+    t.featureOverrides.create.mockRejectedValueOnce(new Error("deadlock detected"));
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      alreadyDisabled: ["recurring_routes"],
+      failedStep: { step: "deny", key: "order_delivery" },
+    });
+    expect(err.getResponse()).not.toHaveProperty("cause");
+  });
+
+  it("with NO billing disable done, a later failure keeps its own error (nothing was stopped to report)", async () => {
+    const t = fakeTenant({ comped: ["recurring_routes"], setFails: "fulfilment_model" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.message).toBe("connection terminated unexpectedly");
     expect(t.addonService.disableAddon).not.toHaveBeenCalled();
   });
 });

@@ -108,6 +108,8 @@ export interface BusinessProfileState {
   holds: Record<string, boolean>;
   /** Modules held through an add-on row the tenant PAYS for (a Stripe item or a price). */
   paying?: ReadonlySet<string>;
+  /** The subset of `paying` billed MANUALLY (a price, no Stripe item). */
+  manualPay?: ReadonlySet<string>;
   modes: Record<string, string>;
 }
 
@@ -140,7 +142,11 @@ export function planBusinessProfile(
   return {
     overrides,
     modes,
-    billing: disables.map((featureKey) => ({ featureKey, action: "disable" as const })),
+    billing: disables.map((featureKey) => ({
+      featureKey,
+      action: "disable" as const,
+      manual: state.manualPay?.has(featureKey) ?? false,
+    })),
   };
 }
 
@@ -196,8 +202,13 @@ export function describeBusinessProfilePlan(plan: BusinessProfilePlan): string[]
   };
   // Owner ruling (money): a paid module is switched off by disabling its add-on, which stops its
   // billing — say exactly that.
-  const billing = (plan.billing ?? []).map(
-    (b) => `${labelOf(b.featureKey)} will be switched off and its billing stopped`,
+  // A MANUAL-pay add-on has no Stripe item to stop: the disable takes it off RouteFlow's ledger,
+  // but the admin must take it off the tenant's manual invoice themselves (SA, no STOP-notice
+  // helper exists to write one).
+  const billing = (plan.billing ?? []).map((b) =>
+    b.manual
+      ? `${labelOf(b.featureKey)} will be switched off; remove it from their manual invoice`
+      : `${labelOf(b.featureKey)} will be switched off and its billing stopped`,
   );
   const changing = plan.overrides.filter((o) => o.action !== "skip");
   const grants = changing.filter((o) => o.effect === "GRANT").map(overrideLine);

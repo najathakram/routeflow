@@ -28,12 +28,12 @@ function build(
     tenant?: { id: string } | null;
     overrides?: ReturnType<typeof overrideRow>[];
     /** Active TenantAddon rows; `paid` = a Stripe item or a positive price, else a comped row. */
-    addons?: (string | { key: string; paid: boolean })[];
+    addons?: (string | { key: string; paid: boolean; manual?: boolean })[];
     modes?: Record<string, string>;
   } = {},
 ) {
   const addonRows = (opts.addons ?? []).map((a) =>
-    typeof a === "string" ? { key: a, paid: true } : a,
+    typeof a === "string" ? { key: a, paid: true, manual: false } : { manual: false, ...a },
   );
   const prisma = {
     tenant: {
@@ -48,7 +48,8 @@ function build(
           ? {
               addonKey: row.key,
               active: true,
-              stripeItemId: row.paid ? "si_x" : null,
+              // manual pay = a price, no Stripe item (a manual/external-payment activation)
+              stripeItemId: row.paid && !row.manual ? "si_x" : null,
               priceSnapshot: row.paid ? "49.00" : null,
             }
           : null;
@@ -147,7 +148,7 @@ describe("BusinessProfileService.preview", () => {
           { featureKey: "driver_payments", effect: "DENY", action: "create" },
         ],
         modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
-        billing: [{ featureKey: "recurring_routes", action: "disable" }],
+        billing: [{ featureKey: "recurring_routes", action: "disable", manual: false }],
       },
       summary: [
         "Recurring routes will be switched off and its billing stopped",
@@ -292,5 +293,18 @@ describe("SA-671 M1 — an unavailable mode refuses the profile with a CODE, bef
     const { svc } = build({ modes: { fulfilment_model: "pickup", counter_sales: "on" } });
     const err = await svc.plan(T, "in_store_retailer").catch((e) => e);
     expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+  });
+});
+
+describe("SA SHOULD — a MANUAL-pay add-on", () => {
+  it("is planned as a disable flagged manual, and the preview says to remove it from the manual invoice", async () => {
+    const { svc } = build({ addons: [{ key: "order_delivery", paid: true, manual: true }] });
+    const res = await svc.preview(T, "shipping_wholesaler");
+    expect(res.plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: true },
+    ]);
+    expect(res.summary[0]).toBe(
+      "Ad hoc order delivery will be switched off; remove it from their manual invoice",
+    );
   });
 });

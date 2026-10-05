@@ -53,7 +53,15 @@ export interface BusinessProfilePlan {
    * order (driver_payments → order_delivery → recurring_routes), before any mode/config write;
    * `[]` for comps.
    */
-  billing: { featureKey: string; action: "disable" }[];
+  billing: {
+    featureKey: string;
+    action: "disable";
+    /**
+     * true = the tenant pays MANUALLY (a price, no Stripe item): the disable switches the module
+     * off and removes it from RouteFlow's ledger, but their manual invoice must be updated by hand.
+     */
+    manual: boolean;
+  }[];
 }
 
 /** `POST /platform-admin/tenants/:id/business-profile/preview` body AND the confirm body. */

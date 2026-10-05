@@ -184,15 +184,21 @@ export class BusinessProfileService {
     // Owner ruling (money): "pays for" = the tenant's ACTIVE add-on row for the module — found by
     // the same predicate the existing disable uses (findAddonRow) — carrying a Stripe item or a
     // positive price snapshot. A comped row (neither) or a GRANT override is never a billing call.
+    // A price with NO Stripe item = paid MANUALLY (a manual/external-payment activation): still
+    // disabled, but flagged so the preview tells the admin to fix the manual invoice.
     const paying = new Set<string>();
+    const manualPay = new Set<string>();
     if (!profile.fleet) {
       for (const key of PROFILE_MODULE_KEYS) {
         const row = await findAddonRow(this.prisma, tenantId, addonCodeOf(key));
-        if (row?.active && (row.stripeItemId || Number(row.priceSnapshot ?? 0) > 0)) {
+        if (!row?.active) continue;
+        if (row.stripeItemId) paying.add(key);
+        else if (Number(row.priceSnapshot ?? 0) > 0) {
           paying.add(key);
+          manualPay.add(key);
         }
       }
     }
-    return { state: { overrides, holds, paying, modes }, activeIds };
+    return { state: { overrides, holds, paying, manualPay, modes }, activeIds };
   }
 }

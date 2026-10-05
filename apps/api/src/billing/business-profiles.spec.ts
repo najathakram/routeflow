@@ -323,7 +323,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       { featureKey: "order_delivery", effect: "DENY", action: "create" },
       { featureKey: "driver_payments", effect: "DENY", action: "skip" },
     ]);
-    expect(plan.billing).toEqual([{ featureKey: "recurring_routes", action: "disable" }]);
+    expect(plan.billing).toEqual([
+      { featureKey: "recurring_routes", action: "disable", manual: false },
+    ]);
     expect(describeBusinessProfilePlan(plan)).toEqual([
       `${label("recurring_routes")} will be switched off and its billing stopped`,
       "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
@@ -342,7 +344,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       effect: "DENY",
       action: "replace",
     });
-    expect(plan.billing).toEqual([{ featureKey: "order_delivery", action: "disable" }]);
+    expect(plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: false },
+    ]);
   });
 
   it("a paid module that is already off (DENY override) still has its billing stopped", () => {
@@ -351,7 +355,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
     state.paying = new Set(["recurring_routes"]);
     const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
     expect(plan.overrides[0].action).toBe("skip");
-    expect(plan.billing).toEqual([{ featureKey: "recurring_routes", action: "disable" }]);
+    expect(plan.billing).toEqual([
+      { featureKey: "recurring_routes", action: "disable", manual: false },
+    ]);
   });
 
   it("LEAD RULING: paid add-ons are disabled in REVERSE dependency order (driver payments first, the last fleet key last)", () => {
@@ -374,6 +380,24 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       "driver_payments",
       "order_delivery",
       "recurring_routes",
+    ]);
+  });
+
+  it("SA SHOULD: a MANUAL-pay add-on (a price, no Stripe item) is disabled too, but the preview tells the admin to remove it from the manual invoice", () => {
+    const label = (key: string) => FEATURE_REGISTRY.find((f) => f.key === key)!.label;
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), {
+      ...unsetTenant(),
+      holds: { recurring_routes: true, order_delivery: true, driver_payments: false },
+      paying: new Set(["recurring_routes", "order_delivery"]),
+      manualPay: new Set(["recurring_routes"]),
+    });
+    expect(plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: false },
+      { featureKey: "recurring_routes", action: "disable", manual: true },
+    ]);
+    expect(describeBusinessProfilePlan(plan).slice(0, 2)).toEqual([
+      `${label("order_delivery")} will be switched off and its billing stopped`,
+      `${label("recurring_routes")} will be switched off; remove it from their manual invoice`,
     ]);
   });
 

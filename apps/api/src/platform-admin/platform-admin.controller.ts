@@ -746,25 +746,41 @@ export class PlatformAdminController {
     // configuration; the apply is then refused with BUSINESS_PROFILE_BILLING_FAILED before ANY
     // mode/config/override write. Stripe calls cannot share one transaction (lead ruling).
     const alreadyDisabled: string[] = [];
+    // The step in flight, so ANY failure once billing has been stopped is reported the same way.
+    let current: { step: "billing" | "grant" | "mode" | "deny" | "audit"; key: string } = {
+      step: "billing",
+      key: "",
+    };
+    // Lead/SA ruling: name EXACTLY which add-ons were already switched off with billing stopped,
+    // and the step that failed, so the admin can retry (a retry re-plans and runs only what is
+    // left). A fixed code and message — never the server's error text.
+    const billingFailed = () => {
+      const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
+      const done = alreadyDisabled.map(label).join(", ") || "none";
+      const what =
+        current.step === "billing"
+          ? `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
+          : `The profile was only partly applied: the ${current.step} step for ` +
+            `${label(current.key)} failed after billing was stopped.`;
+      return new ServiceUnavailableException({
+        statusCode: 503,
+        code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
+        featureKey: current.key,
+        alreadyDisabled: [...alreadyDisabled],
+        failedStep: { ...current },
+        message:
+          `${what} Already switched off with billing stopped: ${done}. ` +
+          (current.step === "billing" ? "Nothing else was changed; " : "") +
+          "retry to finish.",
+      });
+    };
+
     for (const b of resolved.plan.billing) {
+      current = { step: "billing", key: b.featureKey };
       try {
         await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
-      } catch (err) {
-        // Lead ruling: name EXACTLY which add-ons were already switched off with billing stopped,
-        // so the admin can retry (a retry re-plans and runs only the remaining disables).
-        const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
-        const done = alreadyDisabled.map(label).join(", ") || "none";
-        throw new ServiceUnavailableException({
-          statusCode: 503,
-          code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
-          featureKey: b.featureKey,
-          alreadyDisabled,
-          message:
-            `The profile was not applied: billing for ${label(b.featureKey)} could not be ` +
-            `stopped. Already switched off with billing stopped: ${done}. Nothing else was ` +
-            "changed; retry to finish.",
-          cause: (err as Error)?.message,
-        });
+      } catch {
+        throw billingFailed();
       }
       alreadyDisabled.push(b.featureKey);
     }
@@ -773,6 +789,7 @@ export class PlatformAdminController {
     const applyOverrides = async (effect: "GRANT" | "DENY") => {
       for (const o of resolved.plan.overrides) {
         if (o.effect !== effect || o.action === "skip") continue;
+        current = { step: effect === "GRANT" ? "grant" : "deny", key: o.featureKey };
         if (o.action === "replace") {
           await this.revokeFeatureOverride(id, resolved.revokeOverrideIds[o.featureKey], admin);
         }
@@ -783,19 +800,27 @@ export class PlatformAdminController {
         );
       }
     };
-    await applyOverrides("GRANT");
-    for (const m of resolved.plan.modes) {
-      await this.featureConfig.set(id, m.key, m.to, reason, admin.sub);
+    try {
+      await applyOverrides("GRANT");
+      for (const m of resolved.plan.modes) {
+        current = { step: "mode", key: m.key };
+        await this.featureConfig.set(id, m.key, m.to, reason, admin.sub);
+      }
+      await applyOverrides("DENY");
+      current = { step: "audit", key: resolved.profile.key };
+      this.authority.invalidate(id);
+      await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
+        profile: resolved.profile.key,
+        reason,
+        plan: resolved.plan,
+        summary: resolved.summary,
+      });
+    } catch (err) {
+      // SA MUST: once any billing was stopped, EVERY later failure is the same coded 503, so the
+      // admin is always told billing already stopped. With nothing stopped, the error is its own.
+      if (alreadyDisabled.length > 0) throw billingFailed();
+      throw err;
     }
-    await applyOverrides("DENY");
-
-    this.authority.invalidate(id);
-    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
-      profile: resolved.profile.key,
-      reason,
-      plan: resolved.plan,
-      summary: resolved.summary,
-    });
     return {
       profile: resolved.profile.key as BusinessProfileApplyResponse["profile"],
       plan: resolved.plan,
