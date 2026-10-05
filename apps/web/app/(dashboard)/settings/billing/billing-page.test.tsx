@@ -1,5 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import BillingSettingsPage from "./page";
 import type { SubscriptionView } from "@/lib/api/billing";
@@ -513,11 +514,17 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     expect(dialog.queryByText(/About \$/)).toBeNull();
   });
 
-  it("a server refusal (annual 409) keeps the sheet open with the same fixed copy and blocks Confirm", async () => {
+  it("a server refusal (ADDON_ANNUAL_NOT_SUPPORTED) keeps the sheet open with the same fixed copy and blocks Confirm", async () => {
     mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
       o?.onError?.(
         Object.assign(new Error("Request failed"), {
-          response: { status: 409, data: { message: "internal detail Stripe" } },
+          response: {
+            status: 409,
+            data: {
+              code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED,
+              message: "internal detail Stripe",
+            },
+          },
         }),
       ),
     );
@@ -530,6 +537,88 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal detail/)).toBeNull();
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+  });
+
+  // ── SA-669a M1: a REFUSED preview is a BLOCKED sheet — no price, no charge, Confirm disabled ──
+
+  const INCLUDED_COPY = "Route Plus is already included in your plan.";
+  const ANNUAL_COPY =
+    "Add-ons can't be added to an annual plan online yet. Please contact support.";
+  const refused = (code: string) => ({
+    billing: "REFUSED",
+    billed: false,
+    proratedToday: null,
+    refusal: { code, message: "server text that must never be shown" },
+  });
+
+  it("REFUSED (ADDON_INCLUDED_IN_PLAN) on a monthly plan: Confirm disabled, included copy, no price or charge line", async () => {
+    withPreview(refused(API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN));
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(dialog.getByText(INCLUDED_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(/\$[\d.,]+\s*\/mo/)).toBeNull();
+    expect(dialog.queryByText(/About \$|this cycle|next bill|invoice|no charge/i)).toBeNull();
+    expect(screen.queryByText(/server text that must never be shown/)).toBeNull();
+  });
+
+  it("REFUSED (ADDON_ANNUAL_NOT_SUPPORTED) on an annual plan: Confirm disabled, annual copy, no price or charge line", async () => {
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE", cycle: "ANNUAL" });
+    withPreview(refused(API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED));
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(dialog.getByText(ANNUAL_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(/\$[\d.,]+\s*\/mo/)).toBeNull();
+    expect(dialog.queryByText(/About \$|this cycle|next bill|invoice|no charge/i)).toBeNull();
+  });
+
+  it("REFUSED with a refusal object and no billing field is still BLOCKED", async () => {
+    withPreview({ ...refused(API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN), billing: undefined });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(INCLUDED_COPY)).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+  });
+
+  it("REFUSED with a code this page does not know gets fixed generic copy and Confirm stays disabled", async () => {
+    withPreview(refused("SOMETHING_NEW"));
+    const { dialog } = await openEnableSheet();
+    expect(
+      dialog.getByText("This add-on can't be turned on online right now. Please contact support."),
+    ).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(dialog.queryByText(/\$[\d.,]+\s*\/mo/)).toBeNull();
+  });
+
+  // ── SA-669a M2: the enable error keys on response.data.code, never on the HTTP status ──
+
+  const rejectEnableWith = (status: number, data: Record<string, unknown>) =>
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onError?.(Object.assign(new Error("Request failed"), { response: { status, data } })),
+    );
+
+  it("an enable rejected with 409 {code: ADDON_INCLUDED_IN_PLAN} shows the included copy and blocks Confirm", async () => {
+    rejectEnableWith(409, {
+      code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+      message: "internal detail",
+    });
+    const { user, dialog } = await openEnableSheet();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(await dialog.findByText(INCLUDED_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(ANNUAL_COPY)).toBeNull();
+    expect(screen.queryByText(/internal detail/)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+  });
+
+  it("a 409 whose body carries no known code is the generic failure, not the annual copy", async () => {
+    rejectEnableWith(409, { message: "some other conflict" });
+    const { user, dialog } = await openEnableSheet();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(
+      await dialog.findByText(
+        "We couldn't turn this add-on on. Nothing was changed. Please try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(ANNUAL_COPY)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
   });
 
   it("any other failure keeps the sheet open with fixed 'didn't go through' copy and allows a retry", async () => {

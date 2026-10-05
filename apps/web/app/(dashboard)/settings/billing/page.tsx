@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -91,8 +92,21 @@ const ANNUAL_ADDON_COPY =
   "Add-ons can't be added to an annual plan online yet. Please contact support.";
 const ENABLE_FAILED_COPY =
   "We couldn't turn this add-on on. Nothing was changed. Please try again.";
+const ADDON_REFUSED_COPY =
+  "This add-on can't be turned on online right now. Please contact support.";
+const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
 
-export type EnableAddonError = "annual" | "failed" | null;
+/** Why an add-on enable was refused (server body `code`, never the HTTP status): the annual
+ *  Stripe plan, an add-on the plan already includes, or "failed" for anything else. */
+export type EnableAddonError = "annual" | "included" | "failed" | null;
+
+/** Maps a refusal `code` (the preview's `refusal.code` or the enable call's `response.data.code`)
+ *  to the fixed block reason; a code this page does not know is the generic "other" block. */
+function blockReasonOf(code: string | undefined): "annual" | "included" | "other" {
+  if (code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED) return "annual";
+  if (code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN) return "included";
+  return "other";
+}
 
 /**
  * Confirm sheet for turning an add-on ON. It words what REALLY happens, from the preview's
@@ -101,7 +115,10 @@ export type EnableAddonError = "annual" | "failed" | null;
  *              added to the next bill;
  *  - MANUAL:   an invoiced-by-hand tenant — "will appear on your next invoice from us", no card wording;
  *  - UNBILLED: a free pilot — "Included at no charge during your pilot.".
- * An annual Stripe plan can't take a monthly add-on online: fixed contact-support copy, Confirm disabled.
+ * BLOCKED: a REFUSED preview (`billing === "REFUSED"` or a `refusal`), a server refusal on enable, or an
+ * annual Stripe plan (a monthly add-on can't be added online). No price and no charge line, Confirm
+ * disabled, and fixed copy chosen by the refusal `code` (annual: contact support; included: "<Name> is
+ * already included in your plan."; any other code: generic contact-support copy).
  * Confirm also stays disabled until a FRESH preview is on screen (not a cached one still being re-checked).
  */
 function EnableAddonSheet({
@@ -123,10 +140,25 @@ function EnableAddonSheet({
   const preview = useProrationPreview(addon?.sku ?? null);
   const p = preview.data;
   const fresh = !!p && !preview.isFetching && !preview.isError;
-  // An older API without `billing` is worded as the cautious STRIPE estimate, never as "free".
-  const mode: AddonBillingMode = p?.billing ?? "STRIPE";
-  const annualBlocked = annual && mode === "STRIPE";
-  const blocked = annualBlocked || error === "annual";
+  // A REFUSED preview is BLOCKED, never a billed mode: `billing === "REFUSED"` and a `refusal`
+  // each mean the enable call would 409. An older API without `billing` is worded as the cautious
+  // STRIPE estimate, never as "free".
+  const billing = p?.billing;
+  const refusal = p?.refusal ?? null;
+  const refused = billing === "REFUSED" || refusal != null;
+  const mode: AddonBillingMode | "BLOCKED" =
+    billing === "REFUSED" || refusal != null ? "BLOCKED" : (billing ?? "STRIPE");
+  // The server's latest answer (the enable call's refusal) wins, then the preview's refusal, then
+  // the client-side annual check for an API that predates `refusal`.
+  const blockReason: "annual" | "included" | "other" | null =
+    error === "annual" || error === "included"
+      ? error
+      : refused
+        ? blockReasonOf(refusal?.code)
+        : annual && mode === "STRIPE"
+          ? "annual"
+          : null;
+  const blocked = blockReason != null;
   const ready = fresh && !blocked;
   return (
     <Modal
@@ -150,7 +182,7 @@ function EnableAddonSheet({
           <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
             <div className="flex justify-between">
               <span className="font-medium text-slate-800">{addon.name}</span>
-              {fresh && mode !== "UNBILLED" && (
+              {fresh && !blocked && mode !== "UNBILLED" && (
                 <span className="tabular-nums text-slate-800">
                   {formatMoney(addon.monthlyPrice)}/mo
                 </span>
@@ -172,7 +204,15 @@ function EnableAddonSheet({
               We couldn&apos;t work out the cost. Close this and try again.
             </p>
           )}
-          {fresh && blocked && <p className="text-red-700">{ANNUAL_ADDON_COPY}</p>}
+          {fresh && blockReason && (
+            <p className="text-red-700">
+              {blockReason === "annual"
+                ? ANNUAL_ADDON_COPY
+                : blockReason === "included"
+                  ? addonIncludedCopy(addon.name)
+                  : ADDON_REFUSED_COPY}
+            </p>
+          )}
           {fresh && !blocked && mode === "STRIPE" && (
             <p>
               Turns on right away. Prorated for the {p.daysRemaining} of {p.daysInCycle} days left
@@ -251,10 +291,18 @@ export default function BillingSettingsPage() {
           toast({ title: `${addon.name} enabled`, description });
           setEnableTarget(null);
         },
-        // Stay open so nothing is lost; fixed copy only (never the server's text).
+        // Stay open so nothing is lost; fixed copy only (never the server's text). Keyed on the
+        // body's `code`, not the HTTP status: a 409 with any other body is the generic failure.
         onError: (err) => {
-          const status = (err as { response?: { status?: number } } | undefined)?.response?.status;
-          setEnableError(status === 409 ? "annual" : "failed");
+          const code = (err as { response?: { data?: { code?: string } } } | undefined)?.response
+            ?.data?.code;
+          setEnableError(
+            code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED
+              ? "annual"
+              : code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
+                ? "included"
+                : "failed",
+          );
         },
       },
     );
