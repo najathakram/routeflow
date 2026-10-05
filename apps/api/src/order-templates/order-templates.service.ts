@@ -39,6 +39,12 @@ import { assertSellableLines } from "../products/sellable-lines";
 import { assertPositiveTemplateQty } from "./template-qty";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
+import {
+  GENERATED_ORDER_INCLUDE,
+  findReplayOrder,
+  lockTemplateThenFindReplay,
+  replayCutoff,
+} from "./generate-replay";
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -391,18 +397,25 @@ export class OrderTemplatesService {
   // transaction); the two are independent (a buyer backorder run is still a BUYER_PORTAL run), and an
   // absent value falls back to `isStaffRole`, today's value.
   async generateOrder(templateId: string, isStaffRole = true, allowOversell?: boolean) {
+    const replaySince = replayCutoff(new Date()); // B1054: measured from the START of this request
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
       include: { items: true },
     });
     if (!template) throw new NotFoundException("Order template not found");
     if (!template.isActive) throw new BadRequestException("Template is not active");
+    // B1054: a repeat press (double click, retried request) answers with the order the first one
+    // placed, before any side effect. The locked re-check inside the order transaction closes the
+    // concurrent case this unlocked read cannot.
+    const replay = await findReplayOrder(this.prisma.forTenant(), template.id, replaySince);
+    if (replay) return replay;
     const order = await this.createOrderFromTemplate(
       template,
       isStaffRole,
       false,
       undefined,
       allowOversell,
+      replaySince,
     );
     // Null = every line was a license-gated category the customer isn't verified
     // for, so nothing was ordered. Surface it (the cron path tolerates null; a
@@ -558,6 +571,8 @@ export class OrderTemplatesService {
     ctx?: { ban: { count: number; names: string } | null; placed?: boolean },
     /** WS9: the caller's resolved boolean for a manual run (default = isStaffRole, today's value). */
     allowOversellArg?: boolean,
+    /** B1054: a MANUAL run only. An order this template placed at/after it is returned instead of a second one. */
+    replaySince?: Date,
   ) {
     assertPositiveTemplateQty(template.items); // a stored or bypassed quantity never reaches an order or stock
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
@@ -849,7 +864,16 @@ export class OrderTemplatesService {
           customerId: template.customerId,
         })
       : (allowOversellArg ?? isStaffRole);
+    let replayed = false;
     const created = await this.prisma.tenantTransaction(async (tx) => {
+      if (replaySince) {
+        // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
+        const prior = await lockTemplateThenFindReplay(tx, template.id, replaySince);
+        if (prior) {
+          replayed = true;
+          return prior;
+        }
+      }
       const order = await tx.order.create({
         data: {
           customerId: template.customerId,
@@ -864,10 +888,7 @@ export class OrderTemplatesService {
           hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
           lineItems: { create: lineItemsData },
         },
-        include: {
-          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-          customer: { select: { id: true, businessName: true } },
-        },
+        include: GENERATED_ORDER_INCLUDE,
       });
       await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
@@ -884,6 +905,7 @@ export class OrderTemplatesService {
       return order;
     });
 
+    if (replayed) return created; // B1054: nothing was placed by THIS call: no notice, no merge
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
     if (inactiveNotice) {
       // Suspension and notice both follow the commit, so a run that fails never leaves a silent

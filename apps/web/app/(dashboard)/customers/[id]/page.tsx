@@ -19,7 +19,6 @@ import {
   Clock,
   Pencil,
   Trash2,
-  Zap,
   TrendingDown,
   CheckCircle2,
   DollarSign,
@@ -152,6 +151,7 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { GenerateOrderNowButton } from "./generate-order-button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -3587,20 +3587,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        <button
-                          title="Generate order now"
-                          className={cn(
-                            TAP_TARGET,
-                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
-                          )}
-                          onClick={() =>
+                        <GenerateOrderNowButton
+                          pending={generateOrder.isPending}
+                          onGenerate={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
-                        >
-                          <Zap className="h-4 w-4" />
-                        </button>
+                        />
                         <button
                           title="Edit template"
                           className={cn(
