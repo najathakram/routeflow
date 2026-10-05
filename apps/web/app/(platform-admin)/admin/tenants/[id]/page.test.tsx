@@ -349,7 +349,8 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     await waitFor(() => expect(mockProfileApply).toHaveBeenCalledTimes(1));
     expect(mockProfileApply).toHaveBeenCalledWith(
       `/platform-admin/tenants/${TENANT_ID}/business-profile`,
-      { profile: "shipping_wholesaler" },
+      // the confirm sends back the previewed plan's fingerprint (#3199)
+      { profile: "shipping_wholesaler", planFingerprint: "a".repeat(64) },
     );
     expect(
       await screen.findByText("Ship by carrier: orders are shipped, not delivered"),

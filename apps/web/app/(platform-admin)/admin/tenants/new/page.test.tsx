@@ -15,10 +15,14 @@ jest.mock("@/lib/admin-api", () => ({
 const mockFetchPlanCatalog = jest.fn();
 const mockFetchProfiles = jest.fn();
 const mockApplyProfile = jest.fn();
+const mockPreviewProfile = jest.fn();
 
 jest.mock("@/lib/platform-admin/business-profiles", () => ({
   fetchBusinessProfiles: () => mockFetchProfiles(),
-  applyBusinessProfile: (tenantId: string, profile: string) => mockApplyProfile(tenantId, profile),
+  previewBusinessProfile: (tenantId: string, profile: string) =>
+    mockPreviewProfile(tenantId, profile),
+  applyBusinessProfile: (tenantId: string, profile: string, planFingerprint: string) =>
+    mockApplyProfile(tenantId, profile, planFingerprint),
 }));
 
 jest.mock("@/lib/api/platform-pricing", () => ({
@@ -39,6 +43,7 @@ function planEntry(planKey: string, sortOrder: number) {
 beforeEach(() => {
   mockFetchProfiles.mockResolvedValue(PROFILES_FIXTURE);
   mockApplyProfile.mockResolvedValue({});
+  mockPreviewProfile.mockResolvedValue({ planFingerprint: "f".repeat(64) });
 });
 
 describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)", () => {
@@ -359,7 +364,13 @@ describe("create-tenant business profile", () => {
     expect(url).toBe("/platform-admin/tenants");
     expect(payload).not.toHaveProperty("profile");
     expect(mockApplyProfile).toHaveBeenCalledTimes(1);
-    expect(mockApplyProfile).toHaveBeenCalledWith("new-tenant-id", "shipping_wholesaler");
+    // previewed first, then confirmed with that plan's fingerprint (#3199)
+    expect(mockPreviewProfile).toHaveBeenCalledWith("new-tenant-id", "shipping_wholesaler");
+    expect(mockApplyProfile).toHaveBeenCalledWith(
+      "new-tenant-id",
+      "shipping_wholesaler",
+      "f".repeat(64),
+    );
   });
 
   it("a failed create applies no profile", async () => {

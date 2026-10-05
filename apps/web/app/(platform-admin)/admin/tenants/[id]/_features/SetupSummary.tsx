@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import type { CounterSalesMode, FulfilmentMode } from "@routeflow/types";
 import { fetchTenantFeaturesEffective } from "@/lib/platform-admin/features";
 import { fetchTenantConfigValue } from "@/lib/platform-admin/business-profiles";
 import { AdminCard } from "../../../../_components/AdminCard";
@@ -13,16 +14,23 @@ interface Setup {
   fleet: Record<string, boolean> | null;
 }
 
+/** In-store modes always have the counter (typed against the shared mode unions, never bare strings). */
+const IN_STORE_MODES: readonly FulfilmentMode[] = ["pickup", "pickup_ship"];
+const COUNTER_ON: CounterSalesMode = "on";
+const DELIVERY_MODES: readonly FulfilmentMode[] = ["delivery", "both"];
+
 function counterSalesText(setup: Setup): string {
-  if (setup.fulfilmentValue === "pickup" || setup.fulfilmentValue === "pickup_ship") {
+  if ((IN_STORE_MODES as readonly string[]).includes(setup.fulfilmentValue)) {
     return "Always on: in-store setups have the counter";
   }
-  return setup.counterValue === "on" ? "On: this business can also sell over the counter" : "Off";
+  return setup.counterValue === COUNTER_ON
+    ? "On: this business can also sell over the counter"
+    : "Off";
 }
 
 /** Delivery set in the fulfilment model but no fleet feature on: clients fall back to today's choices. */
 function fleetWarning(setup: Setup): string | null {
-  const wantsDelivery = setup.fulfilmentValue === "delivery" || setup.fulfilmentValue === "both";
+  const wantsDelivery = (DELIVERY_MODES as readonly string[]).includes(setup.fulfilmentValue);
   if (!wantsDelivery || !setup.fleet) return null;
   if (FLEET_ENABLERS.some((k) => setup.fleet?.[k])) return null;
   const names = FLEET_ENABLERS.map(keyLabel).join(" or ");

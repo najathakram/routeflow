@@ -14,7 +14,7 @@ import {
 import { AdminCard } from "../../../../_components/AdminCard";
 import { BusinessProfileChoices } from "./BusinessProfileChoices";
 import { BusinessProfilePreviewModal } from "./BusinessProfilePreviewModal";
-import { profileErrorCopy, profilePartlyApplied } from "./profile-errors";
+import { profileErrorCopy, profilePartlyApplied, profilePlanChanged } from "./profile-errors";
 
 type Pending = { profile: BusinessProfileSummary; response: BusinessProfilePreviewResponse };
 
@@ -41,6 +41,8 @@ export function BusinessProfilePicker({
   const [pending, setPending] = React.useState<Pending | null>(null);
   const [applying, setApplying] = React.useState(false);
   const [applyError, setApplyError] = React.useState<string | null>(null);
+  /** Re-previewing after a failed confirm: Confirm stays off until the fresh plan is on screen. */
+  const [refreshing, setRefreshing] = React.useState(false);
   const [appliedLabel, setAppliedLabel] = React.useState<string | null>(null);
 
   const loadProfiles = React.useCallback(() => {
@@ -69,12 +71,26 @@ export function BusinessProfilePicker({
     }
   }
 
+  /** The plan the admin is looking at is no longer the tenant's: fetch it again (keeps the error shown). */
+  async function refreshPreview(profile: BusinessProfileSummary) {
+    setRefreshing(true);
+    try {
+      const response = await previewBusinessProfile(tenantId, profile.key);
+      setPending({ profile, response });
+    } catch {
+      setPending(null); // nothing safe to confirm; the inline preview error path takes over
+      setPreviewError("Could not refresh the preview. Preview the profile again.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function confirm() {
-    if (!pending || applying) return;
+    if (!pending || applying || refreshing) return;
     setApplying(true);
     setApplyError(null);
     try {
-      await applyBusinessProfile(tenantId, pending.profile.key);
+      await applyBusinessProfile(tenantId, pending.profile.key, pending.response.planFingerprint);
       setAppliedLabel(pending.profile.label);
       setPending(null);
       setSelected("");
@@ -82,7 +98,14 @@ export function BusinessProfilePicker({
     } catch (err) {
       setApplyError(profileErrorCopy(err, "Could not apply that business profile. Try again."));
       // Billing already stopped for some add-ons: the tenant HAS changed, so the screen behind must catch up.
-      if (profilePartlyApplied(err)) onApplied();
+      const partly = profilePartlyApplied(err);
+      if (partly) onApplied();
+      // Either way the shown plan is stale: re-preview BEFORE Confirm can be pressed again (#3220 c).
+      if (partly || profilePlanChanged(err)) {
+        setApplying(false);
+        await refreshPreview(pending.profile);
+        return;
+      }
     } finally {
       setApplying(false);
     }
@@ -92,7 +115,8 @@ export function BusinessProfilePicker({
     <AdminCard title="Business profile" className="mb-4">
       <p className="mb-4 text-sm text-slate-400">
         Pick the setup that fits this business. You will see exactly what changes, including any
-        billing that stops, before anything is saved.
+        billing that stops, before anything is saved. Modules a profile turns on are added free
+        (comp), with no charge.
       </p>
 
       {listFailed ? (
@@ -145,7 +169,7 @@ export function BusinessProfilePicker({
         open={pending !== null}
         profileLabel={pending?.profile.label ?? ""}
         response={pending?.response ?? null}
-        confirming={applying}
+        confirming={applying || refreshing}
         error={applyError}
         onConfirm={confirm}
         onClose={() => {

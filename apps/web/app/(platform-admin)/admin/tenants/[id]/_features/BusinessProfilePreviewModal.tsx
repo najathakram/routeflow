@@ -3,10 +3,12 @@
 import * as React from "react";
 import type { BusinessProfilePreviewResponse } from "@routeflow/types";
 import { AdminModal } from "../../../../_components/AdminModal";
+import { keyLabel } from "./setup-copy";
 
 /**
- * Preview → confirm for one business profile. Shows the API's own plain-English change list (`summary`, one line per
- * change, in apply order: billing stops first, then everything else) and nothing else; it never applies anything
+ * Preview → confirm for one business profile. Billing is built from `plan.billing` (never by slicing `summary`): a
+ * Stripe-billed module stops billing on confirm; a MANUALLY billed one must be taken off their manual invoice by hand,
+ * and says so. "What will change" is the API's own plain-English `changes` list. It never applies anything
  * itself — `onConfirm` is the caller's one audited write. While `confirming` the dialog cannot be dismissed: the write
  * is already in flight and Cancel would only hide it.
  */
@@ -29,12 +31,11 @@ export function BusinessProfilePreviewModal({
 }) {
   if (!open || !response) return null;
 
-  const lines = response.summary ?? [];
-  // The API lists billing stops first (apply order), one line per `plan.billing` entry.
-  const billingCount = Math.min(response.plan?.billing?.length ?? 0, lines.length);
-  const billingLines = lines.slice(0, billingCount);
-  const changeLines = lines.slice(billingCount);
-  const empty = lines.length === 0;
+  const billing = response.plan?.billing ?? [];
+  const stopsBilling = billing.filter((b) => !b.manual);
+  const manualBilling = billing.filter((b) => b.manual);
+  const changeLines = response.changes ?? [];
+  const empty = billing.length === 0 && changeLines.length === 0;
   const handleClose = confirming ? () => {} : onClose;
 
   return (
@@ -78,7 +79,7 @@ export function BusinessProfilePreviewModal({
         </p>
       ) : (
         <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto pr-1">
-          {billingLines.length > 0 && (
+          {billing.length > 0 && (
             <section
               data-testid="profile-preview-billing"
               aria-labelledby="profile-preview-billing-title"
@@ -90,12 +91,32 @@ export function BusinessProfilePreviewModal({
               >
                 Billing
               </h4>
-              <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-slate-200">
-                {billingLines.map((line, i) => (
-                  <li key={`billing-${i}`}>{line}</li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs text-amber-200">Billing stops as soon as you confirm.</p>
+              {stopsBilling.length > 0 && (
+                <div data-testid="profile-preview-billing-stops">
+                  <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-slate-200">
+                    {stopsBilling.map((b) => (
+                      <li key={b.featureKey}>
+                        {keyLabel(b.featureKey)} will be switched off and its billing stopped
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-amber-200">
+                    Billing stops as soon as you confirm.
+                  </p>
+                </div>
+              )}
+              {manualBilling.length > 0 && (
+                <div data-testid="profile-preview-billing-manual">
+                  <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-slate-200">
+                    {manualBilling.map((b) => (
+                      <li key={b.featureKey}>{keyLabel(b.featureKey)} will be switched off</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs font-semibold text-amber-200">
+                    You must remove this from their manual invoice.
+                  </p>
+                </div>
+              )}
             </section>
           )}
           {changeLines.length > 0 && (

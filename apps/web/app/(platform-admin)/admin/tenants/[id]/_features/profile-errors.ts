@@ -76,6 +76,10 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
   switch (body.code) {
     case API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED:
       return billingFailedCopy(body);
+    case API_ERROR_CODES.PROFILE_PLAN_CHANGED:
+      return "This account changed since the preview. Review the updated changes below, then confirm again.";
+    case API_ERROR_CODES.LOCK_UNAVAILABLE:
+      return "This account's add-ons are being changed right now. Try again in a moment.";
     case API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN:
       return "That business profile does not exist.";
     case API_ERROR_CODES.BUSINESS_PROFILE_UNAVAILABLE:
@@ -114,4 +118,10 @@ export function profilePartlyApplied(err: unknown): boolean {
     Array.isArray(body.alreadyDisabled) &&
     body.alreadyDisabled.length > 0
   );
+}
+
+/** The plan changed under the admin (409 PROFILE_PLAN_CHANGED): the preview must be re-run before Confirm. */
+export function profilePlanChanged(err: unknown): boolean {
+  const body = (err as { response?: { data?: ErrorBody } } | null | undefined)?.response?.data;
+  return body?.code === API_ERROR_CODES.PROFILE_PLAN_CHANGED;
 }

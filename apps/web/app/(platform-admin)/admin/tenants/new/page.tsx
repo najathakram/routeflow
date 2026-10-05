@@ -7,6 +7,7 @@ import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
   applyBusinessProfile,
+  previewBusinessProfile,
   fetchBusinessProfiles,
 } from "@/lib/platform-admin/business-profiles";
 import { BusinessProfileChoices } from "../[id]/_features/BusinessProfileChoices";
@@ -124,7 +125,9 @@ export default function AdminCreateTenantPage() {
       // Its own try/catch: once the account exists, a failed profile must not read as "Failed to create tenant".
       if (profile && res.data?.id) {
         try {
-          await applyBusinessProfile(res.data.id, profile);
+          // confirm needs the plan it applies (#3199): preview the new tenant, confirm that plan
+          const { planFingerprint } = await previewBusinessProfile(res.data.id, profile);
+          await applyBusinessProfile(res.data.id, profile, planFingerprint);
           setProfileResult({
             status: "applied",
             label: profiles?.find((p) => p.key === profile)?.label ?? "",

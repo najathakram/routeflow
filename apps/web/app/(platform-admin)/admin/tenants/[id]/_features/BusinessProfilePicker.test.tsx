@@ -15,7 +15,8 @@ const mockApply = jest.fn();
 jest.mock("@/lib/platform-admin/business-profiles", () => ({
   fetchBusinessProfiles: () => mockFetchProfiles(),
   previewBusinessProfile: (tenantId: string, profile: string) => mockPreview(tenantId, profile),
-  applyBusinessProfile: (tenantId: string, profile: string) => mockApply(tenantId, profile),
+  applyBusinessProfile: (tenantId: string, profile: string, planFingerprint: string) =>
+    mockApply(tenantId, profile, planFingerprint),
 }));
 
 const TENANT_ID = "tenant-1";
@@ -116,34 +117,71 @@ describe("BusinessProfilePicker — preview", () => {
     expect(mockApply).not.toHaveBeenCalled();
   });
 
-  it("renders the API's plain-English change list, with the billing lines under Billing", async () => {
+  it("builds Billing from plan.billing: a Stripe-billed module stops billing, a MANUAL one must come off their manual invoice", async () => {
     await renderPicker();
     const dialog = await openPreview();
     const billing = within(dialog).getByTestId("profile-preview-billing");
     expect(within(billing).getByText(/billing/i, { selector: "h4" })).toBeInTheDocument();
+    const stops = within(billing).getByTestId("profile-preview-billing-stops");
     expect(
-      within(billing).getByText(
+      within(stops).getByText(
         "At-door payment collection will be switched off and its billing stopped",
       ),
     ).toBeInTheDocument();
+    expect(within(stops).getByText("Billing stops as soon as you confirm.")).toBeInTheDocument();
+    const manual = within(billing).getByTestId("profile-preview-billing-manual");
     expect(
-      within(billing).getByText(
-        "Ad hoc order delivery will be switched off; remove it from their manual invoice",
-      ),
+      within(manual).getByText("Ad hoc order delivery will be switched off"),
     ).toBeInTheDocument();
+    expect(
+      within(manual).getByText("You must remove this from their manual invoice."),
+    ).toBeInTheDocument();
+    // the manual entry never claims its billing stops on its own
+    expect(within(manual).queryByText(/Billing stops/)).not.toBeInTheDocument();
     const changes = within(dialog).getByTestId("profile-preview-changes");
     expect(
       within(changes).getByText("How orders reach customers: Own delivery → Ship by carrier"),
     ).toBeInTheDocument();
-    // The billing lines are not repeated among the plain setup changes.
     expect(within(changes).queryByText(/billing stopped/)).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/Billing stops as soon as you confirm/)).toBeInTheDocument();
+  });
+
+  it("MUST: when EVERY billing line is manual, 'Billing stops as soon as you confirm' is never shown", async () => {
+    mockPreview.mockResolvedValue(
+      shippingPreviewWithBilling({
+        plan: {
+          overrides: [],
+          modes: [{ key: "fulfilment_model", from: "delivery", to: "ship" }],
+          billing: [
+            { featureKey: "driver_payments", action: "disable", manual: true },
+            { featureKey: "order_delivery", action: "disable", manual: true },
+          ],
+        },
+      }),
+    );
+    await renderPicker();
+    const dialog = await openPreview();
+    expect(
+      within(dialog).queryByText(/Billing stops as soon as you confirm/),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).queryByTestId("profile-preview-billing-stops")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText("You must remove this from their manual invoice."),
+    ).toBeInTheDocument();
+  });
+
+  it("says modules a profile turns on are a free comp, with no charge", async () => {
+    await renderPicker();
+    expect(screen.getByText(/with no charge/)).toBeInTheDocument();
   });
 
   it("a preview with no billing lines has no Billing section", async () => {
     mockPreview.mockResolvedValue(
       shippingPreviewWithBilling({
         summary: [
+          "Turn off Recurring routes",
+          "How orders reach customers: Own delivery → Ship by carrier",
+        ],
+        changes: [
           "Turn off Recurring routes",
           "How orders reach customers: Own delivery → Ship by carrier",
         ],
@@ -210,7 +248,8 @@ describe("BusinessProfilePicker — confirm", () => {
     const dialog = await openPreview();
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(1));
-    expect(mockApply).toHaveBeenCalledWith(TENANT_ID, "shipping_wholesaler");
+    // the confirm carries the previewed plan's fingerprint (#3199: the server applies only that plan)
+    expect(mockApply).toHaveBeenCalledWith(TENANT_ID, "shipping_wholesaler", "a".repeat(64));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onApplied).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -298,5 +337,45 @@ describe("BusinessProfilePicker — confirm", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "Could not apply that business profile. Try again.",
     );
+  });
+});
+
+describe("BusinessProfilePicker — a stale preview is re-run before Confirm (#3220 c, #3199)", () => {
+  it("PROFILE_PLAN_CHANGED: fixed copy, the preview is fetched again, and Confirm comes back only with the new plan", async () => {
+    mockApply.mockRejectedValueOnce(
+      apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED, message: "RAW" }),
+    );
+    await renderPicker();
+    const dialog = await openPreview();
+    mockPreview.mockResolvedValueOnce(
+      shippingPreviewWithBilling({ planFingerprint: "c".repeat(64) }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "This account changed since the preview.",
+    );
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeEnabled(),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(mockApply).toHaveBeenLastCalledWith(TENANT_ID, "shipping_wholesaler", "c".repeat(64)),
+    );
+  });
+
+  it("a partial apply (billing stopped for some) reloads the page AND re-previews before Confirm", async () => {
+    mockApply.mockRejectedValueOnce(
+      apiError(503, {
+        code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
+        alreadyDisabled: ["driver_payments"],
+        failedStep: { step: "billing", key: "order_delivery" },
+      }),
+    );
+    const { onApplied } = await renderPicker();
+    const dialog = await openPreview();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
   });
 });

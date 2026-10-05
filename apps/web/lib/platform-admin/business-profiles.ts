@@ -2,6 +2,7 @@
 // like ./features.ts. The contract is packages/types/api/profiles.ts; nothing here redeclares a shape from it.
 import { superAdminClient } from "@/lib/admin-api";
 import type {
+  ConfirmBusinessProfileRequest,
   BusinessProfileApplyResponse,
   BusinessProfileKey,
   BusinessProfileListResponse,
@@ -30,14 +31,20 @@ export async function previewBusinessProfile(
   return res.data;
 }
 
-/** `POST /platform-admin/tenants/:id/business-profile` — one audited action; re-applying is idempotent. */
+/**
+ * `POST /platform-admin/tenants/:id/business-profile` — one audited action; re-applying is idempotent.
+ * Sends the preview's `planFingerprint`: the server applies only the plan that was shown, else a 409
+ * PROFILE_PLAN_CHANGED (the picker re-previews).
+ */
 export async function applyBusinessProfile(
   tenantId: string,
   profile: BusinessProfileKey,
+  planFingerprint: string,
 ): Promise<BusinessProfileApplyResponse> {
+  const body: ConfirmBusinessProfileRequest = { profile, planFingerprint };
   const res = await superAdminClient.post<BusinessProfileApplyResponse>(
     `/platform-admin/tenants/${tenantId}/business-profile`,
-    { profile },
+    body,
   );
   return res.data;
 }

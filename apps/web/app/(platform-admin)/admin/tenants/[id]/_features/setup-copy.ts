@@ -1,4 +1,4 @@
-import type { FulfilmentMode } from "@routeflow/types";
+import { FLEET_MODULE_KEYS, type FulfilmentMode } from "@routeflow/types";
 
 /**
  * Fixed plain-English copy for the Setup tab and the business-profile flow. Everything the admin reads here comes from
@@ -14,7 +14,7 @@ export const FLEET_MODULES = [
 ] as const;
 
 /** Either of these makes delivery possible; "At-door payment collection" alone does not. */
-export const FLEET_ENABLERS = ["recurring_routes", "order_delivery"] as const;
+export const FLEET_ENABLERS = FLEET_MODULE_KEYS; // the ONE list (@routeflow/types), the api pins it
 
 const KEY_LABELS: Record<string, string> = {
   recurring_routes: "Recurring routes",
