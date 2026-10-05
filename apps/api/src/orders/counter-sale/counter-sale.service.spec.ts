@@ -752,6 +752,53 @@ describe("CounterSaleService.ring", () => {
       expect(r).toMatchObject({ paid: 20, balanceDue: 30, paymentRecorded: true });
     });
 
+    it("a replay whose resume still cannot record: paymentRecorded:false, NO change, balanceDue stays 20", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2") throw new BadRequestException("regulated refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      replay = true;
+      const again = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(again).toMatchObject({
+        paid: 30,
+        balanceDue: 20,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+      expect(again.change).toBeUndefined();
+    });
+
+    it("change comes ONLY from a fully covered STORED balance, never from this call's tender against stored cash", async () => {
+      // Sibling 1 holds its 30 of cash; sibling 2's recordPayment answers OK but nothing is stored for it
+      // (the stored balance is still 20). This call's tender (50) minus the stored cash (30) is 20, which
+      // is money still OWED, not change to hand back.
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 30, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [], 2),
+      ];
+      recordPayment.mockResolvedValue({ id: "inv-2", createdPaymentId: "x" });
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r.balanceDue).toBe(20);
+      expect(r.change).toBeUndefined();
+    });
+
+    it("a fully covered stored balance returns change from the tender (CASH 60 on a 50 sale = 10)", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      const r = await service.ring(named({ method: "CASH", amount: 60 }) as never, staff, "k");
+      expect(r).toMatchObject({ paid: 50, balanceDue: 0, change: 10, paymentRecorded: true });
+    });
+
     it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {
       invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
       recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {

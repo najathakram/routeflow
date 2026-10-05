@@ -320,7 +320,9 @@ export class CounterSaleService {
     const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
     const tendered = dto.payment.amount;
     const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
-    const change = method === "CASH" && settled && owed > 0 ? owed : undefined;
+    // Change is handed back ONLY once the STORED balance is fully covered: this call's tender against stored
+    // cash is otherwise money still owed (a replay must never read an unpaid sibling's share as change).
+    const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
 
     return {
       orderId: order.id,
