@@ -26,6 +26,12 @@ import {
 } from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+import {
+  CHECKOUT_ADDON_EXPAND,
+  CHECKOUT_ADDON_SKUS_KEY,
+  checkoutAddonItems,
+} from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
 import { retryOnTxConflict } from "../common/tx-retry";
 import {
@@ -127,6 +133,9 @@ export class BillingService {
     // Lane B A2 / B593: a checkout that moves the plan snapshots/restores the tenant's feature
     // config in the same transaction as the subscription write (live flag, default off).
     private readonly planTransition: PlanTransitionConfigService,
+    // SA-690 option A: the unbilled self-serve add-ons ride the card checkout as line items, and the
+    // completion adopts the resulting Stripe items onto their rows (see SubscriptionMutationService).
+    private readonly mutations: SubscriptionMutationService,
   ) {}
 
   /**
@@ -313,6 +322,12 @@ export class BillingService {
       );
     }
 
+    // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
+    // pilot's) is billed on THIS checkout as one extra line. Read before ANY Stripe call: an annual
+    // checkout with such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) with nothing created.
+    const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
+    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
+
     // A second checkout on a tenant that already has a live subscription creates a
     // SECOND Stripe subscription on the same customer: both invoice every cycle, and
     // the completion webhook overwrites `stripeSubId`, orphaning the first one where
@@ -341,7 +356,6 @@ export class BillingService {
       }
     }
 
-    const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price
     // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
@@ -356,11 +370,26 @@ export class BillingService {
     const session = await this.stripe.client.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
-      line_items: [{ price_data: priceData, quantity: 1 }],
+      line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
       success_url:
         opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
-      metadata: { tenantId, slug: tenant.slug, planKey: pricing.planKey, interval },
+      metadata: {
+        tenantId,
+        slug: tenant.slug,
+        planKey: pricing.planKey,
+        interval,
+        ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
+      },
+      // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+      // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+      ...(addons.skus.length
+        ? {
+            subscription_data: {
+              metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") },
+            },
+          }
+        : {}),
     });
 
     this.logger.log(
@@ -674,10 +703,22 @@ export class BillingService {
       return;
     }
 
-    // Fetch the full subscription to get period dates
-    const stripeSub = await this.stripe.getSubscription(subscriptionId);
+    // Fetch the full subscription to get period dates. SA-690: with each item's product expanded, so
+    // the add-on items this checkout billed (tagged `addonSku` on their product) can be told apart
+    // from the base plan item and adopted onto their rows below. Retrieved BEFORE anything is
+    // written: a Stripe failure here fails the webhook with nothing applied, and Stripe redelivers.
+    const stripeSub = await this.stripe.getSubscription(subscriptionId, {
+      expand: CHECKOUT_ADDON_EXPAND,
+    });
     // #2436: under API dahlia the period lives on the items; null ⇒ write no period, never NaN.
-    const period = await this.subscriptionPeriod(stripeSub, tenantId, "checkout.session.completed");
+    // The checkout's own add-on items are not the base plan item (N2) — their rows carry no
+    // stripeItemId yet, so they are named here explicitly.
+    const period = await this.subscriptionPeriod(
+      stripeSub,
+      tenantId,
+      "checkout.session.completed",
+      checkoutAddonItems(stripeSub).map((i) => i.itemId),
+    );
     // Platform billing: which interval the tenant checked out with (set in
     // BillingService.createCheckoutSession metadata), stamped for sync/resume use.
     const billingInterval: string | undefined =
@@ -809,6 +850,11 @@ export class BillingService {
         });
         if (processed) {
           this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+          // SA-690: the add-on adoption is idempotent (a row that already holds its item books
+          // nothing) and runs on a redelivery too — an earlier attempt may have applied the plan
+          // and then failed on Stripe before adopting, and a retry that skipped it would leave the
+          // customer billed for an item no row owns.
+          await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
           return;
         }
       }
@@ -1004,6 +1050,7 @@ export class BillingService {
 
     if (upserted === ALREADY_APPLIED) {
       this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
       return;
     }
 
@@ -1035,6 +1082,12 @@ export class BillingService {
       );
     }
 
+    // SA-690 option A, booked AFTER the activation crossing above: the crossing prices the base
+    // plan and every active add-on at its STORED snapshot (0 for a trial's unbilled add-on), then the
+    // adoption books each add-on's one stored → actual delta. Reversed, the crossing would price
+    // the adopted snapshot a second time.
+    await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
+
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
 
@@ -1056,8 +1109,11 @@ export class BillingService {
     stripeSub: any,
     tenantId: string,
     event: string,
+    extraAddonItemIds: readonly string[] = [],
   ): Promise<{ periodStart: Date; periodEnd: Date } | null> {
-    const period = stripeSubscriptionPeriod(stripeSub, await this.addonItemIds(tenantId));
+    const known = await this.addonItemIds(tenantId);
+    for (const id of extraAddonItemIds) known.add(id);
+    const period = stripeSubscriptionPeriod(stripeSub, known);
     if (!period) {
       this.logger.warn(
         `${event}: Stripe subscription ${stripeSub?.id ?? "(unknown)"} for tenant ${tenantId} ` +

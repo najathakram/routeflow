@@ -90,8 +90,11 @@ export class StripeService implements OnModuleInit {
 
   // ─── Subscription ─────────────────────────────────────────────────────────
 
-  async getSubscription(subId: string): Promise<any> {
-    return this.client.subscriptions.retrieve(subId);
+  /** `params` carries `expand` (SA-690: checkout completion reads each item's product metadata). */
+  async getSubscription(subId: string, params?: { expand?: string[] }): Promise<any> {
+    return params
+      ? this.client.subscriptions.retrieve(subId, params)
+      : this.client.subscriptions.retrieve(subId);
   }
 
   async updateSubscription(subId: string, params: any): Promise<any> {

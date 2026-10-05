@@ -24,6 +24,15 @@ import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { BillingNotificationService } from "./billing-notification.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+
+/** SA-690: the add-on checkout/adoption seam of SubscriptionMutationService — inert by default (no
+ *  add-ons), so every pre-existing assertion in this file measures exactly what it did before. */
+const mutationsStub = () =>
+  ({
+    checkoutAddonLines: jest.fn().mockResolvedValue({ lineItems: [], skus: [] }),
+    adoptCheckoutAddons: jest.fn().mockResolvedValue(undefined),
+  }) as any;
 
 /**
  * MRR-ledger reconciliation for the LEGACY Stripe lifecycle (Plans & Billing P6 follow-up).
@@ -153,6 +162,7 @@ function make(
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     invalidateCaches: jest.fn(),
   } as any;
+  const mutations = mutationsStub();
   const svc = new BillingService(
     prisma,
     stripe,
@@ -162,9 +172,11 @@ function make(
     pricing,
     billingNotification,
     planTransition,
+    mutations,
   );
   return {
     svc,
+    mutations,
     prisma,
     tx,
     stripe,
@@ -1418,6 +1430,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
           provide: PlanTransitionConfigService,
           useValue: { prepare: jest.fn(), onPlanChange: jest.fn() },
         },
+        { provide: SubscriptionMutationService, useValue: mutationsStub() },
       ],
     }).compile();
 

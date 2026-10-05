@@ -1618,6 +1618,28 @@ export class SubscriptionMutationService {
     return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
   }
 
+  /** SKELETON (SA-690, red phase): the checkout lines for the tenant's unbilled self-serve add-ons. */
+  async checkoutAddonLines(
+    _tenantId: string,
+    _interval: "month" | "year",
+  ): Promise<{ lineItems: Array<Record<string, unknown>>; skus: string[] }> {
+    return { lineItems: [], skus: [] };
+  }
+
+  /** SKELETON (SA-690, red phase): adopt the add-on items a completed checkout created. */
+  async adoptCheckoutAddons(
+    _tenantId: string,
+    _stripeSub: any,
+    _ctx: { sessionId?: string | null } = {},
+  ): Promise<void> {
+    return;
+  }
+
+  /** SKELETON (SA-690, red phase): true when the tenant's status is TRIAL. */
+  async isTrialTenant(_tenantId: string): Promise<boolean> {
+    return false;
+  }
+
   /**
    * The "already in your plan" refusal: the SKU's `includedAtPlan` (the plan at and above which the
    * catalog bundles it free, the same rule the choose-plan quote prices with) is at or below the
