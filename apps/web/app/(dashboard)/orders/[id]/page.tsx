@@ -82,6 +82,7 @@ import {
 } from "@/lib/change-requests";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
+import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
@@ -2751,14 +2752,10 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
+                />
                 {showDeleteConfirm ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-danger font-medium">Delete order?</span>
@@ -2840,14 +2837,10 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
+                />
                 {renderDeleteOrderAction("Delete this order? This can't be undone.")}
               </ActionTier>
             </>
@@ -2877,14 +2870,10 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
+                />
                 {renderDeleteOrderAction(
                   "Delete this order? It's out for delivery — this can't be undone.",
                 )}

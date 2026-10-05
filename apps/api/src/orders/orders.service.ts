@@ -186,6 +186,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import {
   assertCarrierOrderNotInTransit,
+  carrierCancelBlockedReason,
   invoicesAtShipment,
   settleOrderInvoice,
   settledAtShipment,
@@ -567,6 +568,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+    // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
+    (order as any).cancelBlockedReason = await carrierCancelBlockedReason(
+      this.featureConfig,
+      this.prisma.getTenantId(),
+      order,
+    );
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -5235,6 +5242,8 @@ export class OrdersService implements OnApplicationBootstrap {
       include: { invoices: { select: { id: true } }, transaction: { select: { id: true } } },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
+    await assertCarrierOrderNotInTransit(this.featureConfig, this.prisma.getTenantId(), order);
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
