@@ -80,6 +80,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { resolvePendingMirror } from "./pending-mirror";
+import { resolveInvoiceVariant } from "./invoice-stage";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -3035,7 +3036,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true, shippedAt: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3057,6 +3058,8 @@ export class InvoicesService {
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
+      // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
+      pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 

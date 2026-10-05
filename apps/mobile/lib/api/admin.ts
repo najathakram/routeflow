@@ -380,6 +380,8 @@ export interface AdminInvoice {
   /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
    *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
   pendingMirror?: boolean;
+  /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
+  pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
    *  the API already returned, previously untyped (needed to hydrate the edit
    *  screen and render Reference/Subject on the detail). */

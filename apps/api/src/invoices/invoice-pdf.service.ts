@@ -5,7 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
-import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
+import type { InvoicePdfVariant } from "./invoice-pdf-variant";
+import { resolveInvoiceVariant } from "./invoice-stage";
 import { invoiceItemCode } from "./invoice-item-code";
 import { roundMoney } from "@routeflow/pricing";
 import { splitConfirmed } from "./payment-predicates";
@@ -85,14 +86,20 @@ export class InvoicePdfService {
           orderBy: { paidAt: "asc" },
           include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
         },
-        order: { select: { status: true } },
+        order: { select: { status: true, fulfillPath: true, shippedAt: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
 
+    // F3: the invoice raised at shipment is FINAL (resolveInvoiceVariant), not the pre-delivery proforma.
     const variant =
       variantArg ??
-      deriveInvoiceVariant(inv as { status: string; order?: { status: string } | null });
+      (await resolveInvoiceVariant(
+        this.featureConfig,
+        (inv as { tenantId?: string | null }).tenantId,
+        inv,
+        inv.order,
+      ));
 
     // Load tenant's business info (including logo + primary color) to render
     // a fully branded invoice header.
