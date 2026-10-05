@@ -269,9 +269,9 @@ describe("one fleet resolver: the capability and the 409 agree", () => {
   });
 });
 
-describe("F-A: PICKUP is a capability method, NOT a FulfillPath value", () => {
-  it("the FulfillPath enum has no PICKUP and the order DTO rejects it", async () => {
-    expect(Object.values(FulfillPath)).toEqual(["ROUTE", "SHIP"]);
+describe("F-A: PICKUP is a FulfillPath value that no order write accepts yet", () => {
+  it("the FulfillPath enum includes PICKUP and the order DTO still rejects it", async () => {
+    expect(Object.values(FulfillPath)).toEqual(["ROUTE", "SHIP", "PICKUP"]);
     const bad = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
     const errs = await validate(bad as object, { skipMissingProperties: true });
     expect(errs.some((e) => e.property === "fulfillPath")).toBe(true);

@@ -61,11 +61,8 @@ export enum TxnStatus {
 // #2722: the legacy `enum PaymentMethod` that lived here SHADOWED api/enums.ts' PaymentMethod
 // (a local declaration beats `export *`), so importers got a TS enum that string literals don't
 // satisfy. The one PaymentMethod is now PAYMENT_METHOD_VALUES' union (api/enums.ts, parity-pinned).
-
-export enum FulfillPath {
-  ROUTE = "ROUTE",
-  SHIP = "SHIP",
-}
+// SA-650: same for the legacy `enum FulfillPath { ROUTE, SHIP }` — it shadowed api/enums.ts' FulfillPath,
+// whose FULFILL_PATH_VALUES union now carries PICKUP too.
 
 export enum RouteKind {
   SCHEDULED = "SCHEDULED",

@@ -18,8 +18,9 @@ export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
 export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
 
 /**
- * PICKUP is a capability METHOD only; it is NOT a FulfillPath value (the order enum is ROUTE|SHIP).
- * Pickup routes to the counter path; no client may send fulfillPath "PICKUP" until a migration adds it.
+ * PICKUP is a capability METHOD and a FulfillPath value (the order enum is ROUTE|SHIP|PICKUP since
+ * the 20261004150000 migration). No order write accepts "PICKUP" yet (WRITABLE_FULFILL_PATHS);
+ * pickup orders come from the counter-sale path once it lands.
  */
 export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
 
