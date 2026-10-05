@@ -1341,3 +1341,82 @@ describe("preview agreement: addonEnableRefusal says what enableAddon will do", 
     expect(await m.svc.addonEnableRefusal("t1", "NOPE")).toBeNull();
   });
 });
+
+// SA-693 (owner ruling 2026-10-05 "Mark grants as comps"): a comp is a platform grant, never billed.
+// Self-serve is billable by definition: it never writes a comp, and it re-bills a comp that was turned
+// off. An ACTIVE comp's quantity is the platform's to manage, so a tenant change is a coded 409.
+describe("SA-693 — self-serve add-on vs comp rows", () => {
+  const comp = {
+    id: "a1",
+    addonKey: "CUSTOMER_PACK_100",
+    sku: "CUSTOMER_PACK_100",
+    active: true,
+    quantity: 1,
+    priceSnapshot: 0,
+    stripeItemId: null,
+    isComp: true,
+  };
+
+  it("pins the wire code", () => {
+    expect(API_ERROR_CODES.ADDON_COMP_MANAGED_BY_SUPPORT).toBe("ADDON_COMP_MANAGED_BY_SUPPORT");
+  });
+
+  it("a quantity change on an ACTIVE comp is a coded 409: no Stripe, no write, no ledger event", async () => {
+    const { svc, stripeClient, tenantAddon, events, getRow } = make({ addonRow: comp });
+
+    const err: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1").catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "ADDON_COMP_MANAGED_BY_SUPPORT" });
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(stripeClient.subscriptionItems.update).not.toHaveBeenCalled();
+    expect(tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(getRow()).toMatchObject({ quantity: 1, isComp: true });
+  });
+
+  it("the same quantity on an active comp stays an idempotent no-op (never an error, never a bill)", async () => {
+    const { svc, stripeClient, tenantAddon, getRow } = make({ addonRow: comp });
+
+    await expect(svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1")).resolves.toBeDefined();
+
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(getRow()).toMatchObject({ isComp: true, stripeItemId: null });
+  });
+
+  it("a self-serve re-enable of a DISABLED comp BILLS: Stripe item, isComp false, price booked", async () => {
+    const { svc, stripeClient, getRow, events } = make({
+      addonRow: { ...comp, active: false },
+    });
+
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+
+    expect(stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    expect(getRow()).toMatchObject({
+      active: true,
+      isComp: false,
+      stripeItemId: "si_1",
+      priceSnapshot: 12,
+    });
+    expect(enabledDeltas(events)).toEqual([12]);
+  });
+
+  it("a self-serve enable of a brand-new row writes isComp false", async () => {
+    const { svc, tenantAddon } = make({ addonRow: null });
+
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+
+    expect(tenantAddon.upsert.mock.calls[0][0].create.isComp).toBe(false);
+    expect(tenantAddon.upsert.mock.calls[0][0].update.isComp).toBe(false);
+  });
+
+  it("disabling an active comp is allowed and books nothing", async () => {
+    const { svc, getRow, events } = make({ addonRow: comp });
+
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
+
+    expect(getRow()).toMatchObject({ active: false });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});

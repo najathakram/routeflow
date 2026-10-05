@@ -129,6 +129,8 @@
 //   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
 //                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
 //                    names the add-ons and says to turn them off or contact support.
+//   SA-693 (comp add-ons) � ADDON_COMP_MANAGED_BY_SUPPORT: the 409 of a self-serve add-on quantity change on an ACTIVE comp row
+//                    (a platform grant, never billed). Same quantity stays a no-op and a disable stays allowed. Body {code, message}.
 //   B987-D — regulated / common refusals, now named here (value == key, byte-identical to what was sent): MONEY_INVARIANT (the 400 of
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
@@ -261,6 +263,7 @@ export const API_ERROR_CODES = {
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
+  ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",

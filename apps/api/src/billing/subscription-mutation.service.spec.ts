@@ -559,6 +559,66 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
     });
 
+    // SA-693: a comp is a platform grant, not the tenant's to drop. subscribe() reconciles the tenant's
+    // self-serve add-ons against the payload, and a /choose-plan cycle switch sends none: without the
+    // isComp exclusion every plan choice would silently remove a comp.
+    describe("SA-693 � comp rows survive subscribe()", () => {
+      const comp = {
+        ...billedRow,
+        quantity: 1,
+        priceSnapshot: 0,
+        stripeItemId: null,
+        isComp: true,
+      };
+
+      it("a cycle switch with no add-ons keeps the comp row: not disabled, no Stripe call, no ledger event for it", async () => {
+        const { svc, tx, events, stripe } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [comp],
+        });
+        await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBeUndefined();
+      });
+
+      it("a NON-comp unbilled row is still dropped (the exclusion is the flag, not 'no Stripe item')", async () => {
+        const { svc, tx } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [{ ...comp, isComp: false }],
+        });
+        await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+          where: { id: "a1" },
+          data: { active: false, stripeItemId: null },
+        });
+      });
+
+      it("a comp row named in addons[] is left as it is: still comp, quantity and price untouched", async () => {
+        const { svc, tx } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [comp],
+        });
+        await svc.subscribe(
+          "t1",
+          {
+            planKey: "STARTER",
+            cycle: "MONTHLY",
+            addons: [{ sku: "CUSTOMER_PACK_100", quantity: 5 }],
+          },
+          "admin",
+        );
+
+        expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+      });
+    });
+
     it("an item Stripe already removed counts as removed", async () => {
       const { svc, tx, stripe } = make({
         tenantStatus: "ACTIVE",

@@ -107,6 +107,9 @@ model TenantAddon {
   stripePriceId String? // Stripe price for this add-on
   stripeItemId  String? // Stripe subscription item ID
   active        Boolean  @default(true)
+  // SA-693: granted free ON PURPOSE by the platform. Never billed, never blocks a checkout, never
+  // booked as revenue. Written only by the admin comp/uncomp paths; self-serve always writes false.
+  isComp        Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
