@@ -2839,6 +2839,20 @@ function SettingsPageInner() {
 
   const section = activeTab ? SECTIONS[activeTab] : undefined;
 
+  // REG-B1013: a CUSTOMER or DRIVER manages only their own account — never the business hub, a
+  // `?tab=` deep link into it (user management + Add User, invoicing, email ...), the Stripe card
+  // or the tier labels. (The API refuses these roles on the business endpoints too.)
+  if (user?.role === "CUSTOMER" || user?.role === "DRIVER") {
+    return (
+      <div className="mx-auto max-w-5xl p-6">
+        <h2 className="mb-5 text-2xl font-bold text-navy">My account</h2>
+        <div className="max-w-3xl">
+          <MyAccountTab />
+        </div>
+      </div>
+    );
+  }
+
   return (
     // Centred, width-capped column so settings forms don't strand the whole
     // right half of wide screens empty.

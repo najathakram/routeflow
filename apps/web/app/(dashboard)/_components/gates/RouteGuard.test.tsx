@@ -164,4 +164,47 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     );
     expect(mockReplace).not.toHaveBeenCalled();
   });
+
+  // REG-B1013: "/settings" is the CUSTOMER/DRIVER account page only; the business sub-pages under it
+  // (billing, restrictions, imports, migration, product categories) are staff-only.
+  it.each(["DRIVER", "CUSTOMER"])(
+    "lets a %s stay on /settings itself (their own account)",
+    (role) => {
+      mockUser = { role };
+      mockPathname = "/settings";
+      render(
+        <RouteGuard>
+          <div />
+        </RouteGuard>,
+      );
+      expect(mockReplace).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["DRIVER", "/settings/billing"],
+    ["CUSTOMER", "/settings/billing"],
+    ["DRIVER", "/settings/restrictions"],
+    ["CUSTOMER", "/settings/import"],
+    ["CUSTOMER", "/settings/product-categories"],
+  ])("bounces a %s off %s to /dashboard", (role, path) => {
+    mockUser = { role };
+    mockPathname = path;
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("lets an OPERATOR stay on /settings/billing", () => {
+    mockPathname = "/settings/billing";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
 });

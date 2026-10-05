@@ -116,6 +116,11 @@ export interface Recommendation {
   preCheckedAddons: string[];
 }
 
+/** How the tenant's self-serve add-on is billed (`GET /billing/proration-preview`):
+ *  STRIPE = prorated onto the next Stripe bill; MANUAL = the owner adds it to the next manual
+ *  invoice; UNBILLED = a free pilot, included at no charge. */
+export type AddonBillingMode = "STRIPE" | "MANUAL" | "UNBILLED";
+
 export interface ProrationPreview {
   sku: string;
   name: string;
@@ -128,7 +133,7 @@ export interface ProrationPreview {
   effectiveAt: string;
   nextChargeAt: string;
   /** How the add-on is billed; "REFUSED" when the enable call would 409 (see `refusal`). */
-  billing?: "STRIPE" | "MANUAL" | "UNBILLED" | "REFUSED";
+  billing?: AddonBillingMode | "REFUSED";
   billed?: boolean;
   /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
    *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
@@ -179,10 +184,15 @@ export function useRecommendation() {
   });
 }
 
+/** A MONEY quote the add-on confirm sheet shows before the tenant commits: never served from
+ *  the cache as current. `staleTime: 0` + `refetchOnMount: "always"` override the app-wide 30s
+ *  staleTime, so every open re-checks; callers gate Confirm on `isFetching`, not `isLoading`. */
 export function useProrationPreview(sku: string | null) {
   return useQuery<ProrationPreview>({
     queryKey: [...KEY, "proration-preview", sku],
     enabled: !!sku,
+    staleTime: 0,
+    refetchOnMount: "always",
     queryFn: () =>
       apiClient.get(`/billing/proration-preview`, { params: { sku } }).then((r) => r.data),
   });
