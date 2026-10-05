@@ -332,6 +332,7 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
         applied: ["inv-1"],
         refused: {
           invoiceId: "inv-2",
+          invoiceNumber: "INV-inv-2",
           code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
           message:
             "Invoice INV-inv-2: The invoice became PAID while the price was being adjusted. Issue a credit note instead.",
@@ -355,6 +356,7 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
       expect(body.applied).toEqual(["inv-1"]);
       expect(body.refused).toEqual({
         invoiceId: "inv-2",
+        invoiceNumber: "INV-inv-2",
         code: API_ERROR_CODES.MONEY_INVARIANT,
         message: "Invoice INV-inv-2: Invoice discount ($30.00) cannot exceed subtotal ($20.00).",
       });
