@@ -98,6 +98,11 @@ export const orderInvoicesNeedReviewError = () =>
     message: ORDER_INVOICES_NEED_REVIEW_MESSAGE,
   });
 
+/** True for the 409 above. The driver's stop completion catches it (the status write never depends on the invoice). */
+export const isOrderInvoicesNeedReview = (err: unknown): boolean =>
+  err instanceof ConflictException &&
+  (err.getResponse() as { code?: string })?.code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW;
+
 /**
  * SA-687: can the order's "qty - invoicedQty" be trusted before more is billed beside its existing
  * invoices? No when any non-void invoice:
@@ -147,7 +152,13 @@ export async function invoicesNeedReview(
   if (opts.onlyWhenRemainder && !hasRemainder) return false;
 
   const items = invoices.flatMap((i) => i.items ?? []);
+  // KNOWN GAPS (B1090 follow-up): an unlisted (productId null) invoice line is recognised only by its
+  // description matching a live custom line's name, so the orphan test is bypassed when (1) the
+  // custom line is RENAMED in the same replace-all edit, or (2) staff edited that draft line's
+  // description before the replace-all. Both leave the remainder to bill unguarded; pinned as-is in
+  // invoice-partition-known-gaps.spec.ts so a later fix flips them deliberately.
   const customNames = new Set(lines.filter((li) => li.name).map((li) => li.name));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- an invoice item row as selected above
   const looksLikeOrderLine = (it: Record<string, any>) =>
     !!it.productId || customNames.has(it.description);
   if (

@@ -1,4 +1,6 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PAYABLE } from "./invoice-status-sets";
+import { isOrderInvoicesNeedReview } from "./invoice-partition";
 
 export interface DeliveredReconcileDeps {
   findOpenOrderDraft: (orderId: string, tx?: any) => Promise<any>;
@@ -58,7 +60,27 @@ export async function reconcileDeliveredOrdersInTx(
       // caller's own payment step (recordDeliveryPaymentInTx) still applies cash
       // to whatever invoice(s) are already there.
       if (!existing) {
-        await deps.createInvoiceFromOrder(orderId, tx);
+        try {
+          await deps.createInvoiceFromOrder(orderId, tx);
+        } catch (err) {
+          // SA-687c: the physical status write never depends on the invoice. The review guard throws
+          // BEFORE any write, so the tx is intact: skip the create, flag the order for the office in
+          // the audit trail (same tx), and let the stop complete. The office's from-order route keeps
+          // refusing until the invoices are reviewed.
+          if (!isOrderInvoicesNeedReview(err)) throw err;
+          await tx.auditLog.create({
+            data: {
+              action: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+              entityType: "order",
+              entityId: orderId,
+              meta: {
+                context: "stop-completion",
+                note: "invoice not created: invoices need review",
+              },
+            },
+          });
+          continue;
+        }
         draft = await deps.findOpenOrderDraft(orderId, tx);
       }
     }
