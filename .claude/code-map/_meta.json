@@ -1,6 +1,6 @@
 {
-  "mappedSha": "f3d686fa70e8f7c3f0d9beb17670b4e182fbdc79",
-  "generatedAt": "2026-10-04T00:00:00.000Z",
+  "mappedSha": "80a3697a262571b483b33d36690980916c6e9c18",
+  "generatedAt": "2026-10-05T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -14,6 +14,6 @@
     "mobile": 5,
     "packages": 0
   },
-  "fileCount": 1046,
-  "notes": "**2026-10-04 \u2014 window 1 landings #3190, #3196, #3191, #3188, #3194, #3192, #3135 (master `f3d686fa7`) (docs-only bookkeeping).** New `api/landing-2026-10-04-w1.md` (TOC row in `api.md`), one bullet per PR, each symbol grepped at HEAD; `packages.md` gains a \"Landed 2026-10-04 (window 1)\" section (fulfilment and price-history types). `mappedSha` restamped to `f3d686fa7`. Lessons L-259 and L-260 minted. No source changed."
+  "fileCount": 1047,
+  "notes": "**2026-10-05 — window 6 landings #3217, #3161, #3199 (master `80a3697a2`) (docs-only bookkeeping).** New `api/landing-2026-10-05-w6.md` (TOC row in `api.md`), one bullet per PR, each symbol grepped at HEAD (#3217 is listed by file and function names only: tenant guard hardening for unique lookups); `packages.md` gains a \"Landed 2026-10-05 (window 6)\" section (business-profile types, `FLEET_MODULE_KEYS`, error codes). `mappedSha` restamped to `80a3697a2`. Lessons L-261 to L-263 minted (L-253, L-255, L-256 archived). Records B1079 to B1114 landed in the same PR. No source changed."
 }
