@@ -136,4 +136,40 @@ describe("OrdersController — merge choice vs orderDate", () => {
       { skipAutoMerge: true },
     );
   });
+
+  // Wiring pins (one predicate, merge-candidates.ts): every merge-target search passes `mergeAs`, so the
+  // incoming order's fulfil path decides which open order it may fold into.
+  it("the pre-merge candidate search AND its in-lock re-read both pass mergeAs (the request's own path)", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+        fulfillPath: "SHIP",
+      } as any,
+      operatorPayload,
+    );
+    const calls = ordersService.findActiveOrder.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const [, opts] of calls)
+      expect(opts).toEqual({ forMerge: true, mergeAs: { explicit: "SHIP" } });
+  });
+
+  it("GET /orders/active takes the order's path and searches as create would (omitted = the customer's own)", async () => {
+    await controller.getActiveOrderForCustomer("cust-1", "SHIP");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "SHIP" },
+    });
+    await controller.getActiveOrderForCustomer("cust-1");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined },
+    });
+    await controller.getActiveOrderForCustomer("cust-1", "garbage");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined },
+    });
+  });
 });

@@ -411,9 +411,18 @@ export class OrdersController {
   @Get("active")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
+  async getActiveOrderForCustomer(
+    @Query("customerId") customerId: string,
+    // The path the order being built is on: the preview looks for the SAME merge target create would
+    // (merge-candidates.ts); omitted = the customer's own path.
+    @Query("fulfillPath") fulfillPath?: string,
+  ) {
     if (!customerId) return null;
-    const order = await this.ordersService.findActiveOrder(customerId, { forMerge: true });
+    const explicit = fulfillPath === "SHIP" || fulfillPath === "ROUTE" ? fulfillPath : undefined;
+    const order = await this.ordersService.findActiveOrder(customerId, {
+      forMerge: true,
+      mergeAs: { explicit },
+    });
     if (!order) return null;
     return {
       id: order.id,

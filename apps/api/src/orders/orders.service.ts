@@ -77,6 +77,7 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { resolveFulfilPath } from "./fulfil-path-resolver";
 import {
+  assertNoBackdatedMerge,
   findActiveOrderImpl,
   sameFulfilPathAsWinner,
   type MergeSearchOpts,
@@ -1562,12 +1563,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      const mergeTarget = await this.findActiveOrder(customerId, { forMerge: true });
-      if (mergeTarget) {
-        throw new BadRequestException(
-          "This customer has an open order. Enter a backdated order as a separate order.",
-        );
-      }
+      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID

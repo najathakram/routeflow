@@ -11,6 +11,7 @@
  *
  * No new lock: the callers' `withAdvisoryLock("order-merge")` stays the only one.
  */
+import { BadRequestException } from "@nestjs/common";
 import { FulfillPath, ItemStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import { resolveFulfilPath, type FulfilPathDeps } from "./fulfil-path-resolver";
@@ -20,13 +21,22 @@ export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): Fu
   return o.fulfillPath ?? FulfillPath.ROUTE;
 }
 
-/** The orders that may fold together: those on the SAME path as the winner (the first, most recent). */
+/**
+ * The orders that fold together in one pass: the first path (most recent first) that has MORE THAN ONE
+ * order, so [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP order;
+ * with no path holding two, just the winner (the most recent), which is a no-op fold. Orders on other
+ * paths are left exactly as they are (the next sweep takes the next pair).
+ */
 export function sameFulfilPathAsWinner<T extends { fulfillPath?: FulfillPath | null }>(
   orders: T[],
 ): T[] {
   if (orders.length <= 1) return orders;
-  const winnerPath = effectiveFulfilPath(orders[0]);
-  return orders.filter((o) => effectiveFulfilPath(o) === winnerPath);
+  const byPath = new Map<FulfillPath, T[]>();
+  for (const o of orders) {
+    const path = effectiveFulfilPath(o);
+    byPath.set(path, [...(byPath.get(path) ?? []), o]);
+  }
+  return [...byPath.values()].find((g) => g.length > 1) ?? [orders[0]];
 }
 
 /** The `where` fragment that limits a merge-target search to the incoming order's path. */
@@ -109,4 +119,21 @@ export async function findActiveOrderImpl(
     },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/**
+ * A backdated order is refused while an open order it would MERGE into exists (an auto-merge folds into the
+ * existing order, whose own business date stays authoritative). "Would merge into" = same fulfil path, the
+ * same `mergeAs` rule the create's own merge search uses.
+ */
+export async function assertNoBackdatedMerge(
+  orders: { findActiveOrder(customerId: string, opts: MergeSearchOpts): Promise<unknown> },
+  customerId: string,
+  explicit?: FulfillPath | null,
+): Promise<void> {
+  if (await orders.findActiveOrder(customerId, { forMerge: true, mergeAs: { explicit } })) {
+    throw new BadRequestException(
+      "This customer has an open order. Enter a backdated order as a separate order.",
+    );
+  }
 }
