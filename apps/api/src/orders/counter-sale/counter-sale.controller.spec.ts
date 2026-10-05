@@ -48,12 +48,19 @@ describe("CounterSaleController", () => {
     expect(service.ring).toHaveBeenCalledWith(dto, user, "key-123");
   });
 
-  it("a blank key means no key; an oversized or spaced key is a 400 before the service runs", async () => {
-    await controller.ring(dto, user, "   ");
-    expect(service.ring).toHaveBeenCalledWith(dto, user, undefined);
-    await controller.ring(dto, user, undefined);
-    expect(service.ring).toHaveBeenLastCalledWith(dto, user, undefined);
-    service.ring.mockClear();
+  it("a missing or blank Idempotency-Key is a coded 400 IDEMPOTENCY_KEY_REQUIRED before the service runs", async () => {
+    for (const raw of [undefined, "", "   "]) {
+      const e = await controller.ring(dto, user, raw).then(
+        () => null,
+        (err) => err,
+      );
+      expect(e).toBeInstanceOf(BadRequestException);
+      expect(e.getResponse().code).toBe("IDEMPOTENCY_KEY_REQUIRED");
+    }
+    expect(service.ring).not.toHaveBeenCalled();
+  });
+
+  it("an oversized or spaced key is a 400 before the service runs", async () => {
     await expect(controller.ring(dto, user, "x".repeat(129))).rejects.toBeInstanceOf(
       BadRequestException,
     );

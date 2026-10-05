@@ -33,6 +33,7 @@ import {
   autoApplyCandidateWhere,
   hasOpenCreditBalance,
 } from "../../credit-notes/auto-apply-candidates";
+import { withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
 
 type InvoiceRow = {
@@ -157,11 +158,39 @@ export class CounterSaleService {
       select: { id: true, orderNumber: true },
     });
 
-    // 5. The tender, against what is STORED now.
+    // 5. The tender, against what is STORED now. The re-read -> "no tender yet" -> record window runs
+    // under the shared advisory lock keyed on the order, so two concurrent same-key submits cannot
+    // both pass the test (recordPayment has no key of its own). ON_ACCOUNT takes no money: no lock.
+    const method = dto.payment.method;
+    let invoices: InvoiceRow[];
+    let planError: string | undefined;
+    if (method === "ON_ACCOUNT") {
+      invoices = await this.readInvoices(orderId);
+    } else {
+      const locked = await withAdvisoryLock(
+        { family: "counter-tender", key: orderId, mode: "wait" },
+        () => this.tender(dto, orderId),
+      );
+      if (!locked.acquired) throw new InternalServerErrorException("Tender lock not acquired");
+      ({ invoices, planError } = locked.value);
+    }
+
+    return this.respond(dto, order, invoices, replayed, planError);
+  }
+
+  /**
+   * The locked half of the tender. A replay's rule "no non-VOID tender exists on the sale's invoices" is
+   * sound HERE only because a counter sale's invoice is born in the same request as its tender, so
+   * any stored tender can only be this sale's own earlier attempt (pickup-complete cannot use it).
+   */
+  private async tender(
+    dto: CounterSaleDto,
+    orderId: string,
+  ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
     const method = dto.payment.method;
-    if (method !== "ON_ACCOUNT" && !invoices.some((i) => (i.payments ?? []).some(isTender))) {
+    if (!invoices.some((i) => (i.payments ?? []).some(isTender))) {
       const balances = invoices.map((i) => ({
         id: i.id,
         balance: remainingCapacity(Number(i.total), i.payments),
@@ -191,8 +220,7 @@ export class CounterSaleService {
         invoices = await this.readInvoices(orderId);
       }
     }
-
-    return this.respond(dto, order, invoices, replayed, planError);
+    return { invoices, planError };
   }
 
   private async assertProductsExist(productIds: string[]): Promise<void> {
@@ -251,7 +279,11 @@ export class CounterSaleService {
     const firstTender = payments.find(isTender);
     // Recorded = nothing was asked of the till (on account / nothing owing) or a tender is STORED (a partial
     // included: its balanceDue stays open on purpose).
-    const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || !!firstTender;
+    // A throw part-way (a sibling invoice's allocation) can leave an EARLIER invoice's tender stored while
+    // balance remains: that must never read as recorded, so a planError beats "a tender exists" (paid and
+    // balanceDue still come from storage). A balance that storage shows fully covered is recorded regardless
+    // (the loser of a race whose own recordPayment the invoice row lock refused).
+    const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
     // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
     const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
     const tendered = dto.payment.amount;

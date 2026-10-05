@@ -111,6 +111,7 @@ export const LOCK_FAMILIES = [
   "demo-booking",
   "mailbox",
   "policy-write",
+  "counter-tender",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -178,6 +179,11 @@ const POOL_MAX: Record<string, number | undefined> = {
   // settings action: request-path, short (one tx), rarer than even `billing`'s add-on toggles —
   // same size as `billing` for the same reason.
   "policy-write": 4,
+  // `counter-tender` (SA-672 M1): `CounterSaleService`'s re-read -> "no tender yet" -> recordPayment
+  // window, keyed on the order id. Staff request-path and short (one invoice read + one or two
+  // recordPayment calls), one checkout per counter-sale call; same size as `billing` for the same
+  // reason.
+  "counter-tender": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

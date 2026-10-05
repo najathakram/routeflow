@@ -3,6 +3,30 @@
 jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 
+// The shared Postgres advisory lock is replaced by a per-key in-process mutex with the same contract
+// (fn never runs without the lock; same key serialises, different keys do not), so a spec can
+// interleave two calls and prove the section is actually serialised.
+const mockLocks = new Map<string, Promise<unknown>>();
+const mockLockCalls: Array<{ family: string; key: string; mode: string }> = [];
+jest.mock("../../common/db-locks", () => ({
+  withAdvisoryLock: async (opts: any, fn: () => Promise<unknown>) => {
+    mockLockCalls.push({ family: opts.family, key: opts.key, mode: opts.mode });
+    const prev = mockLocks.get(opts.key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    mockLocks.set(
+      opts.key,
+      prev.then(() => mine),
+    );
+    await prev;
+    try {
+      return { acquired: true, value: await fn() };
+    } finally {
+      release();
+    }
+  },
+}));
+
 import { ConflictException, BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { CounterSaleService } from "./counter-sale.service";
@@ -73,6 +97,8 @@ describe("CounterSaleService.ring", () => {
   const codeOf = async (p: Promise<unknown>) => (await errorOf(p)).getResponse().code;
 
   beforeEach(async () => {
+    mockLocks.clear();
+    mockLockCalls.length = 0;
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
@@ -591,6 +617,64 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledTimes(2); // the loser tried; the invoice row lock said no
       expect(invoices[0].payments).toHaveLength(1);
       expect(loser).toMatchObject({ paymentRecorded: true, replayed: true, paid: 37.25 });
+    });
+  });
+
+  describe("serialised tender (SA-672 M1) and a failing sibling allocation (M2)", () => {
+    const tick = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+
+    it("the payment step runs inside the shared counter-tender advisory lock keyed on the order", async () => {
+      await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(mockLockCalls).toEqual([{ family: "counter-tender", key: "ord-1", mode: "wait" }]);
+    });
+
+    it("two concurrent same-key SHORT tenders record exactly ONE payment", async () => {
+      // A slow recordPayment holds the race window open: without the lock both calls read 'no tender yet'.
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        await tick();
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const [a, b] = await Promise.all([
+        service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
+        service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
+      ]);
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(invoices[0].payments).toHaveLength(1);
+      expect(a).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
+      expect(b).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
+    });
+
+    it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2") throw new BadRequestException("regulated line refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r).toMatchObject({
+        total: 50,
+        paid: 30,
+        balanceDue: 20,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+      expect(r.change).toBeUndefined();
     });
   });
 });

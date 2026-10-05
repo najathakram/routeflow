@@ -83,6 +83,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // endpoint plus the row update that persists the refreshed token).
       // "policy-write" (2026-09-24, SA-138 policy layer phase 1) backs PolicyService#set/#clear's
       // supersede-then-insert window, keyed `${tenantId}:${key}`.
+      // "counter-tender" (2026-10-04, SA-672 M1) backs CounterSaleService's re-read -> 'no tender yet'
+      // -> recordPayment window, keyed on the order id.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -91,6 +93,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "demo-booking",
         "mailbox",
         "policy-write",
+        "counter-tender",
       ]);
     });
   });
