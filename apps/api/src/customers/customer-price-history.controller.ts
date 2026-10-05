@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { PriceHistoryResponse } from "@routeflow/types";
@@ -28,8 +28,9 @@ export class CustomerPriceHistoryController {
     @Param("productId") productId: string,
     @Query("limit") limit: string | undefined,
     @CurrentUser() user: JwtPayload,
-    /** The order being edited: its own lines and invoices are not "history" (hunt2 F6). */
-    @Query("excludeOrderId") excludeOrderId?: string,
+    /** The order being edited: its own lines and invoices are not "history" (hunt2 F6). A UUID or
+     *  absent; anything else (a repeated param arrives as an array) is a 400, never a 500. */
+    @Query("excludeOrderId", new ParseUUIDPipe({ optional: true })) excludeOrderId?: string,
   ): Promise<PriceHistoryResponse> {
     return this.history.getHistory(customerId, productId, {
       limit,

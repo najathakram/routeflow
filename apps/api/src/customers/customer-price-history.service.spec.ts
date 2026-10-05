@@ -342,6 +342,12 @@ describe("CustomerPriceHistoryService", () => {
         expect.arrayContaining(["inv-loose", "inv1"]),
       );
       expect(out.rows[0].unitPrice).not.toBe(99); // "Last" is never the price being edited
+      // the REAL query (not just the fake store): null-order invoices are kept explicitly
+      const rowsQuery = prisma.invoice.findMany.mock.calls.find(
+        ([a]: any[]) => !a?.where?.items?.some?.orderItemId,
+      )![0];
+      expect(rowsQuery.where.OR).toEqual([{ orderId: null }, { orderId: { not: "o-edit" } }]);
+      expect(prisma.order.findMany.mock.calls[0][0].where.id).toEqual({ not: "o-edit" });
     });
 
     it("without it (order entry, a new order) every row stays, as today", async () => {
