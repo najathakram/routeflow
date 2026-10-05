@@ -1602,12 +1602,6 @@ export class SubscriptionMutationService {
   }
 
   /**
-   * The ONE place a tenant's add-on billing mode is decided. STRIPE is checked FIRST: nothing ever
-   * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
-   * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
-   * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
-   */
-  /**
    * Would a self-serve ENABLE be refused for this tenant, and why? The preview reads this so it can
    * never disagree with `enableAddon`, which throws the SAME objects: plan-included first (the
    * add-on is bundled, nothing to buy), then annual (a monthly item can't join a yearly Stripe
@@ -1645,6 +1639,12 @@ export class SubscriptionMutationService {
       : null;
   }
 
+  /**
+   * The ONE place a tenant's add-on billing mode is decided. STRIPE is checked FIRST: nothing ever
+   * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
+   * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
+   * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
+   */
   private addonModeOf(
     sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
   ): AddonBilling {
