@@ -85,6 +85,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
+import { buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -2436,22 +2437,10 @@ export class OrdersService implements OnApplicationBootstrap {
     if (carrier?.withCarrier) throwIfWithCarrier("WITH_CARRIER");
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
-    const statusUpdateData = {
-      status: dto.status,
-      // A backdated order was delivered on its business date, not on the day
-      // staff got around to marking it.
-      ...(dto.status === OrderStatus.DELIVERED
-        ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
-        : {}),
-      // A reopened order is no longer delivered — a stale deliveredAt would
-      // keep it in delivered-on-date reports and reconcile passes.
-      ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
-      // E-b: shippedAt is stamped ONLY by the ship transition (never by saving tracking) and survives an unmark.
-      ...(dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
-        ? { shippedAt: order.shippedAt ?? new Date() }
-        : {}),
-      ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
-    };
+    const statusUpdateData = buildStatusUpdateData(order, dto.status, {
+      isDeliveredDemotion,
+      noteAppend,
+    });
 
     const isDraftToPendingPromotion =
       order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING;
@@ -2642,7 +2631,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409).
+      return writeStatusIfUnchanged(this.prisma.forTenant(), id, order.status, statusUpdateData);
     })();
 
     await recordShipStateChange(this, order, dto.status, user, dto.reason);
@@ -2898,9 +2888,9 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     dto: UpdateOrderItemsDto,
     user?: JwtPayload,
-    // B215/B465: set ONLY by the staff create-merge branch (OrdersController.create). Not
-    // reachable from a request body — the PATCH routes and the buyer merge call with three
-    // arguments. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
+    // B215/B465: `isCreateMerge` is set ONLY by the staff create-merge branch (OrdersController.create),
+    // never reachable from a request body (the PATCH routes call with three arguments). B1094: the
+    // buyer merge adds a fourth argument carrying ONLY `idempotency`. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
     // line NEW to the order (no existing counterpart) skips the reason-required guard below,
     // matching separate create's own unchecked behavior — never inferred from the DTO/order
     // state, only ever set here by the one call site that means it.
