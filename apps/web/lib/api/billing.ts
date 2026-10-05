@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SubscriptionView } from "@routeflow/types";
+import type { AddonBillingMode, EnableAddonResult, SubscriptionView } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 export type { SubscriptionView };
@@ -116,17 +116,12 @@ export interface Recommendation {
   preCheckedAddons: string[];
 }
 
-/** How the tenant's self-serve add-on is billed (`GET /billing/proration-preview`):
- *  STRIPE = prorated onto the next Stripe bill; MANUAL = the owner adds it to the next manual
- *  invoice; UNBILLED = a free pilot, included at no charge. */
-export type AddonBillingMode = "STRIPE" | "MANUAL" | "UNBILLED";
-
 export interface ProrationPreview {
   sku: string;
   name: string;
   monthly: number;
   /** An estimate (Stripe's own figure comes back from the enable call). Null when nothing would
-   *  be charged: a free pilot (`billed` false) or a refused enable (`refusal` set). */
+   *  be charged: an unbilled tenant (`billed` false) or a refused enable (`refusal` set). */
   proratedToday: number | null;
   daysRemaining: number;
   daysInCycle: number;
@@ -207,9 +202,9 @@ export function useQuote() {
   });
 }
 
-function useBillingMutation<TBody>(fn: (b: TBody) => Promise<unknown>) {
+function useBillingMutation<TBody, TResult = unknown>(fn: (b: TBody) => Promise<TResult>) {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, TBody>({
+  return useMutation<TResult, Error, TBody>({
     mutationFn: fn,
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
@@ -260,8 +255,9 @@ export function useCreateCheckout() {
 }
 
 export function useEnableAddon() {
-  return useBillingMutation<{ sku: string; quantity?: number }>(({ sku, quantity }) =>
-    apiClient.post(`/billing/addons/${sku}/enable`, { quantity }).then((r) => r.data),
+  return useBillingMutation<{ sku: string; quantity?: number }, EnableAddonResult>(
+    ({ sku, quantity }) =>
+      apiClient.post(`/billing/addons/${sku}/enable`, { quantity }).then((r) => r.data),
   );
 }
 

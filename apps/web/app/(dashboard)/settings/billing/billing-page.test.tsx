@@ -1,4 +1,6 @@
 import * as React from "react";
+import * as fs from "fs";
+import * as path from "path";
 import userEvent from "@testing-library/user-event";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
@@ -484,22 +486,79 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     ).toBeInTheDocument();
   });
 
-  it("UNBILLED (pilot): 'Included at no charge during your pilot.' and no amount", async () => {
-    withPreview({ billing: "UNBILLED", billed: false });
+  // SA-690: UNBILLED is worded by the tenant's status. A TRIAL tenant is free until the trial ends
+  // and the fresh preview's own monthly figure is the price after; an ACTIVE tenant with no Stripe
+  // subscription gets neutral copy. The word "pilot" never reaches the tenant.
+  const trialSubscription = () =>
+    subscriptionView({
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+  const NOT_BILLED_COPY = "Not billed online yet; your account manager will set up billing.";
+
+  it("TRIAL + UNBILLED: 'Free during your trial, then $55.00/mo' from the fresh preview, not the catalog", async () => {
+    mockSubscriptionView = trialSubscription();
+    mockPlansAddons = [{ ...ADDON, monthlyPrice: 50 }];
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, monthly: 55 });
     const { dialog } = await openEnableSheet();
-    expect(dialog.getByText("Included at no charge during your pilot.")).toBeInTheDocument();
-    expect(dialog.queryByText(/\$24\.50|card|invoice/i)).toBeNull();
+    expect(dialog.getByText("Free during your trial, then $55.00/mo")).toBeInTheDocument();
+    expect(dialog.queryByText(/\$50\.00|\$24\.50|card|invoice/i)).toBeNull();
+    expect(dialog.queryByText(NOT_BILLED_COPY)).toBeNull();
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
   });
 
-  it("UNBILLED: the success toast says it is included at no charge", async () => {
+  it("ACTIVE + UNBILLED (no Stripe subscription): neutral 'Not billed online yet' copy and no amount", async () => {
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, monthly: 55 });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(NOT_BILLED_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(/\$\d|free during your trial|no charge|card|invoice/i)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
+  });
+
+  it("UNBILLED on a TRIAL: the success toast says it is free during the trial", async () => {
+    mockSubscriptionView = trialSubscription();
     withPreview({ billing: "UNBILLED", billed: false });
     mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
       o?.onSuccess?.({ proratedNow: 0, billing: "UNBILLED" }),
     );
     const { user, dialog } = await openEnableSheet();
     await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
-    expect(await screen.findByText("Included at no charge during your pilot.")).toBeInTheDocument();
+    expect(await screen.findByText("Free during your trial.")).toBeInTheDocument();
+  });
+
+  it("UNBILLED on an ACTIVE tenant: the success toast uses the neutral copy", async () => {
+    withPreview({ billing: "UNBILLED", billed: false });
+    mockEnableMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onSuccess?.({ proratedNow: 0, billing: "UNBILLED" }),
+    );
+    const { user, dialog } = await openEnableSheet();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(await screen.findByText(NOT_BILLED_COPY)).toBeInTheDocument();
+  });
+
+  it('the word "pilot" is never rendered, in any billing mode, or left in the billing sources', async () => {
+    for (const billing of ["STRIPE", "MANUAL", "UNBILLED"]) {
+      withPreview({ billing, billed: billing !== "UNBILLED" });
+      const { unmount } = renderWithProviders(<BillingSettingsPage />);
+      await userEvent.setup().click(await screen.findByRole("button", { name: "Enable" }));
+      await screen.findByRole("dialog");
+      expect(document.body.textContent ?? "").not.toMatch(/pilot/i);
+      unmount();
+    }
+    for (const rel of ["page.tsx", "../../../../lib/api/billing.ts"]) {
+      expect(fs.readFileSync(path.resolve(__dirname, rel), "utf8")).not.toMatch(/pilot/i);
+    }
+  });
+
+  // ── (c) the sheet quotes the FRESH preview's monthly figure, never the cached catalog price ──
+
+  it("STRIPE: the sheet quotes the fresh preview monthly ($55.00), not the cached catalog price ($50.00)", async () => {
+    mockPlansAddons = [{ ...ADDON, monthlyPrice: 50 }];
+    withPreview({ monthly: 55 });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText("$55.00/mo")).toBeInTheDocument();
+    expect(dialog.getByText(/then \$55\.00\/mo/)).toBeInTheDocument();
+    expect(dialog.queryByText(/50\.00/)).toBeNull();
   });
 
   it("ANNUAL Stripe plan: shows the fixed contact-support copy and Confirm is disabled", async () => {
@@ -608,17 +667,31 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
   });
 
-  it("a 409 whose body carries no known code is the generic failure, not the annual copy", async () => {
+  it("a 409 whose body carries no known code BLOCKS the sheet with generic copy, not the annual copy", async () => {
     rejectEnableWith(409, { message: "some other conflict" });
     const { user, dialog } = await openEnableSheet();
     await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
     expect(
       await dialog.findByText(
-        "We couldn't turn this add-on on. Nothing was changed. Please try again.",
+        "This add-on can't be turned on online right now. Please contact support.",
       ),
     ).toBeInTheDocument();
     expect(dialog.queryByText(ANNUAL_COPY)).toBeNull();
-    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
+    expect(screen.queryByText(/some other conflict/)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(dialog.queryByText(/\$[\d.,]+\s*\/mo/)).toBeNull();
+  });
+
+  it("a 409 with an unrecognised code is BLOCKED too, never keyed on the status alone", async () => {
+    rejectEnableWith(409, { code: "SOMETHING_NEW", message: "x" });
+    const { user, dialog } = await openEnableSheet();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(
+      await dialog.findByText(
+        "This add-on can't be turned on online right now. Please contact support.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
   });
 
   it("any other failure keeps the sheet open with fixed 'didn't go through' copy and allows a retry", async () => {
@@ -661,5 +734,117 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     await user.click(dialog.getByRole("button", { name: "Keep my plan" }));
 
     expect(mockCancelMutate).not.toHaveBeenCalled();
+  });
+
+  it("Cancel subscription that fails shows fixed failure copy, never the server's text", async () => {
+    mockCancelMutate.mockReset();
+    mockCancelMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onError?.(
+        Object.assign(new Error("Request failed"), {
+          response: { status: 500, data: { message: "stripe internal sk_live_detail" } },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Cancel subscription" }));
+
+    expect(
+      await screen.findByText("We couldn't cancel your subscription. Nothing was changed."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sk_live_detail/)).toBeNull();
+  });
+
+  // ── (a) Enable / Disable / Cancel are TENANT_ADMIN actions; an OPERATOR gets a read-only note ──
+
+  it("an OPERATOR sees no Enable, Disable or Cancel button and a read-only note instead", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack" }];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", monthly: 49 }] as never,
+    });
+    renderWithProviders(<BillingSettingsPage />);
+
+    await screen.findByRole("button", { name: /change plan/i });
+    expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).toBeNull();
+    expect(screen.getByText("Only a workspace admin can turn add-ons on or off.")).toBeVisible();
+    expect(screen.getByText("Only a workspace admin can cancel the subscription.")).toBeVisible();
+  });
+
+  it("a TENANT_ADMIN sees the buttons and no read-only note", async () => {
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack" }];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", monthly: 49 }] as never,
+    });
+    renderWithProviders(<BillingSettingsPage />);
+
+    expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Only a workspace admin/)).toBeNull();
+  });
+});
+
+// ─── SA-690: a trial tenant's checkout refused because of add-ons it has switched on ───────────
+
+describe("BillingSettingsPage — checkout errors", () => {
+  const PENDING_MESSAGE =
+    "Turn off Route Plus before adding your card, or contact support to set them up.";
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockCheckoutPending = false;
+    mockCheckoutMutate.mockReset();
+    mockSubscriptionView = subscriptionView({
+      planKey: "LITE",
+      planName: "Lite",
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+      monthlyPrice: 99,
+      paymentRequired: true,
+    });
+  });
+
+  const failCheckout = (status: number, data: Record<string, unknown>) =>
+    mockCheckoutMutate.mockImplementation((_v: unknown, o: any) =>
+      o?.onError?.(Object.assign(new Error("Request failed"), { response: { status, data } })),
+    );
+  const clickComplete = async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await user.click(await screen.findByRole("button", { name: "Complete payment" }));
+  };
+
+  it("a 409 ADDON_BILLING_PENDING_CHECKOUT shows that error's own message", async () => {
+    failCheckout(409, {
+      code: API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT,
+      message: PENDING_MESSAGE,
+    });
+    await clickComplete();
+    expect(await screen.findByRole("alert")).toHaveTextContent(PENDING_MESSAGE);
+  });
+
+  it("any other checkout failure shows fixed copy, never the server's text", async () => {
+    failCheckout(409, { code: "SOMETHING_ELSE", message: "internal stripe detail" });
+    await clickComplete();
+    expect(
+      await screen.findByText("We couldn't start checkout. Nothing was changed. Please try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/internal stripe detail/)).toBeNull();
+  });
+
+  it("a checkout failure with no body at all shows the fixed copy", async () => {
+    mockCheckoutMutate.mockImplementation((_v: unknown, o: any) => o?.onError?.(new Error("net")));
+    await clickComplete();
+    expect(
+      await screen.findByText("We couldn't start checkout. Nothing was changed. Please try again."),
+    ).toBeInTheDocument();
   });
 });

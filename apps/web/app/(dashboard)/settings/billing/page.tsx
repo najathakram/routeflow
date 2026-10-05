@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
 import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -18,7 +18,6 @@ import {
   useEnableAddon,
   useDisableAddon,
   useProrationPreview,
-  type AddonBillingMode,
   useCreateCheckout,
   type MeterReading,
   type SubscriptionView,
@@ -94,11 +93,33 @@ const ENABLE_FAILED_COPY =
   "We couldn't turn this add-on on. Nothing was changed. Please try again.";
 const ADDON_REFUSED_COPY =
   "This add-on can't be turned on online right now. Please contact support.";
+// UNBILLED on a tenant that is not on a trial: no Stripe subscription yet, so nothing is charged
+// online. Neutral on purpose (never a "free" promise, never an internal label).
+const NOT_BILLED_ONLINE_COPY = "Not billed online yet; your account manager will set up billing.";
+const CHECKOUT_FAILED_COPY = "We couldn't start checkout. Nothing was changed. Please try again.";
+const CHECKOUT_ADDONS_PENDING_FALLBACK =
+  "Turn off your add-ons before adding your card, or contact support to set them up.";
 const addonIncludedCopy = (name: string) => `${name} is already included in your plan.`;
 
-/** Why an add-on enable was refused (server body `code`, never the HTTP status): the annual
- *  Stripe plan, an add-on the plan already includes, or "failed" for anything else. */
-export type EnableAddonError = "annual" | "included" | "failed" | null;
+/** Why an add-on enable failed, read from the server body `code` (never the status alone):
+ *  "annual" (annual Stripe plan), "included" (the plan already bundles it), "refused" (a 409 whose
+ *  code this page does not know: BLOCKED like an unknown refusal on the preview), or "failed"
+ *  (anything else: retryable). */
+export type EnableAddonError = "annual" | "included" | "refused" | "failed" | null;
+
+/** The copy for a failed "Complete payment" checkout. A trial tenant refused because of add-ons it
+ *  switched on (`ADDON_BILLING_PENDING_CHECKOUT`) is shown that error's own message (the API's
+ *  authored copy, "Turn off <add-ons> before adding your card ..."); every other failure is fixed
+ *  copy, never the server's text. */
+function checkoutErrorCopy(err: unknown): string {
+  const body = (err as { response?: { data?: { code?: unknown; message?: unknown } } } | undefined)
+    ?.response?.data;
+  if (body?.code === API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT) {
+    const text = body.message; // the one deliberate raw-message read on this page (allowlisted)
+    return typeof text === "string" && text.trim() ? text : CHECKOUT_ADDONS_PENDING_FALLBACK;
+  }
+  return CHECKOUT_FAILED_COPY;
+}
 
 /** Maps a refusal `code` (the preview's `refusal.code` or the enable call's `response.data.code`)
  *  to the fixed block reason; a code this page does not know is the generic "other" block. */
@@ -114,7 +135,8 @@ function blockReasonOf(code: string | undefined): "annual" | "included" | "other
  *  - STRIPE:   "About $X this cycle" (an estimate; the success toast shows Stripe's actual figure),
  *              added to the next bill;
  *  - MANUAL:   an invoiced-by-hand tenant — "will appear on your next invoice from us", no card wording;
- *  - UNBILLED: a free pilot — "Included at no charge during your pilot.".
+ *  - UNBILLED: no Stripe subscription. A TRIAL tenant reads "Free during your trial, then $X/mo"
+ *              ($X from the FRESH preview); anyone else reads the neutral "Not billed online yet" copy.
  * BLOCKED: a REFUSED preview (`billing === "REFUSED"` or a `refusal`), a server refusal on enable, or an
  * annual Stripe plan (a monthly add-on can't be added online). No price and no charge line, Confirm
  * disabled, and fixed copy chosen by the refusal `code` (annual: contact support; included: "<Name> is
@@ -124,6 +146,7 @@ function blockReasonOf(code: string | undefined): "annual" | "included" | "other
 function EnableAddonSheet({
   addon,
   annual,
+  trial,
   busy,
   error,
   onConfirm,
@@ -132,6 +155,8 @@ function EnableAddonSheet({
   addon: AddonSkuDef | null;
   /** The tenant is on an annual plan (a monthly Stripe add-on can't be added online). */
   annual: boolean;
+  /** The tenant is on a trial (`status === "TRIAL"`): an unbilled add-on is free until it ends. */
+  trial: boolean;
   busy: boolean;
   error: EnableAddonError;
   onConfirm: () => void;
@@ -153,11 +178,13 @@ function EnableAddonSheet({
   const blockReason: "annual" | "included" | "other" | null =
     error === "annual" || error === "included"
       ? error
-      : refused
-        ? blockReasonOf(refusal?.code)
-        : annual && mode === "STRIPE"
-          ? "annual"
-          : null;
+      : error === "refused"
+        ? "other"
+        : refused
+          ? blockReasonOf(refusal?.code)
+          : annual && mode === "STRIPE"
+            ? "annual"
+            : null;
   const blocked = blockReason != null;
   const ready = fresh && !blocked;
   return (
@@ -183,9 +210,7 @@ function EnableAddonSheet({
             <div className="flex justify-between">
               <span className="font-medium text-slate-800">{addon.name}</span>
               {fresh && !blocked && mode !== "UNBILLED" && (
-                <span className="tabular-nums text-slate-800">
-                  {formatMoney(addon.monthlyPrice)}/mo
-                </span>
+                <span className="tabular-nums text-slate-800">{formatMoney(p.monthly)}/mo</span>
               )}
             </div>
             {fresh && mode === "STRIPE" && !blocked && (
@@ -217,14 +242,18 @@ function EnableAddonSheet({
             <p>
               Turns on right away. Prorated for the {p.daysRemaining} of {p.daysInCycle} days left
               in this cycle; the exact amount is confirmed when you turn it on and is added to your
-              next bill, then {formatMoney(addon.monthlyPrice)}/mo.
+              next bill, then {formatMoney(p.monthly)}/mo.
             </p>
           )}
           {fresh && !blocked && mode === "MANUAL" && (
             <p>Added to your plan. It will appear on your next invoice from us.</p>
           )}
           {fresh && !blocked && mode === "UNBILLED" && (
-            <p>Included at no charge during your pilot.</p>
+            <p>
+              {trial
+                ? `Free during your trial, then ${formatMoney(p.monthly)}/mo`
+                : NOT_BILLED_ONLINE_COPY}
+            </p>
           )}
           {error === "failed" && (
             <p role="alert" className="text-red-700">
@@ -256,6 +285,8 @@ export default function BillingSettingsPage() {
   const [enableTarget, setEnableTarget] = React.useState<AddonSkuDef | null>(null);
   const [enableError, setEnableError] = React.useState<EnableAddonError>(null);
   const [disableTarget, setDisableTarget] = React.useState<AddonSkuDef | null>(null);
+  // A trial tenant's checkout can be refused because of add-ons it switched on; show why.
+  const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
 
   const activeSkus = new Set(
     (sub.data?.addons ?? []).map((a) => a.sku).filter(Boolean) as string[],
@@ -278,30 +309,38 @@ export default function BillingSettingsPage() {
       {
         onSuccess: (res) => {
           // The server returns what actually happened: Stripe's prorated figure (STRIPE), nothing to
-          // show for an invoiced-by-hand tenant (MANUAL) or a free pilot (UNBILLED).
-          const out = res as { proratedNow?: number | null; billing?: AddonBillingMode };
+          // show for an invoiced-by-hand tenant (MANUAL) or a tenant with no Stripe subscription
+          // (UNBILLED: free during a trial, otherwise the neutral "not billed online" copy).
+          const out: Partial<EnableAddonResult> | undefined = res;
           const description =
             out?.billing === "MANUAL"
               ? "It will appear on your next invoice from us."
               : out?.billing === "UNBILLED"
-                ? "Included at no charge during your pilot."
+                ? sub.data?.status === "TRIAL"
+                  ? "Free during your trial."
+                  : NOT_BILLED_ONLINE_COPY
                 : out?.proratedNow != null
                   ? `Prorated ${formatMoney(out.proratedNow)} this cycle.`
                   : "The prorated amount will show on your next bill.";
           toast({ title: `${addon.name} enabled`, description });
           setEnableTarget(null);
         },
-        // Stay open so nothing is lost; fixed copy only (never the server's text). Keyed on the
-        // body's `code`, not the HTTP status: a 409 with any other body is the generic failure.
+        // Stay open so nothing is lost; fixed copy only (never the server's text). The known
+        // refusals are keyed on the body's `code`, never the status alone; any OTHER 409 is still a
+        // refusal (BLOCKED, same as an unknown refusal on the preview), and the rest are retryable.
         onError: (err) => {
-          const code = (err as { response?: { data?: { code?: string } } } | undefined)?.response
-            ?.data?.code;
+          const res = (
+            err as { response?: { status?: number; data?: { code?: string } } } | undefined
+          )?.response;
+          const code = res?.data?.code;
           setEnableError(
             code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED
               ? "annual"
               : code === API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN
                 ? "included"
-                : "failed",
+                : res?.status === 409
+                  ? "refused"
+                  : "failed",
           );
         },
       },
@@ -316,9 +355,21 @@ export default function BillingSettingsPage() {
       {
         onSuccess: () =>
           toast({ title: `${addon.name} disabled`, description: "History kept read-only." }),
+        // Fixed copy only, never the server's text.
+        onError: () =>
+          toast({
+            title: `${addon.name} not disabled`,
+            description: "We couldn't turn this add-on off. Nothing was changed.",
+            variant: "error",
+          }),
       },
     );
     setDisableTarget(null);
+  };
+
+  const startCheckout = () => {
+    setCheckoutError(null);
+    checkout.mutate(undefined, { onError: (err) => setCheckoutError(checkoutErrorCopy(err)) });
   };
 
   if (sub.isLoading) {
@@ -430,12 +481,12 @@ export default function BillingSettingsPage() {
               <span className="text-sm font-medium text-slate-700">
                 {s.planName} · {money(s.monthlyPrice)}/mo
               </span>
-              <Button loading={checkout.isPending} onClick={() => checkout.mutate()}>
+              <Button loading={checkout.isPending} onClick={startCheckout}>
                 Complete payment
               </Button>
             </div>
           )}
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <a href="/choose-plan">
               <Button size="sm">Change plan</Button>
             </a>
@@ -444,25 +495,45 @@ export default function BillingSettingsPage() {
                 End trial
               </Button>
             )}
-            {!s.cancelAtPeriodEnd && s.status !== "TRIAL" && s.status !== "READ_ONLY" && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setCancelOpen(true)}
-                disabled={cancel.isPending}
-              >
-                Cancel
-              </Button>
-            )}
+            {!s.cancelAtPeriodEnd &&
+              s.status !== "TRIAL" &&
+              s.status !== "READ_ONLY" &&
+              (isAdmin ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setCancelOpen(true)}
+                  disabled={cancel.isPending}
+                >
+                  Cancel
+                </Button>
+              ) : (
+                <span className="text-xs text-slate-500">
+                  Only a workspace admin can cancel the subscription.
+                </span>
+              ))}
           </div>
         </div>
+        {checkoutError && (
+          <p role="alert" className="mt-3 text-sm text-red-700">
+            {checkoutError}
+          </p>
+        )}
       </Card>
 
       <ConfirmDialog
         open={endTrialOpen}
         onClose={() => setEndTrialOpen(false)}
         onConfirm={() => {
-          cancel.mutate(undefined, { onSuccess: () => toast({ title: "Trial ended" }) });
+          cancel.mutate(undefined, {
+            onSuccess: () => toast({ title: "Trial ended" }),
+            onError: () =>
+              toast({
+                title: "Trial not ended",
+                description: "We couldn't end your trial. Nothing was changed.",
+                variant: "error",
+              }),
+          });
           setEndTrialOpen(false);
         }}
         title="End your trial now?"
@@ -478,6 +549,13 @@ export default function BillingSettingsPage() {
         onConfirm={() => {
           cancel.mutate(undefined, {
             onSuccess: () => toast({ title: "Cancellation scheduled" }),
+            // Fixed copy only, never the server's text.
+            onError: () =>
+              toast({
+                title: "Cancellation failed",
+                description: "We couldn't cancel your subscription. Nothing was changed.",
+                variant: "error",
+              }),
           });
           setCancelOpen(false);
         }}
@@ -492,6 +570,7 @@ export default function BillingSettingsPage() {
       <EnableAddonSheet
         addon={enableTarget}
         annual={s.cycle === "ANNUAL"}
+        trial={s.status === "TRIAL"}
         busy={enable.isPending}
         error={enableError}
         onConfirm={confirmEnable}
@@ -527,6 +606,11 @@ export default function BillingSettingsPage() {
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
           Add-ons
         </h2>
+        {!isAdmin && addonCatalog.length > 0 && (
+          <p className="mb-2 text-sm text-slate-500">
+            Only a workspace admin can turn add-ons on or off.
+          </p>
+        )}
         <div className="divide-y divide-slate-100">
           {addonCatalog.map((a) => {
             const on = activeSkus.has(a.sku);
@@ -549,14 +633,22 @@ export default function BillingSettingsPage() {
                     {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
                   </p>
                 </div>
-                <Button
-                  size="sm"
-                  variant={on ? "ghost" : "secondary"}
-                  onClick={() => toggleAddon(a)}
-                  disabled={busy}
-                >
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : on ? "Disable" : "Enable"}
-                </Button>
+                {isAdmin && (
+                  <Button
+                    size="sm"
+                    variant={on ? "ghost" : "secondary"}
+                    onClick={() => toggleAddon(a)}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : on ? (
+                      "Disable"
+                    ) : (
+                      "Enable"
+                    )}
+                  </Button>
+                )}
               </div>
             );
           })}
