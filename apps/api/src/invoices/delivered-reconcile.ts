@@ -33,6 +33,7 @@ export async function reconcileDeliveredOrdersInTx(
   tx: any,
   orderIds: string[],
   reconcileOrderIds?: string[],
+  userId?: string,
 ): Promise<void> {
   // Only orders actually delivered in THIS completion may be rebuilt on the
   // delivered basis. Default to all orderIds for callers that don't distinguish
@@ -70,6 +71,7 @@ export async function reconcileDeliveredOrdersInTx(
           if (!isOrderInvoicesNeedReview(err)) throw err;
           await tx.auditLog.create({
             data: {
+              userId: userId ?? null,
               action: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
               entityType: "order",
               entityId: orderId,

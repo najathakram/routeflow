@@ -4680,6 +4680,7 @@ export class InvoicesService {
     tx: any,
     orderIds: string[],
     reconcileOrderIds?: string[],
+    userId?: string,
   ): Promise<void> {
     return reconcileDeliveredOrdersInTxImpl(
       {
@@ -4691,6 +4692,7 @@ export class InvoicesService {
       tx,
       orderIds,
       reconcileOrderIds,
+      userId,
     );
   }
 
