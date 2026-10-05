@@ -21,11 +21,18 @@ jest.mock("./invoice-pdf.service", () => ({
 jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
+// A pass-through spy: the service still runs the REAL pre-flight; the spec reads the projected totals it returned.
+jest.mock("./price-adjustment-ledger", () => {
+  const actual = jest.requireActual("./price-adjustment-ledger");
+  return { ...actual, preflightBulkPriceAdjustment: jest.fn(actual.preflightBulkPriceAdjustment) };
+});
 
 import { Test } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { BadRequestException } from "@nestjs/common";
+import { roundMoney } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
+import { preflightBulkPriceAdjustment } from "./price-adjustment-ledger";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -150,6 +157,7 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
       await prisma.orderItem.deleteMany(where).catch(swallow);
       await prisma.order.deleteMany(where).catch(swallow);
       await prisma.product.deleteMany(where).catch(swallow);
+      await prisma.trackedCategory.deleteMany(where).catch(swallow);
       await prisma.customer.deleteMany(where).catch(swallow);
       await prisma.user.deleteMany(where).catch(swallow);
       await prisma.auditLog.deleteMany(where).catch(swallow);
@@ -163,7 +171,7 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
    * production `recordPayment` writer, which also derives the status (PARTIAL for a part payment).
    * `opts.second` seeds a second SENT $150.00 invoice for the same customer (bulk scope).
    */
-  async function seedBase(label: string) {
+  async function seedBase(label: string, opts: { categoryRate?: number } = {}) {
     seq += 1;
     const slug = assertTestTenant(
       `qa-b1051-${RUN}-${seq}-${label}`,
@@ -178,8 +186,26 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
     const customer = await prisma.customer.create({
       data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
     });
+    // A PERCENT_OF_SALE category (a fraction, 0.1 = 10%) makes the product's lines category-taxed.
+    const category =
+      opts.categoryRate != null
+        ? await prisma.trackedCategory.create({
+            data: {
+              tenantId,
+              name: `cat ${label}`,
+              taxType: "PERCENT_OF_SALE",
+              rate: opts.categoryRate,
+            },
+          })
+        : null;
     const product = await prisma.product.create({
-      data: { tenantId, name: `p ${label}`, unit: "each", pricePerUnit: 15 },
+      data: {
+        tenantId,
+        name: `p ${label}`,
+        unit: "each",
+        pricePerUnit: 15,
+        trackedCategoryId: category?.id ?? null,
+      },
     });
     const makeInvoice = async (n: number) => {
       const invoice = await prisma.invoice.create({
@@ -207,7 +233,13 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
       });
       return { invoiceId: invoice.id, lineId: line.id };
     };
-    return { tenantId, productId: product.id, makeInvoice };
+    return {
+      tenantId,
+      customerId: customer.id,
+      productId: product.id,
+      categoryId: category?.id ?? null,
+      makeInvoice,
+    };
   }
 
   const pay = (tenantId: string, invoiceId: string, amount: number) =>
@@ -283,6 +315,14 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
     expect(after.notes).toBeNull(); // and so did the audit breadcrumb
     expect(outcome).toBeInstanceOf(BadRequestException);
     expect((outcome as Error).message).toContain("overpaid by $20.00");
+    // B1058: the SINGLE-scope 400 carries the same one-entry list the bulk 400 does (the client renders from it).
+    const number = (await prisma.invoice.findUnique({ where: { id: s.invoiceId } }))!.invoiceNumber;
+    expect((outcome as BadRequestException).getResponse()).toMatchObject({
+      code: "PRICE_ADJUSTMENT_OVERPAYS",
+      overpaid: [
+        { invoiceId: s.invoiceId, invoiceNumber: number, paid: 100, newTotal: 80, overpaidBy: 20 },
+      ],
+    });
   });
 
   it("pin: a re-price that lands EXACTLY on the paid amount ($100 paid, new total $100) settles PAID", async () => {
@@ -406,5 +446,193 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
     expect(after.map((r) => r.status)).toEqual(["PAID", "PARTIAL", "PARTIAL", "PARTIAL", "SENT"]);
     expect(after.map((r) => r.total)).toEqual([80, 80, 80, 80, 80]);
     expect(after.map((r) => r.unitPrice)).toEqual([8, 8, 8, 8, 8]);
+  });
+
+  // ── The pre-flight's PROJECTED total is the total the real run WRITES (B1058) ────────────────────
+  // The overpay judgment is only as good as the total it compares against. Each case runs the REAL bulk
+  // re-price through the service (real tenant client, real transactions); the spy above hands back what
+  // the real pre-flight projected for each target, and the stored invoice total is read afterwards.
+  describe("projected total == written total, to the cent", () => {
+    const preflightSpy = preflightBulkPriceAdjustment as unknown as jest.Mock;
+
+    /** What the pre-flight projected on the last real run, by invoice id (the spy wraps the real one). */
+    const projectedOfLastRun = async (): Promise<ReadonlyMap<string, number>> =>
+      preflightSpy.mock.results[preflightSpy.mock.results.length - 1].value;
+
+    const rePrice = (tenantId: string, invoiceId: string, lineId: string, newUnitPrice: number) =>
+      tenantCtx.run(tenantId, () =>
+        invoices.applyPriceAdjustment(invoiceId, {
+          items: [{ itemId: lineId, newUnitPrice }],
+          scope: "ALL_CUSTOMER_SINCE",
+          sinceDate: "2000-01-01",
+        } as any),
+      );
+
+    const storedTotal = async (invoiceId: string) =>
+      Number((await prisma.invoice.findUnique({ where: { id: invoiceId } }))!.total);
+
+    /** A SENT invoice: 10 x $15.00 at a 5% regular tax and a 10% category tax (stored: 7.50 + 15.00 on 150.00). */
+    async function categoryTaxedInvoice(
+      b: Awaited<ReturnType<typeof seedBase>>,
+      n: number,
+      createdAt?: Date,
+    ) {
+      const invoice = await prisma.invoice.create({
+        data: {
+          tenantId: b.tenantId,
+          customerId: b.customerId,
+          invoiceNumber: `INV-B1058-${RUN}-${seq}-${n}`,
+          status: "SENT",
+          subtotal: 150,
+          taxAmount: 22.5,
+          total: 172.5,
+          ...(createdAt ? { createdAt } : {}),
+        },
+      });
+      const line = await prisma.invoiceItem.create({
+        data: {
+          tenantId: b.tenantId,
+          invoiceId: invoice.id,
+          productId: b.productId,
+          description: "category taxed",
+          qty: 10,
+          unitPrice: 15,
+          taxRate: 0.05,
+          subtotal: 150,
+          trackedCategoryId: b.categoryId,
+          categoryTaxAmount: 15,
+        },
+      });
+      return { invoiceId: invoice.id, lineId: line.id };
+    }
+
+    it("(1) a CATEGORY-TAXED line: the levy is re-derived from the new subtotal in the projection exactly as in the write", async () => {
+      const b = await seedBase("cat", { categoryRate: 0.1 });
+      const s = await categoryTaxedInvoice(b, 1);
+
+      await rePrice(b.tenantId, s.invoiceId, s.lineId, 8.37); // 10 x 8.37 = 83.70
+
+      const projected = (await projectedOfLastRun()).get(s.invoiceId)!;
+      const inv = await prisma.invoice.findUnique({
+        where: { id: s.invoiceId },
+        include: { items: true },
+      });
+      const written = Number(inv!.total);
+      const line = inv!.items[0];
+      // The levy moved with the price (stored 15.00 -> 8.37), so a projection that kept the stored levy
+      // cannot equal the write.
+      expect(Number(line.categoryTaxAmount)).toBe(8.37);
+      expect(Number(line.subtotal)).toBe(83.7);
+      expect(roundMoney(projected)).toBe(roundMoney(written));
+      expect(written).toBe(96.26); // 83.70 + 4.19 regular + 8.37 category
+    });
+
+    it("(2) a legacy B294 FLAT-RATE invoice (every line taxRate 0, a real header tax, an untaxed NSF fee): the stamped rate is in the projection", async () => {
+      const b = await seedBase("flat");
+      const invoice = await prisma.invoice.create({
+        data: {
+          tenantId: b.tenantId,
+          customerId: b.customerId,
+          invoiceNumber: `INV-B1058-${RUN}-${seq}-flat`,
+          status: "SENT",
+          subtotal: 125, // goods 100.00 + NSF fee 25.00
+          taxAmount: 7.5, // 7.5% of the goods only
+          total: 132.5,
+        },
+      });
+      const goods = await prisma.invoiceItem.create({
+        data: {
+          tenantId: b.tenantId,
+          invoiceId: invoice.id,
+          productId: b.productId,
+          description: "legacy goods",
+          qty: 10,
+          unitPrice: 10,
+          taxRate: 0,
+          subtotal: 100,
+        },
+      });
+      await prisma.invoiceItem.create({
+        data: {
+          tenantId: b.tenantId,
+          invoiceId: invoice.id,
+          description: "NSF fee — returned check P-1058",
+          qty: 1,
+          unitPrice: 25,
+          taxRate: 0,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+        },
+      });
+
+      await rePrice(b.tenantId, invoice.id, goods.id, 9.37); // goods 93.70
+
+      const projected = (await projectedOfLastRun()).get(invoice.id)!;
+      const inv = await prisma.invoice.findUnique({
+        where: { id: invoice.id },
+        include: { items: true },
+      });
+      const written = Number(inv!.total);
+      // The tx stamped the inferred 7.5% on the goods line and not on the fee, so the tax is on the goods alone.
+      expect(Number(inv!.items.find((i) => i.id === goods.id)!.taxRate)).toBe(0.075);
+      expect(roundMoney(projected)).toBe(roundMoney(written));
+      expect(written).toBe(125.73); // 93.70 goods + 25.00 fee + 7.03 tax (93.70 x 7.5%)
+    });
+
+    it("(3) the OVERPAY judgment uses that same projection: a sibling paid exactly the written total is fine, one cent more is refused by one cent", async () => {
+      const b = await seedBase("pair", { categoryRate: 0.1 });
+      const old = new Date("2020-01-01T00:00:00Z"); // outside the first run's sinceDate
+      const overpaying = await categoryTaxedInvoice(b, 1, old);
+      const sibling = await categoryTaxedInvoice(b, 2);
+
+      // Run 1 targets the sibling only (sinceDate after `old`): its projected total vs what it then stores.
+      await tenantCtx.run(b.tenantId, () =>
+        invoices.applyPriceAdjustment(sibling.invoiceId, {
+          items: [{ itemId: sibling.lineId, newUnitPrice: 8.37 }],
+          scope: "ALL_CUSTOMER_SINCE",
+          sinceDate: "2021-01-01",
+        } as any),
+      );
+      const projected = (await projectedOfLastRun()).get(sibling.invoiceId)!;
+      const written = await storedTotal(sibling.invoiceId);
+      expect(roundMoney(projected)).toBe(roundMoney(written));
+      expect(written).toBe(96.26);
+
+      // The old invoice is now paid ONE CENT above that total (it still owes 172.50, so the payment is valid).
+      await pay(b.tenantId, overpaying.invoiceId, roundMoney(written + 0.01));
+      const before = await read(overpaying);
+
+      // Run 2 (both targets, same price): the sibling re-derives the same 96.26 and is not overpaid; the
+      // old invoice would be overpaid by exactly 0.01 against the SAME projected total. One 400, no writes.
+      const outcome = await attempt(
+        rePrice(b.tenantId, overpaying.invoiceId, overpaying.lineId, 8.37),
+      );
+
+      expect(await read(overpaying)).toEqual(before); // unchanged
+      expect(await storedTotal(sibling.invoiceId)).toBe(written); // the sibling's write was not repeated or lost
+      expect(outcome).toBeInstanceOf(BadRequestException);
+      const body = (outcome as BadRequestException).getResponse() as any;
+      expect(body.code).toBe("PRICE_ADJUSTMENT_OVERPAYS");
+      expect(body.overpaid).toEqual([
+        {
+          invoiceId: overpaying.invoiceId,
+          invoiceNumber: `INV-B1058-${RUN}-${seq}-1`,
+          paid: 96.27,
+          newTotal: written,
+          overpaidBy: 0.01,
+        },
+      ]);
+
+      // And at exactly the written total it settles: top the payment down by a cent via a fresh pair.
+      const b2 = await seedBase("settle", { categoryRate: 0.1 });
+      const exact = await categoryTaxedInvoice(b2, 1);
+      await pay(b2.tenantId, exact.invoiceId, 96.26);
+      expect(await attempt(rePrice(b2.tenantId, exact.invoiceId, exact.lineId, 8.37))).toBe(
+        "applied",
+      );
+      const settled = await prisma.invoice.findUnique({ where: { id: exact.invoiceId } });
+      expect(Number(settled!.total)).toBe(96.26);
+      expect(settled!.status).toBe("PAID");
+    });
   });
 });
