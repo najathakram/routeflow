@@ -346,6 +346,16 @@ export const API_ERROR_CODES = {
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
+   * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_OTHER_ORDER: "IDEMPOTENCY_KEY_OTHER_ORDER",
+  /**
+   * 409 from create(): this Idempotency-Key already created an order with a DIFFERENT cart. The order EXISTS:
+   * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const;
 

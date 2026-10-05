@@ -90,6 +90,8 @@ import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-s
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
+  cartMismatchConflict,
+  otherOrderConflict,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
@@ -1546,7 +1548,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const existing = await this.findReplayCandidateByKey(idempotencyKey, customerId);
       if (existing) {
         if (existing.customerId !== customerId) {
-          throw new ConflictException("Idempotency-Key already used for a different order");
+          throw otherOrderConflict();
         }
         // R4 (close-out): a replay must be a replay OF THE SAME CART. A client
         // that edited its cart after a timed-out-but-committed submit and
@@ -1568,9 +1570,7 @@ export class OrdersService implements OnApplicationBootstrap {
             true,
           );
           if (incomingNorm !== storedNorm) {
-            throw new ConflictException(
-              "Idempotency-Key reused with a different cart — submit the edited cart as a new order (new key), or retry the original unchanged",
-            );
+            throw cartMismatchConflict();
           }
         }
         options.onReplay?.(existing);
@@ -2145,7 +2145,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // Same ownership gate as the pre-check above: the row that won the
             // race is only OUR replay if it belongs to this caller.
             if (existing && existing.customerId !== customerId) {
-              throw new ConflictException("Idempotency-Key already used for a different order");
+              throw otherOrderConflict();
             }
             if (existing) {
               options.onReplay?.(existing);

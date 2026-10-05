@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { createHash } from "crypto";
 import { assertReplayCarriesReturnKey } from "./order-inline-return";
 import type { InlineReturnReplayLines } from "../returns/inline-return-fingerprint";
@@ -343,3 +344,19 @@ export async function insertMergeIdempotencyKey(
     throw e;
   }
 }
+
+/**
+ * create()'s two Idempotency-Key 409s, each CODED (the order already exists: for a counter sale an UNKNOWN
+ * outcome). The message text is unchanged from before the codes were added.
+ */
+export const otherOrderConflict = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
+    message: "Idempotency-Key already used for a different order",
+  });
+export const cartMismatchConflict = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+    message:
+      "Idempotency-Key reused with a different cart — submit the edited cart as a new order (new key), or retry the original unchanged",
+  });
