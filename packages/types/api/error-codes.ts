@@ -341,16 +341,22 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
-  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
   /**
-   * 404 on `GET /orders/counter-sale/by-key/:key`: no sale was ever written under that Idempotency-Key. The ONLY answer
-   * (besides a 2xx sale) after which a till may drop the key and ring the sale again.
+   * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
+   * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
-  /** 409: the Idempotency-Key already belongs to a different order. The order EXISTS: an UNKNOWN outcome for the till. */
+  /**
+   * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
+   * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
   IDEMPOTENCY_KEY_OTHER_ORDER: "IDEMPOTENCY_KEY_OTHER_ORDER",
-  /** 409: the Idempotency-Key was used with a different cart. The order EXISTS: an UNKNOWN outcome for the till. */
+  /**
+   * 409 from create(): this Idempotency-Key already created an order with a DIFFERENT cart. The order EXISTS:
+   * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
