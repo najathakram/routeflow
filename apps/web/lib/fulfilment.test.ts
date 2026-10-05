@@ -22,16 +22,12 @@ describe("FULFILMENT_METHODS", () => {
     );
     expect(fulfilmentStatusLabel(undefined, "DELIVERED", "Delivered")).toBe("Delivered");
   });
-  it("pins steps, invoice trigger and email events per method", () => {
+  it("pins the steps per method, and the table is display-only (no billing moment, no email events)", () => {
     for (const m of Object.values(FULFILMENT_METHODS)) {
       expect(m.steps).toEqual(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"]);
+      // the api owns when an order is invoiced and which email fires (billsAtShipment, the registry)
+      expect(Object.keys(m).sort()).toEqual(["labels", "steps"]);
     }
-    expect(FULFILMENT_METHODS.ROUTE.invoiceAt).toBe("DELIVERED");
-    expect(FULFILMENT_METHODS.SHIP.invoiceAt).toBe("SHIPPED");
-    expect(FULFILMENT_METHODS.PICKUP.invoiceAt).toBe("DELIVERED");
-    expect(FULFILMENT_METHODS.SHIP.emailEvents.OUT_FOR_DELIVERY).toBe("order.shipped");
-    expect(FULFILMENT_METHODS.PICKUP.emailEvents.DELIVERED).toBe("order.picked_up");
-    expect(FULFILMENT_METHODS.ROUTE.emailEvents.OUT_FOR_DELIVERY).toBe("order.out_for_delivery");
   });
 });
 
