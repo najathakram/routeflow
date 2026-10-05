@@ -38,6 +38,8 @@ const CODE_COPY: Record<string, string> = {
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
   FULFIL_CAPABILITY_UNAVAILABLE:
     "Couldn't check how this business fulfils orders. Try again in a moment.",
+  ORDER_WITH_CARRIER_NO_CANCEL:
+    "This order is already with the carrier. Use a return instead of cancelling.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",

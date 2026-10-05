@@ -23,6 +23,7 @@
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
+  FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
   // apps/api/src/users/users.controller.preferences.spec.ts.
@@ -126,6 +127,7 @@ module.exports = {
     ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
     FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
     FULFIL_CAPABILITY_UNAVAILABLE: "FULFIL_CAPABILITY_UNAVAILABLE",
+    ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
     CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
     MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
     LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",

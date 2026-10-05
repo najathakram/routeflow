@@ -4,11 +4,14 @@
  * invoice detail page (hides Edit) and the edit route (redirects to the order) so they cannot drift (#2791).
  */
 export function isPendingMirrorInvoice(inv: {
+  /** The server's own answer (it knows the tenant's fulfilment mode; clients cannot). Wins when present. */
+  pendingMirror?: boolean | null;
   orderId?: string | null;
   status?: string | null;
   deliveryBatchId?: string | null;
   order?: { status?: string | null } | null;
 }): boolean {
+  if (typeof inv.pendingMirror === "boolean") return inv.pendingMirror;
   return (
     !!inv.orderId &&
     inv.status === "DRAFT" &&
