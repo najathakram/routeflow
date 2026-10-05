@@ -430,6 +430,32 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
     });
 
+    it("a 409 COUNTER_SALE_ORDER_CHANGED: the sale exists, so banner, lock and the SAME key on Try again", async () => {
+      const banner = await goUnknown({
+        response: { status: 409, data: { code: "COUNTER_SALE_ORDER_CHANGED", message: "RAW" } },
+      });
+      expect(banner).toHaveTextContent(
+        "We couldn't confirm the sale. Check recent sales before trying again.",
+      );
+      expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(keyOfCall(1)).toBe(keyOfCall(0));
+    });
+
+    it("any other 409 is still a definitive refusal (editable, new key)", async () => {
+      mutateAsync.mockRejectedValueOnce({
+        response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } },
+      });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    });
+
     it("Try again that fails again keeps the banner and the SAME key", async () => {
       await goUnknown({ response: { status: 502 } });
       mutateAsync.mockRejectedValueOnce({ response: { status: 504 } });

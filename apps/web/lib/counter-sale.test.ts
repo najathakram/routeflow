@@ -192,6 +192,21 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
       false,
     );
   });
+  it("a 409 COUNTER_SALE_ORDER_CHANGED means the sale EXISTS: unknown outcome, never 'nothing was charged'", () => {
+    const err = {
+      response: { status: 409, data: { code: "COUNTER_SALE_ORDER_CHANGED", message: "RAW" } },
+    };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+    expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged/i);
+  });
+  it("any OTHER 409 stays a definitive refusal", () => {
+    for (const data of [undefined, {}, { code: "WALK_IN_OPEN_CREDIT" }]) {
+      const err = { response: { status: 409, data } };
+      expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
+      expect(counterSaleErrorCopy(err)).toMatch(/nothing was charged/i);
+    }
+  });
   it("only 400 / 401 / 403 / 404 / 409 / 422 / 429 prove nothing was written", () => {
     for (const status of [400, 401, 403, 404, 409, 422, 429])
       expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(true);
