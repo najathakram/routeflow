@@ -19,7 +19,7 @@ import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { autoApplyCandidateWhere } from "./auto-apply-candidates";
+import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
@@ -924,14 +924,7 @@ export class CreditNotesService {
     if (!invoiceId || !customerId) return nothing;
     // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
     // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
-    const tenantId = this.prisma.getTenantId();
-    const cfg = tenantId
-      ? await tx.tenantConfig.findUnique({
-          where: { tenantId },
-          select: { creditAutoApplyOnSend: true },
-        })
-      : null;
-    if (!cfg?.creditAutoApplyOnSend) return nothing;
+    if (!(await creditAutoApplyOnSend(tx, this.prisma.getTenantId()))) return nothing;
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },

@@ -27,3 +27,20 @@ export function autoApplyCandidateWhere(args: {
 export function hasOpenCreditBalance(note: { amount: unknown; amountUsed: unknown }): boolean {
   return roundMoney(Number(note.amount) - Number(note.amountUsed)) > 0.001;
 }
+
+/**
+ * The tenant's send-time credit sweep switch (SA-436, `TenantConfig.creditAutoApplyOnSend`, OFF by default; no
+ * config row reads as OFF). The ONE reader: `autoApplyOldestCreditsInTx` runs only when it is on, and the
+ * counter sale's walk-in open-credit guard only blocks when it is on (when it is off, send() applies nothing).
+ */
+export async function creditAutoApplyOnSend(
+  db: { tenantConfig: { findUnique: (args: any) => Promise<any> } },
+  tenantId: string | null,
+): Promise<boolean> {
+  if (!tenantId) return false;
+  const cfg = await db.tenantConfig.findUnique({
+    where: { tenantId },
+    select: { creditAutoApplyOnSend: true },
+  });
+  return !!cfg?.creditAutoApplyOnSend;
+}

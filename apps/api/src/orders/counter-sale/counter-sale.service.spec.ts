@@ -129,6 +129,9 @@ describe("CounterSaleService.ring", () => {
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
     prisma.creditNote.findMany.mockResolvedValue([]);
+    // SA-436: the tenant's send-time sweep switch. ON here so the open-credit guard specs mean something;
+    // the OFF case is pinned on its own below.
+    prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
     prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
     prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
       invoices
@@ -322,6 +325,36 @@ describe("CounterSaleService.ring", () => {
       await expect(
         service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
       ).resolves.toBeDefined();
+    });
+
+    it("creditAutoApplyOnSend OFF (the default): open credit does NOT block the walk-in (send() would not apply it)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: false });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+      expect(createSale).toHaveBeenCalled();
+    });
+
+    it("no tenant config row reads as OFF: open credit does not block the walk-in", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+    });
+
+    it("creditAutoApplyOnSend ON: open credit blocks the walk-in (409 WALK_IN_OPEN_CREDIT)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      expect(
+        await codeOf(
+          service.ring(
+            { walkIn: true, items: [item], payment: { method: "CASH" } } as never,
+            staff,
+          ),
+        ),
+      ).toBe("WALK_IN_OPEN_CREDIT");
     });
 
     it("a fully consumed credit note does not block the walk-in", async () => {

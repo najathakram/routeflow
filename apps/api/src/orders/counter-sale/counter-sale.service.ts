@@ -31,6 +31,7 @@ import {
 } from "./counter-sale-payment";
 import {
   autoApplyCandidateWhere,
+  creditAutoApplyOnSend,
   hasOpenCreditBalance,
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -265,6 +266,8 @@ export class CounterSaleService {
   }
 
   private async assertNoOpenCredit(customerId: string): Promise<void> {
+    // When the tenant's send-time sweep is OFF (the default) send() applies nothing, so nothing can leak.
+    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
     // The SAME selection markSent's auto-apply uses (credit-notes/auto-apply-candidates), not just ISSUED.
     const notes = await this.prisma.forTenant().creditNote.findMany({
       where: autoApplyCandidateWhere({ customerId, now: new Date() }),
