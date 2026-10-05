@@ -38,6 +38,10 @@ const CODE_COPY: Record<string, string> = {
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
   ORDER_WITH_CARRIER_NO_CANCEL:
     "This order is already with the carrier. Use a return instead of cancelling.",
+  ORDER_WITH_CARRIER_NO_REDUCE:
+    "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+  INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
+    "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",

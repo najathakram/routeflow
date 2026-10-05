@@ -269,7 +269,7 @@ export async function settleStockForEdit(
    * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
-  opts?: { allowOversell?: boolean },
+  opts?: { allowOversell?: boolean; blockCredits?: boolean },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -358,6 +358,15 @@ export async function settleStockForEdit(
     if (delta !== 0) deltas.set(id, delta);
   }
   if (deltas.size === 0) return;
+  // B1082 (B2): a carrier order WITH the carrier is not reduced: a removal / qty decrease would put its stock
+  // back on the shelf while the parcel is still out (returns go through the return flow).
+  if (opts?.blockCredits && [...deltas.values()].some((d) => d < 0)) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_REDUCE,
+      message:
+        "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+    });
+  }
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)

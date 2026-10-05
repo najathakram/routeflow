@@ -17,6 +17,11 @@ export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
 export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
 export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
 
+/** The modules that make a fleet (routes, order delivery), for the web's setup copy. The api keeps
+ *  its own `FLEET_KEYS` literal (a runtime import of this raw-TS package fails its dist build);
+ *  apps/api/src/billing/fleet-keys-parity.spec.ts pins the two set-equal. */
+export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const;
+
 /**
  * PICKUP is a capability METHOD and a FulfillPath value (the order enum is ROUTE|SHIP|PICKUP since
  * the 20261004150000 migration). No order write accepts "PICKUP" yet (WRITABLE_FULFILL_PATHS);

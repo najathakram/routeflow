@@ -38,7 +38,7 @@ describe("fulfilment_model registry row", () => {
     expect(r!.billing).toEqual({ skus: [], selfService: false });
   });
 
-  it("offers unset / delivery / ship / both available; pickup (In store only) and pickup_ship are listed but UNAVAILABLE (SA-666)", () => {
+  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship; the pickup modes are NOT available until the counter-sale work (SA-671 M1)", () => {
     const modes = row()!.config!.modes;
     expect(Object.keys(modes)).toEqual([
       "unset",
@@ -54,7 +54,8 @@ describe("fulfilment_model registry row", () => {
       expect(modes[m].available).toBe(true);
       expect(modes[m].lifecycle).toBe("ga");
     }
-    // not selectable until the in-store (counter) flow lands: PICKUP is a method, not a FulfillPath
+    // No PICKUP order can be written yet (the enum value is not on master), so a tenant must not
+    // be put in a mode whose only method is PICKUP. The counter-sale work flips these back.
     for (const m of ["pickup", "pickup_ship"]) expect(modes[m].available).toBe(false);
     expect(modes.pickup.label).toBe("In store only");
     expect(modes.pickup_ship.label).toBe("In store + shipping");
@@ -156,13 +157,19 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("pickup and pickup_ship are REFUSED as unavailable (SA-666) whatever the fleet", async () => {
+  it("pickup and pickup_ship are refused as not available yet (SA-671 M1, SA-666) whatever the fleet — nothing is written", async () => {
     for (const fleet of [false, true]) {
       hasAddon.mockResolvedValue(fleet);
-      for (const mode of ["pickup", "pickup_ship"])
-        await expect(
-          service.set("t1", "fulfilment_model", mode, "r", "admin-1"),
-        ).rejects.toBeInstanceOf(BadRequestException);
+      for (const mode of ["pickup", "pickup_ship"]) {
+        const err = await service.set("t1", "fulfilment_model", mode, "r", "admin-1").then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as Error).message).toContain(
+          `"${mode}" is not available for "fulfilment_model"`,
+        );
+      }
     }
     expect(upsert).not.toHaveBeenCalled();
   });
