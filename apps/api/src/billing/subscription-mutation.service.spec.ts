@@ -461,6 +461,64 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
+  describe("SA-690 — a TRIAL keeps its add-ons across the plan pick", () => {
+    const trialRow = (sku: string, over: Record<string, unknown> = {}) => ({
+      id: `a-${sku}`,
+      addonKey: sku,
+      sku,
+      quantity: 2,
+      active: true,
+      priceSnapshot: 0, // a trial's add-on is unbilled: priced 0, no Stripe item
+      stripeItemId: null,
+      ...over,
+    });
+
+    it("the choose-plan call sends no add-ons — a trial's rows are NOT switched off (the card checkout bills them)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100"), trialRow("FORECASTING", { quantity: 1 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled(); // nothing deactivated, no pointer cleared
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+      // the crossing books the plan and the kept rows at their STORED price (0 each): no add-on event
+      expect(emitted(events)).toEqual([
+        BILLING_EVENTS.TRIAL_CONVERTED,
+        BILLING_EVENTS.PLAN_CHANGED,
+      ]);
+      expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149);
+    });
+
+    it("a trial that was Stripe-linked early has no billed item removed either (nothing is dropped)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { stripeItemId: "si_1", priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("an ACTIVE tenant's omitted add-on is still dropped (only a trial is spared)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 },
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a-CUSTOMER_PACK_100" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(emitted(events)).toContain(BILLING_EVENTS.ADDON_DISABLED);
+    });
+  });
+
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",

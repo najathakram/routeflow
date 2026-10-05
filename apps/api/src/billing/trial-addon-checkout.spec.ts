@@ -26,6 +26,9 @@ jest.mock("../common/db-locks", () => ({
 
 import { ConflictException } from "@nestjs/common";
 import { BillingService } from "./billing.service";
+import { BillingController } from "./billing.controller";
+import { SettingsBillingController } from "./settings-billing.controller";
+import { PlatformAdminController } from "../platform-admin/platform-admin.controller";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -470,8 +473,8 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
   it("bills only what is active, self-serve, unbilled and not already bundled by the plan", async () => {
     const h = make({
       rows: [
-        addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_billed" }), // already on a Stripe item
-        addonRow("FORECASTING", { active: false }), // switched off
+        addonRow("FORECASTING", { stripeItemId: "si_billed" }), // already on a Stripe item
+        addonRow("CUSTOMER_PACK_100", { active: false }), // switched off
         addonRow("MSRP"), // admin-only SKU (ships dark) — never self-serve billed here
         addonRow("SEAT_EXTRA", { qty: 3 }), // seat plumbing, not a self-serve toggle
         addonRow("CUSTOMER_PACK_100", { qty: 4, addonKey: "extra_pack" }), // the ONE billable row
@@ -481,6 +484,16 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(2); // the plan + the one billable add-on
     expect(lines[1].quantity).toBe(4);
+
+    // never a SECOND line for a SKU that already holds an item through another active row
+    const dup = make({
+      rows: [
+        addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_billed" }),
+        addonRow("CUSTOMER_PACK_100", { addonKey: "extra_pack" }),
+      ],
+    });
+    await dup.billing.createCheckoutSession("t1", "month");
+    expect(dup.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
 
     // a SKU the plan already bundles is never sold again (F3), so it gets no line either
     const bundled = make({
@@ -572,9 +585,14 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     });
     await h.completed();
     expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 45, quantity: 1 });
-    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([
-      { type: BILLING_EVENTS.ADDON_ENABLED, delta: 45, sku: "CUSTOMER_PACK_100" },
-    ]);
+    // stored 0×3 → actual 45×1 = +45. (emitAddonDelta labels a shrinking quantity ADDON_DISABLED
+    // whatever the sign; only the signed amount feeds the run-rate, so the amount is the pin.)
+    expect(
+      h
+        .ledger()
+        .filter((e: any) => ADDON_TYPES.includes(e.type))
+        .map((e: any) => e.delta),
+    ).toEqual([45]);
   });
 
   it("a REDELIVERED webhook finds the item already set: no write, no Stripe call, NOTHING booked", async () => {
@@ -783,8 +801,67 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
         planKey: "SCALE",
         items: [baseItem()],
       });
-      await bundled.completed();
+      // the checkout names the bundling plan too (it is what the completion writes onto the row)
+      await bundled.completed(
+        bundled.session({ metadata: { tenantId: "t1", planKey: "SCALE", interval: "month" } }),
+      );
       expect(bundled.client.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(bundled.rows[0].stripeItemId).toBeNull();
+    });
+
+    it("(c) PIN: an add-on enabled AFTER the session was created is billed once by the enable path — one item, one +delta, no double booking, even redelivered", async () => {
+      // The session was created with CUSTOMER_PACK_100 only (its line became si_pack). Before the
+      // card was entered the tenant also enabled FORECASTING — a row with no item and no session line —
+      // and raised CUSTOMER_PACK_100's quantity from 2 to 3.
+      const h = make({
+        status: "TRIAL",
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 }), addonRow("FORECASTING", { qty: 1 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+
+      await h.completed();
+
+      // FORECASTING: the existing enable path — adoptOrphanItem (a listing) first, then ONE create
+      expect(h.client.subscriptionItems.list).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.create.mock.calls[0][0]).toMatchObject({
+        subscription: "sub_1",
+        quantity: 1,
+        proration_behavior: "create_prorations",
+        price_data: { unit_amount: 1900, recurring: { interval: "month" } },
+        metadata: { tenantId: "t1", sku: "FORECASTING" },
+      });
+      expect(h.rows[1]).toMatchObject({ stripeItemId: "si_new1", priceSnapshot: 19, quantity: 1 });
+      // CUSTOMER_PACK_100: its checkout item is adopted at what Stripe bills (2), not the later 3
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50, quantity: 2 });
+      // crossing first (stored 0s), then one delta per row; nothing twice. (CUSTOMER_PACK_100's
+      // quantity shrank 3 → 2 at adoption, so emitAddonDelta labels it addon.disabled whatever the
+      // sign; only the signed amount feeds the run-rate, so amounts are the pin.)
+      expect(h.ledger().map((e: any) => [e.sku ?? e.type, e.delta])).toEqual([
+        [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99],
+        ["CUSTOMER_PACK_100", 100],
+        ["FORECASTING", 19],
+      ]);
+      // exactly one item per SKU on the subscription
+      expect(h.stripeItems.map((i) => i.id).sort()).toEqual(["si_base", "si_new1", "si_pack"]);
+
+      // a redelivery of the same webhook changes nothing anywhere
+      const ledger = h.ledger();
+      h.client.subscriptionItems.create.mockClear();
+      h.client.subscriptionItems.del.mockClear();
+      await h.completed();
+      expect(h.ledger()).toEqual(ledger);
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.stripeItems).toHaveLength(3);
+    });
+
+    it("(c) a failure creating the item leaves the row unbilled and unbooked, and fails the webhook", async () => {
+      const h = make({ rows: [addonRow("FORECASTING")], items: [baseItem()] });
+      h.client.subscriptionItems.create.mockRejectedValueOnce(new Error("stripe down"));
+      await expect(h.completed()).rejects.toBeDefined();
+      expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+      expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
     });
 
     it("a Stripe failure while deleting an orphan FAILS the webhook (Stripe redelivers) and books nothing; the retry completes", async () => {
@@ -842,6 +919,131 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.ledger()).toEqual([
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("SA-690 all three callers of createCheckoutSession bill the add-ons", () => {
+  /** The three entry points, each over the SAME real BillingService (the checkout logic lives there). */
+  const callers = (h: ReturnType<typeof make>) => ({
+    // the tenant's own checkout (settings→billing): always monthly, takes no interval
+    settings: () =>
+      new SettingsBillingController(
+        { getSubscription: jest.fn().mockResolvedValue({ planKey: "STARTER" }) } as any,
+        {} as any,
+        {} as any,
+        h.billing,
+      ).createCheckout({ tenantId: "t1", sub: "u1" } as any),
+    // POST /billing/checkout (super-admin): takes URLs only, so always monthly
+    billingController: () =>
+      new BillingController(h.billing, {} as any).createCheckout({ tenantId: "t1" } as any),
+    // the platform-admin link: the ONLY caller that can ask for an annual checkout
+    adminLink: (interval?: "month" | "year") =>
+      new PlatformAdminController(
+        {} as any,
+        {} as any,
+        h.billing,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      ).createCheckout("t1", interval),
+  });
+
+  it.each([
+    ["settings→billing (the tenant's own)", "settings"],
+    ["POST /billing/checkout", "billingController"],
+    ["platform-admin link (monthly)", "adminLink"],
+  ] as const)("%s: one plan line + one line per unbilled add-on", async (_name, which) => {
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })] });
+
+    await callers(h)[which]();
+
+    const args = h.client.checkout.sessions.create.mock.calls[0][0];
+    expect(args.line_items).toHaveLength(2);
+    expect(args.line_items[1]).toMatchObject({
+      price_data: { unit_amount: 5000, recurring: { interval: "month" } },
+      quantity: 2,
+    });
+    expect(args.metadata).toMatchObject({ interval: "month", addonSkus: "CUSTOMER_PACK_100" });
+  });
+
+  it("the platform-admin link asked for ANNUAL is refused (409 ADDON_ANNUAL_NOT_SUPPORTED), nothing created in Stripe", async () => {
+    const h = make({ rows: [addonRow("FORECASTING")] });
+
+    const err: any = await callers(h)
+      .adminLink("year")
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED });
+    expect(h.client.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+  });
+
+  it("the other two callers cannot ask for annual: they always send a monthly session", async () => {
+    for (const which of ["settings", "billingController"] as const) {
+      const h = make({ rows: [addonRow("FORECASTING")] });
+      await callers(h)[which]();
+      expect(h.client.checkout.sessions.create.mock.calls[0][0].metadata.interval).toBe("month");
+    }
+  });
+
+  it.each([
+    ["settings→billing", "settings"],
+    ["POST /billing/checkout", "billingController"],
+    ["platform-admin link", "adminLink"],
+  ] as const)("%s: a tenant with no add-on still gets exactly the plan line", async (_n, which) => {
+    const h = make({ rows: [] });
+    await callers(h)[which]();
+    expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("OPEN QUESTION (SA ruling): admin-granted self-serve add-ons on a trial", () => {
+  /**
+   * TenantAddon has NO field marking a platform-admin grant (no source / grantedBy / comp) and
+   * AddonService.enableAddon leaves no per-row trace, so the checkout cannot tell a "free comp" from
+   * a self-serve enable. These specs DOCUMENT what happens today; they are named so the ruling can
+   * flip them (a free-comp discriminator needs a column + migration the owner/SA has not ruled on).
+   *
+   * What the admin path actually writes (addon.service.ts enableAddon, no stripePriceId, as on a trial
+   * that has no Stripe subscription): { addonKey: <as typed>, sku: null unless the key is a bridged
+   * legacy one, quantity: 1, priceSnapshot: 0, stripePriceId: null, stripeItemId: null }.
+   */
+  it("PENDING-SA-RULING (free comp): an admin-granted self-serve SKU on a trial whose row carries the SKU is BILLED at checkout", async () => {
+    const granted = addonRow("FORECASTING", { qty: 1, priceSnapshot: 0 }); // sku set, no item, price 0
+    const h = make({ status: "TRIAL", rows: [granted] });
+
+    await h.billing.createCheckoutSession("t1", "month");
+
+    const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
+    expect(lines).toHaveLength(2);
+    expect(lines[1].price_data.product_data.metadata).toEqual({ addonSku: "FORECASTING" });
+  });
+
+  it("PENDING-SA-RULING (free comp): the row the admin path writes for an UNPRICED FORECASTING grant has sku null and is NOT billed (invisible to the checkout)", async () => {
+    const granted = { ...addonRow("FORECASTING"), sku: null as string | null }; // addonKey only
+    const h = make({ status: "TRIAL", rows: [granted] });
+
+    await h.billing.createCheckoutSession("t1", "month");
+
+    expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+  });
+
+  it("PENDING-SA-RULING (free comp): and at completion an admin-granted row that carries the SKU is adopted like any self-serve row", async () => {
+    const h = make({
+      status: "TRIAL",
+      rows: [addonRow("FORECASTING", { qty: 1, priceSnapshot: 0 })],
+      items: [baseItem(), checkoutItem("si_fc", "FORECASTING", 1900, 1)],
+    });
+    await h.completed();
+    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
   });
 });
 
