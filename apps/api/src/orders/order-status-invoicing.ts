@@ -17,7 +17,11 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { RECONCILE_PARTIALS, partialsNeedReview } from "../invoices/invoice-partition";
+import {
+  RECONCILE_PARTIALS,
+  invoicesNeedReview,
+  orderInvoicesNeedReviewError,
+} from "../invoices/invoice-partition";
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -93,6 +97,7 @@ export async function settleOrderInvoice(
     moment === "delivered" && alreadySettledAtShipment
       ? null
       : await self.invoicesService.findOpenOrderDraft(id);
+  let partials = false;
   if (draft) {
     try {
       // SA-681: "partials" = the draft is one of several invoices (or a lone partial) and was left
@@ -102,15 +107,7 @@ export async function settleOrderInvoice(
         shortDraftIsPartial: true,
       });
       if (res !== RECONCILE_PARTIALS) return undefined;
-      // SA-687: the remainder below trusts OrderItem.invoicedQty; after a replace-all edit (or a line
-      // cut under what is invoiced) it cannot be trusted, so bill nothing and ask for a review.
-      if (await partialsNeedReview(self.prisma.forTenant(), id)) {
-        return new ConflictException(
-          `The order was marked ${moment}, but its partial invoices no longer match its lines ` +
-            `(the order was edited after they were cut) and nothing new was billed. ` +
-            `Open the invoices from the order page to review them.`,
-        );
-      }
+      partials = true;
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
@@ -119,6 +116,22 @@ export async function settleOrderInvoice(
           `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
       );
     }
+  }
+  // SA-687: the remainder create below trusts OrderItem.invoicedQty. After a replace-all edit (it
+  // resets it and orphans the invoices' lines) or a line cut under what is invoiced it cannot be
+  // trusted, so bill nothing and ask for a review. Runs on EVERY path that reaches the create, with
+  // or without an open draft (PARTIALLY_DELIVERED with the partials sent; DELIVERED after a
+  // shipment-time settle). Beside open partials the review also applies when nothing remains.
+  try {
+    if (await invoicesNeedReview(self.prisma.forTenant(), id, { onlyWhenRemainder: !partials })) {
+      return orderInvoicesNeedReviewError();
+    }
+  } catch (err: any) {
+    logger.error(`Failed to check invoices for order ${id}: ${err?.message ?? err}`);
+    return new ConflictException(
+      `The order was marked ${moment}, but its invoice could not be checked ` +
+        `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
+    );
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;

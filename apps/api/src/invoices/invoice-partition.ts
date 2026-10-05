@@ -1,4 +1,6 @@
 import { InvoiceStatus } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isNsfLine } from "./nsf-line";
 
 /**
@@ -87,54 +89,73 @@ export function draftBillsLessThanOrder(
   });
 }
 
+/** SA-687: the 409 for "more would be billed on an order whose invoices no longer match its lines". */
+export const ORDER_INVOICES_NEED_REVIEW_MESSAGE =
+  "This order's invoices don't match its lines. Review the invoices before billing more.";
+export const orderInvoicesNeedReviewError = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+    message: ORDER_INVOICES_NEED_REVIEW_MESSAGE,
+  });
+
 /**
- * SA-687: before Mark Delivered bills "qty - invoicedQty" beside existing partials, can that
- * remainder be trusted? No when either:
- *   - a non-void invoice of the order carries a non-NSF product line with NO orderItemId: a
+ * SA-687: can the order's "qty - invoicedQty" be trusted before more is billed beside its existing
+ * invoices? No when any non-void invoice:
+ *   - carries a non-NSF line with NO orderItemId (productId or not, as isCleanDraftPartition): a
  *     replace-all order edit deletes and re-creates every OrderItem (invoicedQty back to 0) and
- *     InvoiceItem.orderItemId is onDelete SetNull, so those partials keep billing through ORPHANED
+ *     InvoiceItem.orderItemId is onDelete SetNull, so the invoices keep billing through ORPHANED
  *     lines the counter no longer knows about (the remainder would bill the whole order again);
- *   - a live line's invoicedQty exceeds its qty (a line cut below what is already invoiced), or
- *     differs from what the invoices actually bill on that line (the counter is out of step).
- * The caller then returns the review conflict and creates nothing. `db` is a tenant client.
+ *   - leaves a live line with invoicedQty above its qty (a line cut below what is invoiced), or
+ *     different from what the invoices actually bill on that line (the counter is out of step).
+ * No invoice at all is trivially fine. `onlyWhenRemainder` skips the check when nothing remains to
+ * bill (the create paths then bill nothing anyway). Used by Mark Delivered (every path that reaches
+ * the remainder create, with or without an open draft) and createPartialFromOrder.
  */
-export async function partialsNeedReview(
+export async function invoicesNeedReview(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
   db: any,
   orderId: string,
+  opts: { onlyWhenRemainder?: boolean } = {},
 ): Promise<boolean> {
   const invoices: Array<{ items: Array<Record<string, any>> }> = await db.invoice.findMany({
     where: { orderId, status: { not: InvoiceStatus.VOID } },
     select: {
       items: {
-        select: {
-          orderItemId: true,
-          productId: true,
-          systemKind: true,
-          description: true,
-          qty: true,
-        },
+        select: { orderItemId: true, systemKind: true, description: true, qty: true },
       },
     },
   });
-  const items = invoices.flatMap((i) => i.items ?? []);
-  if (items.some((it) => !it.orderItemId && it.productId && !isNsfLine(it))) return true;
-  const billed = new Map<string, number>();
-  for (const it of items) {
-    if (it.orderItemId)
-      billed.set(it.orderItemId, (billed.get(it.orderItemId) ?? 0) + Number(it.qty));
-  }
+  if (invoices.length === 0) return false;
   const lines: Array<{ id: string; qty: unknown; invoicedQty: unknown }> =
     await db.orderItem.findMany({
       where: { orderId, status: { not: "CANCELLED" } },
       select: { id: true, qty: true, invoicedQty: true },
     });
+  const remaining = (li: { qty: unknown; invoicedQty: unknown }) =>
+    Number(li.qty ?? 0) - Number(li.invoicedQty ?? 0);
+  if (opts.onlyWhenRemainder && !lines.some((li) => remaining(li) > 0.001)) return false;
+
+  const items = invoices.flatMap((i) => i.items ?? []);
+  if (items.some((it) => !it.orderItemId && !isNsfLine(it))) return true;
+  const billed = new Map<string, number>();
+  for (const it of items) {
+    if (it.orderItemId)
+      billed.set(it.orderItemId, (billed.get(it.orderItemId) ?? 0) + Number(it.qty));
+  }
   return lines.some((li) => {
     const invoiced = Number(li.invoicedQty ?? 0);
-    // over-invoiced for the line as it now stands, or the invoices and the counter disagree
     return (
       invoiced > Number(li.qty ?? 0) + 0.001 ||
       Math.abs((billed.get(li.id) ?? 0) - invoiced) > 0.001
     );
   });
+}
+
+/** createPartialFromOrder's guard: refuse (409 ORDER_INVOICES_NEED_REVIEW, nothing written) when the invoices need review. */
+export async function assertOrderInvoicesInStep(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant client
+  db: any,
+  orderId: string,
+): Promise<void> {
+  if (await invoicesNeedReview(db, orderId)) throw orderInvoicesNeedReviewError();
 }

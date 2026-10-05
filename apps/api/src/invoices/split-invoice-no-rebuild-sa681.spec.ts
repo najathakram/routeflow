@@ -104,7 +104,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
 
     it("Mark Delivered leaves both partials unchanged and creates no third invoice", async () => {
       const before = shape(db.invoicesOf("ord-1"));
-      await markDelivered();
+      expect(await markDelivered()).toBeUndefined(); // SA-687 S2: no false positive
       const after = db.invoicesOf("ord-1");
       expect(after).toHaveLength(2);
       expect(shape(after)).toEqual(before);
@@ -171,7 +171,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
         [84],
       ]);
 
-      await markDelivered(); // pre-SA-681: ONE rebuilt invoice (305.27); now the mirror is "short"
+      expect(await markDelivered()).toBeUndefined(); // pre-SA-681: ONE rebuilt invoice (305.27); now the mirror is "short"
 
       const after = db.invoicesOf("ord-1");
       expect(after.map((i) => i.items.map((it: any) => Number(it.qty)))).toEqual([[84], [36]]);
@@ -187,7 +187,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
 
     it("Mark Delivered keeps the 6-box partial and bills ONE remainder invoice for the other 4 boxes", async () => {
       const [p1Before] = shape(db.invoicesOf("ord-1"));
-      await markDelivered();
+      expect(await markDelivered()).toBeUndefined();
       const after = db.invoicesOf("ord-1");
       expect(after).toHaveLength(2);
       expect(shape([after[0]])[0]).toEqual(p1Before);
@@ -236,7 +236,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
     });
 
     it("Mark Delivered reconciles the mirror in place and creates no second invoice", async () => {
-      await markDelivered();
+      expect(await markDelivered()).toBeUndefined();
       const invs = db.invoicesOf("ord-1");
       expect(invs).toHaveLength(1);
       expect(sum(invs)).toBe(ORDER_TOTAL);

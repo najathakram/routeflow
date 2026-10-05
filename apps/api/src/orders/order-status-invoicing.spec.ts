@@ -115,8 +115,37 @@ describe("settleOrderInvoice", () => {
     ]);
     const out = await settleOrderInvoice(self, "ord-1", logger, "delivered");
     expect(out).toBeInstanceOf(ConflictException);
-    expect(out?.message).toContain("review");
+    expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICES_NEED_REVIEW" });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("SA-687 S1: an orphaned UNLISTED line (productId null) counts as orphaned too, with no open draft", async () => {
+    const { self, invoicesService, tenantDb } = harness(); // no open draft
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: null, productId: null, systemKind: null, description: "Misc", qty: 1 },
+        ],
+      },
+    ]);
+    tenantDb.orderItem.findMany.mockResolvedValue([{ id: "oi-n", qty: 1, invoicedQty: 0 }]);
+    const out = await settleOrderInvoice(self, "ord-1", logger, "delivered");
+    expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICES_NEED_REVIEW" });
+    expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("SA-687 S2: a legitimate 6-only split (billed qty == invoicedQty, nothing orphaned) is NOT refused: the remainder is created", async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: "oi-1", productId: "p-1", systemKind: null, description: "W", qty: 72 },
+        ],
+      },
+    ]);
+    tenantDb.orderItem.findMany.mockResolvedValue([{ id: "oi-1", qty: 120, invoicedQty: 72 }]);
+    await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
   });
 
   it("M1: DELIVERED after a shipment-time settle does NOT reconcile the draft (staff edits since shipment survive)", async () => {

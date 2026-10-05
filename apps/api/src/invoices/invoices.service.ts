@@ -138,6 +138,7 @@ import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
 import {
   RECONCILE_PARTIALS,
+  assertOrderInvoicesInStep,
   draftBillsLessThanOrder,
   isCleanDraftPartition,
   isSoleBillingDraft,
@@ -1370,8 +1371,7 @@ export class InvoicesService {
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
    * consumer, so set-not-increment stays correct on repeat. SA-681: only when it IS the order's
-   * sole non-void invoice; beside any other (partials, a SENT/batch invoice) it returns "partials"
-   * and touches nothing; `shortDraftIsPartial` (Mark Delivered) counts a lone short draft too.
+   * sole non-void invoice, else "partials" (untouched); `shortDraftIsPartial` adds a lone short draft.
    *
    * SIBLING-AWARE for splits: a regulated SEPARATE_INVOICE order has base + -R# open
    * drafts. `reconcileSplitOrderDrafts` rebuilds each from its OWN category group so the
@@ -2667,6 +2667,7 @@ export class InvoicesService {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    await assertOrderInvoicesInStep(this.prisma.forTenant(), orderId); // SA-687: no 3rd bill
 
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
 

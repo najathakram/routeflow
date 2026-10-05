@@ -303,6 +303,14 @@ describeDb(
       const out = await markDelivered(s);
 
       expect(out).toBeInstanceOf(ConflictException);
+      expect((out as ConflictException).getResponse()).toMatchObject({
+        code: "ORDER_INVOICES_NEED_REVIEW",
+      });
+      // S3: "Split into invoice" for the full qty is refused as well, and bills nothing
+      const fresh = await prisma.orderItem.findFirstOrThrow({ where: { orderId: s.orderId } });
+      await expect(split({ ...s, orderItemId: fresh.id }, 120)).rejects.toMatchObject({
+        response: { code: "ORDER_INVOICES_NEED_REVIEW" },
+      });
       const after = await invoicesOf(s.orderId);
       expect(after).toHaveLength(2); // unguarded: 3
       expect(total(after)).toBe(305.27); // unguarded: 610.54

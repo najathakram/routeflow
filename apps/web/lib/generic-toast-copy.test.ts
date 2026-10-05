@@ -102,6 +102,14 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW, message: "raw server text" }),
+      ),
+    ).toBe("This order's invoices don't match its lines. Review the invoices before billing more.");
+  });
+
   it("the duplicate-email sentence maps to the fixed copy", () => {
     expect(genericToastCopy(err(409, { message: "Email or username already taken" }))).toBe(
       "That email is already in use. Use a different email.",

@@ -16,6 +16,9 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
+//                    invoices no longer match its lines (orphaned invoice line / counter out of step,
+//                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
 //   NSF_LINE_UNTAXED — `body.code` of the 400 when an invoice write gives the NSF fee line a
 //                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
@@ -154,6 +157,7 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",

@@ -82,7 +82,11 @@ export class SplitInvoiceFakeDb {
   }
 
   createOrderLine(data: Row): Row {
-    const row = { ...fakeOrderLine(), ...clone(data), id: `oi-new-${++this.seq}`, invoicedQty: 0 };
+    // Prisma drops `undefined` keys: a column the writer left out keeps its default
+    const written = Object.fromEntries(
+      Object.entries(clone(data)).filter(([, v]) => v !== undefined),
+    );
+    const row = { ...fakeOrderLine(), ...written, id: `oi-new-${++this.seq}`, invoicedQty: 0 };
     this.orderItems.push(row);
     return clone(row);
   }

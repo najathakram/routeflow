@@ -39,6 +39,8 @@ const CODE_COPY: Record<string, string> = {
     "This order is already with the carrier. Use a return instead of cancelling.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
+  [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:
+    "This order's invoices don't match its lines. Review the invoices before billing more.",
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
