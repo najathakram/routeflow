@@ -12,6 +12,7 @@ const cfg = (mode: string) => ({ getEffectiveMode: jest.fn().mockResolvedValue(m
 const SHIPPED_AT = new Date("2026-10-01T00:00:00Z");
 const order = (status: OrderStatus, over: Record<string, unknown> = {}) => ({
   id: "o1",
+  tenantId: "t1",
   status,
   fulfillPath: "SHIP" as const,
   shippedAt: SHIPPED_AT,

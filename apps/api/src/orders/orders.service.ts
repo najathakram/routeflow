@@ -571,7 +571,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
     (order as any).cancelBlockedReason = await carrierCancelBlockedReason(
       this.featureConfig,
-      this.prisma.getTenantId(),
+      order.tenantId,
       order,
     );
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
