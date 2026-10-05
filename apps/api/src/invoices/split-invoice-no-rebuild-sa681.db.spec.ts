@@ -24,7 +24,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { Logger } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -271,6 +271,41 @@ describeDb(
       expect(total(after)).toBe(305.27);
       const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
       expect(Number(line.invoicedQty)).toBe(120);
+    });
+
+    it("SA-687 M1: 6/4, then a replace-all (delete + recreate the lines), then Mark Delivered: no third invoice, review conflict", async () => {
+      const s = await seedBoxedOrder();
+      await split(s, 72);
+      await split(s, 48);
+      // updateOrderItems' replaceAll: `orderItem.deleteMany` + a recreated line (invoicedQty default 0).
+      // InvoiceItem.orderItemId is onDelete SetNull, so the partials' lines are orphaned.
+      const old = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
+      await prisma.orderItem.deleteMany({ where: { orderId: s.orderId } });
+      await prisma.orderItem.create({
+        data: {
+          orderId: s.orderId,
+          productId: old.productId,
+          qty: old.qty,
+          boxes: old.boxes,
+          pieces: old.pieces,
+          unitsPerBox: old.unitsPerBox,
+          unitPrice: old.unitPrice,
+          subtotal: old.subtotal,
+          status: "CONFIRMED",
+          tenantId: s.tenantId,
+        } as any,
+      });
+      const orphaned = await prisma.invoiceItem.count({
+        where: { invoice: { orderId: s.orderId }, orderItemId: null },
+      });
+      expect(orphaned).toBe(2);
+
+      const out = await markDelivered(s);
+
+      expect(out).toBeInstanceOf(ConflictException);
+      const after = await invoicesOf(s.orderId);
+      expect(after).toHaveLength(2); // unguarded: 3
+      expect(total(after)).toBe(305.27); // unguarded: 610.54
     });
   },
 );

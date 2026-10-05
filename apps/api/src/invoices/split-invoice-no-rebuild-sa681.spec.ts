@@ -26,34 +26,17 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
-import { Test, TestingModule } from "@nestjs/testing";
-import { Logger } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
-import { InvoicePdfService } from "./invoice-pdf.service";
-import { PrismaService } from "../prisma/prisma.service";
-import { NumberingService } from "../import/numbering.service";
-import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { EmailService } from "../email/email.service";
-import { SystemConfigService } from "../system-config/system-config.service";
-import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
-import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { MessagingService } from "../messaging/messaging.service";
-import { EntitlementsService } from "../billing/entitlements.service";
-import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
-import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
-import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { settleOrderInvoice } from "../orders/order-status-invoicing";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "./testing/split-invoice-fake-db";
+import { buildSplitInvoicesService } from "./testing/split-invoice-service";
 
 describe("SA-681: partial invoices are never rebuilt to the full order", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let db: SplitInvoiceFakeDb;
-  let invoiceSeq: number;
 
   const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
 
@@ -61,67 +44,7 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
     prisma = createMockPrisma();
     db = new SplitInvoiceFakeDb();
     db.install(prisma);
-    invoiceSeq = 0;
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
-        InvoicesService,
-        {
-          provide: SellingRestrictionsService,
-          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
-        },
-        { provide: PrismaService, useValue: prisma },
-        { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
-        { provide: EmailService, useValue: { sendInvoice: jest.fn() } },
-        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
-        {
-          provide: SystemConfigService,
-          useValue: { get: jest.fn().mockResolvedValue(null), set: jest.fn() },
-        },
-        { provide: RegulatedLedgerService, useValue: mockLedger },
-        {
-          provide: AuthorizationGuardService,
-          useValue: {
-            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
-            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
-          },
-        },
-        {
-          provide: CreditNotesService,
-          useValue: {
-            autoApplyOldestCreditsInTx: jest.fn().mockResolvedValue({ applied: 0 }),
-            settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
-            releaseInvoiceCreditsInTx: jest.fn().mockResolvedValue([]),
-          },
-        },
-        {
-          provide: MessagingService,
-          useValue: { notify: jest.fn().mockResolvedValue([]), notifyEvent: jest.fn() },
-        },
-        { provide: StorageService, useValue: { upload: jest.fn() } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
-        entitlementAuthorityFromEntitlements,
-        {
-          provide: CommissionEngineService,
-          useValue: {
-            syncInvoiceCommissionSafe: jest.fn(),
-            syncOrderInvoices: jest.fn(),
-            removeInvoiceCommission: jest.fn(),
-          },
-        },
-        {
-          provide: NumberingService,
-          useValue: {
-            reserveNext: jest.fn().mockImplementation(async () => `INV-${++invoiceSeq}`),
-          },
-        },
-      ],
-    }).compile();
-    service = module.get<InvoicesService>(InvoicesService);
-    jest
-      .spyOn(service as any, "resolveTenantInvoiceDefaults")
-      .mockResolvedValue({ notes: null, terms: null, timezone: null });
+    service = await buildSplitInvoicesService(InvoicesService, prisma, mockLedger);
   });
 
   // 10 boxes × 12 pieces @ 2.35/piece = 282.00 (+ 8.25% tax 23.27) = 305.27. The line is stored
@@ -206,6 +129,23 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
       expect(db.line("oi-1").invoicedQty).toBe(120);
     });
 
+    it("SA-687: invoices that bill more than the counter says (invoicedQty out of step) refuse to bill", async () => {
+      db.line("oi-1").invoicedQty = 72; // the partials bill 120
+      const before = shape(db.invoicesOf("ord-1"));
+      const out = await markDelivered();
+      expect(out).toBeInstanceOf(ConflictException);
+      expect(shape(db.invoicesOf("ord-1"))).toEqual(before);
+    });
+
+    it("SA-687 SHOULD: a line cut below what is already invoiced (6/4, then 8 boxes) refuses to bill instead of silently billing 10", async () => {
+      Object.assign(db.line("oi-1"), { qty: 96, boxes: 8, subtotal: 225.6 });
+      db.orders.get("ord-1")!.subtotal = 225.6;
+      const before = shape(db.invoicesOf("ord-1"));
+      const out = await markDelivered();
+      expect(out).toBeInstanceOf(ConflictException);
+      expect(shape(db.invoicesOf("ord-1"))).toEqual(before);
+    });
+
     it("an undelivered item edit (price change) rebuilds nothing", async () => {
       // The edit writers have already updated the order line + totals by the time they reconcile.
       db.line("oi-1").unitPrice = 2.4;
@@ -216,6 +156,26 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
       expect(shape(db.invoicesOf("ord-1"))).toEqual(before);
       expect(db.invoiceUpdateCalls).toHaveLength(0);
       expect(db.line("oi-1").invoicedQty).toBe(120);
+    });
+  });
+
+  describe("a delivered-basis mirror (a driver short delivery, then a manual Mark Delivered) — deliberate decision", () => {
+    it("bills the mirror (7 boxes) plus ONE remainder invoice (3 boxes): two invoices, the same 305.27 total", async () => {
+      seedOrder();
+      // The driver delivered 7 of 10 boxes (84 of 120 pieces): the mirror bills the delivered basis.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "oi-1", type: "PARTIAL", quantityDelivered: 84 },
+      ] as any);
+      await service.createInvoiceFromOrder("ord-1");
+      expect(db.invoicesOf("ord-1").map((i) => i.items.map((it: any) => Number(it.qty)))).toEqual([
+        [84],
+      ]);
+
+      await markDelivered(); // pre-SA-681: ONE rebuilt invoice (305.27); now the mirror is "short"
+
+      const after = db.invoicesOf("ord-1");
+      expect(after.map((i) => i.items.map((it: any) => Number(it.qty)))).toEqual([[84], [36]]);
+      expect(sum(after)).toBe(ORDER_TOTAL);
     });
   });
 

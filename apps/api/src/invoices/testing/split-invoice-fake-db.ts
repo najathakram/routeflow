@@ -66,6 +66,27 @@ export class SplitInvoiceFakeDb {
       .map((i) => this.hydrate(i, { items: true }));
   }
 
+  /**
+   * The two row effects of a replace-all order edit (orders.service `orderItem.deleteMany` then
+   * `orderItem.create` per line), for a spec that wires them to the real updateOrderItems: a
+   * deleted line takes InvoiceItem.orderItemId to null (onDelete SetNull), and a re-created line
+   * is a NEW id with invoicedQty back at its schema default 0.
+   */
+  deleteOrderLines(orderId: string): { count: number } {
+    const gone = this.orderItems.filter((l) => l.orderId === orderId);
+    this.orderItems = this.orderItems.filter((l) => l.orderId !== orderId);
+    for (const l of gone) {
+      for (const it of this.invoiceItems) if (it.orderItemId === l.id) it.orderItemId = null;
+    }
+    return { count: gone.length };
+  }
+
+  createOrderLine(data: Row): Row {
+    const row = { ...fakeOrderLine(), ...clone(data), id: `oi-new-${++this.seq}`, invoicedQty: 0 };
+    this.orderItems.push(row);
+    return clone(row);
+  }
+
   line(id: string): Row {
     return this.orderItems.find((l) => l.id === id)!;
   }

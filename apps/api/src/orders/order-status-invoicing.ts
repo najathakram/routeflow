@@ -17,7 +17,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
+import { RECONCILE_PARTIALS, partialsNeedReview } from "../invoices/invoice-partition";
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -102,6 +102,15 @@ export async function settleOrderInvoice(
         shortDraftIsPartial: true,
       });
       if (res !== RECONCILE_PARTIALS) return undefined;
+      // SA-687: the remainder below trusts OrderItem.invoicedQty; after a replace-all edit (or a line
+      // cut under what is invoiced) it cannot be trusted, so bill nothing and ask for a review.
+      if (await partialsNeedReview(self.prisma.forTenant(), id)) {
+        return new ConflictException(
+          `The order was marked ${moment}, but its partial invoices no longer match its lines ` +
+            `(the order was edited after they were cut) and nothing new was billed. ` +
+            `Open the invoices from the order page to review them.`,
+        );
+      }
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);

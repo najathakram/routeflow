@@ -62,8 +62,16 @@ describe("settleOrderInvoice", () => {
       reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "d1" }),
       createInvoiceFromOrderWithTenant: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
     };
-    const self = { invoicesService, prisma: { getTenantId: () => "t1" } } as any;
-    return { self, invoicesService };
+    // SA-687: the "partials" fall-through reads the order's invoices + lines (partialsNeedReview).
+    const tenantDb = {
+      invoice: { findMany: jest.fn().mockResolvedValue([]) },
+      orderItem: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const self = {
+      invoicesService,
+      prisma: { getTenantId: () => "t1", forTenant: () => tenantDb },
+    } as any;
+    return { self, invoicesService, tenantDb };
   };
 
   it("no open draft: creates the invoice once, for the captured tenant", async () => {
@@ -92,6 +100,23 @@ describe("settleOrderInvoice", () => {
     await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
     expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
     expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledWith("ord-1", "t1");
+  });
+
+  it('SA-687: "partials" beside an ORPHANED invoice line (replace-all reset invoicedQty) returns the review conflict and creates nothing', async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "d1" });
+    invoicesService.reconcileOrderDraftInvoice.mockResolvedValue("partials");
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: null, productId: "p-1", systemKind: null, description: "Widget", qty: 72 },
+        ],
+      },
+    ]);
+    const out = await settleOrderInvoice(self, "ord-1", logger, "delivered");
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out?.message).toContain("review");
+    expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
   });
 
   it("M1: DELIVERED after a shipment-time settle does NOT reconcile the draft (staff edits since shipment survive)", async () => {
