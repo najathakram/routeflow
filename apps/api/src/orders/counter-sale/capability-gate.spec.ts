@@ -24,13 +24,43 @@ describe("counterSaleGate", () => {
   });
 });
 
-describe("default capability reader (until #3188 lands)", () => {
-  it("returns the unset capability: ROUTE+SHIP, counter off, so the endpoint is dark today", async () => {
-    const reader = new DefaultFulfilmentCapabilityReader();
-    const cap = await reader.get("any-tenant");
+describe("default capability reader (the real derivation)", () => {
+  const make = (modes: Record<string, string>) =>
+    new DefaultFulfilmentCapabilityReader(
+      { getEffectiveMode: jest.fn(async (_t: string, k: string) => modes[k] ?? "unset") } as never,
+      { getActiveAddons: jest.fn(async () => []) } as never,
+      { allActive: jest.fn(async () => new Map()) } as never,
+    );
+
+  it("unset everything: ROUTE+SHIP, counter off, so the gate is closed (today)", async () => {
+    const cap = await make({}).get("any-tenant");
     expect(cap.methods).toEqual(["ROUTE", "SHIP"]);
     expect(cap.counter).toBe("off");
     expect(counterSaleGate(cap)).toBe(false);
     expect(typeof FULFILMENT_CAPABILITY_READER).toBe("symbol");
+  });
+
+  it("counter_sales on => the gate opens as 'optional'", async () => {
+    const cap = await make({ counter_sales: "on" }).get("t1");
+    expect(cap.counter).toBe("optional");
+    expect(counterSaleGate(cap)).toBe(true);
+  });
+
+  it("fulfilment_model pickup => 'always'", async () => {
+    const cap = await make({ fulfilment_model: "pickup" }).get("t1");
+    expect(cap.counter).toBe("always");
+  });
+
+  it("a null tenant => closed", async () => {
+    expect(counterSaleGate(await make({ counter_sales: "on" }).get(null))).toBe(false);
+  });
+
+  it("a throwing mode read => closed", async () => {
+    const r = new DefaultFulfilmentCapabilityReader(
+      { getEffectiveMode: jest.fn().mockRejectedValue(new Error("db")) } as never,
+      { getActiveAddons: jest.fn(async () => []) } as never,
+      { allActive: jest.fn(async () => new Map()) } as never,
+    );
+    expect(counterSaleGate(await r.get("t1"))).toBe(false);
   });
 });

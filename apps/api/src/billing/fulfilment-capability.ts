@@ -1,7 +1,8 @@
 import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
-import { gateVia } from "./feature-registry";
+import type { FeatureConfigService } from "./feature-config.service";
+import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
 
 /**
  * The two keys that make a tenant a delivery operation (the fleet modules). `driver_payments` is
@@ -86,4 +87,51 @@ export async function isFleetHeld(
 ): Promise<boolean> {
   const held = await heldAddonKeys(addonService, featureOverrides, tenantId);
   return FLEET_KEYS.some((k) => held.has(k));
+}
+
+/** The services the tenant-level capability read needs (the same three `GET /tenants/me/features` uses). */
+export interface FulfilmentCapabilityDeps {
+  featureConfig: Pick<FeatureConfigService, "getEffectiveMode">;
+  addonService: Pick<AddonService, "getActiveAddons">;
+  featureOverrides: Pick<FeatureOverrideService, "allActive">;
+}
+
+/**
+ * SA-666a: a stored mode the registry marks `available: false` reads as `unset` (today). The effective-mode
+ * read only checks a mode's `requires`, so availability is honoured here, at the one place the capability is
+ * built. Every fulfilment_model / counter_sales mode is available on master today, so this is dormant until
+ * a mode is withdrawn.
+ */
+function availableOrUnset(key: string, mode: string): string {
+  const def = FEATURE_REGISTRY.find((f) => f.key === key)?.config?.modes[mode];
+  return def && def.available === false ? "unset" : mode;
+}
+
+/**
+ * The ONE tenant-level capability read for server-side rules (the counter-sale gate and any later consumer):
+ * the same calls `GET /tenants/me/features` makes — `getEffectiveMode` for `fulfilment_model` and
+ * `counter_sales`, `isFleetHeld`, `deriveFulfilmentCapability`. ANY failure, or a null tenant, answers the
+ * "unset" capability (counter "off"): a failed read never blocks the caller and never guesses "on".
+ */
+export async function readFulfilmentCapability(
+  deps: FulfilmentCapabilityDeps,
+  tenantId: string | null,
+): Promise<FulfilmentCapability> {
+  const off = () =>
+    deriveFulfilmentCapability({ mode: "unset", counterSales: "unset", fleet: false });
+  if (!tenantId) return off();
+  try {
+    const [mode, counterSales, fleet] = await Promise.all([
+      deps.featureConfig.getEffectiveMode(tenantId, "fulfilment_model"),
+      deps.featureConfig.getEffectiveMode(tenantId, "counter_sales"),
+      isFleetHeld(deps.addonService, deps.featureOverrides, tenantId),
+    ]);
+    return deriveFulfilmentCapability({
+      mode: availableOrUnset("fulfilment_model", mode),
+      counterSales: availableOrUnset("counter_sales", counterSales),
+      fleet,
+    });
+  } catch {
+    return off();
+  }
 }

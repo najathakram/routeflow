@@ -36,6 +36,7 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CustomersModule } from "../customers/customers.module";
+import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
 import {
   DefaultFulfilmentCapabilityReader,
@@ -63,6 +64,9 @@ import {
     PolicyModule,
     // WalkInCustomerService restores a removed walk-in through CustomersService.restoreCustomer.
     CustomersModule,
+    // DefaultFulfilmentCapabilityReader needs AddonService (FeatureConfigService is global, and
+    // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
+    BillingModule,
   ],
   controllers: [OrdersController, CounterSaleController],
   providers: [
@@ -71,7 +75,6 @@ import {
     PolicyOversellReader,
     CounterSaleService,
     WalkInCustomerService,
-    // TODO(#3188): bind a reader over deriveFulfilmentCapability instead of the "unset = today" default.
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
   ],
   exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
