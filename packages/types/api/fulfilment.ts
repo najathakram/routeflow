@@ -15,11 +15,12 @@ export const FULFILMENT_MODE_VALUES = [
 export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
 
 export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
-
-/** The modules that make a fleet (routes, order delivery): the ONE list. The api's fleet rule
- *  (`FLEET_KEYS`) and the web's setup copy both read it, so the two can never disagree. */
-export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const;
 export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
+
+/** The modules that make a fleet (routes, order delivery), for the web's setup copy. The api keeps
+ *  its own `FLEET_KEYS` literal (a runtime import of this raw-TS package fails its dist build);
+ *  apps/api/src/billing/fleet-keys-parity.spec.ts pins the two set-equal. */
+export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const;
 
 /**
  * PICKUP is a capability METHOD only; it is NOT a FulfillPath value (the order enum is ROUTE|SHIP).

@@ -1,3 +1,10 @@
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
 /**
  * Business profiles — the platform-admin routes. Red-first: written before the routes existed.
  *
@@ -180,7 +187,7 @@ function fakeTenant(start: {
   // Confirm as the web does it: preview first, send that planFingerprint back (#3199 review).
   // A test that passes its own fingerprint keeps it; a preview that refuses leaves a dummy one,
   // so the confirm's own refusal (unknown profile, ...) is what the test sees.
-  const confirm = controller.applyBusinessProfile.bind(controller);
+  const confirm = controller.applyBusinessProfile.bind(controller); // the real route, no auto-fill
   controller.applyBusinessProfile = (async (id: string, dto: any, user: any) => {
     const planFingerprint =
       dto.planFingerprint ??
@@ -198,6 +205,13 @@ function fakeTenant(start: {
     activeOverrides: rows.filter((r) => !r.revokedAt).length,
   });
   return {
+    /** The confirm route WITHOUT the preview-first wrapper. */
+    rawConfirm: confirm,
+    /** A paid add-on switched on behind the admin's back (between preview and confirm). */
+    enablePaid: (key: string) => {
+      addons.add(key);
+      paid.add(key);
+    },
     failNoMore: () => {
       failing.key = undefined;
       failing.setKey = undefined;
@@ -285,6 +299,59 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     });
     expect(t.writes).toEqual([]);
     expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("a confirm with NO fingerprint is a 400 and writes nothing (the route itself, no auto-fill)", async () => {
+    const t = fakeTenant({});
+    await expect(
+      t.rawConfirm(T, { profile: "delivery_distributor" } as any, admin),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a PAID add-on switched on between preview and confirm changes the plan: 409, nothing written or stopped", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(shown.plan.billing).toEqual([]); // nothing to stop when the admin looked
+    t.enablePaid("driver_payments"); // now the tenant PAYS for a module the profile switches off
+    await expect(
+      t.rawConfirm(
+        T,
+        { profile: "shipping_wholesaler", planFingerprint: shown.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("billing and its manual flag are part of the fingerprint", async () => {
+    const paidStripe = fakeTenant({ addons: ["driver_payments"] });
+    const a = await paidStripe.controller.previewBusinessProfile(T, {
+      profile: "shipping_wholesaler",
+    });
+    const comped = fakeTenant({ comped: ["driver_payments"] });
+    const b = await comped.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(a.plan.billing.length).toBe(1);
+    expect(b.plan.billing.length).toBe(0);
+    expect(a.planFingerprint).not.toBe(b.planFingerprint);
+  });
+
+  it("plan-then-apply holds the add-on enable path's locks (billing family, addon:<tenant>:<sku>, sorted)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { withAdvisoryLock } = require("../common/db-locks");
+    (withAdvisoryLock as jest.Mock).mockClear();
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin);
+    const keys = (withAdvisoryLock as jest.Mock).mock.calls.map(([o]: any) => [o.family, o.key]);
+    expect(keys.length).toBe(3);
+    expect(keys.every(([family]: string[]) => family === "billing")).toBe(true);
+    const names = keys.map(([, k]: string[]) => k);
+    expect(names).toEqual([...names].sort());
+    for (const k of names) expect(k.startsWith(`addon:${T}:`)).toBe(true);
   });
 
   it("the previewed fingerprint confirms", async () => {

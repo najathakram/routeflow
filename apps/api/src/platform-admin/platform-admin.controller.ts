@@ -732,10 +732,21 @@ export class PlatformAdminController {
   @Post("tenants/:id/business-profile")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Apply a business profile to a tenant (audited; idempotent)" })
-  async applyBusinessProfile(
+  applyBusinessProfile(
     @Param("id") id: string,
     @Body() dto: ConfirmBusinessProfileDto,
     @CurrentUser() admin: JwtPayload,
+  ): Promise<BusinessProfileApplyResponse> {
+    // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
+    return this.businessProfiles.withConfirmLock(id, () =>
+      this.applyBusinessProfileLocked(id, dto, admin),
+    );
+  }
+
+  private async applyBusinessProfileLocked(
+    id: string,
+    dto: ConfirmBusinessProfileDto,
+    admin: JwtPayload,
   ): Promise<BusinessProfileApplyResponse> {
     const resolved = await this.businessProfiles.plan(id, dto.profile);
     this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
