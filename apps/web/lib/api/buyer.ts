@@ -2,7 +2,8 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
-import { getStoredActiveSeller } from "@/lib/buyer-auth";
+import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
+import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
@@ -380,8 +381,20 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
       forceNew?: boolean;
-    }) => buyerApiClient.post("/buyer/orders", data).then((r) => r.data),
+    }) =>
+      // B1094: the same cart carries the same key, so a double click / timeout retry applies once.
+      buyerApiClient
+        .post("/buyer/orders", data, {
+          headers: {
+            "Idempotency-Key": buyerSubmitKeyFor(
+              data,
+              `${getStoredBuyerId() ?? ""}|${getStoredActiveSeller()?.tenant.id ?? ""}`,
+            ),
+          },
+        })
+        .then((r) => r.data),
     onSuccess: () => {
+      clearBuyerSubmitKey();
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });

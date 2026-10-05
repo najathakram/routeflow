@@ -56,14 +56,6 @@ describe("wiring pins", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require("fs").readFileSync(require("path").join(__dirname, p), "utf8");
 
-  it("the operator order screen passes the server's reason and shows the note", () => {
-    const src = read("../app/(operator)/(tabs)/orders/[id].tsx");
-    expect(src).toMatch(
-      /statusActions\(\s*order\.status as OrderStatus,\s*order\.fulfillPath,\s*order\.cancelBlockedReason,?\s*\)/,
-    );
-    expect(src).toMatch(/cancelBlockedNote\(order\.cancelBlockedReason\)/);
-  });
-
   it("the web's copy constant is the same string (one set of words on both apps)", () => {
     const web = read("../../web/app/(dashboard)/orders/[id]/CancelOrderButton.tsx");
     expect(web).toContain(

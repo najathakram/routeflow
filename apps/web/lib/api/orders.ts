@@ -400,10 +400,15 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the create-order modal to ask the operator whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on: the merge preview must look for the same target create would. */
+  fulfillPath?: "ROUTE" | "SHIP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient.get("/orders/active", { params: { customerId, fulfillPath } }).then((r) => r.data),
     enabled: !!customerId,
   });
 }

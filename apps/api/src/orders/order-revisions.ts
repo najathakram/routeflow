@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -70,7 +71,7 @@ function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs
 
 /** The insert, on a transaction client `tx`: the revision number is max+1 under that transaction. */
 async function insertRevision(
-  tx: any,
+  tx: Prisma.TransactionClient,
   tenantId: string | null,
   [orderId, user, , source, reason]: AppendOrderRevisionArgs,
   snapshot: ReturnType<typeof revisionSnapshot>,
@@ -89,7 +90,7 @@ async function insertRevision(
       editedByRole: user?.role ?? null,
       source,
       reason: reason ?? null,
-      snapshot,
+      snapshot: snapshot as Prisma.InputJsonObject,
     },
   });
 }
@@ -114,7 +115,7 @@ export async function appendOrderRevision(
  * never be lost while the status change it records is kept (SA-689).
  */
 export async function appendOrderRevisionInTx(
-  tx: any,
+  tx: Prisma.TransactionClient,
   tenantId: string | null,
   ...args: AppendOrderRevisionArgs
 ): Promise<void> {

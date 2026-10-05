@@ -23,10 +23,11 @@
  * The marker constants live in `ship-state-markers.ts` (a leaf), so `order-status-invoicing.ts`, which
  * this file imports, can read them without importing this file back (SA-689 b).
  */
-import { FulfillPath, OrderStatus, type Order, type Prisma } from "@prisma/client";
+import { FulfillPath, OrderStatus } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
 import { appendOrderRevisionInTx } from "./order-revisions";
+import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { billsAtShipment } from "./order-status-invoicing";
 import { SHIP_STATE_REOPENED, SHIP_STATE_SOURCES, SHIP_STATE_UNMARKED } from "./ship-state-markers";
 
@@ -74,21 +75,26 @@ type ShipStateOrder = {
  * Write an order's status change and, when it is a ship-state change (SHIP orders of a business that bills
  * at shipment), its marker, in ONE transaction. Any other change is the plain update it always was. The
  * marker is never best-effort: if it cannot be written the status change rolls back with it (SA-689).
+ * Both paths write the status as the B1095 compare-and-set (`writeStatusIfUnchanged`, on the status the
+ * transition was validated against): a lost CAS is the 409 ORDER_CHANGED_DURING_EDIT and, on the marked
+ * path, throws BEFORE the marker, so a status that did not change leaves no marker.
  */
 export async function updateStatusWithShipMarker(
   { prisma, featureConfig }: ShipStateDeps,
   order: ShipStateOrder,
   { status: to, reason }: { status: OrderStatus; reason?: string | null },
   user: JwtPayload | undefined,
-  data: Prisma.OrderUpdateInput,
-): Promise<Order> {
+  data: ReturnType<typeof buildStatusUpdateData>,
+) {
   const source = shipStateMarker(order.fulfillPath, order.status, to);
-  const marked =
-    !!source &&
-    (await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order));
-  if (!marked) return prisma.forTenant().order.update({ where: { id: order.id }, data });
+  if (
+    !source ||
+    !(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order))
+  ) {
+    return writeStatusIfUnchanged(prisma.forTenant(), order.id, order.status, data);
+  }
   return prisma.tenantTransaction(async (tx) => {
-    const row: Order = await tx.order.update({ where: { id: order.id }, data });
+    const row = await writeStatusIfUnchanged(tx, order.id, order.status, data);
     // #3219 S1 (lead ruling): after ANY delivery, "Unmark shipped" never makes the order cancellable
     // again (the rest is still with the carrier): it records a reopen. Read in this transaction; a failed
     // read fails the change (closed), it is never guessed.
@@ -104,7 +110,7 @@ export async function updateStatusWithShipMarker(
       order.id,
       user,
       { subtotal: Number(order.subtotal), tax: Number(order.tax), total: Number(order.total) },
-      delivered ? SHIP_STATE_REOPENED : source!,
+      delivered ? SHIP_STATE_REOPENED : source,
       reason,
     );
     return row;

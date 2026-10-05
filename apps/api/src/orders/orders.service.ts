@@ -75,10 +75,19 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
+import { resolveFulfilPath } from "./fulfil-path-resolver";
+import {
+  assertNoBackdatedMerge,
+  findActiveOrderImpl,
+  sameFulfilPathAsWinner,
+  unshipped,
+  type MergeSearchOpts,
+} from "./merge-candidates";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
+import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -622,31 +631,19 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
-  /**
-   * Find the most recent active (DRAFT/PENDING) order for a customer.
-   * Used by the buyer portal to merge new items into an existing order.
-   */
-  async findActiveOrder(customerId: string, opts: { forMerge?: boolean } = {}) {
-    // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
-    // do NOT propose them as a merge target. The next operator-initiated create for
-    // the same customer should still see no "active" order to merge into.
-    return this.prisma.forTenant().order.findFirst({
-      where: {
-        customerId,
-        status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
-        skipAutoMerge: false,
-        // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
-        ...(opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
-      },
-      include: {
-        lineItems: {
-          where: { status: { not: ItemStatus.CANCELLED } },
-          include: { product: { select: { id: true, name: true, unit: true } } },
-        },
-        customer: { select: { id: true, businessName: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  private fulfilDeps() {
+    return {
+      featureConfig: this.featureConfig,
+      tenantId: this.prisma.getTenantId(),
+      logger: this.logger,
+    };
+  }
+
+  /** The most recent active (DRAFT/PENDING) order for a customer: see `merge-candidates.ts`. */
+  async findActiveOrder(customerId: string, opts: MergeSearchOpts = {}) {
+    // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
+    const guard = opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {};
+    return findActiveOrderImpl(this.prisma, customerId, opts, guard, this.fulfilDeps());
   }
 
   /**
@@ -694,7 +691,7 @@ export class OrdersService implements OnApplicationBootstrap {
    */
   async mergeAllPendingForCustomer(
     customerId: string,
-    options: { buyerInitiated?: boolean } = {},
+    options: { buyerInitiated?: boolean; focusOrderId?: string } = {},
     opts?: {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
@@ -713,7 +710,7 @@ export class OrdersService implements OnApplicationBootstrap {
           waitMs: 20_000,
         },
         async () => {
-          const pendingOrders = await this.prisma.forTenant().order.findMany({
+          const pending = await this.prisma.forTenant().order.findMany({
             where: {
               customerId,
               status: OrderStatus.PENDING,
@@ -736,6 +733,8 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
+          // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
+          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending), options.focusOrderId);
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -981,7 +980,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
         async () => {
-          const orders = await this.prisma.forTenant().order.findMany({
+          const found = await this.prisma.forTenant().order.findMany({
             where: { customerId, status: OrderStatus.PENDING },
             include: {
               lineItems: {
@@ -993,6 +992,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
+          const orders = sameFulfilPathAsWinner(unshipped(found)); // never fold a SHIP order into a ROUTE one
           if (orders.length <= 1) return orders[0] ?? null;
           unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),
@@ -1567,12 +1567,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      const mergeTarget = await this.findActiveOrder(customerId, { forMerge: true });
-      if (mergeTarget) {
-        throw new BadRequestException(
-          "This customer has an open order. Enter a backdated order as a separate order.",
-        );
-      }
+      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1603,7 +1598,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
     // fall back to the customer's own default, else ROUTE (byte-identical to
     // today for every existing order/customer, which default to ROUTE too).
-    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+    const fulfillPath = await resolveFulfilPath(this.fulfilDeps(), {
+      explicit: dto.fulfillPath,
+      stored: customerRecord?.fulfillPath,
+      audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+    });
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.
@@ -2448,22 +2447,10 @@ export class OrdersService implements OnApplicationBootstrap {
     if (carrier?.withCarrier) throwIfWithCarrier("WITH_CARRIER");
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
-    const statusUpdateData = {
-      status: dto.status,
-      // A backdated order was delivered on its business date, not on the day
-      // staff got around to marking it.
-      ...(dto.status === OrderStatus.DELIVERED
-        ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
-        : {}),
-      // A reopened order is no longer delivered — a stale deliveredAt would
-      // keep it in delivered-on-date reports and reconcile passes.
-      ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
-      // E-b: shippedAt is stamped ONLY by the ship transition (never by saving tracking) and survives an unmark.
-      ...(dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
-        ? { shippedAt: order.shippedAt ?? new Date() }
-        : {}),
-      ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
-    };
+    const statusUpdateData = buildStatusUpdateData(order, dto.status, {
+      isDeliveredDemotion,
+      noteAppend,
+    });
 
     const isDraftToPendingPromotion =
       order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING;
@@ -2654,6 +2641,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
+      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409), in the
+      // SAME tx as the ship-state marker when there is one (SA-689): order-ship-state.ts.
       return updateStatusWithShipMarker(this, order, dto, user, statusUpdateData);
     })();
 
@@ -2909,9 +2898,9 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     dto: UpdateOrderItemsDto,
     user?: JwtPayload,
-    // B215/B465: set ONLY by the staff create-merge branch (OrdersController.create). Not
-    // reachable from a request body — the PATCH routes and the buyer merge call with three
-    // arguments. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
+    // B215/B465: `isCreateMerge` is set ONLY by the staff create-merge branch (OrdersController.create),
+    // never reachable from a request body (the PATCH routes call with three arguments). B1094: the
+    // buyer merge adds a fourth argument carrying ONLY `idempotency`. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
     // line NEW to the order (no existing counterpart) skips the reason-required guard below,
     // matching separate create's own unchecked behavior — never inferred from the DTO/order
     // state, only ever set here by the one call site that means it.

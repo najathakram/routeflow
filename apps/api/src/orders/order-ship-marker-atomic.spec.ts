@@ -7,6 +7,7 @@
  * The fake `tenantTransaction` is real in the one way that matters: it works on a COPY of the committed
  * state and keeps the copy only when the callback resolves, so a throw rolls everything back.
  */
+import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
 import { updateStatusWithShipMarker } from "./order-ship-state";
 
@@ -31,8 +32,12 @@ const makeDb = (
   const committed: State = { status: opts.start ?? OrderStatus.DELIVERED, revisions: [] };
   const delegates = (state: State, inTx: boolean) => ({
     order: {
-      update: async ({ data }: any) => {
+      update: async ({ where, data }: any) => {
         if (opts.statusFails && inTx) throw new Error("status update failed");
+        // B1095: the status write is a compare-and-set; no row matching is Prisma's P2025
+        if (where.status !== undefined && where.status !== state.status) {
+          throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
+        }
         state.status = data.status;
         return { id: "o1", status: state.status };
       },
@@ -119,6 +124,29 @@ describe("SA-689: the ship-state marker commits with the status change", () => {
       "status update failed",
     );
     expect(db.committed.revisions).toEqual([]);
+  });
+
+  it("B1095: a CAS miss on the marked path (a cancel committed since the pre-read) writes NO marker and changes nothing", async () => {
+    const db = makeDb({ start: OrderStatus.CANCELLED }); // the order was read as DELIVERED
+    const err = await run(db, OrderStatus.DELIVERED, OrderStatus.CONFIRMED).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({
+      code: "ORDER_CHANGED_DURING_EDIT",
+    });
+    expect(db.committed.status).toBe(OrderStatus.CANCELLED); // never resurrected
+    expect(db.committed.revisions).toEqual([]); // and no marker for a status that did not change
+    expect(db.txCalls.count).toBe(1); // it was the marked path
+  });
+
+  it("B1095: the plain path is the same CAS (409, nothing written)", async () => {
+    const db = makeDb({ start: OrderStatus.CANCELLED });
+    await expect(
+      run(db, OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(db.txCalls.count).toBe(0);
+    expect(db.committed.status).toBe(OrderStatus.CANCELLED);
   });
 
   it("success: the status and its marker land together, in one transaction", async () => {
