@@ -113,6 +113,10 @@ describe("settleOrderInvoice", () => {
         ],
       },
     ]);
+    // the re-created line: invoicedQty back at 0, so a remainder exists
+    tenantDb.orderItem.findMany.mockResolvedValue([
+      { id: "oi-new", name: null, qty: 120, invoicedQty: 0 },
+    ]);
     const out = await settleOrderInvoice(self, "ord-1", logger, "delivered");
     expect(out).toBeInstanceOf(ConflictException);
     expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICES_NEED_REVIEW" });
@@ -128,10 +132,76 @@ describe("settleOrderInvoice", () => {
         ],
       },
     ]);
-    tenantDb.orderItem.findMany.mockResolvedValue([{ id: "oi-n", qty: 1, invoicedQty: 0 }]);
+    // a live custom line named like the invoice line looks like an order line
+    tenantDb.orderItem.findMany.mockResolvedValue([
+      { id: "oi-n", name: "Misc", qty: 1, invoicedQty: 0 },
+    ]);
     const out = await settleOrderInvoice(self, "ord-1", logger, "delivered");
     expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICES_NEED_REVIEW" });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("SA-687b precision: a freeform FEE line (no orderItemId, no product, no matching custom line) never counts as orphaned", async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: "oi-1", productId: "p-1", systemKind: null, description: "W", qty: 72 },
+          {
+            orderItemId: null,
+            productId: null,
+            systemKind: null,
+            description: "Fuel surcharge",
+            qty: 1,
+          },
+        ],
+      },
+    ]);
+    tenantDb.orderItem.findMany.mockResolvedValue([
+      { id: "oi-1", name: null, qty: 120, invoicedQty: 72 }, // a remainder exists
+    ]);
+    await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-687b (1): a hand-added 'Delivery fee' counts only when the order has an unlisted line of that name (another unlisted line does not make it an orphan)", async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: "oi-1", productId: "p-1", systemKind: null, description: "W", qty: 72 },
+          {
+            orderItemId: null,
+            productId: null,
+            systemKind: null,
+            description: "Delivery fee",
+            qty: 1,
+          },
+        ],
+      },
+    ]);
+    tenantDb.orderItem.findMany.mockResolvedValue([
+      { id: "oi-1", name: null, qty: 120, invoicedQty: 72 },
+      { id: "oi-2", name: "Misc part", qty: 1, invoicedQty: 0 }, // an unlisted line, a different name
+    ]);
+    await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-687b precision: the orphan test runs only while a remainder exists (a fully invoiced order with an unlinked product line is not refused)", async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    tenantDb.invoice.findMany.mockResolvedValue([
+      {
+        items: [
+          { orderItemId: "oi-1", productId: "p-1", systemKind: null, description: "W", qty: 120 },
+          { orderItemId: null, productId: "p-1", systemKind: null, description: "W", qty: 0 },
+        ],
+      },
+    ]);
+    tenantDb.orderItem.findMany.mockResolvedValue([
+      { id: "oi-1", name: null, qty: 120, invoicedQty: 120 }, // nothing remains
+    ]);
+    await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
   });
 
   it("SA-687 S2: a legitimate 6-only split (billed qty == invoicedQty, nothing orphaned) is NOT refused: the remainder is created", async () => {

@@ -129,7 +129,7 @@ const expectReviewConflict = (out: unknown) => {
   expect((out as ConflictException).getResponse()).toMatchObject({
     code: "ORDER_INVOICES_NEED_REVIEW",
     message:
-      "This order's invoices don't match its lines. Review the invoices before billing more.",
+      "This order's invoices don't match its lines. Add the remaining items to the draft, or void and re-split, before billing more.",
   });
 };
 
@@ -157,6 +157,16 @@ describe("SA-687 M1: a replace-all edit of an order with partial invoices, then 
     // settledAtShipment makes the open draft null on DELIVERED, so the guard must not live under `if (draft)`
     expectReviewConflict(await settle("delivered", true));
     expect(db.invoicesOf("ord-1")).toHaveLength(2); // unguarded: 3
+  });
+
+  it("SA-687b M1: staff's recovery, POST /invoices/from-order ('Generate Invoice (full order)'), after the 409 is refused too: nothing written", async () => {
+    const { db, real, settle } = await splitThenReplaceAll("PENDING");
+    expectReviewConflict(await settle("delivered")); // the Mark Delivered 409 ...
+    const caught: unknown = await real.createInvoiceFromOrder("ord-1").catch((e: unknown) => e);
+    expectReviewConflict(caught); // ... and the natural recovery must not re-bill the order
+    const after = db.invoicesOf("ord-1");
+    expect(after).toHaveLength(2); // unguarded: 3
+    expect(sum(after)).toBe(ORDER_TOTAL); // unguarded: 610.54
   });
 
   it("S3: 'Split into invoice' for the full qty is refused as well (createPartialFromOrder has the same check)", async () => {

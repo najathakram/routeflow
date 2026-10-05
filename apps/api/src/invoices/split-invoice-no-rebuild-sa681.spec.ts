@@ -244,6 +244,54 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
     });
   });
 
+  describe("SA-687b: the review guard has no false positives on normal orders", () => {
+    const addFeeLine = () =>
+      db.invoiceItems.push({
+        id: "ii-fee",
+        invoiceId: db.invoices[0].id,
+        orderItemId: null,
+        productId: null,
+        description: "Fuel surcharge",
+        qty: 1,
+        subtotal: 5,
+      });
+
+    it("a 6/4 order with a freeform fee line: Mark Delivered with nothing left creates nothing and is not refused", async () => {
+      seedOrder();
+      await splitSix();
+      await splitFour();
+      addFeeLine();
+      expect(await markDelivered()).toBeUndefined();
+      expect(db.invoicesOf("ord-1")).toHaveLength(2);
+    });
+
+    it("6 only + a freeform fee line: the remainder is still billed (the fee line is not an orphan)", async () => {
+      seedOrder();
+      await splitSix();
+      addFeeLine();
+      expect(await markDelivered()).toBeUndefined();
+      expect(db.invoicesOf("ord-1")).toHaveLength(2);
+    });
+
+    it("createInvoiceFromOrder on an order with NO invoice is not refused (createSale / delivered-reconcile only create then)", async () => {
+      seedOrder();
+      await expect(service.createInvoiceFromOrder("ord-1")).resolves.toHaveLength(1);
+    });
+
+    it("a SENT 6-only partial, then 'Generate Invoice (full order)': bills the other 4 boxes (counter in step, not refused)", async () => {
+      seedOrder();
+      await splitSix();
+      db.invoices[0].status = "SENT";
+      const out: any = await service.createInvoiceFromOrder("ord-1");
+      expect(out).toHaveLength(1);
+      expect(db.invoicesOf("ord-1").map((i) => i.items.map((it: any) => Number(it.qty)))).toEqual([
+        [72],
+        [48],
+      ]);
+      expect(sum(db.invoicesOf("ord-1"))).toBe(ORDER_TOTAL);
+    });
+  });
+
   describe("a draft beside a FINALIZED invoice of the same order is not rebuilt either", () => {
     it("an open draft + a SENT partial: no rebuild", async () => {
       seedOrder();

@@ -311,6 +311,10 @@ describeDb(
       await expect(split({ ...s, orderItemId: fresh.id }, 120)).rejects.toMatchObject({
         response: { code: "ORDER_INVOICES_NEED_REVIEW" },
       });
+      // SA-687b: staff's recovery, POST /invoices/from-order ("Generate Invoice (full order)"), too
+      await expect(
+        tenantCtx.run(s.tenantId, () => invoicesService.createInvoiceFromOrder(s.orderId)),
+      ).rejects.toMatchObject({ response: { code: "ORDER_INVOICES_NEED_REVIEW" } });
       const after = await invoicesOf(s.orderId);
       expect(after).toHaveLength(2); // unguarded: 3
       expect(total(after)).toBe(305.27); // unguarded: 610.54

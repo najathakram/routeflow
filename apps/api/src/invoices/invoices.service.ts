@@ -141,7 +141,7 @@ import {
   assertOrderInvoicesInStep,
   draftBillsLessThanOrder,
   isCleanDraftPartition,
-  isSoleBillingDraft,
+  isSoleBillingDraftIn,
 } from "./invoice-partition";
 import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
@@ -570,6 +570,7 @@ export class InvoicesService {
       });
       return existing;
     }
+    await assertOrderInvoicesInStep(db, orderId, { onlyWhenRemainder: true }); // SA-687b: no re-bill
 
     // RF-079: check customer tax-exempt status
     const customer = await db.customer.findFirst({
@@ -1436,12 +1437,8 @@ export class InvoicesService {
       }
     }
     if (!draft) return null;
-    if (!isDepositMirror) {
-      const nonVoid = await db.invoice.findMany({
-        where: { orderId, status: { not: InvoiceStatus.VOID } },
-        select: { id: true },
-      });
-      if (!isSoleBillingDraft(draft.id, nonVoid)) return RECONCILE_PARTIALS; // SA-681
+    if (!isDepositMirror && !(await isSoleBillingDraftIn(db, orderId, draft.id))) {
+      return RECONCILE_PARTIALS; // SA-681
     }
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },

@@ -91,7 +91,7 @@ export function draftBillsLessThanOrder(
 
 /** SA-687: the 409 for "more would be billed on an order whose invoices no longer match its lines". */
 export const ORDER_INVOICES_NEED_REVIEW_MESSAGE =
-  "This order's invoices don't match its lines. Review the invoices before billing more.";
+  "This order's invoices don't match its lines. Add the remaining items to the draft, or void and re-split, before billing more.";
 export const orderInvoicesNeedReviewError = () =>
   new ConflictException({
     code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
@@ -101,15 +101,19 @@ export const orderInvoicesNeedReviewError = () =>
 /**
  * SA-687: can the order's "qty - invoicedQty" be trusted before more is billed beside its existing
  * invoices? No when any non-void invoice:
- *   - carries a non-NSF line with NO orderItemId (productId or not, as isCleanDraftPartition): a
- *     replace-all order edit deletes and re-creates every OrderItem (invoicedQty back to 0) and
- *     InvoiceItem.orderItemId is onDelete SetNull, so the invoices keep billing through ORPHANED
- *     lines the counter no longer knows about (the remainder would bill the whole order again);
+ *   - ORPHANED (only while a remainder exists to bill): carries a line that looks like an order
+ *     line but has NO orderItemId. A replace-all order edit deletes and re-creates every OrderItem
+ *     (invoicedQty back to 0) and InvoiceItem.orderItemId is onDelete SetNull, so the invoices keep
+ *     billing through lines the counter no longer knows about (the remainder would bill the whole
+ *     order again). "Looks like an order line" = productId set, or its description equals a live
+ *     custom (unlisted) line's name; an NSF line or a freeform fee/surcharge line never counts;
  *   - leaves a live line with invoicedQty above its qty (a line cut below what is invoiced), or
- *     different from what the invoices actually bill on that line (the counter is out of step).
- * No invoice at all is trivially fine. `onlyWhenRemainder` skips the check when nothing remains to
- * bill (the create paths then bill nothing anyway). Used by Mark Delivered (every path that reaches
- * the remainder create, with or without an open draft) and createPartialFromOrder.
+ *     different from what the invoices actually bill on that line (the counter is out of step);
+ *     these counter tests apply even when nothing remains.
+ * No invoice at all is trivially fine. `onlyWhenRemainder` skips the whole check when nothing remains
+ * to bill (the create paths then bill nothing anyway). Used by Mark Delivered (every path that
+ * reaches the remainder create, with or without an open draft), createPartialFromOrder and
+ * createInvoiceFromOrder ("Generate Invoice (full order)").
  */
 export async function invoicesNeedReview(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
@@ -121,22 +125,37 @@ export async function invoicesNeedReview(
     where: { orderId, status: { not: InvoiceStatus.VOID } },
     select: {
       items: {
-        select: { orderItemId: true, systemKind: true, description: true, qty: true },
+        select: {
+          orderItemId: true,
+          productId: true,
+          systemKind: true,
+          description: true,
+          qty: true,
+        },
       },
     },
   });
   if (invoices.length === 0) return false;
-  const lines: Array<{ id: string; qty: unknown; invoicedQty: unknown }> =
+  const lines: Array<{ id: string; name?: string | null; qty: unknown; invoicedQty: unknown }> =
     await db.orderItem.findMany({
       where: { orderId, status: { not: "CANCELLED" } },
-      select: { id: true, qty: true, invoicedQty: true },
+      select: { id: true, name: true, qty: true, invoicedQty: true },
     });
-  const remaining = (li: { qty: unknown; invoicedQty: unknown }) =>
-    Number(li.qty ?? 0) - Number(li.invoicedQty ?? 0);
-  if (opts.onlyWhenRemainder && !lines.some((li) => remaining(li) > 0.001)) return false;
+  const hasRemainder = lines.some(
+    (li) => Number(li.qty ?? 0) - Number(li.invoicedQty ?? 0) > 0.001,
+  );
+  if (opts.onlyWhenRemainder && !hasRemainder) return false;
 
   const items = invoices.flatMap((i) => i.items ?? []);
-  if (items.some((it) => !it.orderItemId && !isNsfLine(it))) return true;
+  const customNames = new Set(lines.filter((li) => li.name).map((li) => li.name));
+  const looksLikeOrderLine = (it: Record<string, any>) =>
+    !!it.productId || customNames.has(it.description);
+  if (
+    hasRemainder &&
+    items.some((it) => !it.orderItemId && !isNsfLine(it) && looksLikeOrderLine(it))
+  ) {
+    return true;
+  }
   const billed = new Map<string, number>();
   for (const it of items) {
     if (it.orderItemId)
@@ -151,11 +170,29 @@ export async function invoicesNeedReview(
   });
 }
 
-/** createPartialFromOrder's guard: refuse (409 ORDER_INVOICES_NEED_REVIEW, nothing written) when the invoices need review. */
+/** The billing writers' guard: refuse (409 ORDER_INVOICES_NEED_REVIEW, nothing written) when the invoices need review. */
 export async function assertOrderInvoicesInStep(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant client
   db: any,
   orderId: string,
+  opts: { onlyWhenRemainder?: boolean } = {},
 ): Promise<void> {
-  if (await invoicesNeedReview(db, orderId)) throw orderInvoicesNeedReviewError();
+  if (await invoicesNeedReview(db, orderId, opts)) throw orderInvoicesNeedReviewError();
+}
+
+/**
+ * reconcileOrderDraftInvoice's SA-681 fence on the DB: `draftId` is the order's sole non-void
+ * invoice (see isSoleBillingDraft). Kept here so the service stays under its size ceiling.
+ */
+export async function isSoleBillingDraftIn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a tenant (transaction) client
+  db: any,
+  orderId: string,
+  draftId: string,
+): Promise<boolean> {
+  const nonVoid: PartitionInvoice[] = await db.invoice.findMany({
+    where: { orderId, status: { not: InvoiceStatus.VOID } },
+    select: { id: true },
+  });
+  return isSoleBillingDraft(draftId, nonVoid);
 }

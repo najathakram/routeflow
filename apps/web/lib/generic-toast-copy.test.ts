@@ -107,7 +107,9 @@ describe("genericToastCopy: codes users rely on", () => {
       genericToastCopy(
         err(409, { code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW, message: "raw server text" }),
       ),
-    ).toBe("This order's invoices don't match its lines. Review the invoices before billing more.");
+    ).toBe(
+      "This order's invoices don't match its lines. Add the remaining items to the draft, or void and re-split, before billing more.",
+    );
   });
 
   it("the duplicate-email sentence maps to the fixed copy", () => {
