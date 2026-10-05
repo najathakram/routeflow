@@ -688,6 +688,109 @@ export class BillingService {
 
   // ─── Event handlers ───────────────────────────────────────────────────────
 
+  /**
+   * The refusal trail for a checkout session that was not applied (Stripe gets a 200, there is nothing
+   * to retry): ONE audit row per session, in the existing audit trail. Exactly one row: two
+   * deliveries of the same session (parallel webhook workers, or checkout.session.completed and its
+   * async_payment_* sibling) serialize on the same advisory lock the APPLIED path takes, then the
+   * second sees the first's committed row. The dedupe key is (entityType, entityId, action) ONLY —
+   * the tenant id is payload, because it can differ between deliveries (unknown tenant -> null,
+   * tenant created later -> its id). Best-effort: a failure here must never change the 200.
+   */
+  private async recordCheckoutRefusal(
+    session: any,
+    tenantId: string | null,
+    meta: Prisma.InputJsonObject,
+  ): Promise<void> {
+    await this.prisma
+      .$transaction(async (tx) => {
+        if (session.id) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+          const recorded = await tx.auditLog.findFirst({
+            where: {
+              entityType: STRIPE_CHECKOUT_ENTITY,
+              entityId: session.id,
+              action: STRIPE_CHECKOUT_REFUSED_ACTION,
+            },
+            select: { id: true },
+          });
+          if (recorded) return;
+        }
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            action: STRIPE_CHECKOUT_REFUSED_ACTION,
+            entityType: STRIPE_CHECKOUT_ENTITY,
+            entityId: session.id ?? null,
+            meta,
+          },
+        });
+      }, CHECKOUT_TX_OPTIONS)
+      .catch(() => undefined);
+  }
+
+  /**
+   * SA-690: the customer the session was paid under must be the tenant's — whatever the
+   * plan-transition flag says (it fails closed to OFF). The signature proves the Stripe account, not
+   * that RouteFlow created this session, and a completion writes rows and creates/deletes Stripe items
+   * from `session.metadata.tenantId`. So the tenant's STORED customer, the session's customer and the
+   * retrieved subscription's customer must all be the same one. Returns true when they are.
+   *
+   * Otherwise NOTHING is applied (no row write, no Stripe item created or deleted), the ids are logged
+   * at error level, and a trail row is left (the existing refused-checkout record) carrying the
+   * subscription and its add-on item ids: those items keep billing in Stripe with no row owning them,
+   * so someone has to be able to find them. The caller then answers 200 — a retry cannot fix it.
+   */
+  private async checkoutCustomerVerified(
+    session: any,
+    tenantId: string,
+    stored: { stripeCustomerId?: string | null } | null,
+    stripeSub: any,
+  ): Promise<boolean> {
+    const storedCustomer = stored?.stripeCustomerId ?? null;
+    const sessionCustomer = stripeRefId(session.customer);
+    const subscriptionCustomer = stripeRefId(stripeSub?.customer);
+    if (
+      storedCustomer &&
+      storedCustomer === sessionCustomer &&
+      storedCustomer === subscriptionCustomer
+    ) {
+      return true;
+    }
+    const trail = this.checkoutCustomerTrail(session, stored, stripeSub);
+    this.logger.error(
+      `checkout.session.completed NOT APPLIED for tenant ${tenantId} (session ${session.id ?? "?"}): ` +
+        `the customer is not the tenant's — stored ${storedCustomer ?? "(none)"}, ` +
+        `session ${sessionCustomer ?? "(none)"}, subscription ${subscriptionCustomer ?? "(none)"} ` +
+        `(subscription ${trail.subscriptionId ?? "?"}, add-on items ${trail.addonItemIds.join(",") || "none"})`,
+    );
+    await this.recordCheckoutRefusal(session, stored ? tenantId : null, {
+      reason: storedCustomer ? "customer_mismatch" : "customer_not_on_file",
+      ...trail,
+    });
+    return false;
+  }
+
+  /**
+   * The ids a refused checkout's trail row carries so the Stripe side can be found and dealt with:
+   * the three customers compared, the subscription, and the add-on items that subscription holds.
+   */
+  private checkoutCustomerTrail(
+    session: any,
+    stored: { stripeCustomerId?: string | null } | null,
+    stripeSub: any,
+  ) {
+    return {
+      storedCustomer: stored?.stripeCustomerId ?? null,
+      sessionCustomer: stripeRefId(session.customer),
+      subscriptionCustomer: stripeRefId(stripeSub?.customer),
+      subscriptionId: stripeRefId(stripeSub),
+      addonItemIds: checkoutAddonItems(stripeSub)
+        .map((i) => i.itemId)
+        .sort(),
+    };
+  }
+
   private async onCheckoutCompleted(session: any): Promise<void> {
     const tenantId = session.metadata?.tenantId;
     if (!tenantId) {
@@ -800,40 +903,11 @@ export class BillingService {
         );
         // Stripe gets a 200 (there is nothing to retry), so the refusal must leave a findable trail,
         // not only a log line. tenantId is the METADATA's claim, so an unknown tenant is stored null.
-        // Exactly ONE row per session: two deliveries of the same session (parallel webhook
-        // workers, or checkout.session.completed and its async_payment_* sibling) serialize on the
-        // same advisory lock the APPLIED path takes, then the second sees the first's committed row.
-        // The dedupe key is (entityType, entityId, action) ONLY — the tenant id is payload, because
-        // it can differ between deliveries (unknown tenant -> null, tenant created later -> its id).
-        // Best-effort: a failure here must never change the 200 Stripe already gets.
-        await this.prisma
-          .$transaction(async (tx) => {
-            if (session.id) {
-              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
-              const recorded = await tx.auditLog.findFirst({
-                where: {
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  action: STRIPE_CHECKOUT_REFUSED_ACTION,
-                },
-                select: { id: true },
-              });
-              if (recorded) return;
-            }
-            await tx.auditLog.create({
-              data: {
-                tenantId: tenantRow ? tenantId : null,
-                action: STRIPE_CHECKOUT_REFUSED_ACTION,
-                entityType: STRIPE_CHECKOUT_ENTITY,
-                entityId: session.id ?? null,
-                meta: {
-                  reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
-                  requestedPlanKey: resolvedPlanKey,
-                },
-              },
-            });
-          }, CHECKOUT_TX_OPTIONS)
-          .catch(() => undefined);
+        await this.recordCheckoutRefusal(session, tenantRow ? tenantId : null, {
+          reason: tenantRow ? "customer_mismatch" : "unknown_tenant",
+          requestedPlanKey: resolvedPlanKey,
+          ...this.checkoutCustomerTrail(session, existingOverride, stripeSub),
+        });
         return;
       }
       if (session.id) {
@@ -850,6 +924,11 @@ export class BillingService {
         });
         if (processed) {
           this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+          if (
+            !(await this.checkoutCustomerVerified(session, tenantId, existingOverride, stripeSub))
+          ) {
+            return;
+          }
           // SA-690: the add-on adoption is idempotent (a row that already holds its item books
           // nothing) and runs on a redelivery too — an earlier attempt may have applied the plan
           // and then failed on Stripe before adopting, and a retry that skipped it would leave the
@@ -898,6 +977,12 @@ export class BillingService {
           }
         }
       }
+    }
+
+    // SA-690: for every session — flag on or off — the customer must be the tenant's before ANYTHING
+    // below is written or any add-on item is touched (see checkoutCustomerVerified).
+    if (!(await this.checkoutCustomerVerified(session, tenantId, existingOverride, stripeSub))) {
+      return;
     }
 
     const transition =

@@ -41,13 +41,15 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       {},
       { get: (_t, k) => (k === "then" ? undefined : jest.fn().mockResolvedValue(undefined)) },
     ) as any;
-  const planTransitionStub = {
-    isEnabled: () => Promise.resolve(false),
-    prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
-    onPlanChange: () => Promise.resolve({ action: "none" }),
-    transactionOptions: () => undefined,
-    invalidateCaches: () => undefined,
-  } as any;
+  /** The plan-transition hook: off (the plain upsert path) or ON (the transaction + APPLIED marker path). */
+  const planTransitionStub = (on: boolean) =>
+    ({
+      isEnabled: () => Promise.resolve(on),
+      prepare: () => Promise.resolve({ enabled: on, planAllows: null }),
+      onPlanChange: () => Promise.resolve({ action: "none" }),
+      transactionOptions: () => undefined,
+      invalidateCaches: () => undefined,
+    }) as any;
 
   beforeAll(async () => {
     const url = requireLocalDatabaseUrl();
@@ -75,6 +77,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
 
   afterAll(async () => {
     if (tenantIds.length) {
+      await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.billingEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantAddon.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantSubscription.deleteMany({ where: { tenantId: { in: tenantIds } } });
@@ -120,6 +123,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     items: any[];
     stripeClient: any;
     completed: () => Promise<void>;
+    sessionId: string;
     ledger: () => Promise<Array<{ type: string; delta: number; sku?: string }>>;
     ledgerSum: () => Promise<number>;
     rows: () => Promise<any[]>;
@@ -128,6 +132,10 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   async function rig(opts: {
     rows: Array<{ sku: string; quantity: number; active?: boolean }>;
     items: any[];
+    /** The entitlements.configSnapshot flag (default off). */
+    flagOn?: boolean;
+    /** The session's customer (default the tenant's own). */
+    sessionCustomer?: string;
   }): Promise<Rig> {
     seq += 1;
     const slug = assertTestTenant(`qa-optA-${run}-${seq}`, "trial-addon-checkout.db.spec.ts");
@@ -185,6 +193,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         id: "sub_qa",
         object: "subscription",
         status: "active",
+        customer: opts.sessionCustomer ?? "cus_qa",
         items: { object: "list", data: items.map((i) => ({ ...i })) },
       })),
     } as any;
@@ -200,7 +209,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       stub(),
       stripe,
       stub(),
-      planTransitionStub,
+      planTransitionStub(opts.flagOn ?? false),
     );
     const billing = new BillingService(
       prisma as any,
@@ -210,14 +219,14 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       events,
       { resolveCatalogPricing: jest.fn().mockResolvedValue({ monthly: 99 }) } as any,
       stub(),
-      planTransitionStub,
+      planTransitionStub(opts.flagOn ?? false),
       mutations,
     );
 
     const session = {
       id: `cs_qa_${run}_${seq}`,
       object: "checkout.session",
-      customer: "cus_qa",
+      customer: opts.sessionCustomer ?? "cus_qa",
       subscription: "sub_qa",
       created: 1791172800,
       metadata: { tenantId: tenant.id, planKey: "STARTER", interval: "month" },
@@ -245,6 +254,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       items,
       stripeClient,
       completed,
+      sessionId: session.id,
       ledger: evs,
       ledgerSum: async () => (await evs()).reduce((s, e) => s + e.delta, 0),
       rows: () =>
@@ -367,6 +377,103 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       (await cut.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100").map((e) => e.delta),
     ).toEqual([100, -50]);
     expect(await cut.ledgerSum()).toBe(99 + 50);
+  });
+
+  it("a FORGED session (another customer) adopts nothing, writes nothing, resolves, and leaves ONE trail row — flag off and on", async () => {
+    for (const flagOn of [false, true]) {
+      const r = await rig({
+        flagOn,
+        sessionCustomer: "cus_attacker",
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+
+      await expect(r.completed()).resolves.toBeUndefined();
+      await expect(r.completed()).resolves.toBeUndefined(); // a redelivery: still nothing
+
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null, quantity: 2 });
+      expect(Number((await r.rows())[0].priceSnapshot)).toBe(0);
+      expect(await r.ledger()).toEqual([]);
+      expect((await prisma.tenant.findUniqueOrThrow({ where: { id: r.tenantId } })).status).toBe(
+        TenantStatus.TRIAL,
+      );
+      expect(
+        (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } }))
+          .stripeSubId,
+      ).toBeNull();
+      for (const fn of ["create", "update", "del"] as const) {
+        expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+      }
+      const trail = await prisma.auditLog.findMany({
+        where: {
+          entityType: "stripe_checkout_session",
+          entityId: r.sessionId,
+          action: "STRIPE_CHECKOUT_REFUSED",
+        },
+      });
+      expect(trail).toHaveLength(1);
+      expect(trail[0].meta).toMatchObject({
+        reason: "customer_mismatch",
+        storedCustomer: "cus_qa",
+        sessionCustomer: "cus_attacker",
+        subscriptionId: "sub_qa",
+        addonItemIds: ["si_pack"],
+      });
+    }
+  });
+
+  it("flag ON: delivery B hits ALREADY_APPLIED and adopts BEFORE delivery A's crossing — each row adopted and booked exactly once", async () => {
+    const r = await rig({
+      flagOn: true,
+      rows: [
+        { sku: "CUSTOMER_PACK_100", quantity: 2 },
+        { sku: "FORECASTING", quantity: 1 },
+      ],
+      items: [
+        base(),
+        stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        stripeItem("si_fc", { sku: "FORECASTING", cents: 1900, quantity: 1 }),
+      ],
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    let reached!: () => void;
+    const atGate = new Promise<void>((res) => (reached = res));
+    const real = (r.billing as any).transitionAndEmit.bind(r.billing);
+    jest
+      .spyOn(r.billing as any, "transitionAndEmit")
+      .mockImplementationOnce(async (...args: any[]) => {
+        reached();
+        await gate; // A has committed the plan + the APPLIED marker, and waits before the crossing
+        return real(...args);
+      });
+
+    const a = r.completed();
+    await atGate;
+    await r.completed(); // B: the marker is there -> ALREADY_APPLIED -> adopts while the tenant is still TRIAL
+    expect((await r.rows()).map((x) => x.stripeItemId)).toEqual(["si_pack", "si_fc"]);
+    expect(await r.ledger()).toEqual([]); // a non-paying tenant's adoption books nothing (yet)
+    release();
+    await a;
+
+    // A's crossing prices the base AND the already-adopted add-ons at their stored (actual) snapshots,
+    // once; A's own adoption finds both items set and does nothing
+    expect(await r.ledger()).toEqual([
+      { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99 + 100 + 19, sku: undefined },
+    ]);
+    expect(await r.ledgerSum()).toBe(218);
+    expect(
+      (await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot), x.quantity]),
+    ).toEqual([
+      ["si_pack", 50, 2],
+      ["si_fc", 19, 1],
+    ]);
+    for (const fn of ["create", "update", "del"] as const) {
+      expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+    }
   });
 
   it("(a) a row switched off before completion: its item is deleted with prorations, only the crossing is booked", async () => {

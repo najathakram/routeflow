@@ -24,7 +24,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { BillingController } from "./billing.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
@@ -161,6 +161,10 @@ interface Opts {
   delFails?: boolean;
   updateFails?: boolean;
   baseSub?: Record<string, unknown>;
+  /** The customer RouteFlow stored for the tenant (default cus_1; null = none on file). */
+  storedCustomer?: string | null;
+  /** The customer on the Stripe subscription the completion retrieves (default cus_1). */
+  subCustomer?: string;
 }
 
 function make(opts: Opts = {}) {
@@ -180,7 +184,7 @@ function make(opts: Opts = {}) {
     basePriceSnapshot: 99,
     discount: 0,
     stripeSubId: null,
-    stripeCustomerId: "cus_1",
+    stripeCustomerId: opts.storedCustomer === undefined ? "cus_1" : opts.storedCustomer,
     billingInterval: opts.interval === undefined ? "month" : opts.interval,
     cycle: opts.interval === "year" ? "ANNUAL" : "MONTHLY",
     ...opts.baseSub,
@@ -268,6 +272,7 @@ function make(opts: Opts = {}) {
     id: "sub_1",
     object: "subscription",
     status: "active",
+    customer: opts.subCustomer ?? "cus_1",
     items: { object: "list", data: stripeItems.map((i) => ({ ...i })) },
   });
   const stripe = {
@@ -590,17 +595,35 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("the row takes STRIPE's unit price (not the catalog's) and keeps its OWN quantity", async () => {
+  it("the row takes STRIPE's unit price (not the catalog's) and keeps its OWN quantity (3, not the item's 1)", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+      items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 1)],
+    });
+    await h.completed();
+    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 45, quantity: 3 });
+    // the item is brought UP to the row's quantity (billed), never the row down to the item's
+    expect(h.client.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+      quantity: 3,
+      proration_behavior: "create_prorations",
+    });
+    // adoption 0 → 45×1, then the raise 1 → 3 at 45: 135 = 45×3 in all
+    expect(
+      h
+        .ledger()
+        .filter((e: any) => ADDON_TYPES.includes(e.type))
+        .map((e: any) => e.delta),
+    ).toEqual([45, 90]);
+  });
+
+  it("equal quantities: nothing to reconcile — no Stripe update", async () => {
     const h = make({
       rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
       items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 2)],
     });
     await h.completed();
     expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 45, quantity: 2 });
-    expect(h.client.subscriptionItems.update).not.toHaveBeenCalled(); // quantities agree: nothing to reconcile
-    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([
-      { type: BILLING_EVENTS.ADDON_ENABLED, delta: 90, sku: "CUSTOMER_PACK_100" },
-    ]);
+    expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
   });
 
   describe("the ROW's quantity wins: Stripe is brought to it through the billed quantity-change path", () => {
@@ -1056,6 +1079,154 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.ledger()).toEqual([
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("SA-690 completion — the customer must be the tenant's, flag on or off", () => {
+  /**
+   * The signature proves the Stripe account, not that RouteFlow created the session, and the add-on
+   * adoption writes rows and creates/deletes Stripe items from `session.metadata.tenantId`. Before
+   * anything is written the tenant's STORED customer, the session's customer and the retrieved
+   * subscription's customer must be the same one — whatever the plan-transition flag says (it fails
+   * closed to OFF). A mismatch changes nothing, logs the ids, leaves a trail row and answers 200.
+   */
+  const itemsOf = () => [
+    baseItem(),
+    checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+    checkoutItem("si_fc", "FORECASTING", 1900, 1),
+  ];
+  const rowsOf = () => [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")];
+
+  const expectUntouched = (h: ReturnType<typeof make>, status = "TRIAL") => {
+    expect(
+      h.rows.map((r) => [r.stripeItemId, Number(r.priceSnapshot), r.quantity, r.active]),
+    ).toEqual([
+      [null, 0, 2, true],
+      [null, 0, 1, true],
+    ]);
+    expect(h.ledger()).toEqual([]);
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
+    expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(h.client.subscriptionItems.list).not.toHaveBeenCalled();
+    expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(h.tenant.status).toBe(status);
+    expect(h.entitlements.invalidate).not.toHaveBeenCalled();
+  };
+
+  let errorLog: jest.SpyInstance;
+  beforeEach(() => {
+    errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => errorLog.mockRestore());
+
+  it("a FORGED session naming tenant t1 (another customer): adopts nothing, writes nothing, resolves, logs the ids, leaves a trail row", async () => {
+    const h = make({ rows: rowsOf(), items: itemsOf(), subCustomer: "cus_attacker" });
+
+    await expect(h.completed(h.session({ customer: "cus_attacker" }))).resolves.toBeUndefined();
+
+    expectUntouched(h);
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringMatching(/t1.*cs_1.*cus_1.*cus_attacker|cs_1.*t1/s),
+    );
+    const logged = errorLog.mock.calls.map((c) => String(c[0])).join("\n");
+    for (const id of ["t1", "cs_1", "cus_1", "cus_attacker"]) expect(logged).toContain(id);
+    expect(h.tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: "t1",
+        action: "STRIPE_CHECKOUT_REFUSED",
+        entityType: "stripe_checkout_session",
+        entityId: "cs_1",
+        meta: expect.objectContaining({
+          reason: "customer_mismatch",
+          storedCustomer: "cus_1",
+          sessionCustomer: "cus_attacker",
+          subscriptionCustomer: "cus_attacker",
+          subscriptionId: "sub_1",
+          addonItemIds: ["si_fc", "si_pack"],
+        }),
+      }),
+    });
+  });
+
+  it.each([
+    [
+      "the session's customer is not the stored one",
+      { subCustomer: "cus_2" },
+      { customer: "cus_2" },
+    ],
+    ["the SUBSCRIPTION's customer is not the session's", { subCustomer: "cus_2" }, {}],
+    ["no customer is on file for the tenant", { storedCustomer: null }, {}],
+  ] as const)("refused, same outcome: %s", async (_name, opts, sessionExtra) => {
+    const h = make({ rows: rowsOf(), items: itemsOf(), ...opts });
+    await expect(h.completed(h.session({ ...sessionExtra }))).resolves.toBeUndefined();
+    expectUntouched(h);
+    expect(errorLog).toHaveBeenCalled();
+    expect(h.tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("the plan write is refused too (a forged session never re-points the tenant's subscription)", async () => {
+    const h = make({ rows: rowsOf(), items: itemsOf(), subCustomer: "cus_attacker" });
+    await h.completed(h.session({ customer: "cus_attacker" }));
+    expect(h.sub.stripeSubId).toBeNull();
+    expect(h.sub.stripeCustomerId).toBe("cus_1");
+  });
+
+  it("flag ON: the same refusals (subscription customer differs; already-applied redelivery included)", async () => {
+    const mismatchSub = make({
+      flagOn: true,
+      rows: rowsOf(),
+      items: itemsOf(),
+      subCustomer: "cus_2",
+    });
+    await expect(mismatchSub.completed()).resolves.toBeUndefined();
+    expectUntouched(mismatchSub);
+
+    const redelivery = make({
+      flagOn: true,
+      alreadyApplied: true,
+      rows: rowsOf(),
+      items: itemsOf(),
+      subCustomer: "cus_2",
+    });
+    await expect(redelivery.completed()).resolves.toBeUndefined();
+    expectUntouched(redelivery);
+
+    const noneOnFile = make({
+      flagOn: true,
+      alreadyApplied: true,
+      rows: rowsOf(),
+      items: itemsOf(),
+      storedCustomer: null,
+    });
+    await expect(noneOnFile.completed()).resolves.toBeUndefined();
+    expectUntouched(noneOnFile);
+  });
+
+  it("one trail row per session: a second refused delivery finds the first and writes none", async () => {
+    const h = make({ rows: rowsOf(), items: itemsOf(), subCustomer: "cus_2" });
+    h.tx.auditLog.findFirst.mockResolvedValueOnce({ id: "already" });
+    await h.completed();
+    expect(h.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalled(); // still logged every time
+  });
+
+  it("a verified checkout is untouched by the gate (stored = session = subscription customer)", async () => {
+    const h = make({ rows: rowsOf(), items: itemsOf() });
+    await h.completed();
+    expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_pack", "si_fc"]);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+
+  it("NIT: a session with no subscription id (or no tenant metadata) resolves quietly: nothing retrieved, nothing written", async () => {
+    const h = make({ rows: rowsOf(), items: itemsOf() });
+    await expect(h.completed(h.session({ subscription: null }))).resolves.toBeUndefined();
+    await expect(
+      h.completed(h.session({ metadata: { planKey: "STARTER" } })),
+    ).resolves.toBeUndefined();
+    expect(h.stripe.getSubscription).not.toHaveBeenCalled();
+    expectUntouched(h);
   });
 });
 

@@ -64,6 +64,9 @@ function make(
     basePriceSnapshot: 349,
     discount: 0,
     stripeSubId: null,
+    // SA-690: a checkout completion writes nothing unless the session's customer is the one stored
+    // for the tenant (and the subscription's) — the legitimate case every checkout fixture here is.
+    stripeCustomerId: "cus_1",
   };
   const tx = {
     tenant: {
@@ -127,6 +130,7 @@ function make(
     isConfigured: true,
     // #2440 N3: dahlia-shaped by default — the period lives on the subscription's items.
     getSubscription: jest.fn().mockResolvedValue({
+      customer: "cus_1",
       status: overrides.stripeStatus ?? "past_due",
       items: {
         data: [
@@ -580,7 +584,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
   it("(4) negative: metadata carries neither planKey nor the legacy plan key — left completely unchanged on the update branch, no emit", async () => {
     const { svc, prisma, events } = make({
       transitionCount: 1,
-      sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeCustomerId: "cus_1",
+      },
     });
     await (svc as any).onCheckoutCompleted(session(null));
 
@@ -616,6 +626,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         basePriceSnapshot: 199, // the negotiated figure already on the row
         discount: 0,
         stripeSubId: null,
+        stripeCustomerId: "cus_1",
         priceOverrideMonthly: 199,
       },
     });
@@ -669,7 +680,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a subscription with no stored planKey is judged from the legacy Tenant.plan", async () => {
       const { svc, prisma, planTransition } = make({
-        sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: null,
+          basePriceSnapshot: null,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
       prisma.tenant.findUnique.mockResolvedValue({ plan: "PROFESSIONAL", planVersionId: null });
 
@@ -682,7 +699,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a replay: the stored key equals the checkout's plan, so the hook sees NO rank move (from == to)", async () => {
       const { svc, planTransition } = make({
-        sub: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 349, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: "GROWTH",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
@@ -807,9 +830,15 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(prisma.auditLog.create).not.toHaveBeenCalled(); // no alarm row for the retryable conflict
       });
 
-      it("the CAS matches a NULL stored planKey as IS NULL, and a fresh tenant (no row) skips it", async () => {
+      it("the CAS matches a NULL stored planKey as IS NULL; a tenant with no subscription row is refused before any write (SA-690)", async () => {
         const nullKey = make({
-          sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+          sub: {
+            tenantId: "t1",
+            planKey: null,
+            basePriceSnapshot: null,
+            discount: 0,
+            stripeCustomerId: "cus_1",
+          },
         });
         await (nullKey.svc as any).onCheckoutCompleted(withId());
         expect(nullKey.tx.tenantSubscription.updateMany.mock.calls[0][0].where.planKey).toBeNull();
@@ -1245,6 +1274,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     basePriceSnapshot: 349,
     discount: 0,
     stripeSubId: null,
+    stripeCustomerId: "cus_1",
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     retainedUserIds: ["u-keep"],
@@ -1801,6 +1831,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
   const END = new Date(1_702_000_000 * 1000);
   const dahlia = (extra: Record<string, unknown> = {}) => ({
     status: "active",
+    customer: "cus_1",
     items: { data: [{ current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 }] },
     ...extra,
   });
@@ -2225,7 +2256,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
 
   it("N1: checkout.session.completed with no period logs a warning and still stores stripeSubId", async () => {
     const { svc, prisma, stripe } = make({ transitionCount: 1 });
-    stripe.getSubscription.mockResolvedValue({ status: "active" });
+    stripe.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
     await (svc as any).onCheckoutCompleted({
       metadata: { tenantId: "t1" },

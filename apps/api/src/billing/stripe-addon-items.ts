@@ -59,31 +59,55 @@ export interface CheckoutAddonItem {
   unitAmountCents: number | null;
 }
 
+/** The slice of a Stripe subscription item (API 2026-08-26.dahlia) the add-on adoption reads. */
+interface StripeItemLike {
+  id?: unknown;
+  quantity?: unknown;
+  price?: {
+    metadata?: Record<string, string> | null;
+    /** An id until expanded; the object (with its metadata) after `items.data.price.product`. */
+    product?: string | { metadata?: Record<string, string> | null } | null;
+    unit_amount?: number | null;
+    unit_amount_decimal?: string | null;
+  } | null;
+}
+
+/** The `addonSku` tag on an item: its expanded product's metadata, else its price's. */
+function addonSkuOf(item: StripeItemLike): string | null {
+  const product = item.price?.product;
+  const fromProduct =
+    product && typeof product === "object" ? product.metadata?.[CHECKOUT_ADDON_SKU_KEY] : undefined;
+  const sku = fromProduct ?? item.price?.metadata?.[CHECKOUT_ADDON_SKU_KEY];
+  return typeof sku === "string" && sku ? sku : null;
+}
+
+/** The item's unit price in cents: `unit_amount`, else the rounded decimal; null when neither reads. */
+function unitAmountCentsOf(item: StripeItemLike): number | null {
+  const price = item.price;
+  if (typeof price?.unit_amount === "number") return price.unit_amount;
+  const decimal = Number(price?.unit_amount_decimal);
+  return price?.unit_amount_decimal != null && Number.isFinite(decimal)
+    ? Math.round(decimal)
+    : null;
+}
+
 /**
  * The add-on items on a retrieved subscription: every item whose price or (expanded) product
  * metadata names an `addonSku`. The base plan item, and any item the in-app enable path made
  * (its tag is `metadata.sku`, not `addonSku`), never matches.
  */
-export function checkoutAddonItems(stripeSub: any): CheckoutAddonItem[] {
-  const items: any[] = Array.isArray(stripeSub?.items?.data) ? stripeSub.items.data : [];
+export function checkoutAddonItems(stripeSub: unknown): CheckoutAddonItem[] {
+  const data = (stripeSub as { items?: { data?: unknown } } | null | undefined)?.items?.data;
+  const items: StripeItemLike[] = Array.isArray(data) ? (data as StripeItemLike[]) : [];
   const out: CheckoutAddonItem[] = [];
   for (const i of items) {
-    const product = i?.price?.product;
-    const sku =
-      product?.metadata?.[CHECKOUT_ADDON_SKU_KEY] ?? i?.price?.metadata?.[CHECKOUT_ADDON_SKU_KEY];
-    if (typeof sku !== "string" || !sku || typeof i?.id !== "string") continue;
-    const decimal = Number(i?.price?.unit_amount_decimal);
-    const unit =
-      typeof i?.price?.unit_amount === "number"
-        ? i.price.unit_amount
-        : i?.price?.unit_amount_decimal != null && Number.isFinite(decimal)
-          ? Math.round(decimal)
-          : null;
+    const sku = addonSkuOf(i);
+    if (!sku || typeof i.id !== "string") continue;
     out.push({
       itemId: i.id,
       sku,
-      quantity: Number.isInteger(i.quantity) ? i.quantity : 0,
-      unitAmountCents: unit,
+      quantity: Number.isInteger(i.quantity) ? (i.quantity as number) : 0,
+      unitAmountCents: unitAmountCentsOf(i),
     });
   }
   return out;
