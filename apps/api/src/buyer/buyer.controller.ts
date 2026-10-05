@@ -58,6 +58,7 @@ import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorizati
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { omitStaffOnlyInvoiceFields, omitStaffOnlyOrderFields } from "../common/staff-only-fields";
 import {
   foldMergeItems,
   normalizeBareIncomingSellingUnits,
@@ -205,9 +206,9 @@ export class BuyerController {
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
     );
     // findAll runs as an OPERATOR pseudo-user, so the service-layer customer
-    // redaction never fires — strip upsell bases here at the buyer boundary.
+    // redaction never fires — strip upsell bases and staff-only fields here at the buyer boundary.
     result.data.forEach((order) => redactUpsellForCustomer(order));
-    return result;
+    return { ...result, data: result.data.map(omitStaffOnlyOrderFields) };
   }
 
   @Get("invoices")
@@ -240,10 +241,18 @@ export class BuyerController {
       statuses: visible,
       customerId: ctx.customerId,
     };
-    return this.invoicesService.findAll(
+    const result = await this.invoicesService.findAll(
       buyerQuery,
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
     );
+    // The OPERATOR pseudo-user also skips the service's customer-facing pass, so apply it here:
+    // no staff-only fields, and confirmed (PAID) payment rows only (balances are already derived).
+    return {
+      ...result,
+      data: result.data.map((inv) =>
+        omitStaffOnlyInvoiceFields(inv, { confirmedPaymentsOnly: true }),
+      ),
+    };
   }
 
   @Get("invoices/:id")
@@ -273,9 +282,9 @@ export class BuyerController {
       (invoice as any).pdfUrl = await this.invoicePdfService.getOrGenerate(id);
     }
     // findOne was called without a user, so its customer redaction didn't fire —
-    // strip upsell bases here at the buyer boundary.
+    // strip upsell bases and staff-only fields here at the buyer boundary.
     redactUpsellForCustomer(invoice as any);
-    return invoice;
+    return omitStaffOnlyInvoiceFields(invoice);
   }
 
   @Get("statement")
@@ -511,7 +520,7 @@ export class BuyerController {
   @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
   async getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
     const order = await this.ordersService.findActiveOrder(ctx.customerId);
-    return redactUpsellForCustomer(order);
+    return omitStaffOnlyOrderFields(redactUpsellForCustomer(order));
   }
 
   @Get("orders/:id")
@@ -519,8 +528,9 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get order detail with line items" })
-  getOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    return this.ordersService.findOne(id, makePseudoUser(ctx));
+  async getOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // findOne's CUSTOMER branch already applies this; the boundary pass keeps it independent of the role.
+    return omitStaffOnlyOrderFields(await this.ordersService.findOne(id, makePseudoUser(ctx)));
   }
 
   @Get("orders/:id/tracking")
@@ -719,7 +729,9 @@ export class BuyerController {
         }
 
         // Return the updated order
-        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        return omitStaffOnlyOrderFields(
+          await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
+        );
       }
     }
 
@@ -759,7 +771,7 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return merged ?? created;
+    return omitStaffOnlyOrderFields(merged ?? created);
   }
 
   @Patch("orders/:id/items")
@@ -767,12 +779,14 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Edit items on a DRAFT/PENDING order" })
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+    return omitStaffOnlyOrderFields(
+      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx)),
+    );
   }
 
   @Post("orders/:id/change-requests")
@@ -900,7 +914,7 @@ export class BuyerController {
     if (items.length === 0) {
       // No low items — no-op: return the active order (or null) unchanged.
       const active = await this.ordersService.findActiveOrder(ctx.customerId);
-      return redactUpsellForCustomer(active);
+      return omitStaffOnlyOrderFields(redactUpsellForCustomer(active));
     }
     // Delegate to the EXACT create/merge path the buyer cart uses (@Post("orders")):
     // pricing, active-order merge and the pending-sweep are inherited, never re-implemented.

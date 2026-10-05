@@ -119,6 +119,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { omitStaffOnlyOrderFields } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -435,7 +436,9 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().order.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    // Customer-facing fields only for the customer (common/staff-only-fields.ts); staff rows as read.
+    const rows = user.role === UserRole.CUSTOMER ? data.map(omitStaffOnlyOrderFields) : data;
+    return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -571,7 +574,9 @@ export class OrdersService implements OnApplicationBootstrap {
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
 
-    return order;
+    // Customer-facing fields only for the customer: no staff-only order/line fields, and no DRAFT
+    // invoice in the order's invoice list (common/staff-only-fields.ts). Staff get the order as read.
+    return user.role === UserRole.CUSTOMER ? omitStaffOnlyOrderFields(order) : order;
   }
 
   /**

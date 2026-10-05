@@ -44,6 +44,7 @@ import {
   mapLockError,
 } from "./merge-contention";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { omitStaffOnlyOrderFields } from "../common/staff-only-fields";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -56,6 +57,11 @@ export class OrdersController {
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
+
+  /** A CUSTOMER caller gets customer-facing fields only (common/staff-only-fields.ts); staff get `order` itself. */
+  private forCaller<T>(user: JwtPayload, order: T): T {
+    return user.role === UserRole.CUSTOMER ? omitStaffOnlyOrderFields(order) : order;
+  }
 
   // F30/R11 (B199): the staff merge's read-fold-write critical section is
   // serialized by `withAdvisoryLock` (../common/db-locks) — a Postgres
@@ -376,7 +382,7 @@ export class OrdersController {
           // customer anyway, so `try` defers to them instead of spending this request's budget.
           { lockMode: "try", actor: user },
         );
-        if (merged) return merged;
+        if (merged) return this.forCaller(user, merged);
       } catch (e) {
         if (!isMergeContention(e)) throw e;
         this.logger.warn(
@@ -384,7 +390,7 @@ export class OrdersController {
         );
       }
     }
-    return created;
+    return this.forCaller(user, created);
   }
 
   /**
@@ -458,12 +464,12 @@ export class OrdersController {
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.DRIVER)
-  changeStatus(
+  async changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.changeStatus(id, dto, user);
+    return this.forCaller(user, await this.ordersService.changeStatus(id, dto, user));
   }
 
   @Post(":id/reopen")
@@ -476,12 +482,12 @@ export class OrdersController {
   @Patch(":id/items")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, await this.ordersService.updateOrderItems(id, dto, user));
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────
@@ -550,12 +556,12 @@ export class OrdersController {
   @Patch(":id/urgent")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
-  toggleUrgent(
+  async toggleUrgent(
     @Param("id") id: string,
     @Body() body: { urgent?: boolean },
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ordersService.toggleUrgent(id, user, body.urgent);
+    return this.forCaller(user, await this.ordersService.toggleUrgent(id, user, body.urgent));
   }
 
   // Sales agents & commissions: staff-only per-order commission-rate override
