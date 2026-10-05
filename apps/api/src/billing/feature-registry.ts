@@ -1146,11 +1146,15 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
           lifecycle: "ga",
           settings: [],
         },
-        pickup: { label: "In store only", available: true, lifecycle: "ga", settings: [] },
+        // SA-671 M1: not available until the counter-sale work lands — no PICKUP order can be
+        // written yet (the enum value is not on master), so no tenant may be SET to a mode whose
+        // methods are PICKUP. A tenant already storing one keeps it (resolveEffective ignores
+        // `available`); only new writes are refused. The counter-sale work flips these to true.
+        pickup: { label: "In store only", available: false, lifecycle: "proposed", settings: [] },
         pickup_ship: {
           label: "In store + shipping",
-          available: true,
-          lifecycle: "ga",
+          available: false,
+          lifecycle: "proposed",
           settings: [],
         },
       },
