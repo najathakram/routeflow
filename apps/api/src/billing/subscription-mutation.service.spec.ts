@@ -201,6 +201,28 @@ function catalogWithLite(): ReturnType<typeof catalog> {
   } as ReturnType<typeof catalog>;
 }
 
+/** A tenant billed through Stripe: self-serve add-ons go on its subscription (owner ruling 2026-10-03). */
+const BILLED_SUB = {
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+  billingInterval: "month",
+  cycle: "MONTHLY",
+};
+
+/** Stripe module-boundary mock for the add-on item calls (no live Stripe). */
+function addonStripeClient() {
+  return {
+    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    subscriptionItems: {
+      create: jest.fn().mockResolvedValue({ id: "si_1" }),
+      list: jest.fn().mockResolvedValue({ data: [] }),
+      update: jest.fn().mockResolvedValue({ id: "si_1" }),
+      del: jest.fn().mockResolvedValue({}),
+    },
+    invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+  };
+}
+
 interface Opts {
   catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
@@ -359,6 +381,7 @@ function make(opts: Opts = {}) {
     opts.stripe ??
     ({
       isConfigured: true,
+      client: addonStripeClient(),
       updateSubscription: jest.fn().mockResolvedValue({}),
       // CHANGE-1 (2026-09-13): the READ_ONLY cohort's cancel() branch now cancels the Stripe
       // subscription IMMEDIATELY (see cancelReadOnlyStripeSubImmediately) instead of scheduling
@@ -460,9 +483,181 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-12); // dropped CUSTOMER_PACK_100
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+  });
+
+  describe("B1 — a billed self-serve add-on dropped by a subscribe()/cycle switch loses its Stripe item", () => {
+    const billedRow = {
+      id: "a1",
+      addonKey: "CUSTOMER_PACK_100",
+      sku: "CUSTOMER_PACK_100",
+      quantity: 2,
+      active: true,
+      priceSnapshot: 12,
+      stripeItemId: "si_1",
+    };
+    const activeAnnual = {
+      ...BILLED_SUB,
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      basePriceSnapshot: 349,
+    };
+
+    it("deletes the item (so it stops billing), clears the pointer, and books the MRR reversal", async () => {
+      const { svc, tx, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledWith("si_1", {
+        proration_behavior: "create_prorations",
+      });
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // MRR matches: 12 x 2 gone
+    });
+
+    it("a re-enable after the cycle switch then creates ONE item, not a second (no double billing)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      // the row is now inactive with no item pointer: enabling creates exactly one new item
+      const again = make({
+        sub: { ...BILLED_SUB, planKey: "STARTER" },
+        addonRow: { ...billedRow, active: false, stripeItemId: null },
+      });
+      await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(again.stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("an add-on the caller KEEPS in addons[] keeps its item (no delete)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe(
+        "t1",
+        {
+          planKey: "STARTER",
+          cycle: "MONTHLY",
+          addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        },
+        "admin",
+      );
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("an item Stripe already removed counts as removed", async () => {
+      const { svc, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("any OTHER Stripe failure refuses the whole subscribe with fixed copy and writes NOTHING", async () => {
+      const { svc, prisma, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        new Error("api_connection_error: x"),
+      );
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(String(err.message)).not.toMatch(/api_connection|si_1/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA F1: a dropped billed add-on while Stripe is NOT configured refuses the whole subscribe (handle kept, nothing written)", async () => {
+      const { svc, prisma, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+        stripe: { isConfigured: false, client: addonStripeClient() },
+      });
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("(b) if the tx fails AFTER the Stripe deletes, a retry heals it (the second delete is resource_missing)", async () => {
+      const { svc, prisma, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      prisma.$transaction.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toThrow("db down");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+
+      // retry: the rows still point at the (already deleted) item; Stripe says it is gone
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("(c) a manually-invoiced tenant's dropped priced add-on raises a 'stop invoicing' platform notice", async () => {
+      const { svc, tx } = make({
+        tenantStatus: "ACTIVE",
+        sub: { ...activeAnnual, stripeSubId: null, stripeCustomerId: null, externalPayment: true },
+        priorAddons: [{ ...billedRow, stripeItemId: null }],
+      });
+      const auditLog = { create: jest.fn().mockResolvedValue({}) };
+      (tx as any).auditLog = auditLog;
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(auditLog.create).toHaveBeenCalledTimes(1);
+      const d = auditLog.create.mock.calls[0][0].data;
+      expect(d.action).toBe("ADDON_MANUAL_INVOICE_STOP");
+      expect(d.meta.message).toMatch(/Add-on Customer pack turned off for .*: stop invoicing it/);
+    });
+
+    it("an item that only appears under the lock (a concurrent enable) is never left billing: retryable refusal", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [], // pre-tx read saw nothing to remove
+      });
+      tx.tenantAddon.findMany.mockResolvedValue([billedRow]); // ...but the locked re-read did
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
   });
 
   it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {
@@ -1248,7 +1443,7 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
   it("enableAddon charges the qty delta only (idempotent re-enable at same qty emits nothing)", async () => {
     // CUSTOMER_PACK_100, not SEAT_EXTRA — SEAT_EXTRA is seat-billing plumbing, never a
     // self-service toggle (see the SELF_SERVICE_ADDON_SKUS tests below).
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
@@ -1278,7 +1473,7 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // 12 × 2
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
   });
 });
@@ -1292,7 +1487,11 @@ describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger g
   it("REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)", async () => {
     // SA-277: enableAddon() never changes tenant status, so the tx-scoped paying-set read
     // must stay TRIAL here too (never the ACTIVE default `subscribe()`'s tests rely on).
-    const { svc, tx, events } = make({ tenantStatus: "TRIAL", txTenantStatus: "TRIAL" });
+    const { svc, tx, events } = make({
+      tenantStatus: "TRIAL",
+      txTenantStatus: "TRIAL",
+      sub: BILLED_SUB,
+    });
 
     await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
 
@@ -1398,7 +1597,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // model — re-enabling at the same qty is documented, tested idempotent behaviour (see
     // "enableAddon charges the qty delta only" above), not a conflict. The lock must not
     // change that: this guard test pins it stays a no-op, not a new refusal.
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
@@ -1418,6 +1617,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // priorQty of 0 and both emit the full delta.
     let row: { active: boolean; quantity: number; priceSnapshot: unknown } | null = null;
     const tenantAddon = {
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
       // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
       findFirst: jest.fn(function (this: any, args: unknown) {
@@ -1432,8 +1632,10 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
         return { id: "addon1", ...row };
       }),
     };
+    const raceStripeClient = addonStripeClient();
     const prisma = {
       tenantAddon,
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(BILLED_SUB) },
       $transaction: jest.fn(async (fn: any) =>
         fn({
           tenantAddon,
@@ -1462,7 +1664,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     const entitlements = { invalidate: jest.fn() } as any;
     const events = { emit: jest.fn().mockResolvedValue({}) } as any;
     const tenantStatus = { invalidate: jest.fn() } as any;
-    const stripe = { isConfigured: false } as any;
+    const stripe = { isConfigured: true, client: raceStripeClient } as any;
     const billingNotification = {
       notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
       notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
@@ -1495,6 +1697,8 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     );
     expect(enabledEmits).toHaveLength(1);
     expect(enabledEmits[0][3].amountDelta).toBe(12); // ONE delta of 1 × $12, never 24
+    // ... and ONE Stripe item: the second, serialised call sees the first call's row.
+    expect(raceStripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
 
     // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, sku)
     // — matching the admin path's key shape exactly so the two paths serialise against
@@ -3121,9 +3325,12 @@ describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, S
   };
 
   it("self-serve enable re-activates the admin's legacy row IN PLACE and nets the ledger once", async () => {
-    const { svc, store, events } = withStore([
-      { addonKey: "msrp", sku: "MSRP", active: true, quantity: 1, priceSnapshot: 0 },
-    ]);
+    // INACTIVE seed: an ACTIVE free row is never retro-billed by a re-enable (see
+    // subscription-mutation.addon-billing.spec.ts case 8); re-activation is the billed path.
+    const { svc, store, events } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: false, quantity: 1, priceSnapshot: 0 }],
+      { sub: BILLED_SUB },
+    );
     await svc.enableAddon("t1", "MSRP", 1);
     expect(store.rows).toHaveLength(1);
     expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });

@@ -305,5 +305,46 @@ describeDb(
         lines: [{ qty: 1, subtotal: 25 }],
       });
     });
+
+    it("SA-674b: with the carrier, a qty cut on the shipment invoice is refused, so DELIVERED bills no second invoice", async () => {
+      const s = await seedShipped("carrier-cut");
+      // the shipment invoice as an operator would edit it: back in DRAFT, no deposit, lines fully invoiced
+      await prisma.invoice.update({
+        where: { id: s.invoiceId },
+        data: { status: "DRAFT", depositPercent: null },
+      });
+      await prisma.orderItem.updateMany({
+        where: { orderId: s.orderId },
+        data: { invoicedQty: 2 },
+      });
+      const [line] = await prisma.invoiceItem.findMany({ where: { invoiceId: s.invoiceId } });
+
+      await expect(
+        tenantCtx.run(s.tenantId, () =>
+          invoices.update(s.invoiceId, {
+            items: [
+              {
+                id: line.id,
+                productId: line.productId,
+                description: line.description,
+                qty: 1,
+                unitPrice: 25,
+              },
+            ],
+          } as any),
+        ),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE" }),
+      });
+
+      await prisma.order.update({ where: { id: s.orderId }, data: { status: "DELIVERED" } });
+      await tenantCtx.run(s.tenantId, () =>
+        invoices.createInvoiceFromOrderWithTenant(s.orderId, s.tenantId),
+      );
+      const all = await prisma.invoice.findMany({ where: { orderId: s.orderId } });
+      expect(all.map((i) => i.id)).toEqual([s.invoiceId]); // no second invoice for a "cut"
+      expect((await snapshot(s.invoiceId)).lines).toEqual([{ qty: 2, subtotal: 50 }]);
+    });
   },
 );
