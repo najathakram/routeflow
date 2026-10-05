@@ -185,7 +185,15 @@ function fakeTenant(start: {
     stub() as any, // snapshotAdmin
     businessProfiles,
     featureConfig as any,
-  );
+  ) as Omit<PlatformAdminController, "applyBusinessProfile"> & {
+    // the confirm as these tests call it: `planFingerprint` may be left out, the preview-first
+    // wrapper below fills it in exactly as the web does (rawConfirm sends the body unchanged)
+    applyBusinessProfile(
+      id: string,
+      dto: { profile: string; reason?: string; planFingerprint?: string },
+      admin: unknown,
+    ): ReturnType<PlatformAdminController["applyBusinessProfile"]>;
+  };
   // Confirm as the web does it: preview first, send that planFingerprint back (#3199 review).
   // A test that passes its own fingerprint keeps it; a preview that refuses leaves a dummy one,
   // so the confirm's own refusal (unknown profile, ...) is what the test sees.
