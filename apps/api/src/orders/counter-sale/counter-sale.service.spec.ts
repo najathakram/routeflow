@@ -686,6 +686,64 @@ describe("CounterSaleService.ring", () => {
       ).rejects.toThrow("boom");
     });
 
+    it("a replay after a failed sibling allocation RESUMES: only the missing part is recorded, paid = total", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      let failSibling = true;
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2" && failSibling)
+          throw new BadRequestException("regulated refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const first = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(first).toMatchObject({ paid: 30, balanceDue: 20, paymentRecorded: false });
+
+      failSibling = false;
+      replay = true;
+      recordPayment.mockClear();
+      const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }));
+      expect(second).toMatchObject({
+        total: 50,
+        paid: 50,
+        balanceDue: 0,
+        paymentRecorded: true,
+        replayed: true,
+      });
+      expect(invoices[0].payments).toHaveLength(1); // sibling 1 is never charged twice
+    });
+
+    it("a replay whose planned allocation is already fully stored records nothing", async () => {
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 30, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [{ id: "p2", amount: 20, method: "CASH", status: "PAID" }], 2),
+      ];
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paid: 50, paymentRecorded: true });
+    });
+
+    it("a resume never over-collects: a tender above the plan on one invoice is not topped up elsewhere", async () => {
+      // 20 tendered, sibling 1 already holds 20 (its whole planned share): nothing more is due.
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 20, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [], 2),
+      ];
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paid: 20, balanceDue: 30, paymentRecorded: true });
+    });
+
     it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {
       invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
       recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {

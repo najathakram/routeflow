@@ -64,8 +64,9 @@ const isTender = (p: { method?: string; status?: string }) =>
  *  - the payment runs after the sale commits against the invoice's server-computed POST-send balance.
  *    If it cannot be recorded the sale stays an open invoice on account and the 201 says so
  *    (`paymentRecorded: false` + `paymentErrorCode`); it is never rolled back;
- *  - `recordPayment` has no key of its own, so a replay records a payment ONLY if the sale's invoices
- *    hold no tender yet, and `paymentRecorded` always comes from what is STORED.
+ *  - `recordPayment` has no key of its own, so a replay records only the SHORTFALL between the planned
+ *    allocation and the tender already stored per invoice (a partial first attempt is resumed, never
+ *    repeated), and `paymentRecorded` always comes from what is STORED.
  *
  * No line/tax/total math lives here (create() + @routeflow/pricing own it) and no stock call: the one
  * decrement is create()'s. Staff oversell is allowed by policy (oversell-policy.ts), so there is no
@@ -189,9 +190,10 @@ export class CounterSaleService {
   }
 
   /**
-   * The locked half of the tender. A replay's rule "no non-VOID tender exists on the sale's invoices" is
-   * sound HERE only because a counter sale's invoice is born in the same request as its tender, so
-   * any stored tender can only be this sale's own earlier attempt (pickup-complete cannot use it).
+   * The locked half of the tender. Replay-safe by comparing what is STORED per invoice with the planned
+   * allocation and recording only the shortfall. That comparison is sound here because a counter sale's
+   * invoices are born in the same request as the tender, so any stored tender is this sale's own earlier
+   * attempt (pickup-complete's invoice pre-exists, so it must key on the request instead).
    */
   private async tender(
     dto: CounterSaleDto,
@@ -200,35 +202,51 @@ export class CounterSaleService {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
     const method = dto.payment.method;
-    if (!invoices.some((i) => (i.payments ?? []).some(isTender))) {
-      const balances = invoices.map((i) => ({
-        id: i.id,
-        balance: remainingCapacity(Number(i.total), i.payments),
-      }));
-      const plan = planCounterPayment({
-        method,
-        amount: dto.payment.amount,
-        balance: roundMoney(balances.reduce((s, b) => s + b.balance, 0)),
-      });
-      if (plan.kind === "refuse") {
-        planError = plan.code;
-      } else if (plan.kind === "pay") {
-        try {
-          for (const part of allocateOldestFirst(balances, plan.amount)) {
-            await this.invoices.recordPayment(part.invoiceId, {
-              amount: part.amount,
-              method: toPrismaMethod(method)!,
-              reference: dto.payment.reference,
-            } as never);
-          }
-        } catch (e) {
-          this.logger.warn(
-            `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+    // The plan is made against each invoice's balance BEFORE any tender of this sale (its total less the
+    // wallet credit applied), so a replay computes the SAME allocation the first call did; what is already
+    // stored per invoice is then subtracted and only the SHORTFALL is recorded. "A tender exists" is not
+    // "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
+    const balances = invoices.map((i) => ({
+      id: i.id,
+      balance: remainingCapacity(
+        Number(i.total),
+        (i.payments ?? []).filter((p) => !isTender(p)),
+      ),
+    }));
+    const plan = planCounterPayment({
+      method,
+      amount: dto.payment.amount,
+      balance: roundMoney(balances.reduce((sum, b) => sum + b.balance, 0)),
+    });
+    if (plan.kind === "refuse") {
+      // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
+      if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
+    } else if (plan.kind === "pay") {
+      try {
+        for (const part of allocateOldestFirst(balances, plan.amount)) {
+          const row = invoices.find((i) => i.id === part.invoiceId)!;
+          const stored = roundMoney(
+            (row.payments ?? [])
+              .filter((p) => isTender(p))
+              .reduce((sum, p) => sum + Number(p.amount), 0),
           );
-          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+          const due = roundMoney(
+            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+          );
+          if (due <= 0) continue;
+          await this.invoices.recordPayment(part.invoiceId, {
+            amount: due,
+            method: toPrismaMethod(method)!,
+            reference: dto.payment.reference,
+          } as never);
         }
-        invoices = await this.readInvoices(orderId);
+      } catch (e) {
+        this.logger.warn(
+          `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+        );
+        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
       }
+      invoices = await this.readInvoices(orderId);
     }
     return { invoices, planError };
   }
