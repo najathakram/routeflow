@@ -180,28 +180,31 @@ describe("references, compare, margin, markers", () => {
     expect(within(dialog).getByText("+3% since last order")).toBeInTheDocument();
   });
 
-  it("Compare toggles to other customers low / typical / high, never names", async () => {
+  it("Compare: the base request has no compare; choosing All customers asks the server with ?compare=all and shows low / typical / high, never names", async () => {
+    const withAgg = base();
+    const { aggregate: _a, ...noAgg } = withAgg;
+    mockGet.mockImplementation((_url: string, cfg?: { params?: { compare?: string } }) =>
+      Promise.resolve({ data: cfg?.params?.compare === "all" ? withAgg : noAgg }),
+    );
     renderBtn();
     fireEvent.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
+    // the toggle is offered although the base response carries no aggregate (it is the request that adds it)
+    const toggle = await within(dialog).findByRole("button", { name: "All customers" });
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
-    fireEvent.click(await within(dialog).findByRole("button", { name: "All customers" }));
-    const panel = within(dialog).getByTestId("compare-panel");
+    expect(mockGet.mock.calls.every((c) => c[1]?.params?.compare === undefined)).toBe(true);
+    fireEvent.click(toggle);
+    const panel = await within(dialog).findByTestId("compare-panel");
+    await waitFor(() => expect(panel).toHaveTextContent("$11.50"));
+    expect(mockGet).toHaveBeenCalledWith(
+      "/customers/c1/products/p1/price-history",
+      expect.objectContaining({ params: expect.objectContaining({ compare: "all" }) }),
+    );
     expect(panel).toHaveTextContent("$9.00");
-    expect(panel).toHaveTextContent("$11.50");
     expect(panel).toHaveTextContent("$15.00");
     expect(panel).toHaveTextContent("7 in all");
     fireEvent.click(within(dialog).getByRole("button", { name: "This customer" }));
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
-  });
-
-  it("no Compare control without an aggregate (API not there yet)", async () => {
-    mockGet.mockResolvedValue({ data: base({ aggregate: undefined, references: undefined }) });
-    renderBtn();
-    fireEvent.click(screen.getByRole("button", { name: "Price history" }));
-    const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    await within(dialog).findByText("INV-D");
-    expect(within(dialog).queryByRole("button", { name: "All customers" })).not.toBeInTheDocument();
   });
 
   it("margin % is masked until Show cost", async () => {

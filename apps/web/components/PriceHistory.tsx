@@ -140,6 +140,9 @@ function PanelBody({
   customerName,
   unitHint,
   packHint,
+  compare,
+  comparing,
+  onCompareChange,
   onUse,
 }: {
   data: PriceHistoryResponse;
@@ -147,10 +150,14 @@ function PanelBody({
   customerName?: string | null;
   unitHint?: string | null;
   packHint?: number | null;
+  /** "All customers" is selected; the Panel owns it (it adds `?compare=all` to the request). */
+  compare: boolean;
+  /** The comparison request is still in flight. */
+  comparing: boolean;
+  onCompareChange: (on: boolean) => void;
   onUse: (price: number) => void;
 }) {
   const [showCost, setShowCost] = React.useState(false);
-  const [compare, setCompare] = React.useState(false);
   const [active, setActive] = React.useState(0);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
@@ -262,14 +269,14 @@ function PanelBody({
 
       <Sparkline points={chronological} />
 
-      {data.aggregate !== undefined && (
+      {
         <div className="flex items-center gap-1" role="group" aria-label="Compare">
           {(["This customer", "All customers"] as const).map((label) => (
             <button
               key={label}
               type="button"
               aria-pressed={(label === "All customers") === compare}
-              onClick={() => setCompare(label === "All customers")}
+              onClick={() => onCompareChange(label === "All customers")}
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] ring-1",
                 (label === "All customers") === compare
@@ -281,7 +288,7 @@ function PanelBody({
             </button>
           ))}
         </div>
-      )}
+      }
       {compare && (
         <div data-testid="compare-panel" className="rounded border border-surface-border p-2">
           {agg ? (
@@ -295,6 +302,8 @@ function PanelBody({
                 Other customers, {agg.customers} in all. Names are never shown.
               </p>
             </>
+          ) : comparing ? (
+            <p className="text-[11px] text-navy/60">Loading comparison…</p>
           ) : (
             <p className="text-[11px] text-navy/60">No comparison available for this unit.</p>
           )}
@@ -434,7 +443,8 @@ function Panel({
   onClose: (reason: CloseReason) => void;
   onUsePrice: (price: number) => void;
 }) {
-  const q = usePriceHistory(customerId, productId, true);
+  const [compare, setCompare] = React.useState(false);
+  const q = usePriceHistory(customerId, productId, true, 25, compare);
   return (
     <AnchoredPopover
       anchor={anchor}
@@ -470,6 +480,9 @@ function Panel({
           customerName={customerName}
           unitHint={unitHint}
           packHint={packHint}
+          compare={compare}
+          comparing={q.isFetching}
+          onCompareChange={setCompare}
           onUse={(price) => {
             onUsePrice(price);
             onClose("use");

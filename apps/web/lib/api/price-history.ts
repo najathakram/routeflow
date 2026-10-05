@@ -2,51 +2,49 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
+import { keepPreviousData } from "@tanstack/react-query";
 import type {
-  PriceHistoryResponse as ApiPriceHistoryResponse,
+  PriceHistoryAggregate,
+  PriceHistoryReferences,
+  PriceHistoryResponse,
   PriceHistoryRow,
   PriceHistorySource,
   PriceHistorySummary,
 } from "@routeflow/types";
 
-export type { PriceHistoryRow, PriceHistorySource, PriceHistorySummary };
-
-/**
- * GET /customers/:customerId/products/:productId/price-history — what THIS customer has paid for
- * THIS product (invoiced sales, plus open not-yet-invoiced orders, labelled separately). Staff only.
- * The contract is `@routeflow/types` (price-history.ts); `references` / `aggregate` are the v1.1
- * extension (builder F), optional until that API lands.
- */
-export interface PriceHistoryReferences {
-  listPrice: number | null;
-  tierPrice: number | null;
-  /** Fraction (0.03 = +3%) of the newest sale vs the one before; null with fewer than two. */
-  changeSinceLast: number | null;
-}
-
-/** Other customers' prices for the product (never names): low / typical (median) / high. */
-export interface PriceHistoryAggregate {
-  low: number;
-  median: number;
-  high: number;
-  customers: number;
-  unitLabel: string;
-}
-
-export interface PriceHistoryResponse extends ApiPriceHistoryResponse {
-  references?: PriceHistoryReferences;
-  aggregate?: PriceHistoryAggregate | null;
-}
+// The contract (rows, summaries, `references`, the `?compare=all` `aggregate`) is `@routeflow/types`
+// (price-history.ts): re-exported here, never redeclared.
+export type {
+  PriceHistoryAggregate,
+  PriceHistoryReferences,
+  PriceHistoryResponse,
+  PriceHistoryRow,
+  PriceHistorySource,
+  PriceHistorySummary,
+};
 
 export const priceHistoryKey = (
   customerId: string | null | undefined,
   productId: string | null | undefined,
   limit: number,
-) => ["customers", customerId, "products", productId, "price-history", limit] as const;
+  compare = false,
+) =>
+  [
+    "customers",
+    customerId,
+    "products",
+    productId,
+    "price-history",
+    limit,
+    ...(compare ? (["compare"] as const) : []),
+  ] as const;
 
-const fetchPriceHistory = (customerId: string, productId: string, limit: number) =>
+/** `compare` adds `?compare=all`: the server then returns the anonymous other-customers `aggregate`. */
+const fetchPriceHistory = (customerId: string, productId: string, limit: number, compare = false) =>
   apiClient
-    .get(`/customers/${customerId}/products/${productId}/price-history`, { params: { limit } })
+    .get(`/customers/${customerId}/products/${productId}/price-history`, {
+      params: { limit, ...(compare ? { compare: "all" } : {}) },
+    })
     .then((r) => r.data as PriceHistoryResponse);
 
 export function usePriceHistory(
@@ -54,13 +52,16 @@ export function usePriceHistory(
   productId: string | null | undefined,
   enabled: boolean,
   limit = 25,
+  compare = false,
 ) {
   return useQuery<PriceHistoryResponse>({
-    queryKey: priceHistoryKey(customerId, productId, limit),
-    queryFn: () => fetchPriceHistory(customerId!, productId!, limit),
+    queryKey: priceHistoryKey(customerId, productId, limit, compare),
+    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, compare),
     enabled: enabled && !!customerId && !!productId,
     staleTime: 30_000,
     retry: false,
+    // Switching to "All customers" keeps the rows on screen while the aggregate loads.
+    placeholderData: keepPreviousData,
   });
 }
 
