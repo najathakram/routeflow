@@ -52,6 +52,19 @@ export interface FulfilmentCapability {
   consistent: boolean;
 }
 
+/** An account with no fulfilment mode set: exactly today's behaviour (ROUTE/SHIP both offered). The ONE
+ *  copy: the api's derive is pinned to it and the web's unset check reads it. */
+export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
+  methods: ["ROUTE", "SHIP"],
+  staffDefault: "ROUTE",
+  staffOpensAs: "order",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: true,
+  consistent: true,
+};
+
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }
