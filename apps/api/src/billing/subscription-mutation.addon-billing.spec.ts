@@ -44,11 +44,12 @@ jest.mock("../common/db-locks", () => ({
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const CATALOG = {
   addonSkus: [
     { sku: "CUSTOMER_PACK_100", name: "Customer pack", monthlyPrice: 12 },
-    { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 },
+    { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
     { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
   ],
   definitions: [],
@@ -82,10 +83,67 @@ interface Opts {
   updateFails?: unknown;
   txFails?: boolean;
   stripeProrationCents?: number | null;
+  /** Overrides the whole pending-invoice-items list Stripe answers with (real-shape items). */
+  invoiceItems?: any[];
   stripeTenantSubFor?: string;
+  /** TenantSubscription.planKey (the tenant's current plan); undefined leaves the fixture's own. */
+  planKey?: string | null;
+  /** The legacy Tenant.plan enum, the fallback when the subscription carries no planKey. */
+  tenantPlan?: string;
 }
 
 const NOW_S = () => Math.floor(Date.now() / 1000);
+
+/**
+ * A pending proration InvoiceItem exactly as the sandbox returns it under the pinned API version
+ * 2026-08-26.dahlia (`stripe invoiceitems list`, captured 2026-10-04, test mode, no secrets): there
+ * is NO `created` field on the object, its creation time is `date`, and the subscription item it
+ * belongs to is `parent.subscription_details.subscription_item`. (The list REQUEST param is still
+ * called `created`.) Never rebuild this with `created` — that is how F1 hid: the old fixture
+ * carried a field the real object does not have.
+ */
+function prorationItem(o: { amount: number; date?: number; item?: string; proration?: boolean }) {
+  return {
+    id: "ii_1UN35eB7KzYEvmBqc5LbMWYU",
+    object: "invoiceitem",
+    amount: o.amount,
+    currency: "usd",
+    customer: "cus_t1",
+    customer_account: null,
+    date: o.date ?? NOW_S(),
+    description: "Unused time on 2 × RouteFlow add-on — Customer pack (+100) after 05 Oct 2026",
+    discountable: false,
+    discounts: [],
+    frozen_fields: ["pricing", "quantity", "discounts"],
+    invoice: null,
+    invoicing_rules: [],
+    livemode: false,
+    metadata: {},
+    net_amount: o.amount,
+    parent: {
+      subscription_details: {
+        subscription: "sub_t1",
+        subscription_item: o.item ?? "si_1",
+      },
+      type: "subscription_details",
+    },
+    period: { end: 1793851237, start: 1791172886 },
+    pricing: {
+      price_details: { price: "price_1UN34eB7KzYEvmBqW0qTkLv5", product: "prod_VNoiOBesncBnYg" },
+      type: "price_details",
+      unit_amount_decimal: null,
+    },
+    proration: o.proration ?? true,
+    proration_details: {
+      credited_items: { invoice_item: "ii_1UN34xB7KzYEvmBq6wrDOJ5f", type: "invoice_item" },
+      discount_amounts: [],
+    },
+    quantity: 2,
+    quantity_decimal: "2",
+    tax_rates: [],
+    test_clock: null,
+  };
+}
 
 function make(opts: Opts = {}) {
   // The subscription's items as Stripe holds them, so a lost response leaves a REAL orphan.
@@ -124,36 +182,17 @@ function make(opts: Opts = {}) {
     invoiceItems: {
       list: jest.fn().mockResolvedValue({
         data:
-          opts.stripeProrationCents == null
+          opts.invoiceItems ??
+          (opts.stripeProrationCents == null
             ? []
             : [
-                {
-                  proration: true,
-                  amount: opts.stripeProrationCents,
-                  created: NOW_S(),
-                  parent: { subscription_details: { subscription_item: "si_1" } },
-                },
+                prorationItem({ amount: opts.stripeProrationCents }),
                 // an OLDER proration line of the same item (e.g. an earlier quantity change): not ours
-                {
-                  proration: true,
-                  amount: 7777,
-                  created: NOW_S() - 86400,
-                  parent: { subscription_details: { subscription_item: "si_1" } },
-                },
-                {
-                  proration: true,
-                  amount: 99999,
-                  created: NOW_S(),
-                  parent: { subscription_details: { subscription_item: "si_OTHER" } },
-                },
+                prorationItem({ amount: 7777, date: NOW_S() - 86400 }),
+                prorationItem({ amount: 99999, item: "si_OTHER" }),
                 // not a proration line of ours, same item: must not be summed
-                {
-                  proration: false,
-                  amount: 55555,
-                  created: NOW_S(),
-                  parent: { subscription_details: { subscription_item: "si_1" } },
-                },
-              ],
+                prorationItem({ amount: 55555, proration: false }),
+              ]),
       }),
     },
   };
@@ -198,10 +237,21 @@ function make(opts: Opts = {}) {
   const prisma = {
     tenantAddon,
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ slug: "acme", name: "Acme Foods" }),
+      findUnique: jest.fn().mockResolvedValue({
+        slug: "acme",
+        name: "Acme Foods",
+        plan: opts.tenantPlan ?? "STARTER",
+      }),
     },
     tenantSubscription: {
-      findUnique: jest.fn().mockResolvedValue(opts.sub === undefined ? ACTIVE_SUB : opts.sub),
+      findUnique: jest.fn().mockResolvedValue(
+        (() => {
+          const subRow = opts.sub === undefined ? ACTIVE_SUB : opts.sub;
+          return subRow && opts.planKey !== undefined
+            ? { ...subRow, planKey: opts.planKey }
+            : subRow;
+        })(),
+      ),
     },
     $transaction: jest.fn(async (fn: any) => {
       if (opts.txFails) throw new Error("db down: internal detail");
@@ -379,6 +429,7 @@ describe("self-serve enableAddon — billed through Stripe", () => {
     });
     const err: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1").catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(ANNUAL_REFUSAL);
     expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(getRow()).toBeNull();
   });
@@ -1036,5 +1087,257 @@ describe("ORPHAN — Stripe created the item but the response was lost", () => {
     expect(err).toBeInstanceOf(ServiceUnavailableException);
     expect(m.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(m.getRow()).toBeNull();
+  });
+});
+
+// ─── #3129 sandbox-checklist folds (F1, F2/B1088, F3, preview agreement) ─────────────────────────
+
+const ANNUAL_SUB = { ...ACTIVE_SUB, billingInterval: "year", cycle: "ANNUAL" };
+const ANNUAL_COPY = "Add-ons can't be added to an annual plan online yet. Please contact support.";
+const ANNUAL_REFUSAL = { code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED, message: ANNUAL_COPY };
+const INCLUDED_REFUSAL = {
+  code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+  message: "Forecasting is already included in your plan.",
+};
+
+const billedPack = (quantity: number) => ({
+  id: "a1",
+  addonKey: "CUSTOMER_PACK_100",
+  sku: "CUSTOMER_PACK_100",
+  active: true,
+  quantity,
+  priceSnapshot: 12,
+  stripeItemId: "si_1",
+});
+
+/** Nothing reached Stripe, the database or the MRR ledger. */
+function expectUntouched(m: ReturnType<typeof make>) {
+  expect(m.stripeClient.products.create).not.toHaveBeenCalled();
+  expect(m.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+  expect(m.stripeClient.subscriptionItems.update).not.toHaveBeenCalled();
+  expect(m.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+  expect(m.prisma.$transaction).not.toHaveBeenCalled();
+  expect(m.tenantAddon.upsert).not.toHaveBeenCalled();
+  expect(m.events.emit).not.toHaveBeenCalled();
+  expect(m.entitlements.invalidate).not.toHaveBeenCalled();
+}
+
+const rejection = (p: Promise<unknown>): Promise<any> =>
+  p.then(
+    () => undefined,
+    (e) => e,
+  );
+
+describe("F1: Stripe's proration is read from the InvoiceItem `date` (2026-08-26.dahlia has no `created`)", () => {
+  it("pins the fixture to the real object: `date`, no `created`", () => {
+    const item = prorationItem({ amount: 1 });
+    expect(item).toHaveProperty("date");
+    expect(item).not.toHaveProperty("created");
+  });
+
+  it("an enable returns, and the ledger event carries, the REAL pending proration", async () => {
+    const { svc, events } = make({ stripeProrationCents: 637 });
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(res.proratedNow).toBe(6.37);
+    const enabled = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED,
+    );
+    expect(enabled?.[2]).toMatchObject({
+      sku: "CUSTOMER_PACK_100",
+      quantity: 1,
+      prorated: 6.37,
+      billed: true,
+    });
+  });
+
+  it("a quantity raise nets the unused-time credit and the remaining-time line of THIS item only", async () => {
+    const { svc, events } = make({
+      addonRow: billedPack(2),
+      invoiceItems: [
+        prorationItem({ amount: -10000 }), // credit for the unused 2x
+        prorationItem({ amount: 14999 }), // remaining-time charge at 3x
+        prorationItem({ amount: 7777, date: NOW_S() - 86400 }), // an earlier change: not this call
+        prorationItem({ amount: 99999, item: "si_OTHER" }), // another item
+        prorationItem({ amount: 55555, proration: false }), // not a proration line
+      ],
+    });
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(res.proratedNow).toBe(49.99);
+    const enabled = events.emit.mock.calls.find(
+      (c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED,
+    );
+    expect(enabled?.[2]).toMatchObject({ quantity: 3, prorated: 49.99, billed: true });
+  });
+
+  it("only lines older than this call exist: proratedNow is null, the add-on is still on", async () => {
+    const { svc, getRow } = make({
+      invoiceItems: [prorationItem({ amount: 5000, date: NOW_S() - 3600 })],
+    });
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(res.proratedNow).toBeNull();
+    expect(getRow()).toMatchObject({ active: true, quantity: 1 });
+  });
+});
+
+describe("F2 (B1088): an annual subscription refuses a quantity RAISE on a billed row", () => {
+  it("annual + raise 2 -> 3: the same coded 409 as enable, before any Stripe call, write or event", async () => {
+    const m = make({ sub: ANNUAL_SUB, addonRow: billedPack(2) });
+    const err = await rejection(m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1"));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(ANNUAL_REFUSAL);
+    expect(err.message).toBe(ANNUAL_COPY);
+    expectUntouched(m);
+    expect(m.getRow()).toMatchObject({ quantity: 2, stripeItemId: "si_1" });
+  });
+
+  it("a cycle-only annual row (no billingInterval) is annual by the SAME predicate enable uses", async () => {
+    const m = make({
+      sub: { ...ACTIVE_SUB, billingInterval: null, cycle: "ANNUAL" },
+      addonRow: billedPack(1),
+    });
+    const err = await rejection(m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1"));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(ANNUAL_REFUSAL);
+    expectUntouched(m);
+  });
+
+  it("annual + decrease 3 -> 2 stays allowed (the item is updated, the ledger gives back one unit)", async () => {
+    const m = make({ sub: ANNUAL_SUB, addonRow: billedPack(3) });
+    await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+    expect(m.stripeClient.subscriptionItems.update).toHaveBeenCalledWith("si_1", {
+      quantity: 2,
+      proration_behavior: "create_prorations",
+    });
+    expect(m.getRow()).toMatchObject({ quantity: 2 });
+    const disabled = m.events.emit.mock.calls.filter(
+      (c: any[]) => c[1] === BILLING_EVENTS.ADDON_DISABLED,
+    );
+    expect(disabled.map((c: any[]) => c[3]?.amountDelta)).toEqual([-12]);
+  });
+
+  it("annual + disable stays allowed (the item is removed)", async () => {
+    const m = make({ sub: ANNUAL_SUB, addonRow: billedPack(2) });
+    await m.svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
+    expect(m.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(m.getRow()).toMatchObject({ active: false, stripeItemId: null });
+  });
+
+  it("monthly + raise 2 -> 3 is unchanged (the item is updated and the ledger books one unit)", async () => {
+    const m = make({ addonRow: billedPack(2) });
+    await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(m.stripeClient.subscriptionItems.update).toHaveBeenCalledWith("si_1", {
+      quantity: 3,
+      proration_behavior: "create_prorations",
+    });
+    expect(enabledDeltas(m.events)).toEqual([12]);
+  });
+});
+
+describe("F3: an add-on the tenant's plan already includes can't be bought", () => {
+  it("SCALE + FORECASTING: refused with the fixed code and copy; no Stripe call, row or MRR", async () => {
+    const m = make({ planKey: "SCALE" });
+    const err = await rejection(m.svc.enableAddon("t1", "FORECASTING", 1, "u1"));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(INCLUDED_REFUSAL);
+    expectUntouched(m);
+    expect(m.getRow()).toBeNull();
+  });
+
+  it.each([
+    ["ENTERPRISE (above the bundling plan)", { planKey: "ENTERPRISE" }],
+    ["the legacy BUSINESS alias of SCALE", { planKey: "BUSINESS" }],
+    [
+      "a subscription with no planKey, Tenant.plan PROFESSIONAL (= SCALE)",
+      { planKey: null, tenantPlan: "PROFESSIONAL" },
+    ],
+  ])("refused on %s", async (_label, plan) => {
+    const m = make(plan as any);
+    const err = await rejection(m.svc.enableAddon("t1", "FORECASTING", 1, "u1"));
+    expect(err?.getResponse()).toEqual(INCLUDED_REFUSAL);
+    expectUntouched(m);
+  });
+
+  it("refused for a free pilot (no subscription) and a manually-invoiced tenant on SCALE too", async () => {
+    const pilot = make({ sub: null, tenantPlan: "SCALE" });
+    expect(
+      (await rejection(pilot.svc.enableAddon("t1", "FORECASTING", 1, "u1")))?.getResponse(),
+    ).toEqual(INCLUDED_REFUSAL);
+    expectUntouched(pilot);
+    const manual = make({ sub: MANUAL_SUB, planKey: null, tenantPlan: "SCALE" });
+    expect(
+      (await rejection(manual.svc.enableAddon("t1", "FORECASTING", 1, "u1")))?.getResponse(),
+    ).toEqual(INCLUDED_REFUSAL);
+    expectUntouched(manual);
+    expect(manual.tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("STARTER + FORECASTING and GROWTH + FORECASTING are allowed (billed at the catalog price)", async () => {
+    for (const planKey of ["STARTER", "GROWTH"]) {
+      const m = make({ planKey });
+      await m.svc.enableAddon("t1", "FORECASTING", 1, "u1");
+      expect(m.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect(m.getRow()).toMatchObject({ active: true, priceSnapshot: 25 });
+      expect(enabledDeltas(m.events)).toEqual([25]);
+    }
+  });
+
+  it("an add-on with no bundling plan (CUSTOMER_PACK_100) is allowed on SCALE", async () => {
+    const m = make({ planKey: "SCALE" });
+    await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(m.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a tenant that bought it before upgrading to SCALE can't re-enable or raise it, but can still disable it", async () => {
+    const row = {
+      id: "a1",
+      addonKey: "FORECASTING",
+      sku: "FORECASTING",
+      active: true,
+      quantity: 1,
+      priceSnapshot: 25,
+      stripeItemId: "si_1",
+    };
+    const m = make({ planKey: "SCALE", addonRow: row });
+    const err = await rejection(m.svc.enableAddon("t1", "FORECASTING", 1, "u1"));
+    expect(err?.getResponse()).toEqual(INCLUDED_REFUSAL);
+    expectUntouched(m);
+    await m.svc.disableAddon("t1", "FORECASTING", "u1");
+    expect(m.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(m.getRow()).toMatchObject({ active: false });
+  });
+});
+
+describe("preview agreement: addonEnableRefusal says what enableAddon will do", () => {
+  const cases: Array<[string, string, Opts, { code: string; message: string } | null]> = [
+    ["annual Stripe, new add-on", "CUSTOMER_PACK_100", { sub: ANNUAL_SUB }, ANNUAL_REFUSAL],
+    ["plan-included (SCALE)", "FORECASTING", { planKey: "SCALE" }, INCLUDED_REFUSAL],
+    [
+      "plan-included wins over annual",
+      "FORECASTING",
+      { sub: ANNUAL_SUB, planKey: "SCALE" },
+      INCLUDED_REFUSAL,
+    ],
+    ["monthly Stripe on STARTER", "FORECASTING", { planKey: "STARTER" }, null],
+    ["free pilot", "CUSTOMER_PACK_100", { sub: null }, null],
+    ["manually invoiced", "CUSTOMER_PACK_100", { sub: MANUAL_SUB }, null],
+  ];
+
+  it.each(cases)("%s", async (_label, sku, opts, expected) => {
+    const preview = make(opts);
+    expect(await preview.svc.addonEnableRefusal("t1", sku)).toEqual(expected);
+    // The enable path on an identical tenant refuses iff the preview did, with the same body.
+    const enable = make(opts);
+    const err = await rejection(enable.svc.enableAddon("t1", sku, 1, "u1"));
+    if (expected) {
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(expected);
+    } else {
+      expect(err).toBeUndefined();
+    }
+  });
+
+  it("an unknown SKU has no refusal (the preview's own 400 covers it)", async () => {
+    const m = make();
+    expect(await m.svc.addonEnableRefusal("t1", "NOPE")).toBeNull();
   });
 });

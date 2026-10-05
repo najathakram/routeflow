@@ -30,6 +30,7 @@ import {
   planKeyToEnum,
   normalizePlanKey,
   addonSkuCode,
+  isAddonIncludedAtPlan,
   SELF_SERVICE_ADDON_SKUS,
   isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
@@ -128,6 +129,50 @@ const ADDON_ANNUAL_NOT_SUPPORTED =
 
 const ADDON_RAISE_UNBILLED_ROW =
   "This add-on was set up before online billing, so its quantity can't be raised here yet. Please contact support.";
+
+/**
+ * A refusal of a self-serve add-on enable: a fixed machine code plus fixed tenant-facing copy. The
+ * enable call throws it as a 409 body (`{ code, message }`) and `GET /billing/proration-preview`
+ * returns the SAME object as `refusal`, so the confirm sheet can never promise what enable refuses.
+ */
+export interface AddonRefusal {
+  code: string;
+  message: string;
+}
+
+const ADDON_ANNUAL_REFUSAL: AddonRefusal = {
+  code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED,
+  message: ADDON_ANNUAL_NOT_SUPPORTED,
+};
+
+/** The fixed refusal for an add-on the tenant's plan already bundles (F3). */
+function addonIncludedRefusal(addonName: string): AddonRefusal {
+  return {
+    code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+    message: `${addonName} is already included in your plan.`,
+  };
+}
+
+const refusalException = (r: AddonRefusal) =>
+  new ConflictException({ code: r.code, message: r.message });
+
+/**
+ * The ONE annual predicate for self-serve add-ons (enable of a new item AND a quantity raise on a
+ * billed row both use it, and so does the preview): the tenant is billed through a live Stripe
+ * subscription whose interval is not monthly. Interval = `billingInterval`, else the cycle.
+ */
+function isAnnualStripeBilled(
+  mode: AddonBilling,
+  sub: {
+    stripeSubId?: string | null;
+    billingInterval?: string | null;
+    cycle?: string | null;
+  } | null,
+): boolean {
+  if (mode !== "STRIPE" || !sub?.stripeSubId) return false;
+  const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
+  return interval !== "month";
+}
 
 /**
  * How a tenant's self-serve add-on is billed (owner rulings 2026-10-03):
@@ -1487,6 +1532,11 @@ export class SubscriptionMutationService {
     if (!isSelfServiceAddon(sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
 
+    // F3 (#3129 sandbox checklist): an add-on the tenant's plan already bundles is never sold
+    // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
+    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    if (included) throw refusalException(included);
+
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
     // addon.service.ts, so the two paths serialise against each other and not merely within
     // themselves. This side is already SKU-native; the admin side normalises its addonKey
@@ -1557,6 +1607,44 @@ export class SubscriptionMutationService {
    * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
    * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
    */
+  /**
+   * Would a self-serve ENABLE be refused for this tenant, and why? The preview reads this so it can
+   * never disagree with `enableAddon`, which throws the SAME objects: plan-included first (the
+   * add-on is bundled, nothing to buy), then annual (a monthly item can't join a yearly Stripe
+   * subscription online). Row-independent on purpose: the preview carries no quantity, and on
+   * annual both a new item and a raise are refused. Never throws for an unknown SKU (null).
+   */
+  async addonEnableRefusal(tenantId: string, sku: string): Promise<AddonRefusal | null> {
+    const version = await this.catalog.getPublishedCatalog();
+    const skuDef = version.addonSkus.find((s) => s.sku === sku);
+    if (!skuDef) return null;
+    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    if (included) return included;
+    const { sub, mode } = await this.addonBillingContext(tenantId);
+    return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
+  }
+
+  /**
+   * The "already in your plan" refusal: the SKU's `includedAtPlan` (the plan at and above which the
+   * catalog bundles it free, the same rule the choose-plan quote prices with) is at or below the
+   * tenant's CURRENT plan. The plan resolves as everywhere else here: the subscription's planKey,
+   * else the legacy `Tenant.plan` enum. Only SKUs that have a bundling plan cost a read.
+   */
+  private async planIncludedRefusal(
+    tenantId: string,
+    skuDef: { name: string; includedAtPlan?: string | null },
+  ): Promise<AddonRefusal | null> {
+    if (!skuDef.includedAtPlan) return null;
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId }, select: { planKey: true } }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }),
+    ]);
+    const planKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
+    return isAddonIncludedAtPlan(skuDef.includedAtPlan, planKey)
+      ? addonIncludedRefusal(skuDef.name)
+      : null;
+  }
+
   private addonModeOf(
     sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
   ): AddonBilling {
@@ -1638,16 +1726,19 @@ export class SubscriptionMutationService {
         customer: sub.stripeCustomerId,
         pending: true,
         // Only lines this call produced: an older proration line of the same item (an earlier
-        // quantity change still pending on the next invoice) must not be summed in.
+        // quantity change still pending on the next invoice) must not be summed in. (`created` is
+        // the list REQUEST filter; the object itself carries its creation time as `date`.)
         created: { gte: callStartSec },
         limit: 100,
       });
-      // API 2026-08-26.dahlia: the subscription item a proration line belongs to is
-      // `parent.subscription_details.subscription_item` (the old top-level `subscription_item` is gone).
+      // API 2026-08-26.dahlia (pinned, verified against the sandbox + the SDK types): an InvoiceItem
+      // has NO `created` field, its creation time is `date`; the subscription item a proration line
+      // belongs to is `parent.subscription_details.subscription_item` (the old top-level
+      // `subscription_item` is gone). Reading `created` here made `proratedNow` null on every call.
       const mine = (list?.data ?? []).filter(
         (ii: any) =>
           ii?.proration === true &&
-          Number(ii?.created ?? 0) >= callStartSec &&
+          Number(ii?.date ?? 0) >= callStartSec &&
           ii?.parent?.subscription_details?.subscription_item === itemId,
       );
       if (mine.length === 0) return null;
@@ -1764,6 +1855,12 @@ export class SubscriptionMutationService {
     let manualNotice: { action: string; kind: "enable" | "reduce" } | null = null;
 
     if (existing?.active && existing.stripeItemId) {
+      // F2 (B1088): a quantity RAISE on an annual Stripe subscription is refused exactly like a new
+      // item (same predicate, same coded 409), before any Stripe call, write or ledger event. A
+      // decrease (and a disable) stay allowed so the tenant can always shrink what it pays for.
+      if (qty > existing.quantity && isAnnualStripeBilled(mode, sub)) {
+        throw refusalException(ADDON_ANNUAL_REFUSAL);
+      }
       // Billed row, new quantity: update the item (prorated). Its price stays the one it was
       // created at (grandfathered) — only the quantity moves.
       if (!this.stripe.isConfigured) {
@@ -1807,10 +1904,10 @@ export class SubscriptionMutationService {
         }
       }
     } else if (mode === "STRIPE" && sub?.stripeSubId) {
-      const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
-      if (interval !== "month") {
-        // Stripe cannot mix a monthly item into a yearly subscription; fail closed, no Stripe call.
-        throw new ConflictException(ADDON_ANNUAL_NOT_SUPPORTED);
+      if (isAnnualStripeBilled(mode, sub)) {
+        // Online add-ons are monthly items; an annual subscription is refused by policy (support
+        // sets it up). Fail closed, no Stripe call.
+        throw refusalException(ADDON_ANNUAL_REFUSAL);
       }
       // A previous attempt may have created an item whose response was lost: adopt it, never add a second.
       const adopted = await this.adoptOrphanItem(tenantId, sku, sub.stripeSubId, qty);

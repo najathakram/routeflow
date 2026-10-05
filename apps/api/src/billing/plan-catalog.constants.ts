@@ -169,6 +169,20 @@ export function planRank(planKey: string): number {
 }
 
 /**
+ * Is an add-on bundled free at `planKey`? `includedAtPlan` is the plan at AND ABOVE which the
+ * catalog includes it (AddonSku.includedAtPlan); both keys are normalized (legacy aliases rank as
+ * their current plan). False when the SKU has no bundling plan or either key is unknown.
+ */
+export function isAddonIncludedAtPlan(
+  includedAtPlan: string | null | undefined,
+  planKey: string | null | undefined,
+): boolean {
+  const need = includedAtPlan ? planRank(includedAtPlan) : -1;
+  const have = planKey ? planRank(planKey) : -1;
+  return need >= 0 && have >= need;
+}
+
+/**
  * Find a catalog definition by plan key, NORMALIZING both sides so a stored key and a
  * pinned version that disagree about the rename still resolve to the same row — a v7-pinned
  * tenant carrying SCALE matches the BUSINESS row, a v8 tenant carrying legacy TEAM matches

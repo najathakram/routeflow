@@ -120,11 +120,19 @@ export interface ProrationPreview {
   sku: string;
   name: string;
   monthly: number;
-  proratedToday: number;
+  /** An estimate (Stripe's own figure comes back from the enable call). Null when nothing would
+   *  be charged: a free pilot (`billed` false) or a refused enable (`refusal` set). */
+  proratedToday: number | null;
   daysRemaining: number;
   daysInCycle: number;
   effectiveAt: string;
   nextChargeAt: string;
+  /** How the add-on is billed; "REFUSED" when the enable call would 409 (see `refusal`). */
+  billing?: "STRIPE" | "MANUAL" | "UNBILLED" | "REFUSED";
+  billed?: boolean;
+  /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
+   *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
+  refusal?: { code: string; message: string } | null;
 }
 
 export interface QuoteInput {
