@@ -468,3 +468,9 @@ export const SELF_SERVICE_ADDON_SKUS: readonly AddonSkuCode[] = [
   "CUSTOMER_PACK_100",
   "FORECASTING",
 ] as const;
+
+/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
+ *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
+export function isSelfServiceAddon(sku: string): boolean {
+  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
+}
