@@ -3,6 +3,7 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { assertSafeCustomerNames } from "../../customers/customer-name-guard";
+import { CustomersService } from "../../customers/customers.service";
 
 /** The walk-in system user's fixed login name: the User @@unique([tenantId, username]) makes the lazy create race-safe. */
 export const WALK_IN_USERNAME = "walk-in-counter";
@@ -20,7 +21,10 @@ const WALK_IN_NAMES = { businessName: "Walk-in customer", contactName: "Walk-in"
  */
 @Injectable()
 export class WalkInCustomerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly customers: CustomersService,
+  ) {}
 
   private find(): Promise<{ id: string } | null> {
     return this.prisma.forTenant().customer.findFirst({
@@ -32,6 +36,18 @@ export class WalkInCustomerService {
   async getOrCreateWalkIn(): Promise<string> {
     const existing = await this.find();
     if (existing) return existing.id;
+
+    // A walk-in someone removed (soft-deleted) is brought back through the real restore path, never
+    // recreated: the username unique could 500 the create, and a second walk-in would split the
+    // tenant's counter history.
+    const removed = await this.prisma.forTenant().customer.findFirst({
+      where: { isWalkIn: true, deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (removed) {
+      await this.customers.restoreCustomer(removed.id);
+      return removed.id;
+    }
 
     assertSafeCustomerNames(WALK_IN_NAMES); // constants, but every customer-name writer calls the shared guard (B956)
     const password = await bcrypt.hash(crypto.randomBytes(48).toString("hex"), 10);

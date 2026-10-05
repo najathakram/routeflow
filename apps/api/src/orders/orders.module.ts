@@ -35,6 +35,7 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
 // SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { CustomersModule } from "../customers/customers.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
 import {
   DefaultFulfilmentCapabilityReader,
@@ -60,6 +61,8 @@ import {
     SellingRestrictionsModule,
     ReturnsModule,
     PolicyModule,
+    // WalkInCustomerService restores a removed walk-in through CustomersService.restoreCustomer.
+    CustomersModule,
   ],
   controllers: [OrdersController, CounterSaleController],
   providers: [

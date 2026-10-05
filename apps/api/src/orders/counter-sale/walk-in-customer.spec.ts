@@ -9,6 +9,7 @@ describe("WalkInCustomerService.getOrCreateWalkIn", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let service: WalkInCustomerService;
   const created: { user?: any; customer?: any } = {};
+  let customers: { restoreCustomer: jest.Mock };
 
   beforeEach(() => {
     prisma = createMockPrisma();
@@ -32,7 +33,8 @@ describe("WalkInCustomerService.getOrCreateWalkIn", () => {
       }),
     );
     // Constructed with ONLY the prisma service: the customer cap gate is deliberately not a dependency.
-    service = new WalkInCustomerService(prisma as never);
+    customers = { restoreCustomer: jest.fn().mockResolvedValue({ success: true, restored: true }) };
+    service = new WalkInCustomerService(prisma as never, customers as never);
   });
 
   it("creates the system user + customer once, with an unusable password and no status emails", async () => {
@@ -85,6 +87,25 @@ describe("WalkInCustomerService.getOrCreateWalkIn", () => {
       Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
     );
     await expect(service.getOrCreateWalkIn()).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("a soft-deleted walk-in is RESTORED (CustomersService.restoreCustomer), never a 500 or a second walk-in", async () => {
+    prisma.customer.findFirst
+      .mockResolvedValueOnce(null) // no live walk-in
+      .mockResolvedValueOnce({ id: "cust-deleted" }); // a removed one
+    await expect(service.getOrCreateWalkIn()).resolves.toBe("cust-deleted");
+    expect(customers.restoreCustomer).toHaveBeenCalledWith("cust-deleted");
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.customer.findFirst.mock.calls[1][0].where).toMatchObject({
+      isWalkIn: true,
+      deletedAt: { not: null },
+    });
+  });
+
+  it("a live walk-in wins over a removed one and nothing is restored", async () => {
+    prisma.customer.findFirst.mockResolvedValueOnce({ id: "cust-live" });
+    await expect(service.getOrCreateWalkIn()).resolves.toBe("cust-live");
+    expect(customers.restoreCustomer).not.toHaveBeenCalled();
   });
 
   it("reads and writes through the tenant-scoped client / tenantTransaction", async () => {
