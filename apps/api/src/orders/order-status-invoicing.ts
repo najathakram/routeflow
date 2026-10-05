@@ -18,7 +18,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import type { OrderCancelBlockedReason } from "@routeflow/types";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { SHIP_STATE_REOPENED } from "./order-ship-state";
+import { SHIP_STATE_REOPENED } from "./ship-state-markers"; // a leaf: order-ship-state.ts imports THIS file
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -140,6 +140,8 @@ export async function settleOrderInvoice(
  * (PENDING / CONFIRMED) with `shippedAt` set AND its last ship-state change a REOPEN from delivery
  * (`order-ship-state.ts`). A deliberate "Unmark shipped" is NOT with the carrier (the parcel never left,
  * so the stock comes back): the unmarked order is cancellable again. `shippedAt` itself survives both.
+ * KNOWN: a reopen that predates the markers has none, so it reads as unmarked (cancellable); pinned in
+ * `carrier-cancel.spec.ts` ("KNOWN: legacy reopen without marker"), see `order-ship-state.ts`.
  * GATED on the billing moment (`billsAtShipment`: ship / both / pickup_ship businesses only), so an
  * unset-mode business is untouched. Returns the reason the web reads to disable Cancel, or null.
  */

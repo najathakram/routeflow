@@ -3096,9 +3096,6 @@ export class InvoicesService {
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
-      // SA-674b: with the carrier, the shipment invoice keeps its lines and quantities (checked in the tx)
-      const carrierDeps = { featureConfig: this.featureConfig, prisma: this.prisma };
-      const carrierLocked = await invoiceOrderWithCarrier(carrierDeps, inv.orderId);
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
@@ -3109,6 +3106,12 @@ export class InvoicesService {
         if (inv.orderId)
           await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
         await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
+        // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
+        const carrierLocked = await invoiceOrderWithCarrier(
+          { featureConfig: this.featureConfig, prisma: { forTenant: () => tx } },
+          inv.orderId,
+        );
         await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules

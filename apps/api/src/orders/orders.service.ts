@@ -185,7 +185,7 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
-import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
+import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -2654,10 +2654,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+      return updateStatusWithShipMarker(this, order, dto, user, statusUpdateData);
     })();
 
-    await recordShipStateChange(this, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
