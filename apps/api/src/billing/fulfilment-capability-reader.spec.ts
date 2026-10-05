@@ -1,5 +1,11 @@
 import { FEATURE_REGISTRY } from "./feature-registry";
-import { readFulfilmentCapability } from "./fulfilment-capability";
+import { readdirSync, readFileSync, statSync } from "fs";
+import { join } from "path";
+import {
+  capabilityFromInputs,
+  readFulfilmentCapability,
+  readFulfilmentInputs,
+} from "./fulfilment-capability";
 
 /**
  * The shared tenant-level read: the SAME calls `GET /tenants/me/features` makes (effective modes,
@@ -66,11 +72,63 @@ describe("readFulfilmentCapability", () => {
     expect(cap.counter).toBe("off");
   });
 
+  it("the counter gate is strict: a failed fulfilment_model read with counter_sales 'on' is still off (never a half-read 'optional')", async () => {
+    const d = deps({ counter_sales: "on" });
+    d.featureConfig.getEffectiveMode.mockImplementation(async (_t: string, key: string) => {
+      if (key === "fulfilment_model") throw new Error("db");
+      return "on";
+    });
+    expect((await readFulfilmentCapability(d as never, "t1")).counter).toBe("off");
+  });
+
+  describe("readFulfilmentInputs (lets each caller keep its own failure semantics)", () => {
+    it("a failed mode read reads as unset with modesFailed; the fleet read still answers", async () => {
+      const d = deps({}, true);
+      d.featureConfig.getEffectiveMode.mockRejectedValue(new Error("db"));
+      const r = await readFulfilmentInputs(d as never, "t1");
+      expect(r).toEqual({
+        fulfilmentMode: "unset",
+        counterSales: "unset",
+        fleet: true,
+        modesFailed: true,
+      });
+    });
+
+    it("a failed fleet read is fleet:null (the caller decides: the tenants endpoint answers 503, the gate answers off)", async () => {
+      const d = deps({ fulfilment_model: "pickup" });
+      d.addonService.getActiveAddons.mockRejectedValue(new Error("db"));
+      const r = await readFulfilmentInputs(d as never, "t1");
+      expect(r).toMatchObject({ fulfilmentMode: "pickup", fleet: null, modesFailed: false });
+      expect(capabilityFromInputs(r).counter).toBe("always"); // the derivation itself never throws
+    });
+  });
+
+  it("no copy of the capability calls anywhere else: getEffectiveMode('fulfilment_model') and deriveFulfilmentCapability( are read only in billing/fulfilment-capability.ts", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((f) => {
+        const p = join(dir, f);
+        return statSync(p).isDirectory()
+          ? walk(p)
+          : /\.ts$/.test(f) && !/\.spec\.ts$/.test(f)
+            ? [p]
+            : [];
+      });
+    const offenders = walk(join(__dirname, "..")).filter((p) => {
+      if (p.endsWith(join("billing", "fulfilment-capability.ts"))) return false;
+      const src = readFileSync(p, "utf8");
+      return (
+        /getEffectiveMode\([^)]*["']fulfilment_model["']/.test(src) ||
+        /deriveFulfilmentCapability\(/.test(src)
+      );
+    });
+    expect(offenders).toEqual([]);
+  });
+
   // SA-666a. On master EVERY fulfilment_model / counter_sales mode is `available: true`, so the
   // unavailable branch cannot trigger from real registry data; this spec flips one mode's flag on
   // the live registry row (restored in finally) to prove the branch itself. Without that flip the
   // spec would be vacuous on master.
-  describe("SA-666a: a stored mode the registry marks unavailable reads as unset", () => {
+  describe("SA-666a (registry FIXTURE: the availability flip is not on master, it arrives with #3210): a stored mode the registry marks unavailable reads as unset", () => {
     const mode = () =>
       FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes["pickup"] as {
         available: boolean;
