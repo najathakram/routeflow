@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -30,6 +31,25 @@ import {
   type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
+
+/** Canonical JSON (object keys sorted, array order kept): the same plan always hashes the same. */
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map(canonical)
+    : v && typeof v === "object"
+      ? Object.fromEntries(
+          Object.keys(v as object)
+            .sort()
+            .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+        )
+      : v;
+
+/** A stable hash of a plan: what the admin was shown, so confirm can prove it applies the same. */
+export function planFingerprint(plan: BusinessProfilePlan): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(plan)))
+    .digest("hex");
+}
 
 /** What the confirm path needs: the plan recomputed server-side at confirm time. */
 export interface BusinessProfileResolution {
@@ -145,7 +165,21 @@ export class BusinessProfileService {
       profile: resolved.profile.key as BusinessProfilePreviewResponse["profile"],
       plan: resolved.plan,
       summary: resolved.summary,
+      planFingerprint: planFingerprint(resolved.plan),
     };
+  }
+
+  /**
+   * Confirm re-plans from the tenant's CURRENT state; anything that changed since the preview (an
+   * add-on turned on in between, say) would be applied unseen. A different plan is a 409
+   * PROFILE_PLAN_CHANGED before any write: the web re-previews and the admin confirms again.
+   */
+  assertPlanUnchanged(resolved: BusinessProfileResolution, previewed: string): void {
+    if (planFingerprint(resolved.plan) === previewed) return;
+    throw new ConflictException({
+      code: API_ERROR_CODES.PROFILE_PLAN_CHANGED,
+      message: "This account changed since the preview. Review the new preview and confirm again.",
+    });
   }
 
   /**

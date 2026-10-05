@@ -54,7 +54,10 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BusinessProfileService } from "../billing/business-profile.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { ApplyBusinessProfileDto } from "./dto/apply-business-profile.dto";
+import {
+  ApplyBusinessProfileDto,
+  ConfirmBusinessProfileDto,
+} from "./dto/apply-business-profile.dto";
 import type {
   BusinessProfileApplyResponse,
   BusinessProfileListResponse,
@@ -731,10 +734,11 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Apply a business profile to a tenant (audited; idempotent)" })
   async applyBusinessProfile(
     @Param("id") id: string,
-    @Body() dto: ApplyBusinessProfileDto,
+    @Body() dto: ConfirmBusinessProfileDto,
     @CurrentUser() admin: JwtPayload,
   ): Promise<BusinessProfileApplyResponse> {
     const resolved = await this.businessProfiles.plan(id, dto.profile);
+    this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
     const reason = dto.reason?.trim() || resolved.reason;
     const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
 

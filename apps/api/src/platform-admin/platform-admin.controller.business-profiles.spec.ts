@@ -177,6 +177,19 @@ function fakeTenant(start: {
     businessProfiles,
     featureConfig as any,
   );
+  // Confirm as the web does it: preview first, send that planFingerprint back (#3199 review).
+  // A test that passes its own fingerprint keeps it; a preview that refuses leaves a dummy one,
+  // so the confirm's own refusal (unknown profile, ...) is what the test sees.
+  const confirm = controller.applyBusinessProfile.bind(controller);
+  controller.applyBusinessProfile = (async (id: string, dto: any, user: any) => {
+    const planFingerprint =
+      dto.planFingerprint ??
+      (await controller
+        .previewBusinessProfile(id, { profile: dto.profile })
+        .then((p) => p.planFingerprint)
+        .catch(() => "0".repeat(64)));
+    return confirm(id, { ...dto, planFingerprint }, user);
+  }) as typeof controller.applyBusinessProfile;
   const state = () => ({
     modes: { ...modes },
     held: Object.fromEntries(
@@ -240,6 +253,49 @@ describe("GET business-profiles / POST preview", () => {
     expect(res.profile).toBe("delivery_distributor");
     expect(res.summary.length).toBeGreaterThan(0);
     expect(writes).toEqual([]);
+  });
+
+  it("preview returns a stable planFingerprint (the same plan hashes the same)", async () => {
+    const { controller } = fakeTenant({});
+    const a = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    const b = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    expect(a.planFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(b.planFingerprint).toBe(a.planFingerprint);
+    const other = await controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(other.planFingerprint).not.toBe(a.planFingerprint);
+  });
+});
+
+describe("confirm applies only the plan that was previewed (#3199 review)", () => {
+  it("a plan that changed since the preview is a 409 PROFILE_PLAN_CHANGED and NOTHING is written", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    // between preview and confirm, the tenant's state moves (here: the confirm targets a plan
+    // other than the one shown, exactly what an add-on turned on in between produces)
+    const stale = { ...shown, planFingerprint: "f".repeat(64) };
+    await expect(
+      t.controller.applyBusinessProfile(
+        T,
+        { profile: "delivery_distributor", planFingerprint: stale.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("the previewed fingerprint confirms", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    await t.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_distributor", planFingerprint: shown.planFingerprint } as any,
+      admin,
+    );
+    expect(t.writes.length).toBeGreaterThan(0);
   });
 });
 

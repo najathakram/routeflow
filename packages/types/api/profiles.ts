@@ -76,6 +76,9 @@ export interface BusinessProfilePreviewResponse extends FeaturePreviewResponse {
   plan: BusinessProfilePlan;
   /** The plan in plain English, one line per change; `[]` = the tenant already matches. */
   summary: string[];
+  /** A stable hash of `plan`. Confirm sends it back; a different plan at confirm time is a 409
+   *  `PROFILE_PLAN_CHANGED` (the admin re-previews), never an unseen change applied. */
+  planFingerprint: string;
 }
 
 /** `POST /platform-admin/tenants/:id/business-profile` (confirm). Re-applying is idempotent. */

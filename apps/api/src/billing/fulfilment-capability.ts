@@ -1,4 +1,8 @@
-import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
+import {
+  FLEET_MODULE_KEYS,
+  type FulfilmentCapability,
+  type FulfilmentMethod,
+} from "@routeflow/types";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
 import { gateVia } from "./feature-registry";
@@ -8,7 +12,7 @@ import { gateVia } from "./feature-registry";
  * deliberately NOT here: it is gated via "guard", so `can()` is true for almost every tenant and
  * including it would neuter the 409 on delivery/both.
  */
-export const FLEET_KEYS = ["recurring_routes", "order_delivery"] as const;
+export const FLEET_KEYS = FLEET_MODULE_KEYS; // the shared list (@routeflow/types)
 
 /** What each stored mode offers. SHIP semantics come ONLY from the ship-family modes (SA-649 R3). */
 const BY_MODE: Record<string, { methods: FulfilmentMethod[]; opensAs: "order" | "counter" }> = {

@@ -15,6 +15,10 @@ export const FULFILMENT_MODE_VALUES = [
 export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
 
 export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
+
+/** The modules that make a fleet (routes, order delivery): the ONE list. The api's fleet rule
+ *  (`FLEET_KEYS`) and the web's setup copy both read it, so the two can never disagree. */
+export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const;
 export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
 
 /**

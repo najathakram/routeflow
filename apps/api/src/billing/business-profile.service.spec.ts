@@ -140,6 +140,7 @@ describe("BusinessProfileService.preview", () => {
     });
     expect(res).toEqual({
       ...previewResponse,
+      planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
       profile: "shipping_wholesaler",
       plan: {
         overrides: [
