@@ -183,10 +183,12 @@ import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
+import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import { lastShipStateSource, recordShipStateChange } from "./order-ship-state";
 import {
-  assertCarrierOrderNotInTransit,
   carrierCancelBlockedReason,
+  throwIfWithCarrier,
   invoicesAtShipment,
   settleOrderInvoice,
   settledAtShipment,
@@ -439,6 +441,14 @@ export class OrdersService implements OnApplicationBootstrap {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  private carrierBlocked(
+    order: Parameters<typeof carrierCancelBlockedReason>[2] & { tenantId?: string | null },
+  ) {
+    return carrierCancelBlockedReason(this.featureConfig, order.tenantId, order, (id) =>
+      lastShipStateSource(this.prisma, id),
+    );
+  }
+
   async findOne(id: string, user: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
@@ -569,11 +579,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
-    (order as any).cancelBlockedReason = await carrierCancelBlockedReason(
-      this.featureConfig,
-      order.tenantId,
-      order,
-    );
+    Object.assign(order, {
+      cancelBlockedReason: await this.carrierBlocked(order),
+    } satisfies OrderCancelBlockedField);
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -2456,7 +2464,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // order exactly as it was, not cancelled-but-not-unwound.
     if (dto.status === OrderStatus.CANCELLED) {
       // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
-      await assertCarrierOrderNotInTransit(this.featureConfig, this.prisma.getTenantId(), order);
+      throwIfWithCarrier(await this.carrierBlocked(order));
       await this.assertCancellableOrThrow(id);
     }
 
@@ -2668,6 +2676,7 @@ export class OrdersService implements OnApplicationBootstrap {
       return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
     })();
 
+    await recordShipStateChange(this.prisma, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
@@ -4233,6 +4242,7 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
+            blockCredits: (await this.carrierBlocked(order)) !== null,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -5243,7 +5253,7 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
-    await assertCarrierOrderNotInTransit(this.featureConfig, this.prisma.getTenantId(), order);
+    throwIfWithCarrier(await this.carrierBlocked(order));
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
