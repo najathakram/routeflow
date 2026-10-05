@@ -77,6 +77,7 @@ describe("CounterSaleService.ring", () => {
   let service: CounterSaleService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let createSale: jest.Mock;
+  let findReplayCandidateByKey: jest.Mock;
   let recordPayment: jest.Mock;
   let walkIn: { getOrCreateWalkIn: jest.Mock };
   let reader: { get: jest.Mock };
@@ -111,6 +112,7 @@ describe("CounterSaleService.ring", () => {
       if (replay) sale?.onReplay?.();
       return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
     });
+    findReplayCandidateByKey = jest.fn(async () => null);
     recordPayment = jest.fn(async (invoiceId: string, dto: any) => {
       const target = invoices.find((i) => i.id === invoiceId)!;
       if (target.payments.some((p) => p.status !== "VOID" && p.method !== "CREDIT_NOTE"))
@@ -142,7 +144,7 @@ describe("CounterSaleService.ring", () => {
     const mod = await Test.createTestingModule({
       providers: [
         CounterSaleService,
-        { provide: OrdersService, useValue: { createSale } },
+        { provide: OrdersService, useValue: { createSale, findReplayCandidateByKey } },
         { provide: InvoicesService, useValue: { recordPayment } },
         { provide: WalkInCustomerService, useValue: walkIn },
         { provide: PrismaService, useValue: prisma },
@@ -855,6 +857,106 @@ describe("CounterSaleService.ring", () => {
         paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
       });
       expect(r.change).toBeUndefined();
+    });
+  });
+
+  describe("byKey (GET /orders/counter-sale/by-key/:key): a definitive answer about a key", () => {
+    const sale = { id: "ord-1", orderNumber: "ORD-1", fulfillPath: "PICKUP", customerId: "cust-1" };
+
+    it("found: the same body a replay would return, read back from storage, replayed:true, nothing written", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [
+        inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: "CASH", status: "PAID" }]),
+      ];
+      const r = await service.byKey("k1");
+      expect(r).toEqual({
+        orderId: "ord-1",
+        orderNumber: "ORD-1",
+        invoiceId: "inv-1",
+        invoiceNumber: "N-inv-1",
+        total: 37.25,
+        paid: 37.25,
+        balanceDue: 0,
+        paymentId: "p0",
+        paymentRecorded: true,
+        replayed: true,
+      });
+      expect(findReplayCandidateByKey).toHaveBeenCalledWith("k1", expect.any(String));
+      expect(createSale).not.toHaveBeenCalled();
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+    });
+
+    it("matches what the POST replay returns for the same stored sale (modulo change, which needs the tender)", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      const first = await service.ring(
+        named({ method: "CASH", amount: 37.25 }) as never,
+        staff,
+        "k",
+      );
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      const { change: _c, ...expected } = { ...first, replayed: true } as any;
+      expect(await service.byKey("k")).toEqual(expected);
+    });
+
+    it("a partly paid sale reports what is stored: paid, balanceDue, paymentRecorded from the stored tender", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [inv("inv-1", 37.25, [{ id: "p0", amount: 20, method: "CASH", status: "PAID" }])];
+      expect(await service.byKey("k1")).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        paymentRecorded: true,
+      });
+    });
+
+    it("no tender stored and money owing reads paymentRecorded:false (the caller knows if it rang ON_ACCOUNT)", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      const r = await service.byKey("k1");
+      expect(r).toMatchObject({
+        paid: 0,
+        balanceDue: 37.25,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+    });
+
+    it("an invoice-less order is not a finished sale: refused as an unknown outcome, never a guess", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [];
+      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 500 });
+    });
+
+    it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
+      const e = await service.byKey("nope").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(404);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("an order that is not a counter (PICKUP) sale is not a sale for this key: 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "ROUTE" });
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("is NOT gated by the counter capability: it answers even when the counter is off", async () => {
+      reader.get.mockResolvedValue(cap("off"));
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      await expect(service.byKey("k1")).resolves.toMatchObject({ orderId: "ord-1" });
+      expect(reader.get).not.toHaveBeenCalled();
+    });
+
+    it("a caller with no tenant scope is refused (the lookup would otherwise span every tenant)", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 403 });
+      expect(findReplayCandidateByKey).not.toHaveBeenCalled();
     });
   });
 });

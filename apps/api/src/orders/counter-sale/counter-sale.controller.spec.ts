@@ -13,12 +13,18 @@ import { RolesGuard } from "../../auth/guards/roles.guard";
 
 /** The HTTP edge of POST /orders/counter-sale: route, role gate, header normalisation, DTO shape. */
 describe("CounterSaleController", () => {
-  const service = { ring: jest.fn().mockResolvedValue({ orderId: "ord-1" }) };
+  const service = {
+    ring: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+    byKey: jest.fn().mockResolvedValue({ orderId: "ord-1", replayed: true }),
+  };
   const controller = new CounterSaleController(service as never);
   const user = { sub: "op-1", role: "OPERATOR" } as never;
   const dto = { customerId: "c", items: [], payment: { method: "CASH" } } as never;
 
-  beforeEach(() => service.ring.mockClear());
+  beforeEach(() => {
+    service.ring.mockClear();
+    service.byKey.mockClear();
+  });
 
   it("is POST /orders/counter-sale", () => {
     expect(Reflect.getMetadata("path", CounterSaleController)).toBe("orders");
@@ -68,6 +74,39 @@ describe("CounterSaleController", () => {
       BadRequestException,
     );
     expect(service.ring).not.toHaveBeenCalled();
+  });
+  describe("GET /orders/counter-sale/by-key/:key", () => {
+    it("is a GET on counter-sale/by-key/:key", () => {
+      expect(Reflect.getMetadata("path", CounterSaleController.prototype.byKey)).toBe(
+        "counter-sale/by-key/:key",
+      );
+      expect(Reflect.getMetadata("method", CounterSaleController.prototype.byKey)).toBe(0); // GET
+    });
+
+    const guard = new RolesGuard(new Reflector());
+    const allows = (role: UserRole) =>
+      guard.canActivate({
+        getHandler: () => CounterSaleController.prototype.byKey,
+        getClass: () => CounterSaleController,
+        switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }),
+      } as unknown as ExecutionContext);
+    it.each([UserRole.OPERATOR, UserRole.TENANT_ADMIN])("%s passes", (role) =>
+      expect(allows(role)).toBe(true),
+    );
+    it.each([UserRole.DRIVER, UserRole.CUSTOMER])("%s is refused (403)", (role) =>
+      expect(allows(role)).toBe(false),
+    );
+
+    it("normalises the key like the header (trim) and asks the service", async () => {
+      await controller.byKey("  key-9 ");
+      expect(service.byKey).toHaveBeenCalledWith("key-9");
+    });
+
+    it("a blank or malformed key is a 400 before the service runs", async () => {
+      await expect(controller.byKey("   ")).rejects.toBeInstanceOf(BadRequestException);
+      await expect(controller.byKey("has space")).rejects.toBeInstanceOf(BadRequestException);
+      expect(service.byKey).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -37,6 +37,9 @@ import {
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
 
+// A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
+const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
+
 type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
@@ -187,7 +190,7 @@ export class CounterSaleService {
       }
     }
 
-    return this.respond(dto, order, invoices, replayed, planError);
+    return this.respond(dto.payment, order, invoices, replayed, planError);
   }
 
   /**
@@ -253,6 +256,32 @@ export class CounterSaleService {
   }
 
   /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */
+  /**
+   * GET /orders/counter-sale/by-key/:key. The sale this key rang, from STORAGE: the same replay lookup
+   * create() uses (`findReplayCandidateByKey`: key table first, then the Order column; tenant-scoped), then
+   * the same read-back `ring` ends with, `replayed: true`. No writes, no payment, no capability gate.
+   * Without the request's payment the body carries no `change`, and `paymentRecorded` is read from what is
+   * stored (a tender exists, or nothing is owing): an ON_ACCOUNT sale therefore reads `false` here, which the
+   * till (it knows it rang ON_ACCOUNT) interprets. Nothing stored for the key is a definitive 404.
+   */
+  async byKey(key: string): Promise<CounterSaleResponse> {
+    // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
+    if (!this.prisma.getTenantId()) {
+      throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
+    }
+    // A customer id no row can hold: only the tenant-wide steps of the lookup can match (the key is the
+    // identity here, not the customer).
+    const order = await this.orders.findReplayCandidateByKey(key, NO_CUSTOMER);
+    if (!order || order.fulfillPath !== FulfillPath.PICKUP) {
+      throw new NotFoundException({
+        code: API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
+        message: "No sale exists for this key",
+      });
+    }
+    const invoices = await this.readInvoices(order.id);
+    return this.respond(undefined, order, invoices, true, undefined);
+  }
+
   private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
     const unique = [...new Set(productIds)];
     const found = await this.prisma.forTenant().product.findMany({
@@ -294,7 +323,7 @@ export class CounterSaleService {
 
   /** Every figure comes from the stored invoices/payments; `change` is display-only (no money row). */
   private respond(
-    dto: CounterSaleDto,
+    payment: CounterSaleDto["payment"] | undefined,
     order: { id: string; orderNumber: string | null } | null,
     invoices: InvoiceRow[],
     replayed: boolean,
@@ -310,7 +339,7 @@ export class CounterSaleService {
     const total = roundMoney(invoices.reduce((s, i) => s + Number(i.total), 0));
     const paid = roundMoney(sumConfirmed(payments));
     const balanceDue = Math.max(0, roundMoney(total - paid));
-    const method = dto.payment.method;
+    const method = payment?.method;
     const firstTender = payments.find(isTender);
     // Recorded = nothing was asked of the till (on account / nothing owing) or a tender is STORED (a partial
     // included: its balanceDue stays open on purpose).
@@ -321,7 +350,7 @@ export class CounterSaleService {
     const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
     // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
     const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
-    const tendered = dto.payment.amount;
+    const tendered = payment?.amount;
     const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
     // Change is handed back ONLY once the STORED balance is fully covered: this call's tender against stored
     // cash is otherwise money still owed (a replay must never read an unpaid sibling's share as change).

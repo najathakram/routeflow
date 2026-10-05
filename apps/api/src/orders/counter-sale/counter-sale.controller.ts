@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
@@ -40,6 +49,18 @@ export class CounterSaleController {
       );
     }
     return key;
+  }
+
+  /**
+   * A DEFINITIVE answer about a key (the unknown-outcome rule of the till): the sale this key rang, read back
+   * from storage with `replayed: true`, or 404 COUNTER_SALE_NOT_FOUND. NOT gated by the counter capability
+   * (an answer must be possible even if the gate flipped off) and writes nothing.
+   */
+  @Get("counter-sale/by-key/:key")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  async byKey(@Param("key") rawKey: string) {
+    return this.counterSale.byKey(this.normalizeKey(rawKey));
   }
 
   @Post("counter-sale")

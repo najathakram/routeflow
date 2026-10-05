@@ -341,6 +341,11 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
+  /**
+   * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
+   * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
+   */
+  COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const;
 
