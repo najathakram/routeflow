@@ -36,7 +36,7 @@ import { Test } from "@nestjs/testing";
 import { CounterSaleService } from "./counter-sale.service";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
-import type { FulfilmentCapability } from "./capability-shape";
+import type { FulfilmentCapability } from "@routeflow/types";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";

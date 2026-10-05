@@ -3,7 +3,7 @@ import { AddonService } from "../../billing/addon.service";
 import { FeatureConfigService } from "../../billing/feature-config.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
 import { readFulfilmentCapability } from "../../billing/fulfilment-capability";
-import type { FulfilmentCapability } from "./capability-shape";
+import type { FulfilmentCapability } from "@routeflow/types";
 
 /** DI token for the reader the counter-sale gate asks "what can this tenant do?". */
 export const FULFILMENT_CAPABILITY_READER = Symbol("FULFILMENT_CAPABILITY_READER");

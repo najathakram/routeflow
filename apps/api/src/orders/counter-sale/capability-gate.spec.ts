@@ -1,4 +1,9 @@
-import { counterSaleGate, UNSET_CAPABILITY, type FulfilmentCapability } from "./capability-shape";
+import { readFileSync } from "fs";
+import { join } from "path";
+import type { FulfilmentCapability } from "@routeflow/types";
+import { deriveFulfilmentCapability } from "../../billing/fulfilment-capability";
+import * as shape from "./capability-shape";
+import { counterSaleGate } from "./capability-shape";
 import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
@@ -10,8 +15,19 @@ import {
  * "unset = today" capability, so production behaviour is unchanged (counter off).
  */
 const withCounter = (counter: FulfilmentCapability["counter"]): FulfilmentCapability => ({
-  ...UNSET_CAPABILITY,
+  ...deriveFulfilmentCapability({ mode: "unset", counterSales: "unset", fleet: false }),
   counter,
+});
+
+describe("capability-shape (one shared FulfilmentCapability, no redeclaration)", () => {
+  const src = readFileSync(join(__dirname, "capability-shape.ts"), "utf8");
+  it("does not redeclare the capability type or its methods: both come from @routeflow/types", () => {
+    expect(src).not.toMatch(/export\s+(interface|type)\s+Fulfilment(Capability|Method)\b/);
+    expect(src).toMatch(/from "@routeflow\/types"/);
+  });
+  it("keeps no hand-built UNSET_CAPABILITY: the unset answer is deriveFulfilmentCapability's", () => {
+    expect(shape).not.toHaveProperty("UNSET_CAPABILITY");
+  });
 });
 
 describe("counterSaleGate", () => {
