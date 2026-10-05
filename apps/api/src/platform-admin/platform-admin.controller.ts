@@ -741,21 +741,28 @@ export class PlatformAdminController {
     // Owner ruling (money, tier 1): a module the profile switches OFF that the tenant PAYS for is
     // switched off by the EXISTING add-on disable (this controller's own route: Stripe item
     // removal + the locked ledger update in AddonService.disableAddon, then ADDON_DISABLED audit)
-    // — never a billing row or Stripe call written here. These run FIRST: if one fails, the apply
-    // is refused with BUSINESS_PROFILE_BILLING_FAILED before any other write of the profile.
+    // — never a billing row or Stripe call written here. These run FIRST, in reverse dependency
+    // order (plan.billing is already in BILLING_DISABLE_ORDER), so a failure part-way leaves a valid
+    // configuration; the apply is then refused with BUSINESS_PROFILE_BILLING_FAILED before ANY
+    // mode/config/override write. Stripe calls cannot share one transaction (lead ruling).
     const alreadyDisabled: string[] = [];
     for (const b of resolved.plan.billing) {
       try {
         await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
       } catch (err) {
+        // Lead ruling: name EXACTLY which add-ons were already switched off with billing stopped,
+        // so the admin can retry (a retry re-plans and runs only the remaining disables).
+        const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
+        const done = alreadyDisabled.map(label).join(", ") || "none";
         throw new ServiceUnavailableException({
           statusCode: 503,
           code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
           featureKey: b.featureKey,
           alreadyDisabled,
           message:
-            "The profile was not applied: an add-on's billing could not be stopped. Retry; " +
-            "nothing else was changed.",
+            `The profile was not applied: billing for ${label(b.featureKey)} could not be ` +
+            `stopped. Already switched off with billing stopped: ${done}. Nothing else was ` +
+            "changed; retry to finish.",
           cause: (err as Error)?.message,
         });
       }

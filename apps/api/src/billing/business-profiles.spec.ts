@@ -9,6 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  BILLING_DISABLE_ORDER,
   BUSINESS_PROFILES,
   PROFILE_MODULE_KEYS,
   businessProfileByKey,
@@ -351,6 +352,29 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
     const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
     expect(plan.overrides[0].action).toBe("skip");
     expect(plan.billing).toEqual([{ featureKey: "recurring_routes", action: "disable" }]);
+  });
+
+  it("LEAD RULING: paid add-ons are disabled in REVERSE dependency order (driver payments first, the last fleet key last)", () => {
+    expect([...BILLING_DISABLE_ORDER]).toEqual([
+      "driver_payments",
+      "order_delivery",
+      "recurring_routes",
+    ]);
+    const dp = FEATURE_REGISTRY.find((f) => f.key === "driver_payments")!;
+    // driver_payments depends on the fleet keys, so it must go before any of them
+    expect(dp.requires?.anyOf).toEqual(
+      expect.arrayContaining(["recurring_routes", "order_delivery"]),
+    );
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), {
+      ...unsetTenant(),
+      holds: { recurring_routes: true, order_delivery: true, driver_payments: true },
+      paying: new Set(["recurring_routes", "order_delivery", "driver_payments"]),
+    });
+    expect(plan.billing.map((b) => b.featureKey)).toEqual([
+      "driver_payments",
+      "order_delivery",
+      "recurring_routes",
+    ]);
   });
 
   it("a profile that turns the fleet ON never disables billing", () => {

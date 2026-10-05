@@ -49,7 +49,9 @@ export interface BusinessProfilePlan {
   /**
    * Owner ruling (money): a module the profile switches OFF that the tenant currently PAYS for
    * (an add-on row with a Stripe item or a price) is switched off by disabling the add-on through
-   * the existing disable, which stops its billing. Runs FIRST at confirm; `[]` for comps.
+   * the existing disable, which stops its billing. Runs FIRST at confirm, in reverse dependency
+   * order (driver_payments → order_delivery → recurring_routes), before any mode/config write;
+   * `[]` for comps.
    */
   billing: { featureKey: string; action: "disable" }[];
 }

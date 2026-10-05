@@ -19,6 +19,14 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  */
 export const PROFILE_MODULE_KEYS = [...FLEET_KEYS, "driver_payments"] as const;
 
+/**
+ * Lead ruling (all-or-nothing as far as Stripe allows): paid add-ons are disabled in REVERSE
+ * dependency order — `driver_payments` (which requires anyOf the fleet keys) first, then the fleet
+ * keys in reverse — so a failure part-way leaves a valid configuration: driver payments is never
+ * on without a fleet key, and the last fleet key goes only after everything that depends on it.
+ */
+export const BILLING_DISABLE_ORDER = ["driver_payments", ...[...FLEET_KEYS].reverse()] as const;
+
 export interface BusinessProfileDef {
   key: string;
   label: string;
@@ -118,7 +126,7 @@ export function planBusinessProfile(
 ): BusinessProfilePlan {
   const effect: "GRANT" | "DENY" = def.fleet ? "GRANT" : "DENY";
   const opposite = def.fleet ? "DENY" : "GRANT";
-  const disables = def.fleet ? [] : PROFILE_MODULE_KEYS.filter((k) => state.paying?.has(k));
+  const disables = def.fleet ? [] : BILLING_DISABLE_ORDER.filter((k) => state.paying?.has(k));
   const overrides = PROFILE_MODULE_KEYS.map((featureKey) => {
     const active = state.overrides.get(featureKey);
     const held = disables.includes(featureKey) ? false : (state.holds[featureKey] ?? false);
