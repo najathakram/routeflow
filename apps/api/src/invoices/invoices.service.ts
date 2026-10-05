@@ -118,6 +118,7 @@ import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-a
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
+  applyBulkPriceAdjustment,
   assertAdjustedTotalsSane,
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
@@ -5819,7 +5820,11 @@ export class InvoicesService {
     const productIdMap = new Map(invoice.items.map((li) => [li.id, li.productId]));
 
     // Helper: update items on a single invoice and recalculate totals
-    const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
+    const applyToInvoice = async (
+      inv: typeof invoice,
+      localPriceMap: Map<string, number>,
+      onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
+    ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
@@ -5862,6 +5867,7 @@ export class InvoicesService {
           resync: (...a) => this.resyncInvoiceLedger(...a),
         });
       });
+      onCommitted?.();
       // Sales agents & commissions: still OUTSIDE the transaction above on purpose (B662 wrapped only
       // the invoice + ledger writes). Pass no tx; the Safe wrapper opens its own transaction, and the
       // hourly reconciliation cron heals the gap if the process dies mid-loop.
@@ -5908,7 +5914,8 @@ export class InvoicesService {
       }
       // B1031: judge every target BEFORE writing any, so a bad line on invoice N never leaves 1..N-1 re-priced.
       preflightBulkPriceAdjustment(plans, isTaxExempt);
-      for (const { inv, localMap } of plans) await applyToInvoice(inv, localMap);
+      // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
+      await applyBulkPriceAdjustment(plans, applyToInvoice);
     }
 
     return this.prisma.forTenant().invoice.findUnique({

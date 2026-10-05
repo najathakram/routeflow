@@ -13,6 +13,8 @@ jest.mock("../common/msrp", () => ({ loadMsrpMap: jest.fn().mockResolvedValue(ne
 
 import { Test } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { InvoicesService } from "./invoices.service";
 import { buildPriceAdjustmentUpdates } from "./price-adjustment-ledger";
 import { PrismaService } from "../prisma/prisma.service";
@@ -197,7 +199,7 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
       sinceDate: "2026-01-01",
     });
     await expect(run).rejects.toThrow(
-      "Invoice INV-inv-2: Invoice discount (30) cannot exceed subtotal (20).",
+      "Invoice INV-inv-2: Invoice discount ($30.00) cannot exceed subtotal ($20.00).",
     );
     await expect(run).rejects.toMatchObject({ status: 400 });
     noWrites();
@@ -223,7 +225,7 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
       items: [{ itemId: "a1", newUnitPrice: 20 }],
       scope: "SINGLE",
     });
-    await expect(run).rejects.toThrow("Invoice discount (30) cannot exceed subtotal (20).");
+    await expect(run).rejects.toThrow("Invoice discount ($30.00) cannot exceed subtotal ($20.00).");
     noWrites();
   });
 
@@ -261,7 +263,7 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
       items: [{ itemId: "a1", newUnitPrice: 5 }],
       scope: "SINGLE",
     });
-    await expect(run).rejects.toThrow("Invoice discount (80) cannot exceed subtotal (5).");
+    await expect(run).rejects.toThrow("Invoice discount ($80.00) cannot exceed subtotal ($5.00).");
     noWrites();
   });
 
@@ -286,5 +288,128 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
       sinceDate: "2026-01-01",
     });
     expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(2);
+  });
+
+  // SA-651 MED-1 (B1031): all-or-nothing is judged at PRE-FLIGHT; each invoice's tx RE-JUDGES under its own
+  // locks. A race between the two can refuse invoice N after 1..N-1 committed. That must name the invoice
+  // ("Invoice X:") and return a STRUCTURED partial result (what committed, what was refused, what was never
+  // attempted), never a bare error that hides what committed. Semantics: STOP at the first tx refusal.
+  describe("bulk race between the pre-flight and the per-invoice tx (SA-651 MED-1)", () => {
+    const batch = () => {
+      const mk = (n: number, over: any = {}) =>
+        invoice(`inv-${n}`, InvoiceStatus.SENT, [plain(`l${n}`, { productId: "prod-x" })], over);
+      return [mk(1), mk(2, { discount: 5 }), mk(3)];
+    };
+    const run = () =>
+      service.applyPriceAdjustment("inv-1", {
+        items: [{ itemId: "l1", newUnitPrice: 20 }],
+        scope: "ALL_CUSTOMER_SINCE",
+        sinceDate: "2026-01-01",
+      });
+    /** The pre-flight reads `batch()` (findMany); invoice 2's tx re-read returns `live2` instead. */
+    const arrangeRace = (live2: any) => {
+      const [one, two, three] = batch();
+      arrange({ "inv-1": one, "inv-2": live2(two), "inv-3": three });
+      prisma.invoice.findMany.mockResolvedValue([one, two, three]);
+    };
+    const caught = async () => {
+      const err: any = await run().then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).not.toBeNull();
+      return err;
+    };
+
+    it("(o) invoice 2 of 3 became PAID before its tx: 409 PARTIAL lists applied [1], refused 2 with its prefix, skipped [3]", async () => {
+      arrangeRace((two: any) => ({ ...two, status: InvoiceStatus.PAID }));
+      const err = await caught();
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toEqual({
+        code: API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL,
+        message: "1 of 3 invoices were updated; invoice INV-inv-2 changed while saving — review it",
+        applied: ["inv-1"],
+        refused: {
+          invoiceId: "inv-2",
+          code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+          message:
+            "Invoice INV-inv-2: The invoice became PAID while the price was being adjusted. Issue a credit note instead.",
+        },
+        skipped: ["inv-3"],
+      });
+      // STOP semantics: invoice 1 committed (its line + totals + commission sync), nothing for 2 or 3.
+      expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.update.mock.calls[0][0].where).toEqual({ id: "inv-1" });
+      expect(commission.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
+      expect(commission.syncInvoiceCommissionSafe).toHaveBeenCalledWith("inv-1");
+    });
+
+    it("(p) the tx re-judge of the totals refuses invoice 2 (its discount grew after the pre-flight): partial, code MONEY_INVARIANT, prefixed copy", async () => {
+      arrangeRace((two: any) => ({ ...two, discount: 30 }));
+      const err = await caught();
+      expect(err.getStatus()).toBe(409);
+      const body = err.getResponse();
+      expect(body.code).toBe(API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL);
+      expect(body.applied).toEqual(["inv-1"]);
+      expect(body.refused).toEqual({
+        invoiceId: "inv-2",
+        code: API_ERROR_CODES.MONEY_INVARIANT,
+        message: "Invoice INV-inv-2: Invoice discount ($30.00) cannot exceed subtotal ($20.00).",
+      });
+      expect(body.skipped).toEqual(["inv-3"]);
+      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("(q) the LAST invoice refusing lists nothing as skipped", async () => {
+      const [one, two, three] = batch();
+      arrange({ "inv-1": one, "inv-2": two, "inv-3": { ...three, status: InvoiceStatus.PAID } });
+      prisma.invoice.findMany.mockResolvedValue([one, two, three]);
+      const body = (await caught()).getResponse();
+      expect(body.applied).toEqual(["inv-1", "inv-2"]);
+      expect(body.refused.invoiceId).toBe("inv-3");
+      expect(body.skipped).toEqual([]);
+      expect(body.message).toBe(
+        "2 of 3 invoices were updated; invoice INV-inv-3 changed while saving — review it",
+      );
+    });
+
+    it("(r) the FIRST invoice of the run refusing in its tx committed nothing: a plain prefixed 409, no partial body", async () => {
+      const [one, two, three] = batch();
+      arrange({ "inv-1": one, "inv-2": { ...two, status: InvoiceStatus.PAID }, "inv-3": three });
+      prisma.invoice.findMany.mockResolvedValue([two, one, three]); // inv-2 runs first
+      const err = await caught();
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toBe(
+        "Invoice INV-inv-2: The invoice became PAID while the price was being adjusted. Issue a credit note instead.",
+      );
+      expect(err.getResponse()).not.toHaveProperty("applied");
+      noWrites();
+    });
+
+    it("(s) a fault that is not a refusal (the database failing) is rethrown as is, never rewritten as a refusal", async () => {
+      const [one, two, three] = batch();
+      arrange({ "inv-1": one, "inv-2": two, "inv-3": three });
+      prisma.invoice.findMany.mockResolvedValue([one, two, three]);
+      const boom = new Error("connection reset");
+      prisma.invoiceItem.update.mockResolvedValueOnce({}).mockRejectedValueOnce(boom);
+      await expect(run()).rejects.toBe(boom);
+    });
+
+    it("(t) SINGLE scope keeps its plain, unprefixed refusal (the prefix and the partial body are bulk-only)", async () => {
+      arrange({
+        "inv-1": invoice("inv-1", InvoiceStatus.SENT, [plain("a1")], { discount: 30 }),
+      });
+      await expect(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "a1", newUnitPrice: 20 }],
+          scope: "SINGLE",
+        }),
+      ).rejects.toMatchObject({
+        message: "Invoice discount ($30.00) cannot exceed subtotal ($20.00).",
+        status: 400,
+      });
+    });
   });
 });

@@ -7,6 +7,7 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
@@ -155,15 +156,43 @@ export function assertAdjustedTotalsSane(
   assertInvoiceTotalsSane({ discount, subtotal, total }, storedInvoiceTotals(inv));
 }
 
+/** A bulk refusal: the re-judge's own 400 (a bad line or totals) or 409 (the invoice moved under its lock). */
+type BulkRefusal = BadRequestException | ConflictException;
+const isBulkRefusal = (e: unknown): e is BulkRefusal =>
+  e instanceof BadRequestException || e instanceof ConflictException;
+
+type BulkTarget = { id: string; invoiceNumber?: string | null };
+const invoiceLabel = (inv: BulkTarget): string => inv.invoiceNumber || inv.id;
+
+/**
+ * SA-651 MED-1 (a): the refusal of one invoice inside a bulk run, same status and same `code` (when it carries
+ * one), its message prefixed "Invoice X:" so the operator can see WHICH of the batch it was.
+ */
+function refusalNamingInvoice(inv: BulkTarget, e: BulkRefusal): BulkRefusal {
+  const message = `Invoice ${invoiceLabel(inv)}: ${e.message}`;
+  const body = e.getResponse();
+  const code = typeof body === "object" ? (body as { code?: string }).code : undefined;
+  const response = code ? { code, message } : message;
+  return e instanceof ConflictException
+    ? new ConflictException(response)
+    : new BadRequestException(response);
+}
+
 /**
  * B1031: the bulk scope (ALL_CUSTOMER_SINCE) re-prices several invoices, each in its OWN transaction, so a
  * refusal found on invoice N would leave invoices 1..N-1 already re-priced. Judge every target first, from
- * the lines as read, writing nothing; a refusal names the invoice. The in-transaction build re-judges the
- * lines re-read under the Invoice lock, so a race can still refuse, never store a negative line.
+ * the lines as read, writing nothing; a refusal names the invoice.
+ *
+ * ALL-OR-NOTHING IS JUDGED HERE, AT PRE-FLIGHT; THE TX RE-JUDGES PER INVOICE (SA-651 MED-1). The pre-flight
+ * holds no lock (a lock across a whole batch is not worth its footprint), so each invoice's tx re-judges the
+ * lines it re-reads under that invoice's own Invoice lock: every invoice stays sane, a race can still refuse,
+ * never store a negative line. What a race can leave is a PARTIAL batch (1..N-1 committed, N refused), which
+ * `applyBulkPriceAdjustment` reports as a structured result, never as a bare error.
  */
 export function preflightBulkPriceAdjustment(
   plans: ReadonlyArray<{
     inv: {
+      id: string;
       invoiceNumber?: string | null;
       items: any[];
       discount?: unknown;
@@ -186,10 +215,58 @@ export function preflightBulkPriceAdjustment(
       });
       assertAdjustedTotalsSane(inv, updates);
     } catch (e) {
-      if (e instanceof BadRequestException) {
-        throw new BadRequestException(`Invoice ${inv.invoiceNumber ?? ""}: ${e.message}`.trim());
-      }
-      throw e;
+      throw isBulkRefusal(e) ? refusalNamingInvoice(inv, e) : e;
+    }
+  }
+}
+
+/**
+ * SA-651 MED-1 (b): the bulk run itself, one invoice at a time after the pre-flight passed. `apply` re-prices
+ * ONE invoice and calls `onCommitted` the moment its transaction has committed (before the post-commit
+ * commission and order syncs), so only a refusal from the tx re-judge or the Invoice lock is treated as one.
+ *
+ * Semantics: STOP at the first tx refusal. A refusal here means the invoices changed since the pre-flight
+ * read them, so the premise of the rest of the batch is gone; nothing further is written. Re-running the
+ * same bulk request later is safe (a re-price to the same price re-derives the same subtotal) and finishes
+ * the skipped invoices.
+ *   - nothing committed yet: the refusal is rethrown as is, named "Invoice X:" (the batch is still
+ *     all-or-nothing);
+ *   - 1..N-1 committed: a 409 `PRICE_ADJUSTMENT_PARTIAL` whose body lists `applied` (invoice ids),
+ *     `refused` ({invoiceId, code, message}) and `skipped` (ids never attempted), with fixed copy.
+ * A fault that is not a refusal (the database failing) propagates unchanged.
+ */
+export async function applyBulkPriceAdjustment<T extends BulkTarget>(
+  plans: ReadonlyArray<{ inv: T; localMap: Map<string, number> }>,
+  apply: (inv: T, localMap: Map<string, number>, onCommitted: () => void) => Promise<void>,
+): Promise<void> {
+  const applied: string[] = [];
+  for (const [index, { inv, localMap }] of plans.entries()) {
+    let committed = false;
+    try {
+      await apply(inv, localMap, () => {
+        committed = true;
+        applied.push(inv.id);
+      });
+    } catch (e) {
+      if (committed || !isBulkRefusal(e)) throw e;
+      const refusal = refusalNamingInvoice(inv, e);
+      if (applied.length === 0) throw refusal;
+      const body = refusal.getResponse() as { code?: string };
+      throw new ConflictException({
+        code: API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL,
+        message: `${applied.length} of ${plans.length} invoices were updated; invoice ${invoiceLabel(inv)} changed while saving — review it`,
+        applied,
+        refused: {
+          invoiceId: inv.id,
+          code:
+            body.code ??
+            (e instanceof ConflictException
+              ? API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY
+              : API_ERROR_CODES.MONEY_INVARIANT),
+          message: refusal.message,
+        },
+        skipped: plans.slice(index + 1).map((p) => p.inv.id),
+      });
     }
   }
 }
