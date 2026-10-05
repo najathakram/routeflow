@@ -78,6 +78,7 @@ import * as unitAware from "./unit-aware-guard";
 import {
   findActiveOrderImpl,
   sameFulfilPathAsWinner,
+  unshipped,
   type MergeSearchOpts,
 } from "./merge-candidates";
 import * as cancelledLines from "./order-edit-cancelled";
@@ -720,7 +721,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
-          const pendingOrders = sameFulfilPathAsWinner(pending); // a SHIP order never folds into a ROUTE one
+          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending)); // a SHIP order never folds into a ROUTE one
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -978,7 +979,7 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
-          const orders = sameFulfilPathAsWinner(found); // never fold a SHIP order into a ROUTE one
+          const orders = sameFulfilPathAsWinner(unshipped(found)); // never fold a SHIP order into a ROUTE one
           if (orders.length <= 1) return orders[0] ?? null;
           unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),

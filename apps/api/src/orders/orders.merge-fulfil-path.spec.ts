@@ -130,4 +130,25 @@ describe("OrdersService merge entry points", () => {
     await h.service.findActiveOrder("cust-1");
     expect(h.prisma.order.findFirst.mock.calls[2][0].where).not.toHaveProperty("fulfillPath");
   });
+
+  it("X1: an already-shipped order is NEVER merged away (a SHIP-into-SHIP fold would delete it and its shippedAt)", async () => {
+    const shipped = {
+      ...order("ship-1", FulfillPath.SHIP, true),
+      shippedAt: new Date("2026-10-01"),
+    };
+    h.prisma.order.findMany.mockResolvedValue([order("ship-2", FulfillPath.SHIP), shipped]);
+    await h.service.mergeAllPendingForCustomer("cust-1");
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+
+    h.prisma.order.findMany.mockResolvedValue([order("ship-3", FulfillPath.SHIP, true), shipped]);
+    await h.service.forceConsolidateCustomer("cust-1");
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(h.prisma.order.delete).not.toHaveBeenCalled();
+  });
+
+  it("X1: the merge-target search excludes shipped orders", async () => {
+    h.prisma.order.findFirst.mockResolvedValue(null);
+    await h.service.findActiveOrder("cust-1", { forMerge: true });
+    expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ shippedAt: null });
+  });
 });
