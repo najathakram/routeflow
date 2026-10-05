@@ -2,7 +2,6 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
-import { keepPreviousData } from "@tanstack/react-query";
 import type {
   PriceHistoryAggregate,
   PriceHistoryReferences,
@@ -60,8 +59,8 @@ export function usePriceHistory(
     enabled: enabled && !!customerId && !!productId,
     staleTime: 30_000,
     retry: false,
-    // Switching to "All customers" keeps the rows on screen while the aggregate loads.
-    placeholderData: keepPreviousData,
+    // NO placeholderData: it ignores `enabled`, so a changed customer would keep showing the previous
+    // customer's prices (and their "use this price" chips) while the new query is pending or disabled.
   });
 }
 

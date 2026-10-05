@@ -171,6 +171,25 @@ describe("placement", () => {
 });
 
 describe("references, compare, margin, markers", () => {
+  it("S1: a FAILED comparison keeps this customer's rows and shows the error inline on the toggle", async () => {
+    mockGet.mockImplementation((_url: string, cfg?: { params?: { compare?: string } }) =>
+      cfg?.params?.compare === "all"
+        ? Promise.reject(new Error("429"))
+        : Promise.resolve({ data: base({ aggregate: undefined }) }),
+    );
+    renderBtn();
+    fireEvent.click(screen.getByRole("button", { name: "Price history" }));
+    const dialog = await screen.findByRole("dialog", { name: "Price history" });
+    await within(dialog).findByText("INV-D");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "All customers" }));
+    const panel = await within(dialog).findByTestId("compare-panel");
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(
+      /couldn.t load the comparison/i,
+    );
+    expect(within(dialog).getByText("INV-D")).toBeInTheDocument(); // the rows did not go away
+    expect(within(dialog).queryByText(/couldn.t load price history/i)).not.toBeInTheDocument();
+  });
+
   it("header shows list, their tier price and the change hint", async () => {
     renderBtn();
     fireEvent.click(screen.getByRole("button", { name: "Price history" }));
