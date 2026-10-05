@@ -182,7 +182,7 @@ function make(opts: Opts = {}) {
               prorationItem({
                 amount: 7777,
                 date: NOW_S() - 86400,
-                item: opts.addonRow.stripeItemId,
+                item: String(opts.addonRow.stripeItemId),
               }),
             ]
           : [])),

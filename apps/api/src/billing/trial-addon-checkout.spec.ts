@@ -68,7 +68,7 @@ const addonRow = (sku: string, o: RowOpts = {}) => ({
   id: `a${++seq}`,
   tenantId: "t1",
   addonKey: o.addonKey ?? sku,
-  sku,
+  sku: sku as string | null,
   quantity: o.qty ?? 1,
   active: o.active ?? true,
   priceSnapshot: o.priceSnapshot === undefined ? 0 : o.priceSnapshot,
@@ -391,11 +391,6 @@ function make(opts: Opts = {}) {
       sku: c[2]?.sku,
     }));
   const ledgerSum = () => ledger().reduce((s: number, e: any) => s + Number(e.delta ?? 0), 0);
-  const stripeNoCalls = () =>
-    expect(client.checkout.sessions.create).not.toHaveBeenCalled() ||
-    expect(stripe.getSubscription).not.toHaveBeenCalled() ||
-    expect(stripe.createCustomer).not.toHaveBeenCalled();
-
   return {
     billing,
     mutations,
@@ -413,7 +408,6 @@ function make(opts: Opts = {}) {
     completed,
     ledger,
     ledgerSum,
-    stripeNoCalls,
   };
 }
 
@@ -1040,7 +1034,7 @@ describe("OPEN QUESTION (SA ruling): admin-granted self-serve add-ons on a trial
   });
 
   it("PENDING-SA-RULING (free comp): the row the admin path writes for an UNPRICED FORECASTING grant has sku null and is NOT billed (invisible to the checkout)", async () => {
-    const granted = { ...addonRow("FORECASTING"), sku: null as string | null }; // addonKey only
+    const granted = { ...addonRow("FORECASTING"), sku: null }; // addonKey only
     const h = make({ status: "TRIAL", rows: [granted] });
 
     await h.billing.createCheckoutSession("t1", "month");
