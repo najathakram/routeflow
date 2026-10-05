@@ -67,14 +67,21 @@ function makeBarrier() {
   };
 }
 
-/** `tx`, except its FIRST `creditNote.findUnique` waits at `barrier` right after reading. */
-function readThenWait(tx: any, barrier: ReturnType<typeof makeBarrier>) {
+/**
+ * `tx`, except its FIRST `creditNote.<verb>` read (findUnique for a settle, findMany for the
+ * send-time sweep) waits at `barrier` right after reading.
+ */
+function readThenWait(
+  tx: any,
+  barrier: ReturnType<typeof makeBarrier>,
+  verb: "findUnique" | "findMany" = "findUnique",
+) {
   let waited = false;
   const delegate = tx.creditNote;
   const creditNote = new Proxy(delegate, {
     get(target, prop) {
       const value = target[prop];
-      if (prop === "findUnique") {
+      if (prop === verb) {
         return async (args: unknown) => {
           const row = await value.call(target, args);
           if (!waited) {
@@ -144,6 +151,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
       await prisma.creditNoteApplyBlock.deleteMany(where).catch(swallow);
       await prisma.invoicePayment.deleteMany(where).catch(swallow);
       await prisma.orderCreditNote.deleteMany(where).catch(swallow);
+      await prisma.tenantConfig.deleteMany(where).catch(swallow);
       await prisma.creditNoteItem.deleteMany(where).catch(swallow);
       await prisma.creditNote.deleteMany(where).catch(swallow);
       await prisma.auditLog.deleteMany(where).catch(swallow);
@@ -232,6 +240,46 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     );
   }
 
+  /** The sweep (send-time oldest-first auto-apply) in its own default-isolation tx, as markSent runs it. */
+  function sweep(
+    tenantId: string,
+    invoiceId: string,
+    customerId: string,
+    barrier?: ReturnType<typeof makeBarrier>,
+  ) {
+    return tenantCtx.run(tenantId, () =>
+      prisma.tenantTransaction(
+        (tx) =>
+          creditNotes.autoApplyOldestCreditsInTx(
+            barrier ? readThenWait(tx, barrier, "findMany") : tx,
+            invoiceId,
+            customerId,
+          ),
+        { timeout: 15_000 },
+      ),
+    );
+  }
+
+  /** What a customer would see on an invoice: its status and what is still owed after live payments. */
+  async function invoiceStateOf(invoiceId: string) {
+    const inv = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { payments: true },
+    });
+    const paid =
+      Math.round(
+        inv!.payments
+          .filter((p) => p.status !== "VOID")
+          .reduce((sum, p) => sum + Number(p.amount), 0) * 100,
+      ) / 100;
+    return {
+      status: inv!.status as string,
+      total: Number(inv!.total),
+      paid,
+      balance: Math.round((Number(inv!.total) - paid) * 100) / 100,
+    };
+  }
+
   async function ledgerOf(creditNoteId: string) {
     const note = await prisma.creditNote.findUnique({ where: { id: creditNoteId } });
     const pays = await prisma.invoicePayment.findMany({
@@ -277,6 +325,13 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     expect(ledger.amountUsed).toBe(100);
     expect(ledger.amountUsed).toBe(ledger.paid);
     expect([...ledger.byInvoice.values()].sort()).toEqual([100]); // one invoice, not both
+    // The invoice that LOST the race is still unpaid: not PAID, no credit on it, balance unchanged.
+    const [winnerId] = [...ledger.byInvoice.keys()];
+    const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
+    expect(await invoiceStateOf(winnerId)).toMatchObject({ status: "PAID", paid: 100, balance: 0 });
+    const loser = await invoiceStateOf(loserId);
+    expect(loser.status).not.toBe("PAID");
+    expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
   }, 60_000);
 
   it("a shrink-restore racing an apply of the same note loses neither write", async () => {
@@ -313,6 +368,47 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     expect(ledger.byInvoice.get(a.invoiceId)).toBe(40); // A shrank to $40 of credit
     expect(ledger.paid).toBeLessThanOrEqual(100);
     expect(ledger.amountUsed).toBe(ledger.paid); // the wallet agrees with the invoices
+    // B takes whatever the note had left when it ran ($40 if it went before A's restore, $60
+    // after) but never the whole $100 invoice, and it is never reported PAID.
+    const stateB = await invoiceStateOf(b.invoiceId);
+    expect(stateB.status).not.toBe("PAID");
+    expect(stateB.paid).toBeLessThanOrEqual(60);
+    expect(stateB.balance).toBe(100 - stateB.paid);
+    expect(stateB.balance).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("a send-time sweep racing a settle of the same note spends it once; the loser stays unpaid", async () => {
+    const { tenantId, customerId } = await seedTenant("sweep");
+    await prisma.tenantConfig.create({ data: { tenantId, creditAutoApplyOnSend: true } });
+    const note = await tenantCtx.run(tenantId, () =>
+      creditNotes.create({ customerId, amount: 100 } as any),
+    );
+    // Order A carries an intent for the note (settle path); invoice B has none (sweep path).
+    const a = await seedOrderWithInvoice(tenantId, customerId, 100);
+    const b = await seedOrderWithInvoice(tenantId, customerId, 100);
+    await intend(tenantId, a.orderId, customerId, note.id);
+
+    const barrier = makeBarrier();
+    const results = await Promise.allSettled([
+      settle(tenantId, a.orderId, barrier),
+      sweep(tenantId, b.invoiceId, customerId, barrier),
+    ]);
+
+    const ledger = await ledgerOf(note.id);
+    console.log(
+      `B1052 sweep-vs-settle: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
+        `appliedOnInvoices=${ledger.paid} settles=${results.map((r) => r.status).join(",")}`,
+    );
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(ledger.paid).toBe(100); // never 200
+    expect(ledger.amountUsed).toBe(ledger.paid);
+    expect([...ledger.byInvoice.values()]).toEqual([100]); // exactly one invoice got the note
+    const [winnerId] = [...ledger.byInvoice.keys()];
+    const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
+    expect(await invoiceStateOf(winnerId)).toMatchObject({ status: "PAID", paid: 100, balance: 0 });
+    const loser = await invoiceStateOf(loserId);
+    expect(loser.status).not.toBe("PAID");
+    expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
   }, 60_000);
 
   it("sequential settles (today's safe case) still spend it once", async () => {
