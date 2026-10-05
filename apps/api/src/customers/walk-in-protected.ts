@@ -15,3 +15,15 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
     });
   }
 }
+
+/**
+ * The customer list and its CSV export never show the walk-in customer: it is a system row, chosen at the
+ * counter by the `walkIn` flag, never from a list. `isWalkIn` is nullable and every pre-existing row is NULL,
+ * so the filter is the explicit null-or-false (Prisma's `not: true` drops NULL rows) and rides in `AND`,
+ * because `OR` is already the search clause's key. Mutates and returns `where`.
+ */
+export function excludeWalkIn<T extends { AND?: unknown }>(where: T): T {
+  const and = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : [];
+  where.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
+  return where;
+}

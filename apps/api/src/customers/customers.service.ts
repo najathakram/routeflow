@@ -1,4 +1,4 @@
-import { assertNotWalkIn } from "./walk-in-protected";
+import { assertNotWalkIn, excludeWalkIn } from "./walk-in-protected";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
@@ -209,7 +209,7 @@ export class CustomersService {
     if (query.unassigned === "1") {
       where.routeStops = { none: { route: SCHEDULED_ROUTE_KIND_WHERE } };
     }
-    return where;
+    return excludeWalkIn(where);
   }
 
   async findAll(query: ListCustomersDto) {
@@ -2888,6 +2888,7 @@ export class CustomersService {
       include: { user: { select: { email: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    assertNotWalkIn(customer);
 
     // Use override email first, then customer's own email, then User's login email.
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —

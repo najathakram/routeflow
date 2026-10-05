@@ -33,6 +33,7 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
         update: jest.fn(),
       },
       user: { update: jest.fn() },
+      customerLink: { findFirst: jest.fn(async () => null) },
       order: { count: jest.fn(async () => 0), updateMany: jest.fn() },
       invoice: {
         count: jest.fn(async () => 0),
@@ -41,6 +42,8 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
       },
     };
     prisma = {
+      customer: { findFirst: jest.fn(async ({ where }: any) => rows[where.id] ?? null) },
+      customerLink: scoped.customerLink,
       forTenant: () => scoped,
       scoped,
       getTenantId: () => "t1",
@@ -114,5 +117,39 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
   it("delete-all skips it: a tenant holding only the walk-in deletes nothing", async () => {
     await expect(service.deleteAllCustomers()).resolves.toEqual({ deleted: 0 });
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("a portal invite (and a resend) for it is refused before anything is written", async () => {
+    await protectedError(
+      service.sendPortalInvite(WALK_IN.id, { method: "EMAIL", overrideEmail: "a@b.co" }, "t1"),
+    );
+    prisma.customerLink.findFirst.mockResolvedValue({ status: "INVITED", inviteMethod: "EMAIL" });
+    await protectedError(service.resendPortalInvite(WALK_IN.id, "t1"));
+  });
+
+  describe("hidden from the customer list and export by default", () => {
+    // OR is the search clause's key: the walk-in filter must not collide with it.
+    const keepsNullAndFalse = (where: any) => {
+      const clause = (where.AND ?? []).find((c: any) => Array.isArray(c.OR));
+      expect(clause).toEqual({ OR: [{ isWalkIn: null }, { isWalkIn: false }] });
+    };
+
+    it("findAll's where (page and count) excludes isWalkIn=true but keeps NULL rows, alongside a search", async () => {
+      prisma.scoped.customer.findMany.mockResolvedValue([]);
+      prisma.scoped.customer.count = jest.fn(async () => 0);
+      prisma.scoped.invoice.findMany = jest.fn(async () => []);
+      prisma.scoped.advancePayment = { findMany: jest.fn(async () => []) };
+      await service.findAll({ page: 1, limit: 20, search: "walk" } as never);
+      const where = prisma.scoped.customer.findMany.mock.calls[0][0].where;
+      keepsNullAndFalse(where);
+      expect(where.OR).toBeDefined(); // the search clause survives
+      keepsNullAndFalse(prisma.scoped.customer.count.mock.calls[0][0].where);
+    });
+
+    it("the CSV export uses the same where", async () => {
+      prisma.scoped.customer.findMany.mockResolvedValue([]);
+      await service.exportCustomers({} as never).catch(() => undefined);
+      keepsNullAndFalse(prisma.scoped.customer.findMany.mock.calls[0][0].where);
+    });
   });
 });
