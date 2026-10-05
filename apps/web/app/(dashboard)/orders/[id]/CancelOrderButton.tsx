@@ -3,6 +3,7 @@
 import * as React from "react";
 import { XCircle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
+import type { OrderCancelBlockedReason } from "@routeflow/types";
 
 /** Fixed copy for a cancel the server refuses (ORDER_WITH_CARRIER_NO_CANCEL): same words as the 409. */
 export const WITH_CARRIER_COPY =
@@ -17,7 +18,7 @@ export function CancelOrderButton({
   blockedReason,
   onClick,
 }: {
-  blockedReason?: "WITH_CARRIER" | null;
+  blockedReason?: OrderCancelBlockedReason | null;
   onClick: () => void;
 }) {
   if (blockedReason === "WITH_CARRIER") {
