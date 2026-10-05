@@ -24,6 +24,7 @@ import {
   PROFILE_MODULE_KEYS,
   businessProfileByKey,
   describeBusinessProfilePlan,
+  describeBusinessProfileSections,
   planBusinessProfile,
   postApplyViolations,
   toBusinessProfileSummary,
@@ -165,6 +166,7 @@ export class BusinessProfileService {
       profile: resolved.profile.key as BusinessProfilePreviewResponse["profile"],
       plan: resolved.plan,
       summary: resolved.summary,
+      changes: describeBusinessProfileSections(resolved.plan).changes,
       planFingerprint: planFingerprint(resolved.plan),
     };
   }

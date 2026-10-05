@@ -192,13 +192,27 @@ function modeLabel(key: string, mode: string): string {
  * modes → denies); skips say nothing.
  */
 export function describeBusinessProfilePlan(plan: BusinessProfilePlan): string[] {
+  const { billing, changes } = describeBusinessProfileSections(plan);
+  return [...billing, ...changes];
+}
+
+/**
+ * The plan in plain English, split: `billing` (one line per `plan.billing` entry, in its order) and
+ * `changes` (everything else), so a client never has to slice `summary` by position (#3220 review).
+ * A grant is a comp: it adds no charge, and says so.
+ */
+export function describeBusinessProfileSections(plan: BusinessProfilePlan): {
+  billing: string[];
+  changes: string[];
+} {
   const labelOf = (key: string) => registryRow(key)?.label ?? key;
   const overrideLine = (o: BusinessProfilePlan["overrides"][number]) => {
-    const verb = o.effect === "GRANT" ? "Turn on" : "Turn off";
     const replaced = o.effect === "GRANT" ? "off" : "on";
-    return o.action === "replace"
-      ? `${verb} ${labelOf(o.featureKey)} (replaces the current "${replaced}" override)`
-      : `${verb} ${labelOf(o.featureKey)}`;
+    const base =
+      o.effect === "GRANT"
+        ? `Turn on ${labelOf(o.featureKey)}: turned on free (comp), no charge added`
+        : `Turn off ${labelOf(o.featureKey)}`;
+    return o.action === "replace" ? `${base} (replaces the current "${replaced}" override)` : base;
   };
   // Owner ruling (money): a paid module is switched off by disabling its add-on, which stops its
   // billing — say exactly that.
@@ -216,5 +230,5 @@ export function describeBusinessProfilePlan(plan: BusinessProfilePlan): string[]
   const modes = plan.modes.map(
     (m) => `${labelOf(m.key)}: ${modeLabel(m.key, m.from)} → ${modeLabel(m.key, m.to)}`,
   );
-  return [...billing, ...grants, ...modes, ...denies];
+  return { billing, changes: [...grants, ...modes, ...denies] };
 }
