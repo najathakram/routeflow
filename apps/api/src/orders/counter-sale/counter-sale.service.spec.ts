@@ -8,9 +8,12 @@ jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class Inv
 // interleave two calls and prove the section is actually serialised.
 const mockLocks = new Map<string, Promise<unknown>>();
 const mockLockCalls: Array<{ family: string; key: string; mode: string }> = [];
+const mockLockFailure: { error: Error | null } = { error: null };
 jest.mock("../../common/db-locks", () => ({
+  ...jest.requireActual("../../common/db-locks"),
   withAdvisoryLock: async (opts: any, fn: () => Promise<unknown>) => {
     mockLockCalls.push({ family: opts.family, key: opts.key, mode: opts.mode });
+    if (mockLockFailure.error) throw mockLockFailure.error;
     const prev = mockLocks.get(opts.key) ?? Promise.resolve();
     let release!: () => void;
     const mine = new Promise<void>((r) => (release = r));
@@ -28,6 +31,7 @@ jest.mock("../../common/db-locks", () => ({
 }));
 
 import { ConflictException, BadRequestException } from "@nestjs/common";
+import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { Test } from "@nestjs/testing";
 import { CounterSaleService } from "./counter-sale.service";
 import { WalkInCustomerService } from "./walk-in-customer";
@@ -99,6 +103,7 @@ describe("CounterSaleService.ring", () => {
   beforeEach(async () => {
     mockLocks.clear();
     mockLockCalls.length = 0;
+    mockLockFailure.error = null;
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
@@ -650,6 +655,35 @@ describe("CounterSaleService.ring", () => {
       expect(invoices[0].payments).toHaveLength(1);
       expect(a).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
       expect(b).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
+    });
+
+    it.each([
+      ["a lock timeout", () => new LockTimeoutError("counter-tender", "ord-1", 20000)],
+      ["an unavailable lock connection", () => new LockUnavailableError(new Error("pool"))],
+    ])(
+      "%s AFTER the sale committed => 201 paymentRecorded:false + a code, never a 500",
+      async (_n, mk) => {
+        mockLockFailure.error = mk();
+        const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(r).toMatchObject({
+          orderId: "ord-1",
+          invoiceId: "inv-1",
+          total: 37.25,
+          paid: 0,
+          balanceDue: 37.25,
+          paymentRecorded: false,
+          paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        });
+        expect(r.change).toBeUndefined();
+      },
+    );
+
+    it("a non-lock failure inside the locked section still propagates (only the lock errors are mapped)", async () => {
+      mockLockFailure.error = new Error("boom");
+      await expect(
+        service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k"),
+      ).rejects.toThrow("boom");
     });
 
     it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {

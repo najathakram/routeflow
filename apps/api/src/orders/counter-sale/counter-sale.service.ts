@@ -33,7 +33,7 @@ import {
   autoApplyCandidateWhere,
   hasOpenCreditBalance,
 } from "../../credit-notes/auto-apply-candidates";
-import { withAdvisoryLock } from "../../common/db-locks";
+import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
 
 type InvoiceRow = {
@@ -167,12 +167,22 @@ export class CounterSaleService {
     if (method === "ON_ACCOUNT") {
       invoices = await this.readInvoices(orderId);
     } else {
-      const locked = await withAdvisoryLock(
-        { family: "counter-tender", key: orderId, mode: "wait" },
-        () => this.tender(dto, orderId),
-      );
-      if (!locked.acquired) throw new InternalServerErrorException("Tender lock not acquired");
-      ({ invoices, planError } = locked.value);
+      try {
+        const locked = await withAdvisoryLock(
+          { family: "counter-tender", key: orderId, mode: "wait" },
+          () => this.tender(dto, orderId),
+        );
+        if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
+        ({ invoices, planError } = locked.value);
+      } catch (e) {
+        // The sale is already committed: a contended or unavailable lock must not turn into a 500 over a
+        // finished sale. It reads as an unrecorded payment (the invoice stays open; the same key retried
+        // finishes it). Errors from inside the locked section are not lock errors and still propagate.
+        if (!(e instanceof LockTimeoutError || e instanceof LockUnavailableError)) throw e;
+        this.logger.warn(`counter sale ${orderId}: tender lock not taken (${e.message})`);
+        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        invoices = await this.readInvoices(orderId);
+      }
     }
 
     return this.respond(dto, order, invoices, replayed, planError);
