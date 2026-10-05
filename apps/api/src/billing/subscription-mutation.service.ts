@@ -31,7 +31,7 @@ import {
   normalizePlanKey,
   addonSkuCode,
   isAddonIncludedAtPlan,
-  SELF_SERVICE_ADDON_SKUS,
+  isSelfServiceAddon,
   isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
@@ -90,12 +90,6 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
-}
-
-/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
- *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
-function isSelfServiceAddon(sku: string): boolean {
-  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
 }
 
 /**
