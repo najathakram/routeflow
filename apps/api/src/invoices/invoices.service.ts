@@ -118,10 +118,13 @@ import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-a
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
+  applyBulkPriceAdjustment,
+  assertAdjustedTotalsSane,
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
+  preflightBulkPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -5817,7 +5820,11 @@ export class InvoicesService {
     const productIdMap = new Map(invoice.items.map((li) => [li.id, li.productId]));
 
     // Helper: update items on a single invoice and recalculate totals
-    const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
+    const applyToInvoice = async (
+      inv: typeof invoice,
+      localPriceMap: Map<string, number>,
+      onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
+    ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
@@ -5841,6 +5848,7 @@ export class InvoicesService {
           unitsPerBoxByProduct,
           isTaxExempt,
         });
+        assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
@@ -5859,6 +5867,7 @@ export class InvoicesService {
           resync: (...a) => this.resyncInvoiceLedger(...a),
         });
       });
+      onCommitted?.();
       // Sales agents & commissions: still OUTSIDE the transaction above on purpose (B662 wrapped only
       // the invoice + ledger writes). Pass no tx; the Safe wrapper opens its own transaction, and the
       // hourly reconciliation cron heals the gap if the process dies mid-loop.
@@ -5892,6 +5901,7 @@ export class InvoicesService {
         include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
       });
 
+      const plans: Array<{ inv: typeof invoice; localMap: Map<string, number> }> = [];
       for (const inv of targetInvoices) {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
@@ -5900,10 +5910,12 @@ export class InvoicesService {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }
-        if (localMap.size > 0) {
-          await applyToInvoice(inv, localMap);
-        }
+        if (localMap.size > 0) plans.push({ inv, localMap });
       }
+      // B1031: judge every target BEFORE writing any, so a bad line on invoice N never leaves 1..N-1 re-priced.
+      preflightBulkPriceAdjustment(plans, isTaxExempt);
+      // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
+      await applyBulkPriceAdjustment(plans, applyToInvoice);
     }
 
     return this.prisma.forTenant().invoice.findUnique({
