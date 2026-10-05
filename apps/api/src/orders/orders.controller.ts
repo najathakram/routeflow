@@ -373,9 +373,10 @@ export class OrdersController {
       try {
         // Only the CUSTOMER's own consolidation may earn NEW BUY_N_GET_M free units
         // for the combined quantity — a driver's order is priced like staff's.
+        // focusOrderId: fold only the new order's path, so `merged` is never another path's pair (M2)
         const merged = await this.ordersService.mergeAllPendingForCustomer(
           created.customerId,
-          { buyerInitiated: user.role === UserRole.CUSTOMER },
+          { buyerInitiated: user.role === UserRole.CUSTOMER, focusOrderId: created.id },
           // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
           // customer anyway, so `try` defers to them instead of spending this request's budget.
           { lockMode: "try", actor: user },
@@ -411,9 +412,18 @@ export class OrdersController {
   @Get("active")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
+  async getActiveOrderForCustomer(
+    @Query("customerId") customerId: string,
+    // The path the order being built is on: the preview looks for the SAME merge target create would
+    // (merge-candidates.ts); omitted = the customer's own path.
+    @Query("fulfillPath") fulfillPath?: string,
+  ) {
     if (!customerId) return null;
-    const order = await this.ordersService.findActiveOrder(customerId, { forMerge: true });
+    const explicit = fulfillPath === "SHIP" || fulfillPath === "ROUTE" ? fulfillPath : undefined;
+    const order = await this.ordersService.findActiveOrder(customerId, {
+      forMerge: true,
+      mergeAs: { explicit },
+    });
     if (!order) return null;
     return {
       id: order.id,

@@ -2767,7 +2767,7 @@ describe("OrdersService", () => {
       );
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+        where: { id: "ord-1", status: "PENDING" },
         data: { status: "CONFIRMED" },
       });
     });
@@ -2882,7 +2882,7 @@ describe("OrdersService", () => {
       await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
 
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+        where: { id: "ord-1", status: "CONFIRMED" },
         data: { status: "DELIVERED", deliveredAt: businessDate },
       });
     });
@@ -3025,7 +3025,7 @@ describe("OrdersService", () => {
 
       // Additive-only: the write itself carries no run/driver fields.
       expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+        where: { id: "ord-1", status: "CONFIRMED" },
         data: { status: "OUT_FOR_DELIVERY", shippedAt: expect.any(Date) },
       });
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
