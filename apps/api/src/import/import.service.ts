@@ -101,6 +101,7 @@ import {
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { columnEntitlementDenied } from "./import-column-entitlement";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -2460,7 +2461,9 @@ export class ImportService {
         await this.productsService.assertMsrpAllowed();
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "MSRP",
+          resolved.byField.msrp,
           `Column "${resolved.byField.msrp}" needs the MSRP plan flag; remove the column or enable it`,
         );
       }
@@ -2470,7 +2473,9 @@ export class ImportService {
         await this.productsService.assertCanFlagTobacco(true);
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "TOBACCO_DEALER",
+          resolved.byField.isTobacco,
           `Column "${resolved.byField.isTobacco}" needs tobacco_dealer add-on; remove the column or enable it`,
         );
       }
@@ -2481,7 +2486,9 @@ export class ImportService {
         await this.productsService.assertReorderAllowed();
       } catch (e) {
         if (!isEntitlementDenial(e)) throw e;
-        throw new ForbiddenException(
+        throw columnEntitlementDenied(
+          "FORECASTING",
+          reorderColumn,
           `Column "${reorderColumn}" needs the forecasting plan flag; remove the column or enable it`,
         );
       }

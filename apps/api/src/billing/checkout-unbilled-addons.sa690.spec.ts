@@ -299,6 +299,8 @@ describe("SA-690 both checkout entry points reach the gate", () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any, // businessProfiles (#3199)
+      {} as any, // featureConfig (#3199)
     );
 
     const err = await refusalOf(controller.createCheckout("t1", "year"));
@@ -327,6 +329,8 @@ describe("SA-690 both checkout entry points reach the gate", () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any, // businessProfiles (#3199)
+      {} as any, // featureConfig (#3199)
     );
 
     await settings.createCheckout({ tenantId: "t1", sub: "u1" } as any);

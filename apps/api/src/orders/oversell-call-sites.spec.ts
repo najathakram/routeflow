@@ -33,6 +33,10 @@ const PRODUCT = {
   trackedCategoryId: null,
   trackedSubcategoryId: null,
   isActive: true,
+  // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+  kind: "STANDARD",
+  portalVisible: true,
+  parent: null,
 };
 
 type H = Awaited<ReturnType<typeof buildOversellOrders>>;
@@ -270,7 +274,7 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       expectResolvedBeforeTransaction(h);
       expect(h.settle).toHaveBeenCalledTimes(1);
       const args = h.settle.mock.calls[0]; // (deps, db, order, held, final, user, event, opts)
-      expect(args[7]).toEqual({ allowOversell: true });
+      expect(args[7]).toEqual({ allowOversell: true, blockCredits: false });
       expect(args).not.toContain(h.reader);
       expect(h.read).not.toHaveBeenCalled();
     },
@@ -301,7 +305,7 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       );
       expect(h.read).toHaveBeenCalledTimes(1);
       expectResolvedBeforeTransaction(h);
-      expect(h.settle.mock.calls[0][7]).toEqual({ allowOversell: want });
+      expect(h.settle.mock.calls[0][7]).toEqual({ allowOversell: want, blockCredits: false });
     },
   );
 });

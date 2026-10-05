@@ -14,6 +14,7 @@ import {
   ConflictException,
   NotFoundException,
   ParseUUIDPipe,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -51,6 +52,17 @@ import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BusinessProfileService } from "../billing/business-profile.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import {
+  ApplyBusinessProfileDto,
+  ConfirmBusinessProfileDto,
+} from "./dto/apply-business-profile.dto";
+import type {
+  BusinessProfileApplyResponse,
+  BusinessProfileListResponse,
+  BusinessProfilePreviewResponse,
+} from "@routeflow/types";
 
 @ApiTags("platform-admin")
 @ApiBearerAuth()
@@ -69,6 +81,8 @@ export class PlatformAdminController {
     private readonly authority: EntitlementAuthority,
     private readonly featurePreview: FeaturePreviewService,
     private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
+    private readonly businessProfiles: BusinessProfileService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   @Get("stats")
@@ -712,6 +726,155 @@ export class PlatformAdminController {
       overrideId,
     });
     return result;
+  }
+
+  // ─── Business profiles ─────────────────────────────────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard: tenant roles are refused.
+
+  @Get("business-profiles")
+  @ApiOperation({ summary: "The business profiles a platform admin can apply to a tenant" })
+  listBusinessProfiles(): BusinessProfileListResponse {
+    return this.businessProfiles.list();
+  }
+
+  @Post("tenants/:id/business-profile/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "What applying a business profile would change for this tenant — writes nothing",
+  })
+  previewBusinessProfile(
+    @Param("id") id: string,
+    @Body() dto: ApplyBusinessProfileDto,
+  ): Promise<BusinessProfilePreviewResponse> {
+    return this.businessProfiles.preview(id, dto.profile);
+  }
+
+  /**
+   * Confirm. The plan is recomputed HERE from the tenant's current state (never trusted from the
+   * client) and validated whole before the first write. Writes go through the existing audited
+   * paths only — this controller's own add-on disable and override create/revoke, and
+   * `FeatureConfigService.set` — in the order billing disables → grants → modes → denies. The
+   * disables (paid modules, owner ruling) come first so a billing failure refuses the apply before
+   * anything else is written; only fleet-OFF profiles have any, and their modes need no fleet.
+   * Grants precede modes and modes precede denies because `set()` checks the fleet rule against
+   * the SAVED state: delivery needs the fleet granted first, and a fleet is denied only after the
+   * mode has moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
+   * transaction: a mid-way failure leaves the steps already written, each audited, and a re-apply
+   * completes the rest.
+   */
+  @Post("tenants/:id/business-profile")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Apply a business profile to a tenant (audited; idempotent)" })
+  applyBusinessProfile(
+    @Param("id") id: string,
+    @Body() dto: ConfirmBusinessProfileDto,
+    @CurrentUser() admin: JwtPayload,
+  ): Promise<BusinessProfileApplyResponse> {
+    // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
+    return this.businessProfiles.withConfirmLock(id, () =>
+      this.applyBusinessProfileLocked(id, dto, admin),
+    );
+  }
+
+  private async applyBusinessProfileLocked(
+    id: string,
+    dto: ConfirmBusinessProfileDto,
+    admin: JwtPayload,
+  ): Promise<BusinessProfileApplyResponse> {
+    const resolved = await this.businessProfiles.plan(id, dto.profile);
+    this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
+    const reason = dto.reason?.trim() || resolved.reason;
+    const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
+
+    // Owner ruling (money, tier 1): a module the profile switches OFF that the tenant PAYS for is
+    // switched off by the EXISTING add-on disable (this controller's own route: Stripe item
+    // removal + the locked ledger update in AddonService.disableAddon, then ADDON_DISABLED audit)
+    // — never a billing row or Stripe call written here. These run FIRST, in reverse dependency
+    // order (plan.billing is already in BILLING_DISABLE_ORDER), so a failure part-way leaves a valid
+    // configuration; the apply is then refused with BUSINESS_PROFILE_BILLING_FAILED before ANY
+    // mode/config/override write. Stripe calls cannot share one transaction (lead ruling).
+    const alreadyDisabled: string[] = [];
+    // The step in flight, so ANY failure once billing has been stopped is reported the same way.
+    let current: { step: "billing" | "grant" | "mode" | "deny" | "audit"; key: string } = {
+      step: "billing",
+      key: "",
+    };
+    // Lead/SA ruling: name EXACTLY which add-ons were already switched off with billing stopped,
+    // and the step that failed, so the admin can retry (a retry re-plans and runs only what is
+    // left). A fixed code and message — never the server's error text.
+    const billingFailed = () => {
+      const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
+      const done = alreadyDisabled.map(label).join(", ") || "none";
+      const what =
+        current.step === "billing"
+          ? `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
+          : `The profile was only partly applied: the ${current.step} step for ` +
+            `${label(current.key)} failed after billing was stopped.`;
+      return new ServiceUnavailableException({
+        statusCode: 503,
+        code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
+        featureKey: current.key,
+        alreadyDisabled: [...alreadyDisabled],
+        failedStep: { ...current },
+        message:
+          `${what} Already switched off with billing stopped: ${done}. ` +
+          (current.step === "billing" ? "Nothing else was changed; " : "") +
+          "retry to finish.",
+      });
+    };
+
+    for (const b of resolved.plan.billing) {
+      current = { step: "billing", key: b.featureKey };
+      try {
+        await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
+      } catch {
+        throw billingFailed();
+      }
+      alreadyDisabled.push(b.featureKey);
+    }
+    if (alreadyDisabled.length > 0) this.authority.invalidate(id);
+
+    const applyOverrides = async (effect: "GRANT" | "DENY") => {
+      for (const o of resolved.plan.overrides) {
+        if (o.effect !== effect || o.action === "skip") continue;
+        current = { step: effect === "GRANT" ? "grant" : "deny", key: o.featureKey };
+        if (o.action === "replace") {
+          await this.revokeFeatureOverride(id, resolved.revokeOverrideIds[o.featureKey], admin);
+        }
+        await this.createFeatureOverride(
+          id,
+          { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
+          admin,
+        );
+      }
+    };
+    try {
+      await applyOverrides("GRANT");
+      for (const m of resolved.plan.modes) {
+        current = { step: "mode", key: m.key };
+        await this.featureConfig.set(id, m.key, m.to, reason, admin.sub);
+      }
+      await applyOverrides("DENY");
+      current = { step: "audit", key: resolved.profile.key };
+      this.authority.invalidate(id);
+      await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.BUSINESS_PROFILE_APPLIED, {
+        profile: resolved.profile.key,
+        reason,
+        plan: resolved.plan,
+        summary: resolved.summary,
+      });
+    } catch (err) {
+      // SA MUST: once any billing was stopped, EVERY later failure is the same coded 503, so the
+      // admin is always told billing already stopped. With nothing stopped, the error is its own.
+      if (alreadyDisabled.length > 0) throw billingFailed();
+      throw err;
+    }
+    return {
+      profile: resolved.profile.key as BusinessProfileApplyResponse["profile"],
+      plan: resolved.plan,
+      changed,
+      summary: resolved.summary,
+    };
   }
 
   // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────

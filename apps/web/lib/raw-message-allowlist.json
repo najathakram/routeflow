@@ -83,10 +83,6 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
-  "app/(dashboard)/finance/payments/page.tsx": {
-    "count": 1,
-    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
-  },
   "app/(dashboard)/inventory/_components/purchase-orders-edit.ts": {
     "count": 3,
     "why": "B986-8 the rest: per-surface raw message read, pending"
@@ -95,8 +91,12 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
+  "app/(dashboard)/invoices/[id]/AdjustPricesPanel.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    "count": 17,
+    "count": 16,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/page.tsx": {

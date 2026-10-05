@@ -1,7 +1,6 @@
 import {
   IsBoolean,
   IsEmail,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -18,6 +17,7 @@ import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
 
@@ -40,7 +40,7 @@ export class CreateCustomerDto {
   @IsString() @MaxLength(120) contactName: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
-  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsIn(WRITABLE_FULFILL_PATHS) fulfillPath?: FulfillPath;
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CreateAddressDto)

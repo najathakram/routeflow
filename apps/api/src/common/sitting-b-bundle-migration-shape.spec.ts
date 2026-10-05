@@ -21,8 +21,7 @@ function executableSql(): string {
 
 describe("sitting-B bundle migration shape (SA-603)", () => {
   // Ordering only, never "newest forever": a later migration folder is legitimate (SA-650 PICKUP,
-  // the shipped-emails pair, SA-693 isComp), so this pins the named predecessors and that the folder
-  // is on disk. (Same relaxation master carries; stacked branches that add a migration need it.)
+  // the shipped-emails pair), so this pins the named predecessors and that the folder is on disk.
   it("sorts after its named predecessors", () => {
     expect(readdirSync(MIGRATIONS_DIR)).toContain(FOLDER);
     expect(FOLDER > "20260929200000_2309_apple_sign_in").toBe(true);

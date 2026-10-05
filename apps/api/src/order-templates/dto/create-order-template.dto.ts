@@ -6,6 +6,7 @@ import {
   Min,
   Max,
   ValidateNested,
+  ArrayMaxSize,
   ArrayMinSize,
 } from "class-validator";
 import { Type } from "class-transformer";
@@ -29,5 +30,6 @@ export class CreateOrderTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => OrderTemplateItemDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(500)
   items: OrderTemplateItemDto[];
 }
