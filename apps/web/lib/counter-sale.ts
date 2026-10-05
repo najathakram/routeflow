@@ -161,10 +161,11 @@ export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for 
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
 
-const DEFINITIVE_REFUSALS = new Set([400, 403, 404, 409, 422]);
+const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
 
 /**
- * True only for a 4xx that PROVES nothing was written. Every other failure (5xx, network, timeout, an unlisted 4xx) is an
+ * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
+ * handler runs). Every other failure (5xx, network, timeout, 408) is an
  * UNKNOWN outcome: the Idempotency-Key must survive it and the sale must not be edited.
  */
 export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
@@ -183,10 +184,11 @@ export function counterSaleErrorCopy(err: unknown): string {
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
-  if (status === 403) return "You don't have permission to complete a counter sale.";
+  if (status === 401 || status === 403)
+    return "You don't have permission to complete a counter sale.";
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
-  if (status === 400 || status === 404 || status === 422)
+  if (status === 400 || status === 404 || status === 422 || status === 429)
     return "This sale can't be completed as entered. Check the items and payment and try again.";
   return COUNTER_OUTCOME_UNKNOWN_COPY;
 }

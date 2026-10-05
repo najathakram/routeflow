@@ -322,7 +322,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(keyOfCall(1)).not.toBe(keyOfCall(0));
     });
 
-    it.each([403, 404, 409, 422])(
+    it.each([401, 403, 404, 409, 422, 429])(
       "a definitive %s also releases the key: the next submit is a NEW key",
       async (status) => {
         mutateAsync.mockRejectedValueOnce({ response: { status } });
@@ -330,11 +330,23 @@ describe("CounterSaleScreen: API contract wiring", () => {
         await fillCola();
         fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
         expect(await screen.findByRole("alert")).toBeInTheDocument();
+        expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
         await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
         expect(keyOfCall(1)).not.toBe(keyOfCall(0));
       },
     );
+
+    it("a 408 is still an unknown outcome: banner, locked, same key on Try again", async () => {
+      mutateAsync.mockRejectedValueOnce({ response: { status: 408 } });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(keyOfCall(1)).toBe(keyOfCall(0));
+    });
 
     it("a reset after an unknown outcome mints a NEW key for the next sale", async () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });

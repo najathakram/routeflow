@@ -149,6 +149,15 @@ describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
     }
     expect(counterSaleErrorCopy(e(403))).not.toBe(counterSaleErrorCopy(e(500)));
   });
+  it("a 401 reuses the permission copy and a 429 the as-entered copy (no new text)", () => {
+    expect(counterSaleErrorCopy({ response: { status: 401 } })).toBe(
+      counterSaleErrorCopy({ response: { status: 403 } }),
+    );
+    expect(counterSaleErrorCopy({ response: { status: 429 } })).toBe(
+      counterSaleErrorCopy({ response: { status: 400 } }),
+    );
+    expect(counterSaleErrorCopy({ response: { status: 408 } })).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
   it("a 403 COUNTER_SALES_DISABLED shows the fixed disabled copy, not the generic permission copy", () => {
     const disabled = counterSaleErrorCopy({
       response: { status: 403, data: { code: "COUNTER_SALES_DISABLED", message: "RAW" } },
@@ -183,10 +192,10 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
       false,
     );
   });
-  it("only 400 / 403 / 404 / 409 / 422 prove nothing was written", () => {
-    for (const status of [400, 403, 404, 409, 422])
+  it("only 400 / 401 / 403 / 404 / 409 / 422 / 429 prove nothing was written", () => {
+    for (const status of [400, 401, 403, 404, 409, 422, 429])
       expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(true);
-    for (const status of [401, 408, 429, 500, 502, 503, 504])
+    for (const status of [408, 500, 502, 503, 504])
       expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(false);
   });
 });
