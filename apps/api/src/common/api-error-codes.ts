@@ -195,6 +195,8 @@ export const API_ERROR_CODES = {
    * Idempotency-Key and re-ring (that would double-sell). Open the order from the orders list instead.
    */
   COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
+  /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
+  WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
