@@ -419,7 +419,9 @@ export class PlatformAdminController {
     const result = await this.addonService.uncompAddon(id, dto.addonKey, dto.stripePriceId);
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_UNCOMPED, {
       addonKey: dto.addonKey,
-      billed: dto.stripePriceId != null,
+      // The mode the service ACTUALLY took (STRIPE / MANUAL / UNBILLED), never inferred from the DTO:
+      // a price id can ride along on a call that only flipped the flag.
+      billing: result.billing,
       ...(dto.reason ? { reason: dto.reason } : {}),
     });
     return result;

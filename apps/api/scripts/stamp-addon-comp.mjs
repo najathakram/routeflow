@@ -34,7 +34,7 @@ const argOf = (name) => {
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
-/** Why a row may NOT be stamped, or null when it may. Pure: pinned by stamp-addon-comp-script.spec.ts. */
+/** Why a row may NOT be stamped, or null when it may. Pure: pinned by addon-comp-scripts.sa693.spec.ts. */
 export function refusalFor(row) {
   if (!row) return "not found";
   if (!row.active) return "inactive";

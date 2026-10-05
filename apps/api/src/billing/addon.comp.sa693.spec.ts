@@ -268,6 +268,57 @@ describe("SA-693 admin uncomp", () => {
     );
   });
 
+  it("the result says how it was billed: STRIPE / MANUAL / UNBILLED", async () => {
+    const stripe = make({ stripeSubId: "sub_1", rows: [compRow()] });
+    expect((await stripe.svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x")).billing).toBe(
+      "STRIPE",
+    );
+    const manual = make({ externalPayment: true, rows: [compRow()] });
+    expect((await manual.svc.uncompAddon("t1", "REGULATED_ITEMS")).billing).toBe("MANUAL");
+    const plain = make({ rows: [compRow()] });
+    expect((await plain.svc.uncompAddon("t1", "REGULATED_ITEMS")).billing).toBe("UNBILLED");
+  });
+
+  it("a subscribed tenant while Stripe is NOT configured: refused with a coded 409, the comp untouched, nothing written", async () => {
+    const m = make({ stripeSubId: "sub_1", rows: [compRow()] });
+    (m.svc as any).stripe.isConfigured = false;
+
+    const err: any = await m.svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x").catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "ADDON_UNCOMP_STRIPE_UNAVAILABLE" });
+    expect(m.create).not.toHaveBeenCalled();
+    expect(m.store.rows[0]).toMatchObject({ active: true, isComp: true, priceSnapshot: 0 });
+  });
+
+  it("a comp DISABLED between uncomp's read and the lock is refused under the lock: never re-activated and billed", async () => {
+    const m = make({ stripeSubId: "sub_1", rows: [compRow({ active: false })] });
+    // the pre-lock read still saw an active comp; the read under the lock sees the truth
+    m.store.findFirst.mockImplementationOnce(async () => ({ id: "row1", ...compRow() }));
+
+    await expect(m.svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    expect(m.create).not.toHaveBeenCalled();
+    expect(m.store.rows[0]).toMatchObject({ active: false, isComp: true, stripeItemId: null });
+  });
+
+  it("a comp disabled AFTER the Stripe item was created is refused in the transaction and the orphan item is deleted", async () => {
+    const m = make({ stripeSubId: "sub_1", rows: [compRow({ active: false })] });
+    const active = async () => ({ id: "row1", ...compRow() });
+    // reads: 1 uncomp pre-read, 2 under the lock (both active); 3 in the transaction (inactive: the real row)
+    m.store.findFirst.mockImplementationOnce(active).mockImplementationOnce(active);
+
+    await expect(m.svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    expect(m.create).toHaveBeenCalledTimes(1);
+    expect(m.del).toHaveBeenCalledWith("si_new");
+    expect(m.store.rows[0]).toMatchObject({ active: false, isComp: true, stripeItemId: null });
+  });
+
   it("M3: a flag-only uncomp leaves the quantity alone", async () => {
     const { svc, store } = make({ rows: [compRow({ quantity: 4 })] });
 

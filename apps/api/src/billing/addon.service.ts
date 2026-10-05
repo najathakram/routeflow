@@ -38,6 +38,14 @@ export function isStripeResourceMissing(err: unknown): boolean {
   return e?.code === "resource_missing" || e?.statusCode === 404;
 }
 
+/** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
+export interface EnableAddonOptions {
+  /** Grant free on purpose: isComp true, price 0, no Stripe item, nothing booked. */
+  comp?: boolean;
+  /** Internal: `uncompAddon`'s billed branch re-enters here to bill an active comp row. */
+  uncomp?: boolean;
+}
+
 /**
  * Manages add-on features for tenants.
  *
@@ -52,13 +60,16 @@ export function isStripeResourceMissing(err: unknown): boolean {
  * of logging and continuing, so a tenant is never billed for something disabled
  * only in our database, or granted something never billed in Stripe (B107).
  */
-/** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
-export interface EnableAddonOptions {
-  /** Grant free on purpose: isComp true, price 0, no Stripe item, nothing booked. */
-  comp?: boolean;
-  /** Internal: `uncompAddon`'s billed branch re-enters here to bill an active comp row. */
-  uncomp?: boolean;
-}
+/** SA-693: how an uncomp ended up billing the row, reported back so the audit row records what ACTUALLY happened. */
+export const UncompBilling = {
+  /** A Stripe subscription item now bills it. */
+  STRIPE: "STRIPE",
+  /** A manually-invoiced tenant: priced and booked, the owner invoices it by hand (notice raised). */
+  MANUAL: "MANUAL",
+  /** Only the flag flipped: still unbilled at 0 (no Stripe subscription, not manually invoiced). */
+  UNBILLED: "UNBILLED",
+} as const;
+export type UncompBillingMode = (typeof UncompBilling)[keyof typeof UncompBilling];
 
 @Injectable()
 export class AddonService {
@@ -283,6 +294,14 @@ export class AddonService {
               `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
             );
           }
+          // SA-693: an uncomp only ever bills an ACTIVE comp, judged HERE under the lock. `uncompAddon`
+          // read the row before taking it, so a comp disabled (or already uncomped) in between must be
+          // refused, never re-activated and billed.
+          if (uncomp && !(existing?.active && existing.isComp)) {
+            throw new ConflictException(
+              `Add-on "${addonKey}" is no longer an active comp for tenant ${tenant.slug}`,
+            );
+          }
 
           // SA-693 (M3): an uncomp keeps the comp's own quantity (a comp of 3 is billed as 3, never cut to
           // 1); every other enable is a boolean grant whose Stripe item is quantity 1.
@@ -384,7 +403,10 @@ export class AddonService {
             // created (mirroring disableAddon's own Stripe-cleanup handling) rather than leave
             // a live item nothing points to.
             const current = await findAddonRow(tx, tenantId, lockSku);
-            if (current?.active && !(uncomp && current.isComp)) {
+            // SA-693: for an uncomp the lost race is "no longer an ACTIVE comp"; for any other enable it
+            // is "now active". Both clean up the orphan Stripe item below.
+            const lostRace = uncomp ? !(current?.active && current.isComp) : current?.active;
+            if (lostRace) {
               if (stripeItemId) {
                 try {
                   await this.stripe.client.subscriptionItems.del(stripeItemId);
@@ -525,13 +547,26 @@ export class AddonService {
         null)
       : null;
     if (sub?.stripeSubId) {
+      // Without a configured Stripe the billed enable would write an ACTIVE, unbilled, non-comp row at 0
+      // on a tenant that has a subscription: the exact silent state this method must never create.
+      if (!this.stripe.isConfigured) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.ADDON_UNCOMP_STRIPE_UNAVAILABLE,
+          message:
+            `Stripe is not configured here, so "${addonKey}" cannot be billed for tenant ${tenant.slug} — ` +
+            `it stays a comp; uncomp it where Stripe is configured`,
+        });
+      }
       if (!stripePriceId) {
         throw new BadRequestException(
           `Tenant ${tenant.slug} has a Stripe subscription — pass the add-on's stripePriceId to bill ` +
             `"${addonKey}", or disable it; uncomping must never leave an active add-on unbilled`,
         );
       }
-      return this.enableAddon(tenantId, addonKey, stripePriceId, true, { uncomp: true });
+      const billedRow = await this.enableAddon(tenantId, addonKey, stripePriceId, true, {
+        uncomp: true,
+      });
+      return { addon: billedRow, billing: UncompBilling.STRIPE };
     }
 
     try {
@@ -585,7 +620,10 @@ export class AddonService {
           this.entitlements.invalidate(tenantId);
           this.featureResolver.invalidate(tenantId);
           this.logger.log(`Add-on "${addonKey}" uncomped (flag only) for tenant ${tenant.slug}`);
-          return updated;
+          return {
+            addon: updated,
+            billing: manualSkuDef ? UncompBilling.MANUAL : UncompBilling.UNBILLED,
+          };
         },
       );
       if (!result.acquired) {
