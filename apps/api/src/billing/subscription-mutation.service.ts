@@ -25,7 +25,13 @@ import {
   toCents,
 } from "./stripe-addon-items";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
-import { addonCodeOf, addonRowMatches, findAddonRow } from "./addon-row";
+import {
+  addonCodeOf,
+  addonRowMatches,
+  addonRowWhere,
+  billableAddonWhere,
+  findAddonRow,
+} from "./addon-row";
 import { isPayingRow } from "./mrr.service";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -1686,7 +1692,10 @@ export class SubscriptionMutationService {
     interval: "month" | "year",
   ): Promise<{ lineItems: ReturnType<typeof checkoutAddonLineItem>[]; skus: string[] }> {
     const none = { lineItems: [], skus: [] };
-    const active = await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } });
+    // SA-693: a comp is a platform grant — never billed, so never a line and never a reason to refuse.
+    const active = await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ tenantId, active: true }),
+    });
     const bySku = new Map<string, any[]>();
     for (const row of active) {
       const code = addonSkuCode(row);
@@ -1761,7 +1770,7 @@ export class SubscriptionMutationService {
     }
     // (c): active self-serve rows nothing bills and this checkout had no line for.
     const unbilled = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, active: true, stripeItemId: null },
+      where: billableAddonWhere({ tenantId, active: true, stripeItemId: null }),
     });
     for (const row of unbilled) {
       const code = addonSkuCode(row);
@@ -1826,7 +1835,12 @@ export class SubscriptionMutationService {
     subId: string,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
-    const row = await findAddonRow(this.prisma, tenantId, sku);
+    // SA-693: only a BILLABLE row (never a comp) can own an item. A SKU whose only rows are comps has
+    // no row here, so a checkout item for it is an orphan (deleted), and no item is ever created for it.
+    const row = await this.prisma.tenantAddon.findFirst({
+      where: billableAddonWhere(addonRowWhere(tenantId, sku)),
+      orderBy: [{ active: "desc" }, { createdAt: "asc" }],
+    });
     if (items.length === 0) {
       return row?.active && !row.stripeItemId
         ? this.billUnbilledRow(tenantId, sku, row, subId, ctx)
@@ -1912,10 +1926,21 @@ export class SubscriptionMutationService {
     return this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
       const current = await tx.tenantAddon.findUnique({ where: { id: rowId } });
-      if (!current?.active || current.stripeItemId || current.quantity !== rowQuantity)
+      if (
+        !current?.active ||
+        current.stripeItemId ||
+        current.isComp ||
+        current.quantity !== rowQuantity
+      ) {
         return false;
+      }
       const { count } = await tx.tenantAddon.updateMany({
-        where: { id: rowId, active: true, stripeItemId: null, quantity: rowQuantity },
+        where: billableAddonWhere({
+          id: rowId,
+          active: true,
+          stripeItemId: null,
+          quantity: rowQuantity,
+        }),
         data: { stripeItemId: itemId, priceSnapshot: price },
       });
       if (count !== 1) return false;

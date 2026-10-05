@@ -76,6 +76,8 @@ interface RowOpts {
   priceSnapshot?: number | null;
   addonKey?: string;
   createdAt?: Date;
+  /** SA-693: a platform grant that is never billed. */
+  isComp?: boolean;
 }
 const addonRow = (sku: string, o: RowOpts = {}) => ({
   id: `a${++seq}`,
@@ -86,6 +88,7 @@ const addonRow = (sku: string, o: RowOpts = {}) => ({
   active: o.active ?? true,
   priceSnapshot: o.priceSnapshot === undefined ? 0 : o.priceSnapshot,
   stripeItemId: o.stripeItemId ?? null,
+  isComp: o.isComp ?? false,
   createdAt: o.createdAt ?? new Date(1_790_000_000_000 + seq),
 });
 
@@ -1424,45 +1427,102 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("OPEN QUESTION (SA ruling): admin-granted self-serve add-ons on a trial", () => {
-  /**
-   * TenantAddon has NO field marking a platform-admin grant (no source / grantedBy / comp) and
-   * AddonService.enableAddon leaves no per-row trace, so the checkout cannot tell a "free comp" from
-   * a self-serve enable. These specs DOCUMENT what happens today; they are named so the ruling can
-   * flip them (a free-comp discriminator needs a column + migration the owner/SA has not ruled on).
-   *
-   * What the admin path actually writes (addon.service.ts enableAddon, no stripePriceId, as on a trial
-   * that has no Stripe subscription): { addonKey: <as typed>, sku: null unless the key is a bridged
-   * legacy one, quantity: 1, priceSnapshot: 0, stripePriceId: null, stripeItemId: null }.
-   */
-  it("PENDING-SA-RULING (free comp): an admin-granted self-serve SKU on a trial whose row carries the SKU is BILLED at checkout", async () => {
-    const granted = addonRow("FORECASTING", { qty: 1, priceSnapshot: 0 }); // sku set, no item, price 0
-    const h = make({ status: "TRIAL", rows: [granted] });
+describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at checkout and never blocks it", () => {
+  const comp = (sku: string, o: RowOpts = {}) => addonRow(sku, { ...o, isComp: true });
+
+  it("a comp self-serve row on a trial gets NO checkout line (it was PENDING-SA-RULING: billed)", async () => {
+    const h = make({ status: "TRIAL", rows: [comp("FORECASTING", { qty: 1 })] });
 
     await h.billing.createCheckoutSession("t1", "month");
 
+    const args = h.client.checkout.sessions.create.mock.calls[0][0];
+    expect(args.line_items).toHaveLength(1); // the plan only
+    expect(args.metadata).not.toHaveProperty("addonSkus");
+    expect(args).not.toHaveProperty("subscription_data");
+  });
+
+  it("a comp never makes an ANNUAL checkout refuse (nothing billable), while a billable row beside it still does", async () => {
+    const onlyComp = make({ rows: [comp("CUSTOMER_PACK_100", { qty: 3 })] });
+    await onlyComp.billing.createCheckoutSession("t1", "year");
+    expect(onlyComp.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+
+    const both = make({ rows: [comp("CUSTOMER_PACK_100"), addonRow("FORECASTING")] });
+    await expect(both.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("only the billable rows are lines; a comp and a billable row of ONE sku bill the billable one's quantity", async () => {
+    const h = make({
+      rows: [
+        comp("CUSTOMER_PACK_100", { qty: 9 }),
+        addonRow("CUSTOMER_PACK_100", { addonKey: "extra_pack", qty: 2 }),
+        comp("FORECASTING"),
+      ],
+    });
+    await h.billing.createCheckoutSession("t1", "month");
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(2);
-    expect(lines[1].price_data.product_data.metadata).toEqual({ addonSku: "FORECASTING" });
+    expect(lines[1].quantity).toBe(2);
+    expect(lines[1].price_data.product_data.metadata).toEqual({ addonSku: "CUSTOMER_PACK_100" });
   });
 
-  it("PENDING-SA-RULING (free comp): the row the admin path writes for an UNPRICED FORECASTING grant has sku null and is NOT billed (invisible to the checkout)", async () => {
-    const granted = { ...addonRow("FORECASTING"), sku: null }; // addonKey only
-    const h = make({ status: "TRIAL", rows: [granted] });
-
-    await h.billing.createCheckoutSession("t1", "month");
-
-    expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+  it("completion: a comp with no checkout line (rule (c)) is never billed — no Stripe call at all, nothing booked", async () => {
+    const h = make({ status: "TRIAL", rows: [comp("FORECASTING")], items: [baseItem()] });
+    await h.completed();
+    expect(h.client.subscriptionItems.list).not.toHaveBeenCalled();
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(h.rows[0]).toMatchObject({ stripeItemId: null, isComp: true });
+    expect(Number(h.rows[0].priceSnapshot)).toBe(0);
+    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
   });
 
-  it("PENDING-SA-RULING (free comp): and at completion an admin-granted row that carries the SKU is adopted like any self-serve row", async () => {
+  it("completion: a checkout item whose row turned out to be a comp is deleted (prorated), never adopted", async () => {
     const h = make({
       status: "TRIAL",
-      rows: [addonRow("FORECASTING", { qty: 1, priceSnapshot: 0 })],
+      rows: [comp("FORECASTING", { qty: 1 })],
       items: [baseItem(), checkoutItem("si_fc", "FORECASTING", 1900, 1)],
     });
     await h.completed();
-    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
+    expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_fc", {
+      proration_behavior: "create_prorations",
+    });
+    expect(h.rows[0]).toMatchObject({ stripeItemId: null, isComp: true });
+    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+  });
+
+  it("completion: a comp duplicate beside a billable row of the same SKU does not take the adoption", async () => {
+    const billable = addonRow("FORECASTING", { qty: 1, createdAt: new Date(1_790_000_009_000) });
+    const h = make({
+      rows: [comp("FORECASTING", { createdAt: new Date(1_790_000_001_000) }), billable],
+      items: [baseItem(), checkoutItem("si_fc", "FORECASTING", 1900, 1)],
+    });
+    await h.completed();
+    expect(h.rows.map((r) => [r.isComp, r.stripeItemId])).toEqual([
+      [true, null],
+      [false, "si_fc"],
+    ]);
+  });
+
+  it("a row that BECAME a comp between the Stripe update and the write is not adopted: the webhook fails and the retry deletes the item", async () => {
+    const h = make({
+      rows: [addonRow("FORECASTING", { qty: 3 })],
+      items: [baseItem(), checkoutItem("si_fc", "FORECASTING", 1900, 1)],
+    });
+    h.client.subscriptionItems.update.mockImplementationOnce(async (id: string, args: any) => {
+      h.rows[0].isComp = true; // support marked it a comp after we read the row
+      const i = h.stripeItems.find((x) => x.id === id);
+      if (i) i.quantity = args.quantity;
+      return { id };
+    });
+    await expect(h.completed()).rejects.toBeDefined();
+    expect(h.rows[0]).toMatchObject({ stripeItemId: null, isComp: true });
+
+    await h.completed(); // the retry: a comp, so its item is an orphan
+    expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_fc", {
+      proration_behavior: "create_prorations",
+    });
+    expect(h.rows[0].stripeItemId).toBeNull();
   });
 });
 

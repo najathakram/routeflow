@@ -130,7 +130,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   }
 
   async function rig(opts: {
-    rows: Array<{ sku: string; quantity: number; active?: boolean }>;
+    rows: Array<{ sku: string; quantity: number; active?: boolean; isComp?: boolean }>;
     items: any[];
     /** The entitlements.configSnapshot flag (default off). */
     flagOn?: boolean;
@@ -154,6 +154,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           sku: r.sku,
           quantity: r.quantity,
           active: r.active ?? true,
+          isComp: r.isComp ?? false,
           priceSnapshot: 0,
         },
       });
@@ -515,6 +516,39 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: tenant.id } }))
         .stripeCustomerId,
     ).toBe(ids[0]);
+  });
+
+  it("SA-693: a COMP is never billed — its checkout item is deleted, a comp with no line gets no item, a billable row of the same completion is adopted", async () => {
+    const r = await rig({
+      rows: [
+        { sku: "CUSTOMER_PACK_100", quantity: 2 }, // billable
+        { sku: "FORECASTING", quantity: 1, isComp: true }, // comp WITH a checkout item (row turned comp after the session)
+        { sku: "MSRP", quantity: 1, isComp: true }, // comp without a line (not self-serve either)
+      ],
+      items: [
+        base(),
+        stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        stripeItem("si_fc", { sku: "FORECASTING", cents: 1900, quantity: 1 }),
+      ],
+    });
+
+    await r.completed();
+
+    const rows = await r.rows();
+    expect(rows.map((x) => [x.sku, x.isComp, x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+      ["CUSTOMER_PACK_100", false, "si_pack", 50],
+      ["FORECASTING", true, null, 0],
+      ["MSRP", true, null, 0],
+    ]);
+    expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledWith("si_fc", {
+      proration_behavior: "create_prorations",
+    });
+    expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(await r.ledger()).toEqual([
+      { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
+      { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
+    ]);
   });
 
   it("(a) a row switched off before completion: its item is deleted with prorations, only the crossing is booked", async () => {
