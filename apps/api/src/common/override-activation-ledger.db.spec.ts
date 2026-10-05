@@ -116,6 +116,12 @@ describeDb(
                   monthlyPrice: 25,
                   grantsFlags: [],
                 },
+                {
+                  sku: "FORECASTING",
+                  name: "Forecasting",
+                  monthlyPrice: 19,
+                  grantsFlags: [],
+                },
               ],
             },
           },
@@ -170,7 +176,10 @@ describeDb(
     });
 
     afterAll(async () => {
-      if (tenantIds.length) await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+      if (tenantIds.length) {
+        await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } });
+        await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+      }
       if (createdVersionId) {
         await prisma.addonSku.deleteMany({ where: { planVersionId: createdVersionId } });
         await prisma.planDefinition.deleteMany({ where: { planVersionId: createdVersionId } });
@@ -301,11 +310,13 @@ describeDb(
         "admin-1",
       );
 
-      // SA-690 / #3129: the unbilled add-on is not retro-billed at activation — the total is the base.
-      expect(await ledgerSum(tenantId)).toBe(starterPrice);
+      // SA-668c residual: a MANUAL activation prices the trial's unbilled add-on at today's catalog
+      // price (it would otherwise stay free forever on a hand-invoiced tenant) and books it ONCE.
+      const packPrice = await catalogPrice("CUSTOMER_PACK_100");
+      expect(await ledgerSum(tenantId)).toBe(starterPrice + packPrice);
 
-      // SA-277b: the crossing helper books the base in its own plan.changed row; a zero-priced
-      // add-on writes no addon.enabled row (emitAddonDelta skips a zero delta).
+      // SA-277b: the crossing helper books the base in its own plan.changed row; the add-on's own
+      // delta follows as one addon.enabled row (the crossing saw it at 0 and booked nothing for it).
       const plan = await prisma.billingEvent.findMany({
         where: { tenantId, type: "plan.changed" },
         select: { amountDelta: true },
@@ -316,7 +327,154 @@ describeDb(
         where: { tenantId, type: "addon.enabled" },
         select: { amountDelta: true },
       });
-      expect(addonRows).toHaveLength(0);
+      expect(addonRows.map((r) => Number(r.amountDelta))).toEqual([packPrice]);
+    });
+
+    async function catalogPrice(sku: string): Promise<number> {
+      const version = await new PlanCatalogService(prisma as any).getPublishedVersion();
+      const def = version?.addonSkus.find((a) => a.sku === sku);
+      if (!def) throw new Error(`the published catalog has no ${sku}`);
+      return Number(def.monthlyPrice);
+    }
+    const activate = (tenantId: string, ref: string) =>
+      platformAdmin.activateManualSubscription(
+        tenantId,
+        { plan: "STARTER", paymentMethod: "ZELLE", paymentRef: ref, billingPeriodDays: 30 } as any,
+        "admin-1",
+      );
+    const addAddon = (
+      tenantId: string,
+      sku: string,
+      quantity: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      prisma.tenantAddon.create({
+        data: { tenantId, addonKey: sku, sku, quantity, active: true, priceSnapshot: 0, ...extra },
+      });
+    const notices = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "ADDON_MANUAL_INVOICE_DUE" },
+        orderBy: { createdAt: "asc" },
+      });
+
+    it("SA-668c: manual activation PRICES each unbilled self-serve add-on at today's catalog price, books each ONCE, writes one DUE notice each; a re-activation does nothing more", async () => {
+      const tenantId = await makeTrialTenant("sa668c", "GROWTH");
+      await prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: { basePriceSnapshot: starterPrice },
+      });
+      await addAddon(tenantId, "CUSTOMER_PACK_100", 2);
+      await addAddon(tenantId, "FORECASTING", 1);
+      // SA-693: platform grants (comps) beside them are NEVER priced, booked or announced
+      await addAddon(tenantId, "MSRP", 1, { isComp: true });
+      await addAddon(tenantId, "SEAT_EXTRA", 4, { isComp: true });
+      const pack = await catalogPrice("CUSTOMER_PACK_100");
+      const forecasting = await catalogPrice("FORECASTING");
+
+      await activate(tenantId, "ref-668c-1");
+
+      const rows = await prisma.tenantAddon.findMany({
+        where: { tenantId },
+        orderBy: { sku: "asc" },
+      });
+      expect(
+        rows.map((r) => [r.sku, Number(r.priceSnapshot), r.quantity, r.stripeItemId, r.isComp]),
+      ).toEqual([
+        ["CUSTOMER_PACK_100", pack, 2, null, false],
+        ["FORECASTING", forecasting, 1, null, false],
+        ["MSRP", 0, 1, null, true], // the comps are untouched
+        ["SEAT_EXTRA", 0, 4, null, true],
+      ]);
+      // the base once (plan.changed), then one addon.enabled per row at price × quantity
+      expect(await ledgerSum(tenantId)).toBe(starterPrice + pack * 2 + forecasting);
+      const adds = await prisma.billingEvent.findMany({
+        where: { tenantId, type: "addon.enabled" },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(adds.map((e) => Number(e.amountDelta)).sort()).toEqual([pack * 2, forecasting].sort());
+      // one DUE notice per priced row, shaped as the manual enable path writes it
+      const due = await notices(tenantId);
+      expect(due).toHaveLength(2);
+      const bySku = Object.fromEntries(due.map((n) => [(n.meta as any).sku, n.meta as any]));
+      expect(bySku.CUSTOMER_PACK_100).toMatchObject({
+        platformAdmin: true,
+        kind: "add",
+        quantity: 2,
+        monthlyPrice: pack,
+        fromQty: 0,
+        toQty: 2,
+        addonName: expect.any(String),
+        message: expect.stringContaining("add to their next manual invoice"),
+      });
+      expect(bySku.FORECASTING).toMatchObject({
+        kind: "add",
+        quantity: 1,
+        monthlyPrice: forecasting,
+      });
+
+      // IDEMPOTENT: a re-activation books nothing and writes no second notice
+      const sumAfter = await ledgerSum(tenantId);
+      const eventsAfter = await prisma.billingEvent.count({ where: { tenantId } });
+      await activate(tenantId, "ref-668c-2");
+      expect(await ledgerSum(tenantId)).toBe(sumAfter);
+      expect(await prisma.billingEvent.count({ where: { tenantId } })).toBe(eventsAfter);
+      expect(await notices(tenantId)).toHaveLength(2);
+    });
+
+    it("SA-693: a COMP of a self-serve SKU is never priced, booked or announced at manual activation — only the base books", async () => {
+      const tenantId = await makeTrialTenant("sa668c-comp", "GROWTH");
+      await prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: { basePriceSnapshot: starterPrice },
+      });
+      await addAddon(tenantId, "CUSTOMER_PACK_100", 2, { isComp: true });
+      await addAddon(tenantId, "FORECASTING", 1, { isComp: true });
+
+      await activate(tenantId, "ref-668c-comp");
+
+      const rows = await prisma.tenantAddon.findMany({
+        where: { tenantId },
+        orderBy: { sku: "asc" },
+      });
+      expect(rows.map((r) => [r.sku, Number(r.priceSnapshot), r.isComp])).toEqual([
+        ["CUSTOMER_PACK_100", 0, true],
+        ["FORECASTING", 0, true],
+      ]);
+      expect(await ledgerSum(tenantId)).toBe(starterPrice);
+      expect(await notices(tenantId)).toHaveLength(0);
+    });
+
+    it("SA-668c: a Stripe-billed row and an already-priced row are left alone; only the unbilled, unpriced one is priced", async () => {
+      const tenantId = await makeTrialTenant("sa668c-b", "GROWTH");
+      await prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: { basePriceSnapshot: starterPrice },
+      });
+      await addAddon(tenantId, "CUSTOMER_PACK_100", 3, {
+        stripeItemId: "si_billed",
+        priceSnapshot: 11,
+      });
+      await addAddon(tenantId, "FORECASTING", 1);
+      const forecasting = await catalogPrice("FORECASTING");
+
+      await activate(tenantId, "ref-668c-3");
+
+      const rows = await prisma.tenantAddon.findMany({
+        where: { tenantId },
+        orderBy: { sku: "asc" },
+      });
+      expect(rows.map((r) => [r.sku, Number(r.priceSnapshot), r.stripeItemId])).toEqual([
+        ["CUSTOMER_PACK_100", 11, "si_billed"], // untouched
+        ["FORECASTING", forecasting, null],
+      ]);
+      // the billed row's contribution is the crossing's (stored 11 × 3, booked by the crossing helper);
+      // only the unbilled row gets a DUE notice and its own addon.enabled delta
+      expect((await notices(tenantId)).map((n) => (n.meta as any).sku)).toEqual(["FORECASTING"]);
+      const amounts = (
+        await prisma.billingEvent.findMany({ where: { tenantId, type: "addon.enabled" } })
+      ).map((e) => Number(e.amountDelta));
+      expect(amounts.sort((x, y) => x - y)).toEqual([33, forecasting].sort((x, y) => x - y));
+      expect(await ledgerSum(tenantId)).toBe(starterPrice + 33 + forecasting);
     });
   },
 );

@@ -38,6 +38,11 @@ import {
   addonSkuCode,
 } from "../billing/plan-catalog.constants";
 import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
+import {
+  priceUnbilledAddonsOnActivation,
+  unpricedSelfServeSkus,
+  withAddonLocks,
+} from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
@@ -966,7 +971,7 @@ export class PlatformAdminService {
     dto: ActivateSubscriptionDto,
     adminId: string | null = null,
   ) {
-    await this._findOrThrow(id);
+    const tenantRow = await this._findOrThrow(id);
 
     // FINDING-2 (Lite-L2 review): resolve + validate against the published catalog, and persist
     // both planKey and planVersionId — this write previously set tenant.plan/currentPlan with no
@@ -1003,196 +1008,218 @@ export class PlatformAdminService {
       : null;
     const preparedTransition = transition ? await this.planTransition.prepare(transition) : null;
 
-    const tenant = await this.prisma.$transaction(async (tx) => {
-      // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
-      // updateTenantPriceOverride.
-      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
-      if (transition && preparedTransition) {
-        await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-      }
-      // B557 (B551's mirror-image gap): capture the tenant's paying-set inputs BEFORE this
-      // call writes anything. This activation can move a tenant into MrrService's paying set
-      // (status→ACTIVE + a resolved planKey) with no compensating BillingEvent today — the
-      // write and the event must land or roll back together, exactly like updatePlan()'s own
-      // upsert+emit elsewhere in this file.
-      const before = await tx.tenant.findUniqueOrThrow({
-        where: { id },
-        select: {
-          status: true,
-          class: true,
-          deletedAt: true,
-          subscription: {
-            select: {
-              planKey: true,
-              basePriceSnapshot: true,
-              discount: true,
-              priceOverrideMonthly: true,
+    // SA-668c residual: the trial's unbilled self-serve add-ons are priced by this activation (see
+    // `priceUnbilledAddonsOnActivation`). Their billing add-on locks are taken BEFORE the transaction
+    // (house order: add-on lock, then the tenant row lock inside it); none to price, none taken.
+    const addonSkusToPrice = await unpricedSelfServeSkus(this.prisma, id);
+
+    const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
+      this.prisma.$transaction(async (tx) => {
+        // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
+        // updateTenantPriceOverride.
+        await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+        if (transition && preparedTransition) {
+          await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+        }
+        // B557 (B551's mirror-image gap): capture the tenant's paying-set inputs BEFORE this
+        // call writes anything. This activation can move a tenant into MrrService's paying set
+        // (status→ACTIVE + a resolved planKey) with no compensating BillingEvent today — the
+        // write and the event must land or roll back together, exactly like updatePlan()'s own
+        // upsert+emit elsewhere in this file.
+        const before = await tx.tenant.findUniqueOrThrow({
+          where: { id },
+          select: {
+            name: true,
+            slug: true,
+            status: true,
+            class: true,
+            deletedAt: true,
+            subscription: {
+              select: {
+                planKey: true,
+                basePriceSnapshot: true,
+                discount: true,
+                priceOverrideMonthly: true,
+              },
             },
           },
-        },
-      });
-
-      // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
-      // the write below, so only class/deletedAt (untouched here) gate whether this activation
-      // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
-      const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
-      const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
-      // #2460 / SA-464 (1): manual activation is a PAID path (owner 09-24), so a crossing INTO the
-      // paying set snapshots what the tenant pays — a negotiated override (0 = free, explicitly),
-      // else the catalog price — in this same tx, and books it below. A renewal of a row already in
-      // the set writes no snapshot and books nothing (a legacy NULL stays NULL, reported as unpriced).
-      const crossingIn = !wasPaying && isPaying;
-      // #2522 / SA-464f: a renewal of an already-paying row that also changes planKey is a ranked
-      // plan change — rebase the snapshot onto the NEW plan and book the difference below.
-      const planSwitch =
-        wasPaying &&
-        isPaying &&
-        normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
-      const override = before.subscription?.priceOverrideMonthly;
-      // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
-      const newBase =
-        override != null
-          ? roundMoney(Number(override))
-          : definition.monthlyPrice != null
-            ? roundMoney(Number(definition.monthlyPrice))
-            : null;
-      const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
-
-      const [updated] = await Promise.all([
-        tx.tenant.update({
-          where: { id },
-          data: { status: "ACTIVE", plan: dto.plan },
-          select: { id: true, slug: true, status: true, plan: true },
-        }),
-        tx.tenantSubscription.upsert({
-          where: { tenantId: id },
-          create: {
-            tenantId: id,
-            currentPlan: dto.plan,
-            planKey: definition.planKey,
-            planVersionId: version.id,
-            periodStart: now,
-            periodEnd,
-            cycle,
-            externalPayment: true,
-            externalPaymentMethod: dto.paymentMethod,
-            externalPaymentRef: dto.paymentRef ?? null,
-            externalPaymentNotes: dto.notes ?? null,
-            ...snapshotWrite,
-          },
-          update: {
-            currentPlan: dto.plan,
-            planKey: definition.planKey,
-            planVersionId: version.id,
-            periodStart: now,
-            periodEnd,
-            cycle,
-            // Rolling the period forward disarms every pending transition. A downgrade left
-            // armed now points at the OLD (already past) period end, so the very next 02:00
-            // sweep would fire it against the subscription this admin just activated.
-            cancelAtPeriodEnd: false,
-            downgradeToPlanKey: null,
-            downgradeEffectiveAt: null,
-            retainedUserIds: [],
-            externalPayment: true,
-            externalPaymentMethod: dto.paymentMethod,
-            externalPaymentRef: dto.paymentRef ?? null,
-            externalPaymentNotes: dto.notes ?? null,
-            ...snapshotWrite,
-          },
-        }),
-      ]);
-
-      if (wasPaying !== isPaying) {
-        const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: id, active: true },
-          select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
         });
-        // #2460 / SA-464: entering, the contribution is priced off the snapshot this call just
-        // wrote (after − before, where before contributed 0 outside the set); leaving (latent,
-        // see below), off the stored snapshot the tenant was counted at (−before).
-        // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
-        // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
-        // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
-        // is double-counted between a plan.changed row and the addon.enabled rows it books.
-        const baseContribution = this.mrrService.priceSubscription(
-          {
-            basePriceSnapshot: crossingIn
-              ? newBase
-              : (before.subscription?.basePriceSnapshot ?? null),
-            discount: before.subscription?.discount ?? null,
-          },
-          [],
-        );
-        await this.billingEventService.emit(
-          id,
-          BILLING_EVENTS.PLAN_CHANGED,
-          {
-            fromPlan: before.subscription?.planKey ?? null,
-            toPlan: definition.planKey,
-            platformAdmin: true,
-            externalActivation: true,
-          },
-          {
-            amountDelta: roundMoney(isPaying ? baseContribution : -baseContribution),
-            actorId: adminId,
+
+        // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
+        // the write below, so only class/deletedAt (untouched here) gate whether this activation
+        // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
+        const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
+        const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
+        // #2460 / SA-464 (1): manual activation is a PAID path (owner 09-24), so a crossing INTO the
+        // paying set snapshots what the tenant pays — a negotiated override (0 = free, explicitly),
+        // else the catalog price — in this same tx, and books it below. A renewal of a row already in
+        // the set writes no snapshot and books nothing (a legacy NULL stays NULL, reported as unpriced).
+        const crossingIn = !wasPaying && isPaying;
+        // #2522 / SA-464f: a renewal of an already-paying row that also changes planKey is a ranked
+        // plan change — rebase the snapshot onto the NEW plan and book the difference below.
+        const planSwitch =
+          wasPaying &&
+          isPaying &&
+          normalizePlanKey(before.subscription?.planKey) !== definition.planKey;
+        const override = before.subscription?.priceOverrideMonthly;
+        // #2570: round every monetary write — the snapshot (and so the delta booked from it) at cents.
+        const newBase =
+          override != null
+            ? roundMoney(Number(override))
+            : definition.monthlyPrice != null
+              ? roundMoney(Number(definition.monthlyPrice))
+              : null;
+        const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
+
+        const [updated] = await Promise.all([
+          tx.tenant.update({
+            where: { id },
+            data: { status: "ACTIVE", plan: dto.plan },
+            select: { id: true, slug: true, status: true, plan: true },
+          }),
+          tx.tenantSubscription.upsert({
+            where: { tenantId: id },
+            create: {
+              tenantId: id,
+              currentPlan: dto.plan,
+              planKey: definition.planKey,
+              planVersionId: version.id,
+              periodStart: now,
+              periodEnd,
+              cycle,
+              externalPayment: true,
+              externalPaymentMethod: dto.paymentMethod,
+              externalPaymentRef: dto.paymentRef ?? null,
+              externalPaymentNotes: dto.notes ?? null,
+              ...snapshotWrite,
+            },
+            update: {
+              currentPlan: dto.plan,
+              planKey: definition.planKey,
+              planVersionId: version.id,
+              periodStart: now,
+              periodEnd,
+              cycle,
+              // Rolling the period forward disarms every pending transition. A downgrade left
+              // armed now points at the OLD (already past) period end, so the very next 02:00
+              // sweep would fire it against the subscription this admin just activated.
+              cancelAtPeriodEnd: false,
+              downgradeToPlanKey: null,
+              downgradeEffectiveAt: null,
+              retainedUserIds: [],
+              externalPayment: true,
+              externalPaymentMethod: dto.paymentMethod,
+              externalPaymentRef: dto.paymentRef ?? null,
+              externalPaymentNotes: dto.notes ?? null,
+              ...snapshotWrite,
+            },
+          }),
+        ]);
+
+        if (wasPaying !== isPaying) {
+          const addons = await tx.tenantAddon.findMany({
+            where: { tenantId: id, active: true },
+            select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
+          });
+          // #2460 / SA-464: entering, the contribution is priced off the snapshot this call just
+          // wrote (after − before, where before contributed 0 outside the set); leaving (latent,
+          // see below), off the stored snapshot the tenant was counted at (−before).
+          // SA-277b: the PLAN_CHANGED amount here is the BASE (plan) share only — the add-on
+          // share of this same crossing is booked separately, through `bookAddonsOnCrossing`
+          // below (the SAME helper `subscribe()` uses for its own kept/prior add-ons), so nothing
+          // is double-counted between a plan.changed row and the addon.enabled rows it books.
+          const baseContribution = this.mrrService.priceSubscription(
+            {
+              basePriceSnapshot: crossingIn
+                ? newBase
+                : (before.subscription?.basePriceSnapshot ?? null),
+              discount: before.subscription?.discount ?? null,
+            },
+            [],
+          );
+          await this.billingEventService.emit(
+            id,
+            BILLING_EVENTS.PLAN_CHANGED,
+            {
+              fromPlan: before.subscription?.planKey ?? null,
+              toPlan: definition.planKey,
+              platformAdmin: true,
+              externalActivation: true,
+            },
+            {
+              amountDelta: roundMoney(isPaying ? baseContribution : -baseContribution),
+              actorId: adminId,
+              tx,
+            },
+          );
+          // Latent-case guard (pre-merge review): `bookAddonsOnCrossing`'s `wasPaying` flag only
+          // knows how to book a tenant CROSSING INTO the paying set (booking each add-on's full
+          // contribution) — it has no "debit" branch for a tenant that left it. Unreachable
+          // today: this method forces `status: "ACTIVE"` unconditionally above and never touches
+          // `class`/`deletedAt`, so `isPaying` can only be `false` here if `wasPaying` already
+          // was (isPayingRow needs status=ACTIVE too) — i.e. wasPaying implies isPaying. Kept as
+          // a fail-loud guard in case that invariant ever changes, rather than silently booking
+          // the wrong direction.
+          if (wasPaying && !isPaying) {
+            throw new InternalServerErrorException(
+              "activation left the paying set — add-on debit not implemented",
+            );
+          }
+          // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
+          // `wasPaying` gates whether each add-on's contribution was already on the ledger.
+          await bookAddonsOnCrossing(
             tx,
-          },
-        );
-        // Latent-case guard (pre-merge review): `bookAddonsOnCrossing`'s `wasPaying` flag only
-        // knows how to book a tenant CROSSING INTO the paying set (booking each add-on's full
-        // contribution) — it has no "debit" branch for a tenant that left it. Unreachable
-        // today: this method forces `status: "ACTIVE"` unconditionally above and never touches
-        // `class`/`deletedAt`, so `isPaying` can only be `false` here if `wasPaying` already
-        // was (isPayingRow needs status=ACTIVE too) — i.e. wasPaying implies isPaying. Kept as
-        // a fail-loud guard in case that invariant ever changes, rather than silently booking
-        // the wrong direction.
-        if (wasPaying && !isPaying) {
-          throw new InternalServerErrorException(
-            "activation left the paying set — add-on debit not implemented",
+            this.billingEventService,
+            id,
+            addons.map((a) => ({
+              sku: addonSkuCode(a) ?? a.addonKey,
+              priceSnapshot: a.priceSnapshot,
+              quantity: a.quantity,
+            })),
+            wasPaying,
+            adminId,
           );
         }
-        // SA-277b: add-ons book through the SAME crossing helper `subscribe()` uses —
-        // `wasPaying` gates whether each add-on's contribution was already on the ledger.
-        await bookAddonsOnCrossing(
-          tx,
-          this.billingEventService,
-          id,
-          addons.map((a) => ({
-            sku: addonSkuCode(a) ?? a.addonKey,
-            priceSnapshot: a.priceSnapshot,
-            quantity: a.quantity,
-          })),
-          wasPaying,
-          adminId,
-        );
-      }
 
-      // #2522 / SA-464f: already paying on both sides, so add-ons and the discount cancel — the
-      // base alone moves: Δ = newBase − (stored snapshot ?? 0). An override row books Δ0; a legacy
-      // NULL self-heals (books the full new base, as upgrade()/updatePlan do).
-      if (planSwitch) {
-        await this.billingEventService.emit(
-          id,
-          BILLING_EVENTS.PLAN_CHANGED,
-          {
-            fromPlan: before.subscription?.planKey ?? null,
-            toPlan: definition.planKey,
-            platformAdmin: true,
-            externalActivation: true,
-          },
-          {
-            amountDelta: roundMoney(
-              Number(newBase ?? 0) - Number(before.subscription?.basePriceSnapshot ?? 0),
-            ),
+        // #2522 / SA-464f: already paying on both sides, so add-ons and the discount cancel — the
+        // base alone moves: Δ = newBase − (stored snapshot ?? 0). An override row books Δ0; a legacy
+        // NULL self-heals (books the full new base, as upgrade()/updatePlan do).
+        if (planSwitch) {
+          await this.billingEventService.emit(
+            id,
+            BILLING_EVENTS.PLAN_CHANGED,
+            {
+              fromPlan: before.subscription?.planKey ?? null,
+              toPlan: definition.planKey,
+              platformAdmin: true,
+              externalActivation: true,
+            },
+            {
+              amountDelta: roundMoney(
+                Number(newBase ?? 0) - Number(before.subscription?.basePriceSnapshot ?? 0),
+              ),
+              actorId: adminId,
+              tx,
+            },
+          );
+        }
+
+        // SA-668c residual ("price them + notify"): after the crossing above (which saw the trial's
+        // add-ons at their stored 0 and booked nothing for them), each unbilled self-serve add-on is
+        // priced at today's catalog price, its delta booked once, and the platform told to invoice it.
+        if (addonSkusToPrice.length > 0) {
+          await priceUnbilledAddonsOnActivation(tx, this.billingEventService, {
+            tenantId: id,
+            tenantLabel: before.name ?? before.slug ?? id,
+            planKey: definition.planKey,
+            catalogAddons: version.addonSkus,
             actorId: adminId,
-            tx,
-          },
-        );
-      }
+          });
+        }
 
-      return updated;
-    }, this.planTransition.transactionOptions(preparedTransition));
+        return updated;
+      }, this.planTransition.transactionOptions(preparedTransition)),
+    );
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
