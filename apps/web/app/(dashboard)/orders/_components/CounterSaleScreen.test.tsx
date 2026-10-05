@@ -728,6 +728,50 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(await screen.findByText("No items yet.")).toBeInTheDocument();
     });
 
+    it("Complete & next sale whose server CHANGE differs from the one the screen showed stays on the receipt with the server's figures", async () => {
+      mutateAsync.mockResolvedValue({
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.5,
+        paid: 7.5,
+        balanceDue: 0,
+        change: 5, // e.g. a credit was auto-applied: the screen said $17.50
+        paymentRecorded: true,
+      });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      const receipt = await screen.findByTestId("counter-sale-receipt");
+      expect(screen.getByText("Change").nextSibling).toHaveTextContent("$5.00");
+      expect(screen.getByText("Paid").nextSibling).toHaveTextContent("$7.50");
+      expect(receipt.textContent).not.toMatch(/17\.50/);
+      expect(screen.queryByText("No items yet.")).toBeNull();
+    });
+
+    it("a non-cash sale whose server response carries change is held too (the screen showed none)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+      fireEvent.click(screen.getByRole("button", { name: "Card" }));
+      mutateAsync.mockResolvedValue({
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.5,
+        paid: 5,
+        balanceDue: 0,
+        change: 2.5,
+        paymentRecorded: true,
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      expect(await screen.findByTestId("counter-sale-receipt")).toBeInTheDocument();
+      expect(screen.getByText("Change").nextSibling).toHaveTextContent("$2.50");
+    });
+
     it("auto-print fires once when the receipt is held for a total mismatch", async () => {
       window.localStorage.setItem("rf.counterSale.autoPrint", "1");
       mutateAsync.mockResolvedValue({

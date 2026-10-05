@@ -93,8 +93,8 @@ export function CounterSaleScreen() {
     next: boolean;
     unknown: boolean; // true once an attempt came back UNKNOWN: from then on only a 2xx or the lookup's 404 settles it
   } | null>(null);
-  // The total the clerk SAW (the client estimate) when the sale was submitted: compared with the server's on the way out.
-  const estimateRef = React.useRef(0);
+  // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
+  const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
   const submittingRef = React.useRef(false);
 
@@ -276,7 +276,10 @@ export function CounterSaleScreen() {
       },
     };
     attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
-    estimateRef.current = totals.total;
+    estimateRef.current = {
+      total: totals.total,
+      change: method === "CASH" ? changeDue(totals.total, tenderedNum) : 0,
+    };
     return send(attemptRef.current);
   };
 
@@ -284,11 +287,14 @@ export function CounterSaleScreen() {
   const finishSale = (res: CounterSaleResponse, next: boolean) => {
     if (autoPrint) window.print(); // once per completed sale, before any reset
     // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
-    // (whose own "New sale" starts the next one). The same holds when the server's total is not the estimate the clerk
-    // collected on: its receipt shows first.
+    // (whose own "New sale" starts the next one). The same holds when the server's total or change is not what the screen
+    // showed the clerk (a credit auto-applied, a re-priced line): the receipt, with the SERVER's figures, shows first.
     const unpaid = res.paymentRecorded === false || res.balanceDue > 0;
-    const totalDiffers = roundMoney(res.total) !== roundMoney(estimateRef.current);
-    if (next && !unpaid && !totalDiffers) resetSale();
+    const shown = estimateRef.current;
+    const figuresDiffer =
+      roundMoney(res.total) !== roundMoney(shown.total) ||
+      roundMoney(res.change ?? 0) !== roundMoney(shown.change);
+    if (next && !unpaid && !figuresDiffer) resetSale();
     else setReceipt(res);
   };
 
