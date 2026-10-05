@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { LadderProduct } from "@routeflow/pricing";
 import type {
@@ -7,7 +8,13 @@ import type {
 } from "@routeflow/types";
 import { fetchProductUnits, productUnitsKey } from "@/lib/api/product-units";
 import { buildUnitOptions, type UnitOption } from "@/lib/unit-options";
-import { planOrderAgain, unavailableMessage, type OrderedAdd } from "./order-again";
+import {
+  planOrderAgain,
+  repackMessage,
+  unavailableMessage,
+  unclearMessage,
+  type OrderedAdd,
+} from "./order-again";
 
 /** The modal's add-line path, as far as the suggestions need it. */
 export type SuggestionAddLine = (
@@ -44,6 +51,9 @@ const ladderProductOf = (p: OrderSuggestionProduct): LadderProduct => ({
  */
 export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast }: Deps) {
   const qc = useQueryClient();
+  // One "Order again" at a time: while a pick is still resolving unit ladders, a second pick (the menu can
+  // be reopened) would add every line twice.
+  const orderAgainBusy = React.useRef(false);
 
   /** A chip tap: exactly a picker tap (the product's default unit, one case), priced today. */
   const addProduct = (product: OrderSuggestionProduct) => {
@@ -71,6 +81,16 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
   };
 
   const orderAgain = async (order: RecentOrderSummary) => {
+    if (orderAgainBusy.current) return;
+    orderAgainBusy.current = true;
+    try {
+      await addOrderLines(order);
+    } finally {
+      orderAgainBusy.current = false;
+    }
+  };
+
+  const addOrderLines = async (order: RecentOrderSummary) => {
     const plan = planOrderAgain(order, suggestions?.products ?? {});
     let unavailable = plan.unavailable;
     // Units are looked up first so every line lands in the order's own order, in one pass.
@@ -98,6 +118,8 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
       });
     }
     if (unavailable > 0) toast({ title: unavailableMessage(unavailable), variant: "info" });
+    if (plan.unclear > 0) toast({ title: unclearMessage(plan.unclear), variant: "info" });
+    if (plan.repacked > 0) toast({ title: repackMessage(plan.repacked), variant: "info" });
   };
 
   return { addProduct, orderAgain };

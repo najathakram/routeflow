@@ -29,6 +29,9 @@ import { RegulatedModule } from "../regulated/regulated.module";
 // email.module.ts), so it cannot be the tail of a cycle back here; a prior
 // comment claiming a circular-module issue was mistaken.
 import { EmailModule } from "../email/email.module";
+// "Usually buys" / "Order again" never suggest a banned product: the same read-only choke-point check
+// the order save runs (the engine behind checkLinesSellable).
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
   imports: [
@@ -39,6 +42,7 @@ import { EmailModule } from "../email/email.module";
     CommissionsModule,
     RegulatedModule,
     EmailModule,
+    SellingRestrictionsModule,
   ],
   controllers: [
     CustomersController,

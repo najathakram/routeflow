@@ -1,10 +1,12 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import {
   CustomerOrderSuggestionsService,
   ORDER_AGAIN_COUNT,
+  USUALLY_BUYS_CANDIDATES,
   USUALLY_BUYS_DAYS,
   USUALLY_BUYS_LIMIT,
 } from "./customer-order-suggestions.service";
@@ -32,10 +34,18 @@ const product = (id: string, o: Record<string, unknown> = {}) => ({
   ...o,
 });
 
-/** A usually-buys source line: one OrderItem row of `productId` on an order dated `at`. */
-const line = (productId: string, at = "2026-09-20T10:00:00Z") => ({
+/** One groupBy row: the order-line count of a product, as the database ranks it. */
+const count = (productId: string, n: number) => ({ productId, _count: { _all: n } });
+
+const orderLine = (productId: string, o: Record<string, unknown> = {}) => ({
   productId,
-  order: { orderDate: null, createdAt: new Date(at) },
+  qty: D(3),
+  boxes: null,
+  pieces: null,
+  unitsPerBox: null,
+  unitLabel: null,
+  unitPrice: D("99.00"), // a historical price: must never reach the response
+  ...o,
 });
 
 const orderRow = (id: string, o: Record<string, unknown> = {}) => ({
@@ -44,33 +54,40 @@ const orderRow = (id: string, o: Record<string, unknown> = {}) => ({
   status: "DELIVERED",
   orderDate: null,
   createdAt: new Date("2026-09-30T09:00:00Z"),
-  lineItems: [
-    {
-      productId: "p1",
-      qty: D(3),
-      boxes: null,
-      pieces: null,
-      unitsPerBox: null,
-      unitLabel: null,
-      unitPrice: D("99.00"), // a historical price: must never reach the response
-    },
-  ],
+  lineItems: [orderLine("p1")],
   ...o,
+});
+
+const ALLOW = { outcome: "ALLOW", reasons: [] };
+const blocked = (...ids: string[]) => ({
+  outcome: "BLOCK",
+  reasons: ids.map((productId) => ({
+    productId,
+    productName: productId,
+    ruleId: "r1",
+    reason: "FEDERAL_BAN",
+  })),
 });
 
 describe("CustomerOrderSuggestionsService", () => {
   let service: CustomerOrderSuggestionsService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let restrictions: { evaluate: jest.Mock };
 
   beforeEach(async () => {
     jest.useFakeTimers().setSystemTime(NOW);
     prisma = createMockPrisma();
     prisma.customer.findFirst.mockResolvedValue({ id: "c1" });
-    prisma.orderItem.findMany.mockResolvedValue([]);
+    prisma.orderItem.groupBy.mockResolvedValue([]);
     prisma.order.findMany.mockResolvedValue([]);
     prisma.product.findMany.mockResolvedValue([]);
+    restrictions = { evaluate: jest.fn().mockResolvedValue(ALLOW) };
     const mod = await Test.createTestingModule({
-      providers: [CustomerOrderSuggestionsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        CustomerOrderSuggestionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: SellingRestrictionsService, useValue: restrictions },
+      ],
     }).compile();
     service = mod.get(CustomerOrderSuggestionsService);
   });
@@ -78,8 +95,8 @@ describe("CustomerOrderSuggestionsService", () => {
   afterEach(() => jest.useRealTimers());
 
   describe("tenant isolation", () => {
-    it("scopes the customer, line, order and product reads to the request tenant", async () => {
-      prisma.orderItem.findMany.mockResolvedValue([line("p1")]);
+    it("scopes the customer, count, order and product reads to the request tenant", async () => {
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 2)]);
       prisma.order.findMany.mockResolvedValue([orderRow("o1")]);
       prisma.product.findMany.mockResolvedValue([product("p1")]);
       await service.getSuggestions("c1");
@@ -87,7 +104,8 @@ describe("CustomerOrderSuggestionsService", () => {
         id: "c1",
         tenantId: "test-tenant",
       });
-      expect(prisma.orderItem.findMany.mock.calls[0][0].where.order).toMatchObject({
+      // OrderItem.tenantId is nullable: the count scopes THROUGH the order's tenant, never an item column.
+      expect(prisma.orderItem.groupBy.mock.calls[0][0].where.order).toMatchObject({
         tenantId: "test-tenant",
         customerId: "c1",
       });
@@ -99,12 +117,13 @@ describe("CustomerOrderSuggestionsService", () => {
         tenantId: "test-tenant",
         id: { in: ["p1"] },
       });
+      expect(restrictions.evaluate.mock.calls[0].slice(0, 2)).toEqual(["test-tenant", "c1"]);
     });
 
     it("404s another tenant's (unfound) customer and never reads orders", async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
       await expect(service.getSuggestions("other")).rejects.toBeInstanceOf(NotFoundException);
-      expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.groupBy).not.toHaveBeenCalled();
       expect(prisma.order.findMany).not.toHaveBeenCalled();
     });
 
@@ -115,27 +134,30 @@ describe("CustomerOrderSuggestionsService", () => {
   });
 
   describe("usually buys", () => {
-    it("reads only the last 90 days of non-cancelled orders and lines", async () => {
+    it("counts in the database, bounded, over the last 90 days of placed, non-cancelled lines", async () => {
       await service.getSuggestions("c1");
-      const where = prisma.orderItem.findMany.mock.calls[0][0].where;
+      const args = prisma.orderItem.groupBy.mock.calls[0][0];
       const since = new Date(NOW.getTime() - USUALLY_BUYS_DAYS * 86_400_000);
       expect(USUALLY_BUYS_DAYS).toBe(90);
-      expect(where.order.status).toEqual({ not: "CANCELLED" });
-      expect(where.status).toEqual({ not: "CANCELLED" });
+      expect(args.by).toEqual(["productId"]);
+      expect(args.take).toBe(USUALLY_BUYS_CANDIDATES);
+      expect(args.orderBy).toEqual([{ _count: { productId: "desc" } }, { productId: "asc" }]);
+      expect(args.where.order.status).toEqual({ notIn: ["CANCELLED", "DRAFT"] });
+      expect(args.where.status).toEqual({ not: "CANCELLED" });
       // The business date when set, else the entry timestamp.
-      expect(where.order.OR).toEqual([
+      expect(args.where.order.OR).toEqual([
         { orderDate: { gte: since } },
         { orderDate: null, createdAt: { gte: since } },
       ]);
-      expect(where.productId).toEqual({ not: null });
-      expect(where.product).toEqual({ isActive: true });
+      expect(args.where.productId).toEqual({ not: null });
+      expect(args.where.product).toEqual({ isActive: true });
+      // The line read is the aggregate: nothing is pulled into memory to be counted.
+      expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
     });
 
-    it("ranks by order-line count, most bought first, and keeps the top 8", async () => {
-      // p1 x5, p2 x4 ... p10 x1 (ten distinct products)
-      const lines: ReturnType<typeof line>[] = [];
-      for (let i = 1; i <= 10; i++) for (let n = 0; n < 11 - i; n++) lines.push(line(`p${i}`));
-      prisma.orderItem.findMany.mockResolvedValue(lines);
+    it("offers the top 8 in the database's order, most bought first", async () => {
+      const rows = Array.from({ length: 10 }, (_, i) => count(`p${i + 1}`, 10 - i));
+      prisma.orderItem.groupBy.mockResolvedValue(rows);
       prisma.product.findMany.mockResolvedValue(
         Array.from({ length: 10 }, (_, i) => product(`p${i + 1}`)),
       );
@@ -156,33 +178,20 @@ describe("CustomerOrderSuggestionsService", () => {
       expect(out.usuallyBuys[7]).toEqual({ productId: "p8", orderLineCount: 3 });
     });
 
-    it("breaks a tie by the most recent order, then by product id", async () => {
-      prisma.orderItem.findMany.mockResolvedValue([
-        line("pB", "2026-09-01T00:00:00Z"),
-        line("pA", "2026-09-01T00:00:00Z"),
-        line("pC", "2026-09-25T00:00:00Z"),
-      ]);
-      prisma.product.findMany.mockResolvedValue([product("pA"), product("pB"), product("pC")]);
-      const out = await service.getSuggestions("c1");
-      expect(out.usuallyBuys.map((u) => u.productId)).toEqual(["pC", "pA", "pB"]);
-    });
-
     it("returns no history prices anywhere in the payload", async () => {
-      prisma.orderItem.findMany.mockResolvedValue([line("p1")]);
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 1)]);
       prisma.order.findMany.mockResolvedValue([orderRow("o1")]);
       prisma.product.findMany.mockResolvedValue([product("p1")]);
       const out = await service.getSuggestions("c1");
       expect(JSON.stringify(out)).not.toContain("99");
       expect(JSON.stringify(out)).not.toMatch(/unitPrice|lastPrice/);
-      // The line selects never ask for a price column at all.
-      expect(prisma.orderItem.findMany.mock.calls[0][0].select).not.toHaveProperty("unitPrice");
       expect(JSON.stringify(prisma.order.findMany.mock.calls[0][0].select)).not.toContain(
         "unitPrice",
       );
     });
 
     it("carries the product's CURRENT catalog columns, including the active flag", async () => {
-      prisma.orderItem.findMany.mockResolvedValue([line("p1")]);
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 1)]);
       prisma.product.findMany.mockResolvedValue([
         product("p1", { unitsPerBox: 12, averageCost: D("1.5000"), parent: { name: "Parent" } }),
       ]);
@@ -200,12 +209,13 @@ describe("CustomerOrderSuggestionsService", () => {
   });
 
   describe("order again", () => {
-    it("takes the last 5 non-cancelled orders, newest first, that have re-orderable lines", async () => {
+    it("takes the last 5 placed, non-cancelled orders, newest first, that have re-orderable lines", async () => {
       await service.getSuggestions("c1");
       const args = prisma.order.findMany.mock.calls[0][0];
       expect(ORDER_AGAIN_COUNT).toBe(5);
       expect(args.take).toBe(5);
-      expect(args.where.status).toEqual({ not: "CANCELLED" });
+      // A DRAFT is not an order yet; a cancelled one is not worth repeating.
+      expect(args.where.status).toEqual({ notIn: ["CANCELLED", "DRAFT"] });
       expect(args.orderBy).toEqual([
         { orderDate: { sort: "desc", nulls: "last" } },
         { createdAt: "desc" },
@@ -227,22 +237,8 @@ describe("CustomerOrderSuggestionsService", () => {
         orderRow("o1", {
           orderDate: new Date("2026-09-28T00:00:00Z"),
           lineItems: [
-            {
-              productId: "p1",
-              qty: D(30),
-              boxes: 2,
-              pieces: 6,
-              unitsPerBox: 12,
-              unitLabel: null,
-            },
-            {
-              productId: "p2",
-              qty: D(4),
-              boxes: null,
-              pieces: null,
-              unitsPerBox: null,
-              unitLabel: "Carton",
-            },
+            orderLine("p1", { qty: D(30), boxes: 2, pieces: 6, unitsPerBox: 12 }),
+            orderLine("p2", { qty: D(4), unitLabel: "Carton" }),
           ],
         }),
         orderRow("o2"),
@@ -278,6 +274,79 @@ describe("CustomerOrderSuggestionsService", () => {
       expect(prisma.product.findMany.mock.calls[0][0].where.id).toEqual({ in: ["p1"] });
       expect(out.products.p1.isActive).toBe(false);
       expect(out.usuallyBuys).toEqual([]);
+    });
+  });
+
+  describe("banned products (selling restrictions)", () => {
+    it("asks the order-save helper once, as STAFF, about every product it might offer", async () => {
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 3), count("p2", 2)]);
+      prisma.order.findMany.mockResolvedValue([
+        orderRow("o1", { lineItems: [orderLine("p2"), orderLine("p3")] }),
+      ]);
+      prisma.product.findMany.mockResolvedValue([product("p1"), product("p2"), product("p3")]);
+      await service.getSuggestions("c1");
+      expect(restrictions.evaluate).toHaveBeenCalledTimes(1);
+      const [, , lines, options] = restrictions.evaluate.mock.calls[0];
+      expect(options).toEqual({ channel: "STAFF" });
+      expect(lines.map((l: { productId: string }) => l.productId).sort()).toEqual([
+        "p1",
+        "p2",
+        "p3",
+      ]);
+    });
+
+    it("never suggests a banned product as a chip; the next product fills its place", async () => {
+      const rows = Array.from({ length: 10 }, (_, i) => count(`p${i + 1}`, 10 - i));
+      prisma.orderItem.groupBy.mockResolvedValue(rows);
+      restrictions.evaluate.mockResolvedValue(blocked("p2"));
+      prisma.product.findMany.mockResolvedValue([]);
+      const out = await service.getSuggestions("c1");
+      expect(out.usuallyBuys.map((u) => u.productId)).toEqual([
+        "p1",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+      ]);
+      expect(prisma.product.findMany.mock.calls[0][0].where.id.in).not.toContain("p2");
+    });
+
+    it("drops a banned line from an order again, and an order left with no lines", async () => {
+      restrictions.evaluate.mockResolvedValue(blocked("p2", "p9"));
+      prisma.order.findMany.mockResolvedValue([
+        orderRow("o1", { lineItems: [orderLine("p1"), orderLine("p2")] }),
+        orderRow("o2", { lineItems: [orderLine("p9")] }),
+      ]);
+      prisma.product.findMany.mockResolvedValue([product("p1")]);
+      const out = await service.getSuggestions("c1");
+      expect(out.recentOrders.map((o) => o.id)).toEqual(["o1"]);
+      expect(out.recentOrders[0].lines.map((l) => l.productId)).toEqual(["p1"]);
+      expect(Object.keys(out.products)).toEqual(["p1"]);
+    });
+
+    it("fails closed on an INDETERMINATE answer, like the order save", async () => {
+      restrictions.evaluate.mockResolvedValue({
+        outcome: "INDETERMINATE",
+        reasons: [
+          {
+            productId: "p1",
+            productName: "p1",
+            ruleId: "r1",
+            reason: "INDETERMINATE_ADDRESS",
+          },
+        ],
+      });
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 3), count("p2", 2)]);
+      const out = await service.getSuggestions("c1");
+      expect(out.usuallyBuys.map((u) => u.productId)).toEqual(["p2"]);
+    });
+
+    it("asks nothing when there is nothing to offer", async () => {
+      await service.getSuggestions("c1");
+      expect(restrictions.evaluate).not.toHaveBeenCalled();
     });
   });
 

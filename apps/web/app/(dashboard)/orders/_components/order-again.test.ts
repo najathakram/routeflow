@@ -5,7 +5,9 @@ import {
   orderAgainSummary,
   orderedQtyFields,
   planOrderAgain,
+  repackMessage,
   unavailableMessage,
+  unclearMessage,
 } from "./order-again";
 
 const product = (id: string, o: Partial<OrderSuggestionProduct> = {}): OrderSuggestionProduct => ({
@@ -87,12 +89,22 @@ describe("orderedQtyFields — quantity as ordered, normalised through @routeflo
     ).toEqual({ qty: 3, boxes: 3, pieces: 0 });
   });
 
-  it("a bare qty on a boxed product means BOXES", () => {
-    expect(orderedQtyFields(line("p1", { qty: 2 }), product("p1", { unitsPerBox: 12 }))).toEqual({
-      qty: 24,
-      boxes: 2,
-      pieces: 0,
-    });
+  it("a legacy line with no stored split on a product that is boxed today is UNCLEAR, never read as boxes", () => {
+    // 24 loose items must not become 24 boxes = 288 pieces at today's pack of 12.
+    expect(orderedQtyFields(line("p1", { qty: 24 }), product("p1", { unitsPerBox: 12 }))).toBe(
+      "unclear",
+    );
+    expect(orderedQtyFields(line("p1", { qty: 2 }), product("p1", { unitsPerBox: 12 }))).toBe(
+      "unclear",
+    );
+  });
+
+  it("a legacy line with no split on a product that is NOT boxed today is a plain count", () => {
+    expect(orderedQtyFields(line("p1", { qty: 24 }), product("p1", { unitsPerBox: null }))).toEqual(
+      {
+        qty: 24,
+      },
+    );
   });
 
   it("a unit line (Carton) is a plain count of that unit, derived from its boxes", () => {
@@ -119,6 +131,8 @@ describe("planOrderAgain", () => {
       { p1: product("p1", { unitsPerBox: 12 }), p2: product("p2", { unitsPerBox: 12 }) },
     );
     expect(plan.unavailable).toBe(0);
+    expect(plan.unclear).toBe(0);
+    expect(plan.repacked).toBe(0);
     expect(plan.items.map((i) => [i.product.id, i.qty, i.unitLabel])).toEqual([
       ["p1", { qty: 30, boxes: 2, pieces: 6 }, undefined],
       ["p2", { qty: 4 }, "Carton"],
@@ -132,6 +146,28 @@ describe("planOrderAgain", () => {
     });
     expect(plan.items.map((i) => i.product.id)).toEqual(["p1"]);
     expect(plan.unavailable).toBe(2);
+  });
+
+  it("skips a line whose quantity cannot be decided and counts it (never guesses)", () => {
+    const plan = planOrderAgain(order([line("p1", { qty: 24 }), line("p2", { qty: 2 })]), {
+      p1: product("p1", { unitsPerBox: 12 }),
+      p2: product("p2"),
+    });
+    expect(plan.items.map((i) => [i.product.id, i.qty])).toEqual([["p2", { qty: 2 }]]);
+    expect(plan.unclear).toBe(1);
+    expect(plan.unavailable).toBe(0);
+  });
+
+  it("counts the lines whose pack size changed since they were ordered", () => {
+    const plan = planOrderAgain(
+      order([
+        line("p1", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 }),
+        line("p2", { qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 }),
+      ]),
+      { p1: product("p1", { unitsPerBox: 6 }), p2: product("p2", { unitsPerBox: 12 }) },
+    );
+    expect(plan.repacked).toBe(1);
+    expect(plan.items[0].qty).toEqual({ qty: 12, boxes: 2, pieces: 0 });
   });
 
   it("carries no price: a plan item is a product, a quantity and a unit only", () => {
@@ -159,6 +195,15 @@ describe("copy", () => {
   it("says how many items are no longer available", () => {
     expect(unavailableMessage(3)).toBe("3 items are no longer available");
     expect(unavailableMessage(1)).toBe("1 item is no longer available");
+  });
+
+  it("says how many items could not be added and how many have a new pack size", () => {
+    expect(unclearMessage(1)).toBe("1 item could not be added because its quantity is unclear");
+    expect(unclearMessage(2)).toBe(
+      "2 items could not be added because their quantities are unclear",
+    );
+    expect(repackMessage(1)).toBe("1 item has a new pack size, so check its quantity");
+    expect(repackMessage(3)).toBe("3 items have a new pack size, so check their quantities");
   });
 
   it("the button and prompt copy is fixed", () => {

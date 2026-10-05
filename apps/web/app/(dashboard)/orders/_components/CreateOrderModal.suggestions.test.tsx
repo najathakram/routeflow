@@ -364,6 +364,101 @@ describe("Order again", () => {
     );
     expect(screen.queryAllByTitle("Remove")).toHaveLength(0);
   });
+
+  it("a legacy line with no stored split on a boxed product is skipped with a notice, never guessed", async () => {
+    // 24 loose items at today's pack of 12 must not become 24 cases (288 pieces).
+    mockSuggestions = suggestions({
+      recentOrders: [oldOrder("o4", [ol("p2", { qty: 24 }), ol("p1", { qty: 2 })])],
+    });
+    await openWithCustomer();
+    await pickOrder(/ORD-o4/);
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "1 item could not be added because its quantity is unclear",
+        }),
+      ),
+    );
+    expect(screen.getAllByTitle("Remove")).toHaveLength(1);
+  });
+
+  it("says so when a product's pack size changed since the order", async () => {
+    mockSuggestions = suggestions({
+      recentOrders: [oldOrder("o5", [ol("p2", { qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6 })])],
+    });
+    await openWithCustomer();
+    await pickOrder(/ORD-o5/);
+    await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "1 item has a new pack size, so check its quantity" }),
+    );
+  });
+
+  it("a second Order again while the first is still resolving adds nothing twice", async () => {
+    let release: (units: unknown[]) => void = () => {};
+    mockFetchUnits.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    mockSuggestions = suggestions({
+      recentOrders: [
+        oldOrder("o3", [
+          ol("p2", { qty: 48, boxes: 4, pieces: 0, unitsPerBox: 12, unitLabel: "Carton" }),
+        ]),
+      ],
+    });
+    await openWithCustomer();
+    await pickOrder(/ORD-o3/); // slow: the ladder is still loading
+    await pickOrder(/ORD-o3/); // the menu is reopened and the same order picked again
+    release([
+      {
+        id: "u1",
+        label: "Carton",
+        factorToBase: 12,
+        isDefaultSelling: false,
+        price: "50.00",
+        priceTier2: "44.00",
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+      },
+    ]);
+    await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
+    expect(screen.getAllByTitle("Remove")).toHaveLength(1);
+    expect(
+      (lineFor("Sample Chips").querySelector('input[aria-label="Quantity"]') as HTMLInputElement)
+        .value,
+    ).toBe("4");
+    expect(mockFetchUnits).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape closes the menu (not the order) and gives focus back to the button", async () => {
+    await openWithCustomer();
+    const trigger = screen.getByRole("button", { name: "Order again" });
+    fireEvent.click(trigger);
+    await screen.findByRole("list", { name: "Choose a recent order" });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("list", { name: "Choose a recent order" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("order-suggestions")).toBeInTheDocument(); // the order is still open
+    expect(trigger).toHaveFocus();
+  });
+});
+
+describe("when the suggestions cannot be loaded", () => {
+  it("says so quietly and leaves order entry alone", async () => {
+    mockApiGet.mockImplementation((url: string) =>
+      url === "/customers/c1/order-suggestions"
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({ data: { taxRate: 0 } }),
+    );
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    expect(await screen.findByText("Suggestions unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Order again" })).not.toBeInTheDocument();
+  });
 });
 
 describe("when there is nothing to suggest", () => {

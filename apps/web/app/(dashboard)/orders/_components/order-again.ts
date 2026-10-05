@@ -1,4 +1,4 @@
-import { invoiceLineQtyText, normalizeBoxesPieces } from "@routeflow/pricing";
+import { invoiceLineQtyText, legacyLinePieces, normalizeBoxesPieces } from "@routeflow/pricing";
 import type { OrderSuggestionProduct, RecentOrderLine, RecentOrderSummary } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
 import type { UnitOption } from "@/lib/unit-options";
@@ -17,11 +17,26 @@ export const ORDER_AGAIN_COPY = {
   confirmLines: "This order already has lines. Add these lines as well?",
   confirmAdd: "Add lines",
   confirmCancel: "Cancel",
+  unavailable: "Suggestions unavailable",
 } as const;
 
 /** "3 items are no longer available" — inactive / retired (or deleted) products are skipped. */
 export function unavailableMessage(n: number): string {
   return n === 1 ? "1 item is no longer available" : `${n} items are no longer available`;
+}
+
+/** "3 items could not be added because their quantities are unclear" — a legacy line whose unit cannot be decided. */
+export function unclearMessage(n: number): string {
+  return n === 1
+    ? "1 item could not be added because its quantity is unclear"
+    : `${n} items could not be added because their quantities are unclear`;
+}
+
+/** The pack size of a product changed since the order: boxes were kept, so the piece count moved. */
+export function repackMessage(n: number): string {
+  return n === 1
+    ? "1 item has a new pack size, so check its quantity"
+    : `${n} items have a new pack size, so check their quantities`;
 }
 
 export interface OrderedQty {
@@ -30,39 +45,48 @@ export interface OrderedQty {
   pieces?: number;
 }
 
+/** An ordered quantity that cannot be decided from the stored line: skip it, never guess. */
+export const UNCLEAR_QTY = "unclear" as const;
+
 /**
  * The qty fields of a re-added line, as ordered and normalised through `@routeflow/pricing`.
  *  - a unit line ("Carton") is a plain COUNT of that unit (boxes, or qty / factor);
- *  - a boxed product keeps its boxes + loose pieces at the product's CURRENT pack size, and a bare
- *    qty means BOXES;
- *  - anything else is a plain qty.
+ *  - a line that stored its box / piece split keeps its boxes + loose pieces at the product's
+ *    CURRENT pack size (or, if the product is no longer boxed, its piece count);
+ *  - a legacy line with NO stored split is classified by `legacyLinePieces` with the product's
+ *    current pack as the gate: it is a plain count only when the product is not boxed today. On a
+ *    boxed product it is UNCLEAR (24 loose items must never become 24 boxes = 288 pieces).
  * Null when the line has nothing to order.
  */
 export function orderedQtyFields(
   line: RecentOrderLine,
   product: Pick<OrderSuggestionProduct, "unitsPerBox">,
-): OrderedQty | null {
+): OrderedQty | null | typeof UNCLEAR_QTY {
   const lineUpb = line.unitsPerBox && line.unitsPerBox > 1 ? line.unitsPerBox : null;
   if (line.unitLabel) {
     const count = lineUpb ? (line.boxes ?? Math.round(line.qty / lineUpb)) : line.qty;
     return count > 0 ? { qty: Math.trunc(count) } : null;
   }
   const upb = product.unitsPerBox ? Number(product.unitsPerBox) : 0;
-  if (upb > 0) {
-    const split = line.boxes != null || line.pieces != null;
-    const boxes = split ? (line.boxes ?? 0) : line.qty;
-    const pieces = split ? (line.pieces ?? 0) : 0;
-    if (upb === 1) {
-      // A pack of one: web still treats it as boxed (qty = boxes), and nothing can be "loose".
-      const total = Math.max(0, Math.trunc(boxes) + Math.trunc(pieces));
-      return total > 0 ? { qty: total, boxes: total, pieces: 0 } : null;
-    }
-    const n = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb });
+  const split = line.boxes != null || line.pieces != null;
+  if (split && upb > 1) {
+    const n = normalizeBoxesPieces({
+      boxes: line.boxes ?? 0,
+      pieces: line.pieces ?? 0,
+      unitsPerBox: upb,
+    });
     return n.qty > 0 ? { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0 } : null;
   }
-  // Not boxed now. A line that WAS boxed ordered its boxes; otherwise its qty is the count.
-  const count = Math.trunc(lineUpb && line.boxes != null ? line.boxes : line.qty);
-  return count > 0 ? { qty: count } : null;
+  // No usable split for a boxed pack: the line's qty is pieces when it stored a split (a repack to
+  // "each" keeps the goods), and is decided by the shared classifier when it stored none.
+  const legacy = legacyLinePieces({ qty: line.qty, boxes: line.boxes, pieces: line.pieces }, null, {
+    productPackNow: product.unitsPerBox == null ? null : Number(product.unitsPerBox),
+  });
+  if ("unknown" in legacy) return UNCLEAR_QTY;
+  const count = Math.trunc(legacy.pieces);
+  if (count <= 0) return null;
+  // A pack of one: web still treats it as boxed (qty = boxes), and nothing can be "loose".
+  return upb === 1 ? { qty: count, boxes: count, pieces: 0 } : { qty: count };
 }
 
 /** What the add-line path is asked to add instead of its default "one": a quantity as ordered, in a unit. */
@@ -109,6 +133,10 @@ export interface OrderAgainPlan {
   items: OrderAgainItem[];
   /** Lines skipped because the product is inactive, retired or gone. */
   unavailable: number;
+  /** Lines skipped because their quantity cannot be decided (a legacy line on a boxed product). */
+  unclear: number;
+  /** Lines added whose product has a different pack size now than when they were ordered. */
+  repacked: number;
 }
 
 export function planOrderAgain(
@@ -117,6 +145,8 @@ export function planOrderAgain(
 ): OrderAgainPlan {
   const items: OrderAgainItem[] = [];
   let unavailable = 0;
+  let unclear = 0;
+  let repacked = 0;
   for (const line of order.lines) {
     const product = products[line.productId];
     if (!product || !product.isActive) {
@@ -124,10 +154,22 @@ export function planOrderAgain(
       continue;
     }
     const qty = orderedQtyFields(line, product);
+    if (qty === UNCLEAR_QTY) {
+      unclear += 1;
+      continue;
+    }
     if (!qty) continue;
+    if (
+      !line.unitLabel &&
+      line.unitsPerBox &&
+      line.unitsPerBox > 1 &&
+      line.unitsPerBox !== (product.unitsPerBox ?? 0)
+    ) {
+      repacked += 1;
+    }
     items.push({ product, qty, unitLabel: line.unitLabel ?? undefined });
   }
-  return { items, unavailable };
+  return { items, unavailable, unclear, repacked };
 }
 
 /** "Chips × 2 boxes + 6 pcs, Soda × 4 Carton" — what the order contained, for the menu. */

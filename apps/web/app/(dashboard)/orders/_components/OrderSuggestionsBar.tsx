@@ -20,6 +20,11 @@ interface Props {
   onAddProduct: (product: OrderSuggestionProduct) => void;
   /** An "Order again" pick: that order's lines, re-priced today. */
   onOrderAgain: (order: RecentOrderSummary) => void;
+  /** The suggestions could not be loaded: say so quietly (order entry is unaffected). */
+  error?: boolean;
+  /** The "Order again" menu is open. Owned by the order modal so its Escape closes only the menu. */
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
 }
 
 /**
@@ -27,16 +32,37 @@ interface Props {
  * add) and a menu of their last orders (pick one to add its lines again). It carries no price, and
  * quietly renders nothing while loading, on failure, or for a customer with no history.
  */
-export function OrderSuggestionsBar({ suggestions, hasLines, onAddProduct, onOrderAgain }: Props) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
+export function OrderSuggestionsBar({
+  suggestions,
+  hasLines,
+  onAddProduct,
+  onOrderAgain,
+  error,
+  menuOpen,
+  onMenuOpenChange,
+}: Props) {
+  const setMenuOpen = onMenuOpenChange;
   const [confirming, setConfirming] = React.useState<RecentOrderSummary | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  // Closing the menu (Escape, a pick, the toggle) hands focus back to the button that opened it.
+  const wasOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (wasOpen.current && !menuOpen) triggerRef.current?.focus();
+    wasOpen.current = menuOpen;
+  }, [menuOpen]);
 
   const products = suggestions?.products ?? {};
   const chips = (Array.isArray(suggestions?.usuallyBuys) ? suggestions!.usuallyBuys : [])
     .map((u) => products[u.productId])
     .filter((p): p is OrderSuggestionProduct => !!p && p.isActive);
   const orders = Array.isArray(suggestions?.recentOrders) ? suggestions!.recentOrders : [];
-  if (chips.length === 0 && orders.length === 0) return null;
+  if (chips.length === 0 && orders.length === 0) {
+    return error ? (
+      <p className="text-xs text-navy/60" data-testid="order-suggestions-unavailable">
+        {ORDER_AGAIN_COPY.unavailable}
+      </p>
+    ) : null;
+  }
 
   const pickOrder = (order: RecentOrderSummary) => {
     if (hasLines) {
@@ -71,10 +97,11 @@ export function OrderSuggestionsBar({ suggestions, hasLines, onAddProduct, onOrd
       {orders.length > 0 && (
         <div className="space-y-1.5">
           <button
+            ref={triggerRef}
             type="button"
             aria-expanded={menuOpen}
             onClick={() => {
-              setMenuOpen((o) => !o);
+              setMenuOpen(!menuOpen);
               setConfirming(null);
             }}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded border border-surface-border bg-white px-3 text-sm font-medium text-navy transition-colors hover:bg-surface-raised sm:min-h-[36px]"

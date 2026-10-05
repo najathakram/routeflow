@@ -454,6 +454,7 @@ export function CreateOrderModal({
     setLineItems([]);
     setLineItemsError("");
     setCustomFormOpen(false);
+    setSuggestionsMenuOpen(false);
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
@@ -903,7 +904,10 @@ export function CreateOrderModal({
 
   // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
   // addLineItem, so every line is priced today (see use-order-suggestion-actions).
-  const { data: orderSuggestions } = useOrderSuggestions(selectedCustomer?.id);
+  const { data: orderSuggestions, isError: orderSuggestionsError } = useOrderSuggestions(
+    selectedCustomer?.id,
+  );
+  const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
     addLine: addLineItem,
@@ -1076,6 +1080,12 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // The "Order again" menu takes Escape first — it closes the menu, never the order.
+    if (suggestionsMenuOpen) {
+      event.preventDefault();
+      setSuggestionsMenuOpen(false);
+      return;
+    }
     // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
     if (editingLineId) {
       event.preventDefault();
@@ -1725,6 +1735,9 @@ export function CreateOrderModal({
                 hasLines={lineItems.length > 0}
                 onAddProduct={suggestionActions.addProduct}
                 onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                error={orderSuggestionsError}
+                menuOpen={suggestionsMenuOpen}
+                onMenuOpenChange={setSuggestionsMenuOpen}
               />
             )}
           </section>
