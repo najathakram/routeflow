@@ -81,6 +81,7 @@ import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { resolvePendingMirror } from "./pending-mirror";
 import { resolveInvoiceVariant } from "./invoice-stage";
+import { orderShipmentFields } from "./order-shipment-fields";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -636,13 +637,7 @@ export class InvoicesService {
       ...depositFields,
       // Carry carrier shipment tracking from the order onto the invoice so the
       // shipment shows on the customer's invoice + PDF.
-      ...(order.shippingCarrier || order.shippingTrackingNumber
-        ? {
-            shippingCarrier: order.shippingCarrier ?? null,
-            shippingTrackingNumber: order.shippingTrackingNumber ?? null,
-            shippedAt: order.shippedAt ?? null,
-          }
-        : {}),
+      ...orderShipmentFields(order),
     };
 
     // Phase 4 (W4): split by regulated category — one invoice per SEPARATE_INVOICE
@@ -2565,6 +2560,8 @@ export class InvoicesService {
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       ...depositFields,
+      // F5: the invoice raised at shipment / delivery carries the order's carrier + tracking too.
+      ...orderShipmentFields(order),
     };
 
     // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
