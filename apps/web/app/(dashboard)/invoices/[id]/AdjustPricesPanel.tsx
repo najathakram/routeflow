@@ -5,6 +5,27 @@ import { AlertTriangle, SlidersHorizontal } from "lucide-react";
 import { Button, Card, useToast } from "@routeflow/ui/web";
 import { useAdjustInvoicePrices, type Invoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
+import {
+  priceAdjustmentFailure,
+  type PriceAdjustmentFailure,
+} from "@/lib/price-adjustment-failure";
+
+/** B1058: what a bulk run that stopped partway, or was refused as overpaying, tells the operator (fixed copy). */
+function PriceAdjustmentFailureNotice({ failure }: { failure: PriceAdjustmentFailure }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    >
+      <p className="font-semibold">{failure.title}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {failure.lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 /** The invoice page's "Adjust Prices" card (moved verbatim out of page.tsx so it can be tested on its own). */
 export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
@@ -22,7 +43,10 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
     return d.toISOString().slice(0, 10);
   });
 
+  const [failure, setFailure] = React.useState<PriceAdjustmentFailure | null>(null);
+
   function handleSave() {
+    setFailure(null);
     const dto = {
       id: invoice.id,
       items: items.map((it) => ({
@@ -46,6 +70,16 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
         onClose();
       },
       onError: (err: any) => {
+        const structured = priceAdjustmentFailure(err);
+        if (structured) {
+          setFailure(structured); // B1058: stays open, so the operator reads what happened to which invoice
+          toast({
+            title: structured.title,
+            description: structured.lines[0],
+            variant: structured.committed ? "warning" : "error",
+          });
+          return;
+        }
         toast({
           title: "Failed to adjust prices",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -136,6 +170,8 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
           cannot be undone.
         </div>
       )}
+
+      {failure && <PriceAdjustmentFailureNotice failure={failure} />}
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" size="sm" onClick={onClose} disabled={adjust.isPending}>
