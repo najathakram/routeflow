@@ -4,6 +4,8 @@ import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
 import { CustomerPriceHistoryController } from "./customer-price-history.controller";
 import { CustomerPriceHistoryService } from "./customer-price-history.service";
+import { CustomerOrderSuggestionsController } from "./customer-order-suggestions.controller";
+import { CustomerOrderSuggestionsService } from "./customer-order-suggestions.service";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 // CustomersService reads the CUSTOMERS meter + published catalog for the
@@ -38,8 +40,18 @@ import { EmailModule } from "../email/email.module";
     RegulatedModule,
     EmailModule,
   ],
-  controllers: [CustomersController, CustomerPriceHistoryController],
-  providers: [CustomersService, CustomerPriceHistoryService, StatementService, StatementPdfService],
+  controllers: [
+    CustomersController,
+    CustomerPriceHistoryController,
+    CustomerOrderSuggestionsController,
+  ],
+  providers: [
+    CustomersService,
+    CustomerPriceHistoryService,
+    CustomerOrderSuggestionsService,
+    StatementService,
+    StatementPdfService,
+  ],
   exports: [CustomersService],
 })
 export class CustomersModule {}
