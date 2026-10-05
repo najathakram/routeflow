@@ -944,7 +944,7 @@ export class CreditNotesService {
       : null;
     if (!cfg?.creditAutoApplyOnSend) return nothing;
     // B1052: lock the invoice and the customer's live notes BEFORE reading any balance.
-    await lockCustomerCreditsForSweep(tx, invoiceId, customerId);
+    await lockCustomerCreditsForSweep(tx, tenantId, invoiceId, customerId);
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -1019,8 +1019,9 @@ export class CreditNotesService {
       this.prisma.tenantTransaction(
         async (tx) => {
           // B1052: the invoice (with its Order), then the note, BEFORE reading the balance.
-          await lockInvoiceForCredit(tx, invoiceId);
-          await lockCreditNotes(tx, [creditNoteId]);
+          const tenantId = this.prisma.getTenantId();
+          await lockInvoiceForCredit(tx, tenantId, invoiceId);
+          await lockCreditNotes(tx, tenantId, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
             throw new BadRequestException("Credit note is not available for application");
@@ -1435,7 +1436,7 @@ export class CreditNotesService {
 
     // B1052: lock the note before reading its balance (the write below takes this lock anyway, so
     // the lock order is unchanged); a concurrent apply can no longer overwrite the restore.
-    await lockCreditNotes(tx, [payment.creditNoteId]);
+    await lockCreditNotes(tx, this.prisma.getTenantId(), [payment.creditNoteId]);
     const cn = await tx.creditNote.findUnique({ where: { id: payment.creditNoteId } });
     if (cn) {
       const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
@@ -1857,7 +1858,7 @@ export class CreditNotesService {
     // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles
     // (or office then driver) of orders sharing a note used to both read amountUsed=0 and both
     // spend it; now the second waits here and reads the first's committed balance.
-    await lockOrderCreditSettle(tx, orderId);
+    await lockOrderCreditSettle(tx, tenantId, orderId);
     const intents = await tx.orderCreditNote.findMany({
       where: { orderId },
       orderBy: { createdAt: "asc" },

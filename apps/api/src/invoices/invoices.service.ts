@@ -126,6 +126,7 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockCreditsForSend } from "../credit-notes/credit-note-locks";
 import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
@@ -3509,6 +3510,15 @@ export class InvoicesService {
           const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
+          // B1052: ONE consistent credit lock order for the whole send — the order's invoices, then
+          // the customer's notes (plus settle's subset) in id order, BEFORE settle and the sweep each
+          // lock their own (overlapping) sets in two passes and deadlock with a second send.
+          await lockCreditsForSend(
+            tx,
+            this.prisma.getTenantId(),
+            locked.orderId,
+            locked.customerId,
+          );
           const updated = await tx.invoice.update({
             where: { id },
             data: { status: nextStatus, sentAt: new Date() },
