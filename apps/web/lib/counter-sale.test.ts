@@ -2,7 +2,9 @@ import {
   AUTO_PRINT_KEY,
   cartTotals,
   changeDue,
+  COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  isDefinitiveCounterSaleRefusal,
   counterSaleGate,
   paymentMethodOptions,
   parseScanField,
@@ -153,6 +155,39 @@ describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
     });
     expect(disabled).toBe("Counter sales are not turned on for this business.");
     expect(disabled).not.toBe(counterSaleErrorCopy({ response: { status: 403 } }));
+  });
+});
+
+describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was charged", () => {
+  const unknown = [
+    ["a 500", { response: { status: 500, data: { message: "RAW" } } }],
+    ["a 503", { response: { status: 503 } }],
+    ["a network error (no response)", new Error("Network Error")],
+    ["a timeout", { code: "ECONNABORTED", message: "timeout of 10000ms exceeded" }],
+    ["an empty error", {}],
+    ["null", null],
+  ] as const;
+  it.each(unknown)("%s: the exact could-not-confirm copy", (_l, err) => {
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+    expect(COUNTER_OUTCOME_UNKNOWN_COPY).toBe(
+      "We couldn't confirm the sale. Check recent sales before trying again.",
+    );
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+  });
+  it("'Nothing was charged' appears only for a 409 refusal", () => {
+    for (const status of [400, 403, 404, 409, 422, 500, 503]) {
+      const copy = counterSaleErrorCopy({ response: { status } });
+      expect(/nothing was charged/i.test(copy)).toBe(status === 409);
+    }
+    expect(/nothing was charged/i.test(counterSaleErrorCopy(new Error("Network Error")))).toBe(
+      false,
+    );
+  });
+  it("only 400 / 403 / 404 / 409 / 422 prove nothing was written", () => {
+    for (const status of [400, 403, 404, 409, 422])
+      expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(true);
+    for (const status of [401, 408, 429, 500, 502, 503, 504])
+      expect(isDefinitiveCounterSaleRefusal({ response: { status } })).toBe(false);
   });
 });
 

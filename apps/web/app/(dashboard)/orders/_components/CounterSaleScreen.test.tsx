@@ -224,9 +224,11 @@ describe("CounterSaleScreen", () => {
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/could not be completed/i);
-    expect(alert.textContent).not.toMatch(/RAW SERVER TEXT/);
+    const banner = await screen.findByTestId("counter-outcome-unknown");
+    expect(banner).toHaveTextContent(
+      "We couldn't confirm the sale. Check recent sales before trying again.",
+    );
+    expect(banner.textContent).not.toMatch(/RAW SERVER TEXT|Nothing was charged/);
     expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
   });
 
@@ -288,30 +290,65 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it.each([
       ["a 5xx", { response: { status: 503 } }],
       ["a network error", new Error("Network Error")],
-    ])("a retry of the SAME sale after %s reuses the SAME key", async (_label, failure) => {
-      mutateAsync.mockRejectedValueOnce(failure);
-      renderWithProviders(<CounterSaleScreen />);
-      await fillCola();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
-      expect(await screen.findByRole("alert")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
-      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
-      expect(keyOfCall(1)).toBe(keyOfCall(0));
-      await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
-    });
+    ])(
+      "a retry of the SAME sale after %s (Try again) reuses the SAME key and the SAME body",
+      async (_label, failure) => {
+        mutateAsync.mockRejectedValueOnce(failure);
+        renderWithProviders(<CounterSaleScreen />);
+        await fillCola();
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).toBe(keyOfCall(0));
+        expect(mutateAsync.mock.calls[1][0].dto).toEqual(mutateAsync.mock.calls[0][0].dto);
+        await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+      },
+    );
 
-    it("a retry after the cart CHANGED is a different sale: a new key", async () => {
-      mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+    it("after a DEFINITIVE 400 the sale is editable and the next submit uses a NEW key", async () => {
+      mutateAsync.mockRejectedValueOnce({ response: { status: 400 } });
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
       expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
       await scan("WATER");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$14.50"));
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
       fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
       expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+
+    it.each([403, 404, 409, 422])(
+      "a definitive %s also releases the key: the next submit is a NEW key",
+      async (status) => {
+        mutateAsync.mockRejectedValueOnce({ response: { status } });
+        renderWithProviders(<CounterSaleScreen />);
+        await fillCola();
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+      },
+    );
+
+    it("a reset after an unknown outcome mints a NEW key for the next sale", async () => {
+      mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+      fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
+      expect(keyOfCall(2)).not.toBe(keyOfCall(0));
     });
 
     it("a new sale after Complete & next sale gets a NEW key", async () => {
@@ -335,6 +372,77 @@ describe("CounterSaleScreen: API contract wiring", () => {
       fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
       await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
       expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+    });
+  });
+
+  describe("unknown outcome (5xx / network / timeout): keep the key, lock the sale", () => {
+    const goUnknown = async (failure: unknown) => {
+      mutateAsync.mockRejectedValueOnce(failure);
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      return screen.findByTestId("counter-outcome-unknown");
+    };
+    it.each([
+      ["a 503", { response: { status: 503 } }],
+      ["a network error", new Error("Network Error")],
+      ["a timeout", { code: "ECONNABORTED", message: "timeout" }],
+    ])(
+      "%s: the banner with its two actions, and every cart/payment control disabled",
+      async (_l, failure) => {
+        const banner = await goUnknown(failure);
+        expect(banner).toHaveTextContent(
+          "We couldn't confirm the sale. Check recent sales before trying again.",
+        );
+        expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: "Check recent sales" })).toHaveAttribute(
+          "href",
+          "/orders",
+        );
+        expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+        expect(screen.getByLabelText("Find a customer")).toBeDisabled();
+        expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Remove Cola" })).toBeDisabled();
+        for (const name of ["Cash", "Card", "Check", "Exact", "$20", "$50", "$100"])
+          expect(screen.getByRole("button", { name })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Complete sale" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Complete & next sale/ })).toBeDisabled();
+      },
+    );
+
+    it("a late product lookup cannot change the locked cart", async () => {
+      await goUnknown({ response: { status: 503 } });
+      const field = screen.getByLabelText("Scan or search items");
+      fireEvent.change(field, { target: { value: "WATER" } });
+      fireEvent.submit(field.closest("form")!);
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
+    });
+
+    it("Try again that fails again keeps the banner and the SAME key", async () => {
+      await goUnknown({ response: { status: 502 } });
+      mutateAsync.mockRejectedValueOnce({ response: { status: 504 } });
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
+      expect(keyOfCall(1)).toBe(keyOfCall(0));
+      expect(keyOfCall(2)).toBe(keyOfCall(0));
+    });
+
+    it("a definitive answer to Try again clears the banner and unlocks (a 409 here)", async () => {
+      await goUnknown({ response: { status: 503 } });
+      mutateAsync.mockRejectedValueOnce({ response: { status: 409 } });
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    });
+
+    it("Try again that succeeds shows the receipt and clears the banner", async () => {
+      await goUnknown({ response: { status: 503 } });
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
     });
   });
 
@@ -497,9 +605,9 @@ describe("CounterSaleScreen: API contract wiring", () => {
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
-      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
       expect(printSpy).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
       expect(printSpy).toHaveBeenCalledTimes(1);
     });

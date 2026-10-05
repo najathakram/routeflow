@@ -8,6 +8,7 @@ import { Button, cn } from "@routeflow/ui/web";
 import { getTierPrice } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
+  CounterSaleRequest,
   CounterSalePaymentMethod,
   CounterSaleResponse,
 } from "@routeflow/types";
@@ -17,11 +18,13 @@ import { useProducts } from "@/lib/api/products";
 import { useCounterSaleGate, useCreateCounterSale } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
 import {
+  COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
   cartTotals,
   changeDue,
   counterSaleErrorCopy,
+  isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
   parseScanField,
   paymentMethodOptions,
@@ -64,9 +67,15 @@ export function CounterSaleScreen() {
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
   const scanRef = React.useRef<HTMLInputElement>(null);
-  // One Idempotency-Key per SALE: kept across a failed attempt so a retry of the same request replays, renewed when the
-  // request itself changed (a different cart/payment is a different sale) and dropped on success / reset.
-  const attemptRef = React.useRef<{ key: string; fingerprint: string } | null>(null);
+  // One Idempotency-Key per SALE. It lives until a DEFINITIVE answer (any 2xx, or a 4xx that proves nothing was written) or a
+  // reset; after a 5xx / network error / timeout the outcome is UNKNOWN, the sale is locked and "Try again" re-sends this same
+  // body with this same key. Editing is impossible while it is held, so there is no "the request changed" renewal.
+  const attemptRef = React.useRef<{
+    key: string;
+    dto: CounterSaleRequest;
+    next: boolean;
+  } | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
   const submittingRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
@@ -85,6 +94,7 @@ export function CounterSaleScreen() {
   React.useEffect(() => setAutoPrint(readAutoPrint()), []);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   const refocus = React.useCallback(() => window.setTimeout(() => scanRef.current?.focus(), 0), []);
+  const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
@@ -119,6 +129,10 @@ export function CounterSaleScreen() {
   const lookupQtyRef = React.useRef(1);
   React.useEffect(() => {
     if (!lookup || isFetching) return;
+    if (locked) {
+      setLookup(null); // a late lookup must not change a locked cart
+      return;
+    }
     const product = (found as { data?: any[] } | undefined)?.data?.[0];
     if (!product) {
       setScanMessage("No product found for that code.");
@@ -129,7 +143,7 @@ export function CounterSaleScreen() {
     setLookup(null);
     refocus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [found, isFetching, lookup]);
+  }, [found, isFetching, lookup, locked]);
 
   function addProduct(product: any, n: number) {
     const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
@@ -153,6 +167,7 @@ export function CounterSaleScreen() {
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (locked) return;
     const parsed = parseScanField(scanText);
     setScanText("");
     if (parsed.kind === "qty") {
@@ -183,11 +198,37 @@ export function CounterSaleScreen() {
     setError("");
     setReceipt(null);
     attemptRef.current = null;
+    setOutcomeUnknown(false);
     refocus();
   }
 
-  const complete = async (): Promise<CounterSaleResponse | null> => {
+  // Sends one attempt. A definitive answer (2xx / a refusal that proves nothing was written) releases the key; anything
+  // else keeps it and locks the sale as "outcome unknown".
+  const send = async (attempt: {
+    key: string;
+    dto: CounterSaleRequest;
+  }): Promise<CounterSaleResponse | null> => {
+    try {
+      const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
+      attemptRef.current = null;
+      setOutcomeUnknown(false);
+      return res;
+    } catch (err) {
+      if (isDefinitiveCounterSaleRefusal(err)) {
+        attemptRef.current = null;
+        setOutcomeUnknown(false);
+        setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+      } else {
+        setError("");
+        setOutcomeUnknown(true);
+      }
+      return null;
+    }
+  };
+
+  const complete = async (next: boolean): Promise<CounterSaleResponse | null> => {
     setError("");
+    if (attemptRef.current) return send(attemptRef.current); // an unknown outcome: the SAME body, the SAME key
     if (lines.length === 0) {
       setError("Add at least one item.");
       return null;
@@ -203,7 +244,7 @@ export function CounterSaleScreen() {
       setError(PAYMENT_PROBLEM_COPY[problem]);
       return null;
     }
-    const dto = {
+    const dto: CounterSaleRequest = {
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
@@ -212,27 +253,16 @@ export function CounterSaleScreen() {
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       },
     };
-    const fingerprint = JSON.stringify(dto);
-    if (attemptRef.current?.fingerprint !== fingerprint)
-      attemptRef.current = { key: newIdempotencyKey(), fingerprint };
-    try {
-      const res = await createSale.mutateAsync({
-        dto,
-        idempotencyKey: attemptRef.current.key,
-      });
-      attemptRef.current = null;
-      return res;
-    } catch (err) {
-      setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
-      return null;
-    }
+    attemptRef.current = { key: newIdempotencyKey(), dto, next };
+    return send(attemptRef.current);
   };
 
-  const completeSale = async (next: boolean) => {
+  const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
     submittingRef.current = true;
     try {
-      const res = await complete();
+      if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
+      const res = await complete(next);
       if (!res) return;
       if (autoPrint) window.print(); // once per completed sale, before any reset
       if (next) resetSale();
@@ -350,6 +380,7 @@ export function CounterSaleScreen() {
             <button
               type="button"
               className="text-brand-700 underline"
+              disabled={locked}
               onClick={() => setCustomer(null)}
             >
               Use Walk-in customer
@@ -360,6 +391,7 @@ export function CounterSaleScreen() {
           aria-label="Find a customer"
           className="w-full rounded border px-3 py-2 text-sm"
           placeholder="Find a customer (optional)"
+          disabled={locked}
           value={customerSearch}
           onChange={(e) => setCustomerSearch(e.target.value)}
         />
@@ -370,6 +402,7 @@ export function CounterSaleScreen() {
                 <button
                   type="button"
                   className="w-full px-3 py-2 text-left hover:bg-gray-50"
+                  disabled={locked}
                   onClick={() => {
                     setCustomer(c);
                     setCustomerSearch("");
@@ -392,10 +425,11 @@ export function CounterSaleScreen() {
           className="w-full rounded border px-3 py-2 text-base"
           placeholder="Scan or type an item (type a quantity first to multiply)"
           value={scanText}
+          disabled={locked}
           onChange={(e) => setScanText(e.target.value)}
           onBlur={(e) => {
             // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
-            if (!receipt && !e.relatedTarget) refocus();
+            if (!receipt && !locked && !e.relatedTarget) refocus();
           }}
           autoFocus
         />
@@ -425,6 +459,7 @@ export function CounterSaleScreen() {
               <button
                 type="button"
                 aria-label={`Remove ${l.name}`}
+                disabled={locked}
                 onClick={() => removeLine(l.tempId)}
               >
                 ×
@@ -446,7 +481,7 @@ export function CounterSaleScreen() {
             <button
               key={m.method}
               type="button"
-              disabled={m.disabled}
+              disabled={m.disabled || locked}
               aria-pressed={method === m.method}
               className={cn(
                 "rounded border px-3 py-2 text-sm disabled:opacity-40",
@@ -469,7 +504,7 @@ export function CounterSaleScreen() {
                 <button
                   key={q.label}
                   type="button"
-                  disabled={q.disabled}
+                  disabled={q.disabled || locked}
                   className="rounded border px-3 py-2 text-sm disabled:opacity-40"
                   onClick={(e) => {
                     setTendered(String(q.amount));
@@ -487,6 +522,7 @@ export function CounterSaleScreen() {
                 inputMode="decimal"
                 className="mt-1 w-full rounded border px-3 py-2"
                 value={tendered}
+                disabled={locked}
                 onChange={(e) => setTendered(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -509,6 +545,7 @@ export function CounterSaleScreen() {
               aria-label="Check number"
               className="mt-1 w-full rounded border px-3 py-2"
               value={reference}
+              disabled={locked}
               onChange={(e) => setReference(e.target.value)}
             />
           </label>
@@ -530,14 +567,32 @@ export function CounterSaleScreen() {
         </p>
       ) : null}
 
+      {outcomeUnknown ? (
+        <div
+          role="alert"
+          className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+          data-testid="counter-outcome-unknown"
+        >
+          <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => void completeSale(false, true)} disabled={createSale.isPending}>
+              Try again
+            </Button>
+            <Link href="/orders" className="text-brand-700 underline">
+              Check recent sales
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => void completeSale(false)} disabled={createSale.isPending}>
+        <Button onClick={() => void completeSale(false)} disabled={createSale.isPending || locked}>
           Complete sale
         </Button>
         <Button
           variant="secondary"
           onClick={() => void completeSale(true)}
-          disabled={createSale.isPending}
+          disabled={createSale.isPending || locked}
         >
           Complete &amp; next sale
         </Button>

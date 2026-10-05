@@ -157,7 +157,25 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
-/** FIXED copy by status (and the one named 403 code); the server's own message is never shown. */
+/** After a 5xx, a network error or a timeout the sale may or may not have been written: say exactly that. */
+export const COUNTER_OUTCOME_UNKNOWN_COPY =
+  "We couldn't confirm the sale. Check recent sales before trying again.";
+
+const DEFINITIVE_REFUSALS = new Set([400, 403, 404, 409, 422]);
+
+/**
+ * True only for a 4xx that PROVES nothing was written. Every other failure (5xx, network, timeout, an unlisted 4xx) is an
+ * UNKNOWN outcome: the Idempotency-Key must survive it and the sale must not be edited.
+ */
+export function isDefinitiveCounterSaleRefusal(err: unknown): boolean {
+  const status = (err as { response?: { status?: number } } | null | undefined)?.response?.status;
+  return typeof status === "number" && DEFINITIVE_REFUSALS.has(status);
+}
+
+/**
+ * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
+ * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
+ */
 export function counterSaleErrorCopy(err: unknown): string {
   const res = (
     err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
@@ -168,12 +186,12 @@ export function counterSaleErrorCopy(err: unknown): string {
   if (status === 403) return "You don't have permission to complete a counter sale.";
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
-  if (status === 400 || status === 422)
+  if (status === 400 || status === 404 || status === 422)
     return "This sale can't be completed as entered. Check the items and payment and try again.";
-  return "The sale could not be completed. Nothing was charged. Try again.";
+  return COUNTER_OUTCOME_UNKNOWN_COPY;
 }
 
-/** One key per SALE (sent as `Idempotency-Key`): a retry of the same sale reuses it, a new sale gets a new one. */
+/** One key per SALE (sent as `Idempotency-Key`): kept until a DEFINITIVE answer, then a new sale gets a new one. */
 export function newIdempotencyKey(): string {
   const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
