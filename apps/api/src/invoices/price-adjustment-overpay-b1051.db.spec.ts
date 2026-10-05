@@ -163,7 +163,7 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
    * production `recordPayment` writer, which also derives the status (PARTIAL for a part payment).
    * `opts.second` seeds a second SENT $150.00 invoice for the same customer (bulk scope).
    */
-  async function seed(label: string, paid: number, opts: { second?: boolean } = {}) {
+  async function seedBase(label: string) {
     seq += 1;
     const slug = assertTestTenant(
       `qa-b1051-${RUN}-${seq}-${label}`,
@@ -207,14 +207,32 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
       });
       return { invoiceId: invoice.id, lineId: line.id };
     };
-    const first = await makeInvoice(1);
-    const second = opts.second ? await makeInvoice(2) : null;
-    if (paid > 0) {
-      await tenantCtx.run(tenantId, () =>
-        invoices.recordPayment(first.invoiceId, { amount: paid, method: "CASH" } as any),
-      );
+    return { tenantId, productId: product.id, makeInvoice };
+  }
+
+  const pay = (tenantId: string, invoiceId: string, amount: number) =>
+    tenantCtx.run(tenantId, () =>
+      invoices.recordPayment(invoiceId, { amount, method: "CASH" } as any),
+    );
+
+  async function seed(label: string, paid: number, opts: { second?: boolean } = {}) {
+    const base = await seedBase(label);
+    const first = await base.makeInvoice(1);
+    const second = opts.second ? await base.makeInvoice(2) : null;
+    if (paid > 0) await pay(base.tenantId, first.invoiceId, paid);
+    return { tenantId: base.tenantId, productId: base.productId, ...first, second };
+  }
+
+  /** One SENT $150.00 invoice per entry of `paid` (0 = unpaid), one customer: a bulk batch of N targets. */
+  async function seedBatch(label: string, paid: number[]) {
+    const base = await seedBase(label);
+    const rows = [];
+    for (const [i, amount] of paid.entries()) {
+      const row = await base.makeInvoice(i + 1);
+      if (amount > 0) await pay(base.tenantId, row.invoiceId, amount);
+      rows.push({ ...row, number: `INV-B1051-${RUN}-${seq}-${i + 1}` });
     }
-    return { tenantId, productId: product.id, ...first, second };
+    return { tenantId: base.tenantId, rows };
   }
 
   const reprice = (
@@ -302,10 +320,23 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
     expect(after.total).toBe(80);
   });
 
-  it("sibling: the bulk scope refuses the overpaying invoice too and leaves it whole", async () => {
+  /** The bulk request that re-prices the batch's first invoice's product to `newUnitPrice` across the customer. */
+  const bulk = (
+    b: { tenantId: string; rows: Array<{ invoiceId: string; lineId: string }> },
+    p: number,
+  ) =>
+    tenantCtx.run(b.tenantId, () =>
+      invoices.applyPriceAdjustment(b.rows[0].invoiceId, {
+        items: [{ itemId: b.rows[0].lineId, newUnitPrice: p }],
+        scope: "ALL_CUSTOMER_SINCE",
+        sinceDate: "2000-01-01",
+      } as any),
+    );
+
+  it("sibling: the bulk scope refuses the overpaying invoice too and leaves the batch whole", async () => {
     const s = await seed("bulk", 100, { second: true });
     // The second invoice has no payment: re-pricing it is fine. The first (PARTIAL, $100 paid)
-    // would land at $80 and must stay exactly as it was.
+    // would land at $80, so the WHOLE batch is refused before any write.
     const outcome = await attempt(
       tenantCtx.run(s.tenantId, () =>
         invoices.applyPriceAdjustment(s.invoiceId, {
@@ -320,6 +351,60 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
     expect(first.status).toBe("PARTIAL");
     expect(first.total).toBe(150);
     expect(first.unitPrice).toBe(15);
+    const second = await read({ invoiceId: s.second!.invoiceId, lineId: s.second!.lineId });
+    expect(second.total).toBe(150); // the unpaid sibling was NOT re-priced either
+    expect(second.unitPrice).toBe(15);
     expect(outcome).toBeInstanceOf(BadRequestException);
+  });
+
+  // B1058 (SA-683): five targets re-priced $150 -> $80. Invoices 2 and 4 are paid above $80.
+  it("REG-B1058: 5 targets, invoices 2 and 4 overpay: ONE 400 lists both and the database is unchanged", async () => {
+    const b = await seedBatch("five", [80, 100, 50, 90, 0]);
+    const before = await Promise.all(b.rows.map(read));
+    expect(before.map((r) => r.status)).toEqual([
+      "PARTIAL",
+      "PARTIAL",
+      "PARTIAL",
+      "PARTIAL",
+      "SENT",
+    ]);
+
+    const outcome = await attempt(bulk(b, 8));
+
+    // Persisted state first, so a red run names the wrong value (a committed prefix, or a PAID row).
+    expect(await Promise.all(b.rows.map(read))).toEqual(before);
+    expect(outcome).toBeInstanceOf(BadRequestException);
+    const body = (outcome as BadRequestException).getResponse() as any;
+    expect(body.code).toBe("PRICE_ADJUSTMENT_OVERPAYS");
+    expect(body.overpaid).toEqual([
+      {
+        invoiceId: b.rows[1].invoiceId,
+        invoiceNumber: b.rows[1].number,
+        paid: 100,
+        newTotal: 80,
+        overpaidBy: 20,
+      },
+      {
+        invoiceId: b.rows[3].invoiceId,
+        invoiceNumber: b.rows[3].number,
+        paid: 90,
+        newTotal: 80,
+        overpaidBy: 10,
+      },
+    ]);
+    expect(body.message).toContain(`${b.rows[1].number} by $20.00`);
+    expect(body.message).toContain(`${b.rows[3].number} by $10.00`);
+  });
+
+  it("pin: the same batch without the two offenders re-prices all five, settling the one paid exactly $80", async () => {
+    const b = await seedBatch("five-ok", [80, 60, 50, 20, 0]);
+
+    const outcome = await attempt(bulk(b, 8));
+
+    expect(outcome).toBe("applied");
+    const after = await Promise.all(b.rows.map(read));
+    expect(after.map((r) => r.status)).toEqual(["PAID", "PARTIAL", "PARTIAL", "PARTIAL", "SENT"]);
+    expect(after.map((r) => r.total)).toEqual([80, 80, 80, 80, 80]);
+    expect(after.map((r) => r.unitPrice)).toEqual([8, 8, 8, 8, 8]);
   });
 });
