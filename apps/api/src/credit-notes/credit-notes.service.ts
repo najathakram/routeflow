@@ -20,6 +20,12 @@ import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
+import {
+  lockCreditNotes,
+  lockCustomerCreditsForSweep,
+  lockInvoiceForCredit,
+  lockOrderCreditSettle,
+} from "./credit-note-locks";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
   loadLineCredits,
@@ -798,6 +804,10 @@ export class CreditNotesService {
    * own. Every monetary figure via roundMoney. Returns {applied:0} instead of
    * throwing so the auto-apply loop can skip; the manual path throws on 0 itself.
    * Callers pre-filter VOID + expired credits (expiry is a computed filter).
+   *
+   * B1052: `cn` MUST have been read AFTER the caller locked the note's row (credit-note-locks.ts:
+   * settle, sweep and manual apply all lock before they read). The balance below comes from `cn`;
+   * an unlocked read let two transactions spend the same dollars.
    */
   private async applyCreditInTx(
     tx: any,
@@ -880,6 +890,8 @@ export class CreditNotesService {
       data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
     });
 
+    // B1052: `cn` was read under its row lock (see the doc above), so this absolute value can't
+    // overwrite another writer's spend.
     const newAmountUsed = roundMoney(Number(cn.amountUsed) + applyAmount);
     const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
     await tx.creditNote.update({
@@ -931,6 +943,8 @@ export class CreditNotesService {
         })
       : null;
     if (!cfg?.creditAutoApplyOnSend) return nothing;
+    // B1052: lock the invoice and the customer's live notes BEFORE reading any balance.
+    await lockCustomerCreditsForSweep(tx, invoiceId, customerId);
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -1004,6 +1018,9 @@ export class CreditNotesService {
     return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
+          // B1052: the invoice (with its Order), then the note, BEFORE reading the balance.
+          await lockInvoiceForCredit(tx, invoiceId);
+          await lockCreditNotes(tx, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
             throw new BadRequestException("Credit note is not available for application");
@@ -1416,6 +1433,9 @@ export class CreditNotesService {
       });
     }
 
+    // B1052: lock the note before reading its balance (the write below takes this lock anyway, so
+    // the lock order is unchanged); a concurrent apply can no longer overwrite the restore.
+    await lockCreditNotes(tx, [payment.creditNoteId]);
     const cn = await tx.creditNote.findUnique({ where: { id: payment.creditNoteId } });
     if (cn) {
       const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
@@ -1430,7 +1450,7 @@ export class CreditNotesService {
       await tx.creditNote.update({
         where: { id: cn.id },
         data: {
-          amountUsed: newUsed,
+          amountUsed: newUsed, // B1052: from the balance read under the lock above
           // Wallet state follows consumption: fully consumed = APPLIED, else ISSUED.
           status: fullyApplied && cn.status !== "VOID" ? "APPLIED" : "ISSUED",
           appliedToInvoiceId: fullyApplied ? cn.appliedToInvoiceId : null,
@@ -1833,6 +1853,11 @@ export class CreditNotesService {
   ): Promise<{ applied: number; unapplied: number }> {
     const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
+    // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
+    // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles
+    // (or office then driver) of orders sharing a note used to both read amountUsed=0 and both
+    // spend it; now the second waits here and reads the first's committed balance.
+    await lockOrderCreditSettle(tx, orderId);
     const intents = await tx.orderCreditNote.findMany({
       where: { orderId },
       orderBy: { createdAt: "asc" },
