@@ -14,6 +14,7 @@ import {
   PROFILE_MODULE_KEYS,
   businessProfileByKey,
   describeBusinessProfilePlan,
+  describeBusinessProfileSections,
   planBusinessProfile,
   postApplyViolations,
   toBusinessProfileSummary,
@@ -295,6 +296,25 @@ describe("postApplyViolations — validate the WHOLE post-apply state before wri
   });
 });
 
+describe("describeBusinessProfileSections — billing kept apart from the rest (#3220 review)", () => {
+  it("billing holds one line per plan.billing entry; changes holds everything else; summary = both", () => {
+    const plan = {
+      overrides: [
+        { featureKey: "recurring_routes", effect: "GRANT" as const, action: "create" as const },
+        { featureKey: "driver_payments", effect: "DENY" as const, action: "skip" as const },
+      ],
+      modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
+      billing: [{ featureKey: "driver_payments", action: "disable" as const, manual: true }],
+    };
+    const { billing, changes } = describeBusinessProfileSections(plan);
+    expect(billing).toHaveLength(1);
+    expect(billing[0]).toMatch(/manual invoice/);
+    expect(changes.some((l) => /billing|manual invoice/.test(l))).toBe(false);
+    expect(changes[0]).toContain("turned on free (comp), no charge added");
+    expect(describeBusinessProfilePlan(plan)).toEqual([...billing, ...changes]);
+  });
+});
+
 describe("describeBusinessProfilePlan — the plain-English preview", () => {
   it("names modules by their registry label and modes by their mode labels; skips say nothing", () => {
     const plan = planBusinessProfile(profile("shipping_wholesaler"), {
@@ -415,7 +435,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       planBusinessProfile(profile("delivery_distributor"), state),
     );
     const label = FEATURE_REGISTRY.find((f) => f.key === "order_delivery")!.label;
-    expect(lines).toContain(`Turn on ${label} (replaces the current "off" override)`);
+    expect(lines).toContain(
+      `Turn on ${label}: turned on free (comp), no charge added (replaces the current "off" override)`,
+    );
   });
 });
 

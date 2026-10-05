@@ -54,7 +54,10 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BusinessProfileService } from "../billing/business-profile.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
-import { ApplyBusinessProfileDto } from "./dto/apply-business-profile.dto";
+import {
+  ApplyBusinessProfileDto,
+  ConfirmBusinessProfileDto,
+} from "./dto/apply-business-profile.dto";
 import type {
   BusinessProfileApplyResponse,
   BusinessProfileListResponse,
@@ -729,12 +732,24 @@ export class PlatformAdminController {
   @Post("tenants/:id/business-profile")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Apply a business profile to a tenant (audited; idempotent)" })
-  async applyBusinessProfile(
+  applyBusinessProfile(
     @Param("id") id: string,
-    @Body() dto: ApplyBusinessProfileDto,
+    @Body() dto: ConfirmBusinessProfileDto,
     @CurrentUser() admin: JwtPayload,
   ): Promise<BusinessProfileApplyResponse> {
+    // Plan-then-apply under the add-on locks the enable path takes (#3199 review): see withConfirmLock.
+    return this.businessProfiles.withConfirmLock(id, () =>
+      this.applyBusinessProfileLocked(id, dto, admin),
+    );
+  }
+
+  private async applyBusinessProfileLocked(
+    id: string,
+    dto: ConfirmBusinessProfileDto,
+    admin: JwtPayload,
+  ): Promise<BusinessProfileApplyResponse> {
     const resolved = await this.businessProfiles.plan(id, dto.profile);
+    this.businessProfiles.assertPlanUnchanged(resolved, dto.planFingerprint); // before any write
     const reason = dto.reason?.trim() || resolved.reason;
     const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
 

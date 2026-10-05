@@ -140,6 +140,11 @@ describe("BusinessProfileService.preview", () => {
     });
     expect(res).toEqual({
       ...previewResponse,
+      planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      changes: [
+        "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+        "Turn off At-door payment collection",
+      ],
       profile: "shipping_wholesaler",
       plan: {
         overrides: [

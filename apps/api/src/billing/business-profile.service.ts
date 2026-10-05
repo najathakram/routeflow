@@ -1,8 +1,10 @@
+import { createHash } from "crypto";
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type {
   BusinessProfileListResponse,
@@ -12,6 +14,7 @@ import type {
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
 import { AddonService } from "./addon.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
@@ -23,6 +26,7 @@ import {
   PROFILE_MODULE_KEYS,
   businessProfileByKey,
   describeBusinessProfilePlan,
+  describeBusinessProfileSections,
   planBusinessProfile,
   postApplyViolations,
   toBusinessProfileSummary,
@@ -30,6 +34,25 @@ import {
   type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
+
+/** Canonical JSON (object keys sorted, array order kept): the same plan always hashes the same. */
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map(canonical)
+    : v && typeof v === "object"
+      ? Object.fromEntries(
+          Object.keys(v as object)
+            .sort()
+            .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+        )
+      : v;
+
+/** A stable hash of a plan: what the admin was shown, so confirm can prove it applies the same. */
+export function planFingerprint(plan: BusinessProfilePlan): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(plan)))
+    .digest("hex");
+}
 
 /** What the confirm path needs: the plan recomputed server-side at confirm time. */
 export interface BusinessProfileResolution {
@@ -145,7 +168,28 @@ export class BusinessProfileService {
       profile: resolved.profile.key as BusinessProfilePreviewResponse["profile"],
       plan: resolved.plan,
       summary: resolved.summary,
+      changes: describeBusinessProfileSections(resolved.plan).changes,
+      planFingerprint: planFingerprint(resolved.plan),
     };
+  }
+
+  /**
+   * Confirm re-plans from the tenant's CURRENT state; anything that changed since the preview (an
+   * add-on turned on in between, say) would be applied unseen. A different plan is a 409
+   * PROFILE_PLAN_CHANGED before any write: the web re-previews and the admin confirms again.
+   */
+  assertPlanUnchanged(resolved: BusinessProfileResolution, previewed: string | undefined): void {
+    if (typeof previewed !== "string" || previewed.trim() === "") {
+      throw new BadRequestException({
+        statusCode: 400,
+        message: "Preview the business profile first, then confirm.",
+      });
+    }
+    if (planFingerprint(resolved.plan) === previewed) return;
+    throw new ConflictException({
+      code: API_ERROR_CODES.PROFILE_PLAN_CHANGED,
+      message: "This account changed since the preview. Review the new preview and confirm again.",
+    });
   }
 
   /**
@@ -200,5 +244,37 @@ export class BusinessProfileService {
       }
     }
     return { state: { overrides, holds, paying, manualPay, modes }, activeIds };
+  }
+
+  /**
+   * Plan-then-apply runs holding the SAME advisory locks the add-on enable takes (family "billing",
+   * `addon:<tenant>:<sku>`, one per profile module, in a fixed order so two confirms cannot
+   * deadlock). An add-on enabled mid-confirm therefore waits for the confirm, and is never DENIED
+   * with its billing still running. `disableAddon` takes none of these locks (no re-entry).
+   */
+  async withConfirmLock<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+    const keys = [
+      ...new Set(PROFILE_MODULE_KEYS.map((k) => `addon:${tenantId}:${addonCodeOf(k)}`)),
+    ].sort();
+    const run = async (i: number): Promise<T> => {
+      if (i === keys.length) return fn();
+      const r = await withAdvisoryLock(
+        { family: "billing", key: keys[i], mode: "wait", waitMs: 10_000 },
+        () => run(i + 1),
+      );
+      if (!r.acquired) throw new LockUnavailableError(null); // unreachable under "wait"
+      return r.value;
+    };
+    try {
+      return await run(0);
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException({
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+          message: "This account's add-ons are being changed right now. Try again in a moment.",
+        });
+      }
+      throw e;
+    }
   }
 }

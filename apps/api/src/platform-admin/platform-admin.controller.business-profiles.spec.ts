@@ -1,3 +1,10 @@
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+}));
 /**
  * Business profiles — the platform-admin routes. Red-first: written before the routes existed.
  *
@@ -177,6 +184,19 @@ function fakeTenant(start: {
     businessProfiles,
     featureConfig as any,
   );
+  // Confirm as the web does it: preview first, send that planFingerprint back (#3199 review).
+  // A test that passes its own fingerprint keeps it; a preview that refuses leaves a dummy one,
+  // so the confirm's own refusal (unknown profile, ...) is what the test sees.
+  const confirm = controller.applyBusinessProfile.bind(controller); // the real route, no auto-fill
+  controller.applyBusinessProfile = (async (id: string, dto: any, user: any) => {
+    const planFingerprint =
+      dto.planFingerprint ??
+      (await controller
+        .previewBusinessProfile(id, { profile: dto.profile })
+        .then((p) => p.planFingerprint)
+        .catch(() => "0".repeat(64)));
+    return confirm(id, { ...dto, planFingerprint }, user);
+  }) as typeof controller.applyBusinessProfile;
   const state = () => ({
     modes: { ...modes },
     held: Object.fromEntries(
@@ -185,6 +205,13 @@ function fakeTenant(start: {
     activeOverrides: rows.filter((r) => !r.revokedAt).length,
   });
   return {
+    /** The confirm route WITHOUT the preview-first wrapper. */
+    rawConfirm: confirm,
+    /** A paid add-on switched on behind the admin's back (between preview and confirm). */
+    enablePaid: (key: string) => {
+      addons.add(key);
+      paid.add(key);
+    },
     failNoMore: () => {
       failing.key = undefined;
       failing.setKey = undefined;
@@ -240,6 +267,102 @@ describe("GET business-profiles / POST preview", () => {
     expect(res.profile).toBe("delivery_distributor");
     expect(res.summary.length).toBeGreaterThan(0);
     expect(writes).toEqual([]);
+  });
+
+  it("preview returns a stable planFingerprint (the same plan hashes the same)", async () => {
+    const { controller } = fakeTenant({});
+    const a = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    const b = await controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    expect(a.planFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(b.planFingerprint).toBe(a.planFingerprint);
+    const other = await controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(other.planFingerprint).not.toBe(a.planFingerprint);
+  });
+});
+
+describe("confirm applies only the plan that was previewed (#3199 review)", () => {
+  it("a plan that changed since the preview is a 409 PROFILE_PLAN_CHANGED and NOTHING is written", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    // between preview and confirm, the tenant's state moves (here: the confirm targets a plan
+    // other than the one shown, exactly what an add-on turned on in between produces)
+    const stale = { ...shown, planFingerprint: "f".repeat(64) };
+    await expect(
+      t.controller.applyBusinessProfile(
+        T,
+        { profile: "delivery_distributor", planFingerprint: stale.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("a confirm with NO fingerprint is a 400 and writes nothing (the route itself, no auto-fill)", async () => {
+    const t = fakeTenant({});
+    await expect(
+      t.rawConfirm(T, { profile: "delivery_distributor" } as any, admin),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a PAID add-on switched on between preview and confirm changes the plan: 409, nothing written or stopped", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(shown.plan.billing).toEqual([]); // nothing to stop when the admin looked
+    t.enablePaid("driver_payments"); // now the tenant PAYS for a module the profile switches off
+    await expect(
+      t.rawConfirm(
+        T,
+        { profile: "shipping_wholesaler", planFingerprint: shown.planFingerprint } as any,
+        admin,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "PROFILE_PLAN_CHANGED" }),
+    });
+    expect(t.writes).toEqual([]);
+    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+
+  it("billing and its manual flag are part of the fingerprint", async () => {
+    const paidStripe = fakeTenant({ addons: ["driver_payments"] });
+    const a = await paidStripe.controller.previewBusinessProfile(T, {
+      profile: "shipping_wholesaler",
+    });
+    const comped = fakeTenant({ comped: ["driver_payments"] });
+    const b = await comped.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
+    expect(a.plan.billing.length).toBe(1);
+    expect(b.plan.billing.length).toBe(0);
+    expect(a.planFingerprint).not.toBe(b.planFingerprint);
+  });
+
+  it("plan-then-apply holds the add-on enable path's locks (billing family, addon:<tenant>:<sku>, sorted)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { withAdvisoryLock } = require("../common/db-locks");
+    (withAdvisoryLock as jest.Mock).mockClear();
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin);
+    const keys = (withAdvisoryLock as jest.Mock).mock.calls.map(([o]: any) => [o.family, o.key]);
+    expect(keys.length).toBe(3);
+    expect(keys.every(([family]: string[]) => family === "billing")).toBe(true);
+    const names = keys.map(([, k]: string[]) => k);
+    expect(names).toEqual([...names].sort());
+    for (const k of names) expect(k.startsWith(`addon:${T}:`)).toBe(true);
+  });
+
+  it("the previewed fingerprint confirms", async () => {
+    const t = fakeTenant({});
+    const shown = await t.controller.previewBusinessProfile(T, { profile: "delivery_distributor" });
+    await t.controller.applyBusinessProfile(
+      T,
+      { profile: "delivery_distributor", planFingerprint: shown.planFingerprint } as any,
+      admin,
+    );
+    expect(t.writes.length).toBeGreaterThan(0);
   });
 });
 
