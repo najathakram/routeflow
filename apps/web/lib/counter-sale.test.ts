@@ -1,3 +1,4 @@
+import type { FulfilmentCapability } from "@routeflow/types";
 import {
   AUTO_PRINT_KEY,
   cartTotals,
@@ -15,22 +16,34 @@ import {
   writeAutoPrint,
 } from "./counter-sale";
 
+const cap = (over: Partial<FulfilmentCapability>): FulfilmentCapability => ({
+  methods: ["ROUTE"],
+  staffDefault: "ROUTE",
+  staffOpensAs: "order",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: true,
+  consistent: true,
+  ...over,
+});
+
 describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
   it("always: the button AND New order opens as the counter sale", () => {
-    expect(counterSaleGate({ counter: "always", methods: ["PICKUP"] })).toEqual({
+    expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP"] }))).toEqual({
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: false,
     });
   });
   it("always + SHIP in methods: 'Ship this order instead' is offered", () => {
-    expect(counterSaleGate({ counter: "always", methods: ["PICKUP", "SHIP"] })).toMatchObject({
+    expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP", "SHIP"] }))).toMatchObject({
       opensAsCounter: true,
       offerShipInstead: true,
     });
   });
   it("optional: the button only; never opens as the counter, never offers the ship switch", () => {
-    expect(counterSaleGate({ counter: "optional", methods: ["SHIP"] })).toEqual({
+    expect(counterSaleGate(cap({ counter: "optional", methods: ["SHIP"] }))).toEqual({
       showButton: true,
       opensAsCounter: false,
       offerShipInstead: false,
@@ -38,10 +51,10 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
   });
   it("off, missing or still loading: nothing", () => {
     const none = { showButton: false, opensAsCounter: false, offerShipInstead: false };
-    expect(counterSaleGate({ counter: "off" })).toEqual(none);
+    expect(counterSaleGate(cap({ counter: "off" }))).toEqual(none);
     expect(counterSaleGate(undefined)).toEqual(none);
     expect(counterSaleGate(null)).toEqual(none);
-    expect(counterSaleGate({ counter: "bogus" as never })).toEqual(none);
+    expect(counterSaleGate(cap({ counter: "bogus" as never }))).toEqual(none);
   });
 });
 

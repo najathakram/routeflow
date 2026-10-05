@@ -1,7 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CounterSaleRequest, CounterSaleResponse } from "@routeflow/types";
+import type {
+  CounterSaleRequest,
+  CounterSaleResponse,
+  FulfilmentCapability,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
-import { counterSaleGate, type FulfilmentCapabilityLike } from "../counter-sale";
+import { counterSaleGate } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
 
 /**
@@ -10,9 +14,9 @@ import { useTenantFeatures } from "../tenant-features";
  */
 export function useCounterSaleGate() {
   const { data, isLoading } = useTenantFeatures();
-  const cap = (
-    data as unknown as { capabilities?: { fulfilment?: FulfilmentCapabilityLike } } | undefined
-  )?.capabilities?.fulfilment;
+  // The response type says `capabilities` is always there; a stale or partial answer may not have it, and that means DARK.
+  const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
+    ?.capabilities?.fulfilment;
   // `loading`: the answer is not in yet. The screen shows an empty placeholder (never "not turned on", which would be false).
   return { ...counterSaleGate(cap), capability: cap, loading: isLoading === true };
 }

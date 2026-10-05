@@ -1,20 +1,14 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
-import { API_ERROR_CODES, type CounterSalePaymentMethod } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type CounterSalePaymentMethod,
+  type FulfilmentCapability,
+} from "@routeflow/types";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
  * (`computeLineSubtotal`, `roundMoney`); there is no ad-hoc rounding here.
  */
-
-/**
- * The slice of `capabilities.fulfilment` (GET /tenants/me/features) this screen reads. Structural on purpose: the shared type
- * (`packages/types/api/fulfilment.ts`, U-units) replaces it when it lands. NEVER read the raw `modes`.
- */
-export interface FulfilmentCapabilityLike {
-  counter: "always" | "optional" | "off";
-  methods?: readonly string[];
-  staffDefault?: string | null;
-}
 
 export interface CounterSaleGate {
   /** the "Counter sale" button (Orders + dashboard) */
@@ -32,7 +26,7 @@ const NO_COUNTER: CounterSaleGate = {
 };
 
 /** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
-export function counterSaleGate(cap: FulfilmentCapabilityLike | null | undefined): CounterSaleGate {
+export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
   if (cap.counter === "optional")
     return { showButton: true, opensAsCounter: false, offerShipInstead: false };
@@ -40,7 +34,7 @@ export function counterSaleGate(cap: FulfilmentCapabilityLike | null | undefined
     return {
       showButton: true,
       opensAsCounter: true,
-      offerShipInstead: (cap.methods ?? []).includes("SHIP"),
+      offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
     };
   return NO_COUNTER;
 }
@@ -51,11 +45,12 @@ export function counterSaleGate(cap: FulfilmentCapabilityLike | null | undefined
  */
 export function preselectFulfilment(
   customerPath: string | null | undefined,
-  cap: Pick<FulfilmentCapabilityLike, "methods" | "staffDefault"> | null | undefined,
+  cap: Pick<FulfilmentCapability, "methods" | "staffDefault"> | null | undefined,
 ): string | null {
   if (!cap) return null;
-  if (customerPath && (cap.methods ?? []).includes(customerPath)) return customerPath;
-  return cap.staffDefault ?? null;
+  if (customerPath && ((cap.methods ?? []) as readonly string[]).includes(customerPath))
+    return customerPath;
+  return cap.staffDefault;
 }
 
 export interface CartLine {
