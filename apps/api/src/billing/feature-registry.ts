@@ -1146,8 +1146,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
           lifecycle: "ga",
           settings: [],
         },
-        // SA-666: not selectable until the in-store (counter) flow lands: PICKUP is a capability
-        // method, not a FulfillPath, so a stored pickup tenant would break order creation.
+        // SA-666: not selectable until the in-store (counter) flow lands. FulfillPath has PICKUP
+        // since SA-650 but nothing writes it yet, so a pickup tenant could not create its orders;
+        // a stored pickup / pickup_ship mode derives as unset (fulfilment-capability.ts).
         pickup: { label: "In store only", available: false, lifecycle: "ga", settings: [] },
         pickup_ship: {
           label: "In store + shipping",

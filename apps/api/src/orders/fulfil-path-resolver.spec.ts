@@ -1,5 +1,6 @@
-import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
+import { UNSET_FULFILMENT_CAPABILITIES } from "@routeflow/types";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
 import { featureDefByKey } from "../billing/feature-registry";
 import { activeFulfilPath, resolveFulfilPath } from "./fulfil-path-resolver";
@@ -92,17 +93,13 @@ describe("resolveFulfilPath: unset / delivery / both are byte-identical to today
   });
 });
 
-describe("(g) a capability read failure is a coded 503, never a guessed path", () => {
-  it("throws FULFIL_CAPABILITY_UNAVAILABLE", async () => {
-    await expect(
-      resolveFulfilPath(deps(new Error("db down")), { stored: R, audience: "staff" }),
-    ).rejects.toMatchObject({
-      status: 503,
-      response: expect.objectContaining({ code: "FULFIL_CAPABILITY_UNAVAILABLE" }),
-    });
-    await expect(
-      resolveFulfilPath(deps(new Error("x")), { stored: R, audience: "buyer" }),
-    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+describe("(g) SA-678: a capability read failure fails OPEN to today's rule (never blocks an order)", () => {
+  it("logs and resolves explicit ?? stored ?? ROUTE", async () => {
+    const d = deps(new Error("db down"));
+    expect(await resolveFulfilPath(d, { stored: R, audience: "staff" })).toBe(R);
+    expect(await resolveFulfilPath(d, { explicit: S, stored: R, audience: "buyer" })).toBe(S);
+    expect(await activeFulfilPath(d, { stored: S, audience: "staff" })).toBeUndefined();
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining("capability read failed"));
   });
 });
 
@@ -132,18 +129,10 @@ describe("(e) SA-666/666a: pickup and pickup_ship are unavailable and a stored o
   });
 
   it("(f) CONTRACT: the unset capability shape the web's isUnsetCapabilities() keys on", () => {
-    // apps/web `isUnsetCapabilities` (fleet-off, #3198) treats exactly this shape as "no mode set":
-    // ROUTE+SHIP offered, ROUTE the default, no buyer choice. A change here must change it too.
-    expect(unset).toEqual({
-      methods: ["ROUTE", "SHIP"],
-      staffDefault: "ROUTE",
-      staffOpensAs: "order",
-      portalMethods: [],
-      portalDefault: null,
-      counter: "off",
-      fleet: true,
-      consistent: true,
-    });
+    // The web's unset check (fleet-off, #3198) treats exactly this shape as "no mode set": ROUTE+SHIP
+    // offered, ROUTE the default, no buyer choice.
+    // L-072: pinned to the ONE shared constant, never a hand-typed copy.
+    expect(unset).toEqual(UNSET_FULFILMENT_CAPABILITIES);
     // and no configured mode produces it by accident (the web must be able to tell them apart)
     for (const mode of ["delivery", "ship", "both"]) {
       const c = deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true });

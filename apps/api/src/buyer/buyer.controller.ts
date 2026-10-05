@@ -751,7 +751,8 @@ export class BuyerController {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         ctx.customerId,
-        { buyerInitiated: true },
+        // focusOrderId: only the new order's path folds, so `merged` is never another path's pair
+        { buyerInitiated: true, focusOrderId: created.id },
         // POST-COMMIT: never wait — see the sibling sweep above.
         { lockMode: "try" },
       );

@@ -67,6 +67,20 @@ describe("merge-candidates (pure)", () => {
     expect(sameFulfilPathAsWinner([])).toEqual([]);
   });
 
+  it("M2: with a focus order, exactly the focus order's path group, never another path's pair", () => {
+    const ship = order("s", FulfillPath.SHIP);
+    const route = order("r", FulfillPath.ROUTE);
+    const route2 = order("r2", FulfillPath.ROUTE);
+    // the new SHIP order is alone on its path: it comes back alone, the ROUTE pair is left for the sweep
+    expect(sameFulfilPathAsWinner([ship, route, route2], "s").map((o) => o.id)).toEqual(["s"]);
+    expect(sameFulfilPathAsWinner([ship, route, route2], "r2").map((o) => o.id)).toEqual([
+      "r",
+      "r2",
+    ]);
+    // a focus that is not a candidate (skipAutoMerge, shipped): fold nothing for this caller
+    expect(sameFulfilPathAsWinner([route, route2], "gone")).toEqual([]);
+  });
+
   it("mergeCandidateWhere adds the path only when one is given", () => {
     expect(mergeCandidateWhere(FulfillPath.SHIP)).toEqual({ fulfillPath: "SHIP" });
     expect(mergeCandidateWhere(undefined)).toEqual({});
@@ -109,6 +123,27 @@ describe("OrdersService merge entry points", () => {
     await h.service.mergeAllPendingForCustomer("cust-1");
     const creates = h.prisma.orderItem.create.mock.calls.map((c: any) => c[0].data.orderId);
     expect(creates).toEqual(["route-2"]); // folded into the ROUTE winner; ship-1's line went nowhere
+  });
+
+  it("M2: a post-create sweep with the new order alone on its path folds nothing and returns THAT order", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("ship-new", FulfillPath.SHIP, true),
+      order("route-2", FulfillPath.ROUTE),
+      order("route-1", FulfillPath.ROUTE, true),
+    ]);
+    const out = await h.service.mergeAllPendingForCustomer("cust-1", { focusOrderId: "ship-new" });
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled(); // the ROUTE pair waits for the hourly sweep
+    expect(out).toMatchObject({ id: "ship-new" }); // never route-2 posing as "the created order"
+  });
+
+  it("M2: a post-create sweep whose new order is not a candidate returns null (caller keeps its order)", async () => {
+    h.prisma.order.findMany.mockResolvedValue([
+      order("route-2", FulfillPath.ROUTE),
+      order("route-1", FulfillPath.ROUTE, true),
+    ]);
+    const out = await h.service.mergeAllPendingForCustomer("cust-1", { focusOrderId: "ship-new" });
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(out).toBeNull();
   });
 
   it("two SHIP orders (a ship-only business's standing order + an earlier one) DO merge", async () => {

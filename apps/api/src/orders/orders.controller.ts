@@ -373,9 +373,10 @@ export class OrdersController {
       try {
         // Only the CUSTOMER's own consolidation may earn NEW BUY_N_GET_M free units
         // for the combined quantity — a driver's order is priced like staff's.
+        // focusOrderId: fold only the new order's path, so `merged` is never another path's pair (M2)
         const merged = await this.ordersService.mergeAllPendingForCustomer(
           created.customerId,
-          { buyerInitiated: user.role === UserRole.CUSTOMER },
+          { buyerInitiated: user.role === UserRole.CUSTOMER, focusOrderId: created.id },
           // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
           // customer anyway, so `try` defers to them instead of spending this request's budget.
           { lockMode: "try", actor: user },

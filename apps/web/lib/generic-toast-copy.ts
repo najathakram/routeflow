@@ -36,8 +36,6 @@ const CODE_COPY: Record<string, string> = {
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
-  FULFIL_CAPABILITY_UNAVAILABLE:
-    "Couldn't check how this business fulfils orders. Try again in a moment.",
   ORDER_WITH_CARRIER_NO_CANCEL:
     "This order is already with the carrier. Use a return instead of cancelling.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:

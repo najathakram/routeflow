@@ -27,6 +27,7 @@ let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
+const mockActiveOrderHook = jest.fn((..._args: unknown[]) => ({ data: undefined }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
   // Like the real hook: nothing until a customer is selected.
@@ -45,7 +46,7 @@ jest.mock("@/lib/api/orders", () => ({
     error: mockCreateOrderError,
     reset: jest.fn(),
   }),
-  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useActiveOrderForCustomer: (...args: unknown[]) => mockActiveOrderHook(...args),
   useCustomerPriceHistory: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
@@ -1295,5 +1296,17 @@ describe("CreateOrderModal", () => {
       expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
     });
+  });
+
+  it("M4: the active-order preview asks for the SAME path create will use (the customer's SHIP default)", async () => {
+    mockCustomers = [
+      { id: "c-ship", businessName: "Shipco Ltd", pricingTier: 1, fulfillPath: "SHIP" },
+    ];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Shi" },
+    });
+    fireEvent.click(await screen.findByText("Shipco Ltd"));
+    await waitFor(() => expect(mockActiveOrderHook).toHaveBeenLastCalledWith("c-ship", "SHIP"));
   });
 });

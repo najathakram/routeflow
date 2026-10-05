@@ -192,6 +192,16 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     });
   });
 
+  it("M2: the post-create sweep folds only the NEW order's path (focusOrderId), so it returns that order", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
+      expect.anything(),
+    );
+  });
+
   it("the buyer's active-order search passes mergeAs for the buyer audience (portal path rules)", async () => {
     ordersService.findActiveOrder.mockResolvedValue(null);
     await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);

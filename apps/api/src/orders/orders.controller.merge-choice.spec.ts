@@ -155,6 +155,18 @@ describe("OrdersController — merge choice vs orderDate", () => {
       expect(opts).toEqual({ forMerge: true, mergeAs: { explicit: "SHIP" } });
   });
 
+  it("M2: a driver's post-create sweep folds only the NEW order's path (focusOrderId)", async () => {
+    await controller.create(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+      { ...operatorPayload, sub: "user-drv", role: "DRIVER" } as JwtPayload,
+    );
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "cust-1",
+      { buyerInitiated: false, focusOrderId: "ord-new" },
+      expect.anything(),
+    );
+  });
+
   it("GET /orders/active takes the order's path and searches as create would (omitted = the customer's own)", async () => {
     await controller.getActiveOrderForCustomer("cust-1", "SHIP");
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {

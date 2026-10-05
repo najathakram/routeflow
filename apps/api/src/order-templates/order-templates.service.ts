@@ -12,7 +12,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
-import { activeFulfilPath } from "../orders/fulfil-path-resolver";
+import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
@@ -850,17 +850,16 @@ export class OrderTemplatesService {
           customerId: template.customerId,
         })
       : (allowOversellArg ?? isStaffRole);
-    // Fulfil path: ONLY a ship-only business resolves one here (the shared resolver); every other
-    // tenant keeps the column default, byte-identical to before.
-    const storedPath = this.featureConfig
-      ? (
-          await this.prisma.forTenant().customer.findFirst({
-            where: { id: template.customerId },
-            select: { fulfillPath: true },
-          })
-        )?.fulfillPath
-      : undefined;
-    const fulfillPath = await activeFulfilPath(
+    // Fulfil path (SA-678): the standing order takes the path order create would give it (the shared
+    // resolver) for EVERY tenant, so a SHIP customer's standing order is SHIP and folds with their
+    // other SHIP orders (the column default made it ROUTE).
+    const storedPath = (
+      await this.prisma.forTenant().customer.findFirst({
+        where: { id: template.customerId },
+        select: { fulfillPath: true },
+      })
+    )?.fulfillPath;
+    const fulfillPath = await resolveFulfilPath(
       {
         featureConfig: this.featureConfig,
         tenantId: this.prisma.getTenantId(),
@@ -873,7 +872,7 @@ export class OrderTemplatesService {
         data: {
           customerId: template.customerId,
           templateId: template.id,
-          ...(fulfillPath ? { fulfillPath } : {}),
+          fulfillPath,
           orderNumber,
           subtotal,
           tax,
@@ -941,7 +940,8 @@ export class OrderTemplatesService {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         template.customerId,
-        {},
+        // focusOrderId: only the standing order's path folds, so `merged` is never another path's pair
+        { focusOrderId: created.id },
         // POST-COMMIT: `try`, never `wait`. On the 06:00 cron this runs once per template in a
         // loop — waiting 20 s on each contended customer would stretch the run without changing
         // the outcome, since the hourly sweep folds whatever is left anyway.

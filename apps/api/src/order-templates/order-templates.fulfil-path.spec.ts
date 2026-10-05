@@ -33,13 +33,14 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 /**
- * Standing orders resolve a fulfil path ONLY for a ship-only business (the shared resolver); every other
- * tenant keeps the column default (no `fulfillPath` in the create), byte-identical to before.
+ * Standing orders take the path order create would give them (the shared resolver) for EVERY tenant
+ * (SA-678 MUST 2): a ship-only business ships; elsewhere the customer's own stored path, then ROUTE.
  */
 describe("OrderTemplatesService fulfil path", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let read: jest.Mock;
+  let orders: { mergeAllPendingForCustomer: jest.Mock };
   const resolve = resolveOversellAllowed as unknown as jest.Mock;
   const decrement = decrementStockForSale as jest.Mock;
   const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
@@ -96,6 +97,7 @@ describe("OrderTemplatesService fulfil path", () => {
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
+    orders = mod.get(OrdersService);
     prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
     // a customer made before the business switched: the stored path is the column default, ROUTE
     prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
@@ -124,20 +126,30 @@ describe("OrderTemplatesService fulfil path", () => {
   });
 
   it.each(["unset", "delivery", "both"])(
-    "%s tenant: no fulfillPath in the create (column default)",
+    "%s tenant: a stored-ROUTE customer's standing order is ROUTE, as today",
     async (mode) => {
       await build(mode);
       await service.generateOrderForUser("t1", staff);
-      expect(createData()).not.toHaveProperty("fulfillPath");
+      expect(createData().fulfillPath).toBe("ROUTE");
     },
   );
 
-  it("(g) an unreadable capability is a coded 503 and no order is created", async () => {
+  it("SA-678: unset tenant, SHIP customer: the standing order is SHIP and the sweep folds that path", async () => {
+    await build("unset");
+    prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "SHIP" });
+    await service.generateOrderForUser("t1", staff);
+    expect(createData().fulfillPath).toBe("SHIP");
+    // the post-create sweep folds the standing order's own path group (its SHIP orders), nothing else
+    expect(orders.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "c1",
+      { focusOrderId: "o1" },
+      expect.anything(),
+    );
+  });
+
+  it("(g) SA-678: an unreadable capability fails open to the customer's path and the order is created", async () => {
     await build(new Error("db down"));
-    await expect(service.generateOrderForUser("t1", staff)).rejects.toMatchObject({
-      status: 503,
-      response: expect.objectContaining({ code: "FULFIL_CAPABILITY_UNAVAILABLE" }),
-    });
-    expect(prisma.order.create).not.toHaveBeenCalled();
+    await service.generateOrderForUser("t1", staff);
+    expect(createData().fulfillPath).toBe("ROUTE");
   });
 });

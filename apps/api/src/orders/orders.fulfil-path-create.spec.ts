@@ -108,12 +108,9 @@ describe("OrdersService.create: fulfil path", () => {
     },
   );
 
-  it("(g) an unreadable capability is a coded 503 and nothing is written (never a guessed path)", async () => {
+  it("(g) SA-678: an unreadable capability fails open to today's rule and the order is created", async () => {
     mode(new Error("db down"));
-    await expect(create({})).rejects.toMatchObject({
-      status: 503,
-      response: expect.objectContaining({ code: "FULFIL_CAPABILITY_UNAVAILABLE" }),
-    });
-    expect(h.prisma.order.create).not.toHaveBeenCalled();
+    await create({});
+    expect(created()).toBe("ROUTE");
   });
 });

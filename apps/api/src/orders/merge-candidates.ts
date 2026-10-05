@@ -22,7 +22,6 @@ export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): Fu
 }
 
 /**
-/**
  * An order that has already SHIPPED (`shippedAt` is stamped only by the ship transition and survives an
  * unmark and a reopen) is never a merge candidate, winner or loser: a fold deletes the losers, which would
  * destroy a shipped order and its `shippedAt` (and walk around the carrier-order cancel/delete guard).
@@ -32,20 +31,30 @@ export function unshipped<T extends { shippedAt?: Date | null }>(orders: T[]): T
 }
 
 /**
- * The orders that fold together in one pass: the first path (most recent first) that has MORE THAN ONE
- * order, so [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP order;
- * with no path holding two, just the winner (the most recent), which is a no-op fold. Orders on other
- * paths are left exactly as they are (the next sweep takes the next pair).
+ * The orders that fold together in one pass.
+ *  - With `focusId` (a post-create sweep): exactly the focus order's path group, so the sweep's winner is
+ *    always the order the caller just created (or what it folded into), never another path's pair; a
+ *    focus that is not a candidate folds nothing.
+ *  - Without (the hourly sweep, force-consolidate): the first path (most recent first) that has MORE THAN
+ *    ONE order, so [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP
+ *    order; with no path holding two, just the winner (the most recent), a no-op fold.
+ * Orders on other paths are left exactly as they are (the next sweep takes the next pair).
  */
-export function sameFulfilPathAsWinner<T extends { fulfillPath?: FulfillPath | null }>(
+export function sameFulfilPathAsWinner<T extends { id?: string; fulfillPath?: FulfillPath | null }>(
   orders: T[],
+  focusId?: string,
 ): T[] {
-  if (orders.length <= 1) return orders;
   const byPath = new Map<FulfillPath, T[]>();
   for (const o of orders) {
     const path = effectiveFulfilPath(o);
     byPath.set(path, [...(byPath.get(path) ?? []), o]);
   }
+  if (focusId) {
+    // not a candidate itself (skipAutoMerge, already shipped, ...): fold nothing for this caller
+    const focus = orders.find((o) => o.id === focusId);
+    return focus ? byPath.get(effectiveFulfilPath(focus))! : [];
+  }
+  if (orders.length <= 1) return orders;
   return [...byPath.values()].find((g) => g.length > 1) ?? [orders[0]];
 }
 

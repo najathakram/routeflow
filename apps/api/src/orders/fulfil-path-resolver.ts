@@ -12,14 +12,15 @@
  *    log line. An explicit DIFFERENT path that is not offered is a coded 400 FULFIL_METHOD_NOT_OFFERED.
  *    Omitted: the stored path when it is offered, else the capability's `staffDefault`.
  *  - buyer: the same with `portalMethods` / `portalDefault`.
- * A capability that cannot be read is a coded 503, never a guessed path.
+ * Fail-open (SA-678): `getEffectiveMode` already falls back to the registry default ("unset") on a DB
+ * blip, and a throw that still escapes is logged and treated as unset (today's rule). A config blip
+ * never blocks an order; at worst a ship-only order takes the request's or the customer's own path.
  */
-import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-
-export const FULFILMENT_MODEL_KEY = "fulfilment_model";
+import { FULFILMENT_MODEL_KEY } from "./order-status-invoicing";
 
 export interface FulfilPathDeps {
   featureConfig?: { getEffectiveMode(tenantId: string, key: string): Promise<string> };
@@ -47,11 +48,11 @@ export async function activeFulfilPath(
   let mode: string;
   try {
     mode = await deps.featureConfig.getEffectiveMode(deps.tenantId, FULFILMENT_MODEL_KEY);
-  } catch {
-    throw new ServiceUnavailableException({
-      code: API_ERROR_CODES.FULFIL_CAPABILITY_UNAVAILABLE,
-      message: "Couldn't check how this business fulfils orders. Try again in a moment.",
-    });
+  } catch (err) {
+    deps.logger?.warn(
+      `fulfil path: capability read failed, using today's rule tenant=${deps.tenantId}: ${String(err)}`,
+    );
+    return undefined;
   }
   const cap = deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true });
   if (cap.methods.includes("ROUTE")) return undefined; // unset / delivery / both: today, exactly

@@ -696,7 +696,7 @@ export class OrdersService implements OnApplicationBootstrap {
    */
   async mergeAllPendingForCustomer(
     customerId: string,
-    options: { buyerInitiated?: boolean } = {},
+    options: { buyerInitiated?: boolean; focusOrderId?: string } = {},
     opts?: {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
@@ -738,7 +738,8 @@ export class OrdersService implements OnApplicationBootstrap {
             },
             orderBy: { updatedAt: "desc" },
           });
-          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending)); // a SHIP order never folds into a ROUTE one
+          // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
+          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending), options.focusOrderId);
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
