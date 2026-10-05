@@ -1,9 +1,11 @@
 /**
- * Every buyer-portal read of an order or an invoice carries customer-facing fields only: no line
- * override reason/author, no order commission rate, no invoice internal notes, no payment notes,
- * no DRAFT invoice inside an order, and the invoice LIST shows confirmed (PAID) payments only.
- * The services below are stubbed to return the full staff-shaped row, so each assertion pins the
- * buyer boundary itself. Fixtures are placeholders (acme-style ids); no live-client data.
+ * Every buyer-portal read or write of an order or an invoice carries an ALLOWLIST of customer-facing
+ * fields (common/staff-only-fields.ts): none of the staff-internal columns (idempotency key, merge
+ * flag, run / template links, commission rate, write-off reason, payment image key / bank charges /
+ * bounce reason ...) nor any column added later, no DRAFT invoice inside an order, and the invoice
+ * LIST shows confirmed (PAID) payments only. The services below are stubbed to return the full
+ * staff-shaped row (common/testing/customer-leak-fixtures.ts), so each assertion pins the buyer
+ * boundary itself. Fixtures are placeholders (acme-style ids); no live-client data.
  */
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { InjectionToken } from "@nestjs/common";
@@ -28,6 +30,11 @@ import { AuthorizationsService } from "../authorizations/authorizations.service"
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import {
+  expectNoStaffLeaks,
+  leakyInvoice,
+  leakyOrder,
+} from "../common/testing/customer-leak-fixtures";
 
 const CTX = {
   customerId: "c-mine",
@@ -37,40 +44,12 @@ const CTX = {
   customer: { id: "c-mine", businessName: "Sample Buyer Co" },
 };
 
-const line = () => ({
-  id: "li-1",
-  productId: "p-1",
-  qty: 1,
-  unitPrice: 5,
-  overrideReason: "staff-only reason",
-  overriddenBy: "user-op",
-});
-
-const orderRow = () => ({
-  id: "ord-1",
-  customerId: "c-mine",
-  status: "PENDING",
-  commissionRatePct: 7.5,
-  lineItems: [line()],
-  invoices: [
-    { id: "inv-draft", status: "DRAFT", payments: [] },
-    { id: "inv-sent", status: "SENT", payments: [] },
-  ],
-});
-
+const orderRow = leakyOrder;
 const invoiceRow = () => ({
-  id: "inv-1",
+  ...leakyInvoice(),
   customerId: "c-mine",
-  status: "SENT",
   viewedAt: new Date(),
   pdfUrl: null,
-  internalNotes: "staff-only memo",
-  items: [line()],
-  payments: [
-    { id: "p-paid", status: "PAID", amount: 3, notes: "staff-only payment memo" },
-    { id: "p-draft", status: "DRAFT", amount: 4, notes: "unconfirmed" },
-    { id: "p-void", status: "VOID", amount: 6, notes: "bounced" },
-  ],
 });
 
 async function boot() {
@@ -82,6 +61,7 @@ async function boot() {
     mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
     updateOrderItems: jest.fn().mockResolvedValue(orderRow()),
   };
+  const templatesService = { generateOrder: jest.fn().mockResolvedValue(orderRow()) };
   const invoicesService = {
     findAll: jest.fn().mockResolvedValue({ data: [invoiceRow()], meta: { total: 1 } }),
     findOne: jest.fn().mockResolvedValue(invoiceRow()),
@@ -93,11 +73,17 @@ async function boot() {
       oversellReaderOffProvider,
       { provide: OrdersService, useValue: ordersService },
       { provide: InvoicesService, useValue: invoicesService },
+      { provide: OrderTemplatesService, useValue: templatesService },
       { provide: ShelfService, useValue: { lowItems: jest.fn().mockResolvedValue([]) } },
       { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
       {
         provide: PrismaService,
-        useValue: { forTenant: () => ({ invoice: { update: jest.fn() } }) },
+        useValue: {
+          forTenant: () => ({
+            invoice: { update: jest.fn() },
+            orderTemplate: { findFirst: jest.fn().mockResolvedValue({ customerId: "c-mine" }) },
+          }),
+        },
       },
       ...[
         BuyerService,
@@ -110,14 +96,18 @@ async function boot() {
         StatementService,
         StatementPdfService,
         CustomersService,
-        OrderTemplatesService,
         AuthorizationsService,
         SystemConfigService,
         TenantContextService,
       ].map(stub),
     ],
   }).compile();
-  return { controller: moduleRef.get(BuyerController), ordersService, invoicesService };
+  return {
+    controller: moduleRef.get(BuyerController),
+    ordersService,
+    invoicesService,
+    templatesService,
+  };
 }
 
 type Row = Record<string, unknown> & {
@@ -128,22 +118,19 @@ type Row = Record<string, unknown> & {
 };
 
 function expectCustomerFacingOrder(order: Row) {
-  expect(order).not.toHaveProperty("commissionRatePct");
-  for (const li of order.lineItems ?? []) {
-    expect(li).not.toHaveProperty("overrideReason");
-    expect(li).not.toHaveProperty("overriddenBy");
-  }
+  expectNoStaffLeaks(order);
   expect((order.invoices ?? []).map((i) => i.id)).toEqual(["inv-sent"]);
   expect(order.lineItems).toHaveLength(1);
+  // What the buyer screens read survives the allowlist.
+  expect(order).toMatchObject({ id: "ord-1", orderNumber: "ORD-1", status: "PENDING", total: 10 });
+  expect(order.lineItems?.[0]).toMatchObject({ id: "li-1", qty: 2, unitPrice: 5, subtotal: 10 });
+  expect(order.lineItems?.[0].product).toEqual({ id: "p-1", name: "Widget", unit: "ea" });
 }
 
 function expectCustomerFacingInvoice(inv: Row) {
-  expect(inv).not.toHaveProperty("internalNotes");
-  for (const li of inv.items ?? []) {
-    expect(li).not.toHaveProperty("overrideReason");
-    expect(li).not.toHaveProperty("overriddenBy");
-  }
-  for (const p of inv.payments ?? []) expect(p).not.toHaveProperty("notes");
+  expectNoStaffLeaks(inv);
+  expect(inv).toMatchObject({ id: "inv-1", invoiceNumber: "INV-1", total: 20 });
+  expect(inv.items?.[0]).toMatchObject({ id: "li-1", description: "Widget", unitPrice: 5 });
 }
 
 describe("buyer order reads — customer-facing fields only", () => {
@@ -178,6 +165,53 @@ describe("buyer order reads — customer-facing fields only", () => {
     expectCustomerFacingOrder(out as unknown as Row);
   });
 
+  it("POST /buyer/templates/:id/reorder (the order the template generated)", async () => {
+    const { controller, templatesService } = await boot();
+    const out = await controller.reorderFromTemplate("tpl-1", CTX);
+    expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
+    expectCustomerFacingOrder(out as unknown as Row);
+  });
+
+  it("POST /buyer/templates/:id/reorder: a template that generates nothing answers null", async () => {
+    const { controller, templatesService } = await boot();
+    templatesService.generateOrder.mockResolvedValue(null);
+    expect(await controller.reorderFromTemplate("tpl-1", CTX)).toBeNull();
+  });
+
+  it("buyer create + edit-items redact an upsell line's base price BEFORE the allowlist", async () => {
+    const { controller, ordersService } = await boot();
+    const upsold = () => ({
+      ...orderRow(),
+      lineItems: [
+        {
+          ...orderRow().lineItems[0],
+          priceType: "MANUAL",
+          unitPrice: 8,
+          originalPrice: 5,
+          product: { id: "p-1", name: "Widget", unit: "ea", pricePerUnit: 5 },
+        },
+      ],
+    });
+    ordersService.create.mockResolvedValue(upsold());
+    ordersService.updateOrderItems.mockResolvedValue(upsold());
+    const created = (await controller.createOrder(
+      { items: [{ productId: "p-1", qty: 1 }], forceNew: true } as never,
+      CTX,
+    )) as unknown as Row;
+    const edited = (await controller.updateOrderItems(
+      "ord-1",
+      { items: [] } as never,
+      CTX,
+    )) as unknown as Row;
+    for (const out of [created, edited]) {
+      expect(out.lineItems?.[0]).toMatchObject({
+        unitPrice: 8,
+        originalPrice: null,
+        priceType: "STANDARD",
+      });
+    }
+  });
+
   it("POST /buyer/shelf/add-all-low (nothing low: the active order)", async () => {
     const { controller } = await boot();
     expectCustomerFacingOrder((await controller.addAllLow(CTX)) as unknown as Row);
@@ -190,7 +224,7 @@ describe("buyer invoice reads — customer-facing fields only", () => {
     const out = await controller.getInvoices(CTX, {} as never);
     const row = out.data[0] as unknown as Row;
     expectCustomerFacingInvoice(row);
-    expect(row.payments).toEqual([{ id: "p-paid", status: "PAID", amount: 3 }]);
+    expect(row.payments?.map((p) => p.id)).toEqual(["p-paid"]);
   });
 
   it("GET /buyer/invoices/:id: no internal notes, line override fields or payment notes", async () => {

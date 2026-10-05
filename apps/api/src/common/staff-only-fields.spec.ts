@@ -1,117 +1,163 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  STAFF_ONLY_INVOICE_FIELDS,
-  STAFF_ONLY_LINE_FIELDS,
-  STAFF_ONLY_ORDER_FIELDS,
-  STAFF_ONLY_PAYMENT_FIELDS,
-  omitStaffOnlyInvoiceFields,
-  omitStaffOnlyOrderFields,
+  CUSTOMER_INVOICE_FIELDS,
+  CUSTOMER_INVOICE_ITEM_FIELDS,
+  CUSTOMER_ORDER_FIELDS,
+  CUSTOMER_ORDER_ITEM_FIELDS,
+  CUSTOMER_PAYMENT_FIELDS,
+  pickCustomerInvoiceFields,
+  pickCustomerOrderFields,
 } from "./staff-only-fields";
+import {
+  INVOICE_LEAK_KEYS,
+  LINE_LEAK_KEYS,
+  ORDER_LEAK_KEYS,
+  PAYMENT_LEAK_KEYS,
+  expectNoStaffLeaks,
+  leakyInvoice,
+  leakyOrder,
+  leakyPayment,
+} from "./testing/customer-leak-fixtures";
 
 /**
- * Customer-facing order and invoice responses carry customer-facing fields only. The helpers return
- * a copy without the staff-internal fields (line override reason/author, order commission rate,
- * invoice internal notes, payment notes) and never mutate their input, so a staff caller holding
- * the same object is unaffected. Fixtures are placeholders.
+ * Customer-facing order and invoice responses are an ALLOWLIST projection, never "everything but
+ * the staff keys": a column added to Order / OrderItem / Invoice / InvoicePayment tomorrow stays
+ * staff-only until someone lists it. The helpers return a COPY (a staff caller holding the same row
+ * is unaffected) and never mutate their input. Fixtures are placeholders.
  */
-const line = () => ({
-  id: "li-1",
-  unitPrice: 5,
-  overrideReason: "staff-only reason",
-  overriddenBy: "user-op",
-});
+const json = (v: unknown) => JSON.parse(JSON.stringify(v));
+type Row = Record<string, any>;
 
-const order = () => ({
-  id: "ord-1",
-  status: "PENDING",
-  commissionRatePct: 7.5,
-  notes: "customer note",
-  lineItems: [line()],
-  invoices: [
-    { id: "inv-draft", status: "DRAFT", payments: [] },
-    { id: "inv-sent", status: "SENT", payments: [{ id: "p-1", amount: 2 }] },
-  ],
-});
+describe("the allowlists", () => {
+  it.each([
+    ["order", CUSTOMER_ORDER_FIELDS, ORDER_LEAK_KEYS],
+    ["order line", CUSTOMER_ORDER_ITEM_FIELDS, LINE_LEAK_KEYS],
+    ["invoice", CUSTOMER_INVOICE_FIELDS, INVOICE_LEAK_KEYS],
+    ["invoice line", CUSTOMER_INVOICE_ITEM_FIELDS, LINE_LEAK_KEYS],
+    ["payment", CUSTOMER_PAYMENT_FIELDS, PAYMENT_LEAK_KEYS],
+  ] as const)("%s: none of the known staff-internal columns is listed", (_n, allowed, leaks) => {
+    for (const key of leaks) expect(allowed as readonly string[]).not.toContain(key);
+  });
 
-const invoice = () => ({
-  id: "inv-1",
-  status: "SENT",
-  notes: "printed on the invoice",
-  internalNotes: "staff-only memo",
-  items: [line()],
-  payments: [
-    { id: "p-paid", status: "PAID", amount: 3, notes: "staff-only payment memo" },
-    { id: "p-draft", status: "DRAFT", amount: 4, notes: "unconfirmed" },
-    { id: "p-pending", status: "PENDING", amount: 5, notes: null },
-    { id: "p-void", status: "VOID", amount: 6, notes: "bounced" },
-  ],
-});
-
-describe("staff-only field lists", () => {
-  it("name exactly the staff-internal fields", () => {
-    expect([...STAFF_ONLY_LINE_FIELDS]).toEqual(["overrideReason", "overriddenBy"]);
-    expect([...STAFF_ONLY_ORDER_FIELDS]).toEqual(["commissionRatePct"]);
-    expect([...STAFF_ONLY_INVOICE_FIELDS]).toEqual(["internalNotes"]);
-    expect([...STAFF_ONLY_PAYMENT_FIELDS]).toEqual(["notes"]);
+  it("every entry is unique", () => {
+    for (const list of [
+      CUSTOMER_ORDER_FIELDS,
+      CUSTOMER_ORDER_ITEM_FIELDS,
+      CUSTOMER_INVOICE_FIELDS,
+      CUSTOMER_INVOICE_ITEM_FIELDS,
+      CUSTOMER_PAYMENT_FIELDS,
+    ]) {
+      expect(new Set(list).size).toBe(list.length);
+    }
   });
 });
 
-describe("omitStaffOnlyOrderFields", () => {
-  it("drops the commission rate and every line's override reason/author", () => {
-    const out = omitStaffOnlyOrderFields(order());
-    expect(out).not.toHaveProperty("commissionRatePct");
+describe("pickCustomerOrderFields", () => {
+  it("drops every known staff-internal column and a column that does not exist yet, at every level", () => {
+    const out = pickCustomerOrderFields(leakyOrder()) as Row;
+    expectNoStaffLeaks(out);
     expect(out.lineItems[0]).not.toHaveProperty("overrideReason");
-    expect(out.lineItems[0]).not.toHaveProperty("overriddenBy");
-    expect(out.lineItems[0]).toEqual({ id: "li-1", unitPrice: 5 });
-    expect(out.notes).toBe("customer note");
+    expect(out).not.toHaveProperty("idempotencyKey");
+    expect(out).not.toHaveProperty("futureStaffColumn");
   });
 
-  it("drops DRAFT invoices from the order's invoice list", () => {
-    const out = omitStaffOnlyOrderFields(order());
-    expect(out.invoices.map((i) => i.id)).toEqual(["inv-sent"]);
+  it("keeps what the buyer screens read, projects relations, drops the rest", () => {
+    const out = pickCustomerOrderFields(leakyOrder()) as Row;
+    expect(out).toMatchObject({ id: "ord-1", orderNumber: "ORD-1", status: "PENDING", total: 10 });
+    expect(out.notes).toBe("customer note");
+    expect(out.customer).toEqual({ id: "cust-1", businessName: "Acme Buyer" });
+    expect(out.lineItems[0]).toMatchObject({ id: "li-1", qty: 2, unitPrice: 5, subtotal: 10 });
+    expect(out.lineItems[0].product).toEqual({ id: "p-1", name: "Widget", unit: "ea" });
+  });
+
+  it("keeps the derived order parts a buyer screen reads and trims their staff parts", () => {
+    const out = pickCustomerOrderFields({
+      ...leakyOrder(),
+      editWindow: { editable: true, editableUntil: null, closedReason: null },
+      routeRun: { status: "ACTIVE", startedAt: null, driverId: "drv-1" },
+      changeRequests: [{ id: "cr-1", type: "ADD_ITEM", status: "PENDING", requestedById: "u-1" }],
+      _count: { changeRequests: 1 },
+    }) as Row;
+    expect(out.editWindow).toEqual({ editable: true, editableUntil: null, closedReason: null });
+    expect(out.routeRun).toEqual({ status: "ACTIVE", startedAt: null });
+    expect(out.changeRequests).toEqual([{ id: "cr-1", type: "ADD_ITEM", status: "PENDING" }]);
+    expect(out._count).toEqual({ changeRequests: 1 });
+  });
+
+  it("drops DRAFT invoices from the order's invoice list and keeps a lean stub of the rest", () => {
+    const out = pickCustomerOrderFields(leakyOrder()) as Row;
+    expect(out.invoices).toEqual([
+      { id: "inv-sent", invoiceNumber: "INV-S", status: "SENT", total: 10 },
+    ]);
   });
 
   it("never mutates its input", () => {
-    const input = order();
-    const snapshot = JSON.parse(JSON.stringify(input));
-    omitStaffOnlyOrderFields(input);
-    expect(JSON.parse(JSON.stringify(input))).toEqual(snapshot);
+    const input = leakyOrder();
+    const snapshot = json(input);
+    pickCustomerOrderFields(input);
+    expect(json(input)).toEqual(snapshot);
   });
 
-  it("is null-safe and leaves shapes without the fields alone", () => {
-    expect(omitStaffOnlyOrderFields(null)).toBeNull();
-    expect(omitStaffOnlyOrderFields(undefined)).toBeUndefined();
-    expect(omitStaffOnlyOrderFields({ id: "o" })).toEqual({ id: "o" });
+  it("is null-safe and passes a non-object through", () => {
+    expect(pickCustomerOrderFields(null)).toBeNull();
+    expect(pickCustomerOrderFields(undefined)).toBeUndefined();
+    expect(pickCustomerOrderFields("x")).toBe("x");
+    expect(pickCustomerOrderFields({ id: "o", idempotencyKey: "k" })).toEqual({ id: "o" });
+  });
+
+  it("is idempotent (the service and the controller may both apply it)", () => {
+    const once = pickCustomerOrderFields(leakyOrder());
+    expect(pickCustomerOrderFields(once)).toEqual(once);
   });
 });
 
-describe("omitStaffOnlyInvoiceFields", () => {
-  it("drops internal notes, line override reason/author and payment notes", () => {
-    const out = omitStaffOnlyInvoiceFields(invoice());
-    expect(out).not.toHaveProperty("internalNotes");
+describe("pickCustomerInvoiceFields", () => {
+  it("drops every known staff-internal column and a future one, at every level", () => {
+    const out = pickCustomerInvoiceFields(leakyInvoice()) as Row;
+    expectNoStaffLeaks(out);
+    expect(out).not.toHaveProperty("writeOffReason");
+    expect(out.payments[0]).not.toHaveProperty("imageKey");
+    expect(out.payments[0]).not.toHaveProperty("bounceReason");
+  });
+
+  it("keeps what the buyer screens read; without the option every payment row stays", () => {
+    const out = pickCustomerInvoiceFields(leakyInvoice()) as Row;
+    expect(out).toMatchObject({ id: "inv-1", invoiceNumber: "INV-1", total: 20 });
     expect(out.notes).toBe("printed on the invoice");
-    expect(out.items[0]).toEqual({ id: "li-1", unitPrice: 5 });
-    for (const p of out.payments) expect(p).not.toHaveProperty("notes");
-    // Without the option every payment row stays (the detail view's own list).
-    expect(out.payments.map((p) => p.id)).toEqual(["p-paid", "p-draft", "p-pending", "p-void"]);
+    expect(out.items[0]).toMatchObject({ id: "li-1", description: "Widget", unitPrice: 5 });
+    expect(out.payments.map((p: Row) => p.id)).toEqual(["p-paid", "p-draft", "p-void"]);
+    expect(out.payments[0]).toMatchObject({ amount: 3, method: "CASH", status: "PAID" });
+  });
+
+  it("keeps a payment's credit note and trims it to what the buyer sees", () => {
+    const out = pickCustomerInvoiceFields({
+      payments: [
+        leakyPayment({
+          creditNote: { id: "cn-1", creditNoteNumber: "CN-1", amount: 5, createdById: "u-1" },
+        }),
+      ],
+    }) as Row;
+    expect(out.payments[0].creditNote).toEqual({ id: "cn-1", creditNoteNumber: "CN-1", amount: 5 });
   });
 
   it("confirmedPaymentsOnly keeps only PAID payment rows", () => {
-    const out = omitStaffOnlyInvoiceFields(invoice(), { confirmedPaymentsOnly: true });
-    expect(out.payments).toEqual([{ id: "p-paid", status: "PAID", amount: 3 }]);
+    const out = pickCustomerInvoiceFields(leakyInvoice(), { confirmedPaymentsOnly: true }) as Row;
+    expect(out.payments.map((p: Row) => p.id)).toEqual(["p-paid"]);
   });
 
   it("never mutates its input", () => {
-    const input = invoice();
-    const snapshot = JSON.parse(JSON.stringify(input));
-    omitStaffOnlyInvoiceFields(input, { confirmedPaymentsOnly: true });
-    expect(JSON.parse(JSON.stringify(input))).toEqual(snapshot);
+    const input = leakyInvoice();
+    const snapshot = json(input);
+    pickCustomerInvoiceFields(input, { confirmedPaymentsOnly: true });
+    expect(json(input)).toEqual(snapshot);
   });
 
-  it("is null-safe", () => {
-    expect(omitStaffOnlyInvoiceFields(null)).toBeNull();
-    expect(omitStaffOnlyInvoiceFields({ id: "i" })).toEqual({ id: "i" });
+  it("is null-safe and idempotent", () => {
+    expect(pickCustomerInvoiceFields(null)).toBeNull();
+    expect(pickCustomerInvoiceFields({ id: "i", internalNotes: "x" })).toEqual({ id: "i" });
+    const once = pickCustomerInvoiceFields(leakyInvoice());
+    expect(pickCustomerInvoiceFields(once)).toEqual(once);
   });
 });
 
@@ -123,11 +169,7 @@ describe("customer-facing PDFs never render a staff-only field", () => {
     "../buyer/statement-pdf.service.ts",
     "../buyer/statement.service.ts",
   ];
-  const names = [
-    ...STAFF_ONLY_LINE_FIELDS,
-    ...STAFF_ONLY_ORDER_FIELDS,
-    ...STAFF_ONLY_INVOICE_FIELDS,
-  ] as string[];
+  const names = ["overrideReason", "overriddenBy", "commissionRatePct", "internalNotes"];
 
   it.each(renderers)("%s references none of them", (rel) => {
     const src = readFileSync(join(__dirname, rel), "utf8");

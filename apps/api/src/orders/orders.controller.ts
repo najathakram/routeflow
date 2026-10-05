@@ -44,7 +44,7 @@ import {
   mapLockError,
 } from "./merge-contention";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { omitStaffOnlyOrderFields } from "../common/staff-only-fields";
+import { toCustomerOrder } from "../common/staff-only-fields";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -60,7 +60,7 @@ export class OrdersController {
 
   /** A CUSTOMER caller gets customer-facing fields only (common/staff-only-fields.ts); staff get `order` itself. */
   private forCaller<T>(user: JwtPayload, order: T): T {
-    return user.role === UserRole.CUSTOMER ? omitStaffOnlyOrderFields(order) : order;
+    return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
   }
 
   // F30/R11 (B199): the staff merge's read-fold-write critical section is

@@ -48,7 +48,7 @@ import {
   matchEditLines,
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { omitStaffOnlyInvoiceFields } from "../common/staff-only-fields";
+import { pickCustomerInvoiceFields } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
@@ -2984,9 +2984,7 @@ export class InvoicesService {
     // money above is already derived (common/staff-only-fields.ts). Staff rows as computed.
     const rows =
       user?.role === UserRole.CUSTOMER
-        ? computedData.map((inv) =>
-            omitStaffOnlyInvoiceFields(inv, { confirmedPaymentsOnly: true }),
-          )
+        ? computedData.map((inv) => pickCustomerInvoiceFields(inv, { confirmedPaymentsOnly: true }))
         : computedData;
     return {
       data: rows,
@@ -3071,7 +3069,7 @@ export class InvoicesService {
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
     // Customer-facing fields only for the customer (common/staff-only-fields.ts); staff as read.
-    return user?.role === UserRole.CUSTOMER ? omitStaffOnlyInvoiceFields(detail) : detail;
+    return user?.role === UserRole.CUSTOMER ? pickCustomerInvoiceFields(detail) : detail;
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {

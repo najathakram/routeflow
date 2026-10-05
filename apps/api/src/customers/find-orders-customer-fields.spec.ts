@@ -1,16 +1,11 @@
 import { CustomersService } from "./customers.service";
+import { expectNoStaffLeaks, leakyOrder } from "../common/testing/customer-leak-fixtures";
 
 /**
  * GET /customers/:id/orders is CUSTOMER-reachable (own customer only). Its rows carry
  * customer-facing fields only for the customer; staff rows are unchanged. Placeholders only.
  */
-const row = () => ({
-  id: "ord-1",
-  customerId: "cust-1",
-  status: "DELIVERED",
-  commissionRatePct: 7.5,
-  total: 20,
-});
+const row = () => ({ ...leakyOrder(), status: "DELIVERED", total: 20 });
 
 function serviceReading(orders: object[]) {
   const service = Object.assign(Object.create(CustomersService.prototype), {
@@ -38,17 +33,12 @@ describe("CustomersService.findOrders — customer-facing fields only", () => {
     expect(out.data).toEqual([row()]);
   });
 
-  it("customer: no commission rate", async () => {
+  it("customer: allowlisted fields only, no staff-internal key at any depth", async () => {
     const out = await serviceReading([row()]).findOrders(
       "cust-1",
       principal("CUSTOMER", "user-cust"),
     );
-    expect(out.data[0]).not.toHaveProperty("commissionRatePct");
-    expect(out.data[0]).toEqual({
-      id: "ord-1",
-      customerId: "cust-1",
-      status: "DELIVERED",
-      total: 20,
-    });
+    expectNoStaffLeaks(out.data[0]);
+    expect(out.data[0]).toMatchObject({ id: "ord-1", status: "DELIVERED", total: 20 });
   });
 });

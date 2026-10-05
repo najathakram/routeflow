@@ -119,7 +119,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { omitStaffOnlyOrderFields } from "../common/staff-only-fields";
+import { toCustomerOrder } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -437,7 +437,7 @@ export class OrdersService implements OnApplicationBootstrap {
     ]);
 
     // Customer-facing fields only for the customer (common/staff-only-fields.ts); staff rows as read.
-    const rows = user.role === UserRole.CUSTOMER ? data.map(omitStaffOnlyOrderFields) : data;
+    const rows = user.role === UserRole.CUSTOMER ? data.map(toCustomerOrder) : data;
     return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
@@ -576,7 +576,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // Customer-facing fields only for the customer: no staff-only order/line fields, and no DRAFT
     // invoice in the order's invoice list (common/staff-only-fields.ts). Staff get the order as read.
-    return user.role === UserRole.CUSTOMER ? omitStaffOnlyOrderFields(order) : order;
+    return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
   }
 
   /**

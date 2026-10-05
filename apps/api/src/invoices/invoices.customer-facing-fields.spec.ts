@@ -1,41 +1,36 @@
 import { NotFoundException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
+import { expectNoStaffLeaks, leakyInvoice } from "../common/testing/customer-leak-fixtures";
 
 /**
- * Customer reads of an invoice (GET /invoices, GET /invoices/:id as CUSTOMER) carry
- * customer-facing fields only: no internal notes, no line override reason/author, no payment
- * notes, and the customer list shows confirmed (PAID) payment rows only. A CUSTOMER opening a
+ * Customer reads of an invoice (GET /invoices, GET /invoices/:id as CUSTOMER) carry an ALLOWLIST of
+ * customer-facing fields: no internal notes, write-off reason, fee/recurring/group/batch links, no
+ * line override reason/author, no payment memo / image key / bank charges / bounce reason /
+ * replaced-payment link (nor any column added later), and the customer list shows confirmed (PAID)
+ * payment rows only. A CUSTOMER opening a
  * DRAFT gets the same 404 as a missing invoice. Staff reads are unchanged. Placeholders only.
  */
 const LINE = {
-  id: "ii-1",
+  id: "li-1",
   unitPrice: 5,
-  priceType: "MANUAL",
-  originalPrice: 4,
-  overrideReason: "staff-only reason",
-  overriddenBy: "user-op",
+  overrideReason: "staff-overrideReason",
+  overriddenBy: "staff-overriddenBy",
 };
 
 function invoiceRow(status = "SENT") {
+  const base = leakyInvoice(status);
+  const pay = base.payments[0];
   return {
-    id: "inv-1",
+    ...base,
     tenantId: "t-1",
-    customerId: "cust-1",
     orderId: null,
-    deliveryBatchId: null,
-    invoiceNumber: "INV-1",
-    status,
-    total: 20,
     dueDate: null,
-    notes: "printed on the invoice",
-    internalNotes: "staff-only memo",
-    items: [{ ...LINE }],
     order: null,
     payments: [
-      { id: "p-paid", status: "PAID", method: "CASH", amount: 5, notes: "staff-only payment memo" },
-      { id: "p-draft", status: "DRAFT", method: "BANK_TRANSFER", amount: 4, notes: "unconfirmed" },
-      { id: "p-pending", status: "PENDING", method: "CHECK", amount: 3, notes: null },
-      { id: "p-void", status: "VOID", method: "CHECK", amount: 2, notes: "bounced" },
+      { ...pay, id: "p-paid", method: "CASH", amount: 5 },
+      { ...pay, id: "p-draft", status: "DRAFT", method: "BANK_TRANSFER", amount: 4 },
+      { ...pay, id: "p-pending", status: "PENDING", method: "CHECK", amount: 3 },
+      { ...pay, id: "p-void", status: "VOID", method: "CHECK", amount: 2 },
     ],
   };
 }
@@ -74,25 +69,26 @@ describe("InvoicesService.findAll — customer-facing fields only", () => {
     const { service } = serviceReading(invoiceRow());
     const out = await service.findAll({} as never, principal("OPERATOR"));
     const row = out.data[0] as unknown as Out;
-    expect(row.internalNotes).toBe("staff-only memo");
+    expect(row.internalNotes).toBe("staff-internalNotes");
     expect(row.payments.map((p) => p.id)).toEqual(["p-paid", "p-draft", "p-pending", "p-void"]);
-    expect(row.payments[0].notes).toBe("staff-only payment memo");
+    expect(row.payments[0].notes).toBe("staff-notes");
     expect(row.paidAmount).toBe(5);
   });
 
   it("staff with no principal (internal callers): unchanged too", async () => {
     const { service } = serviceReading(invoiceRow());
     const out = await service.findAll({} as never);
-    expect((out.data[0] as unknown as Out).internalNotes).toBe("staff-only memo");
+    expect((out.data[0] as unknown as Out).internalNotes).toBe("staff-internalNotes");
   });
 
-  it("customer: no internal notes, no payment notes, confirmed payments only — same money", async () => {
+  it("customer: allowlisted fields only, confirmed payments only — same money", async () => {
     const { service } = serviceReading(invoiceRow());
     const out = await service.findAll({} as never, principal("CUSTOMER"));
     const row = out.data[0] as unknown as Out;
-    expect(row).not.toHaveProperty("internalNotes");
+    expectNoStaffLeaks(row);
     expect(row.notes).toBe("printed on the invoice");
-    expect(row.payments).toEqual([{ id: "p-paid", status: "PAID", method: "CASH", amount: 5 }]);
+    expect(row.payments.map((p) => p.id)).toEqual(["p-paid"]);
+    expect(row.payments[0]).toMatchObject({ status: "PAID", method: "CASH", amount: 5 });
     expect(row.paidAmount).toBe(5);
     expect(row.balanceDue).toBe(15);
   });
@@ -103,18 +99,15 @@ describe("InvoicesService.findOne — customer-facing fields only", () => {
     const { service } = serviceReading(invoiceRow("DRAFT"));
     const out = (await service.findOne("inv-1", principal("OPERATOR"))) as unknown as Out;
     expect(out.status).toBe("DRAFT");
-    expect(out.internalNotes).toBe("staff-only memo");
+    expect(out.internalNotes).toBe("staff-internalNotes");
     expect(out.items[0]).toEqual(expect.objectContaining(LINE));
-    expect(out.payments[0].notes).toBe("staff-only payment memo");
+    expect(out.payments[0].notes).toBe("staff-notes");
   });
 
-  it("customer: no internal notes, no line override reason/author, no payment notes", async () => {
+  it("customer: allowlisted fields only — no internal note, override, or payment memo/key/charges", async () => {
     const { service } = serviceReading(invoiceRow());
     const out = (await service.findOne("inv-1", principal("CUSTOMER"))) as unknown as Out;
-    expect(out).not.toHaveProperty("internalNotes");
-    expect(out.items[0]).not.toHaveProperty("overrideReason");
-    expect(out.items[0]).not.toHaveProperty("overriddenBy");
-    for (const p of out.payments) expect(p).not.toHaveProperty("notes");
+    expectNoStaffLeaks(out);
     expect(out.paidAmount).toBe(5);
   });
 

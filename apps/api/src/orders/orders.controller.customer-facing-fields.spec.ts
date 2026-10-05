@@ -10,10 +10,11 @@ import { OrdersController } from "./orders.controller";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { expectNoStaffLeaks, leakyOrder } from "../common/testing/customer-leak-fixtures";
 
 /**
- * The order bodies a CUSTOMER gets back from the staff orders controller's write routes carry
- * customer-facing fields only; staff (and driver) callers get the service's object itself,
+ * The order bodies a CUSTOMER gets back from the staff orders controller's write routes carry the
+ * customer-facing ALLOWLIST only (no staff-internal key at any depth, present or future); staff (and driver) callers get the service's object itself,
  * untouched. Placeholders only.
  */
 const principal = (role: JwtPayload["role"]): JwtPayload => ({
@@ -26,13 +27,7 @@ const principal = (role: JwtPayload["role"]): JwtPayload => ({
   tenantSlug: null,
 });
 
-const orderRow = () => ({
-  id: "ord-1",
-  customerId: "cust-1",
-  status: "PENDING",
-  commissionRatePct: 7.5,
-  lineItems: [{ id: "li-1", unitPrice: 5, overrideReason: "staff-only", overriddenBy: "u-op" }],
-});
+const orderRow = leakyOrder;
 
 async function boot() {
   const row = orderRow();
@@ -65,13 +60,14 @@ const ROUTES: Array<[string, Call]> = [
 ];
 
 describe.each(ROUTES)("%s — customer-facing fields only", (_name, call) => {
-  it("customer: no commission rate, no line override reason/author", async () => {
+  it("customer: only allowlisted fields — no staff-internal key at any depth", async () => {
     const { controller } = await boot();
     const out = (await call(controller, principal("CUSTOMER"))) as Record<string, unknown> & {
       lineItems: object[];
     };
-    expect(out).not.toHaveProperty("commissionRatePct");
-    expect(out.lineItems[0]).toEqual({ id: "li-1", unitPrice: 5 });
+    expectNoStaffLeaks(out);
+    expect(out).toMatchObject({ id: "ord-1", status: "PENDING" });
+    expect(out.lineItems[0]).toMatchObject({ id: "li-1", unitPrice: 5 });
   });
 
   it.each(["OPERATOR", "DRIVER"] as const)("%s: the service's object, untouched", async (role) => {
