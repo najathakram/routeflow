@@ -1818,13 +1818,30 @@ export class SubscriptionMutationService {
       return false;
     }
     const [keep, ...extra] = items;
-    if (keep.unitAmountCents == null || keep.quantity < 1) {
+    if (keep.unitAmountCents == null || keep.quantity < 1 || !(row.quantity >= 1)) {
       this.logger.error(
         `Checkout add-on "${sku}" tenant ${tenantId}: item ${keep.itemId} has no readable price/quantity — not adopted`,
       );
       return false;
     }
     const price = fromCents(keep.unitAmountCents);
+    // The ROW's quantity wins (SA ruling): the tenant may have changed it after the session was
+    // created, and an entitlement is never quietly cut down to what the session carried. Stripe is
+    // brought to the row's quantity first (Stripe-first, prorated — a raise bills, a reduce credits),
+    // exactly the billed quantity-change path; a failure fails the webhook with nothing written.
+    if (keep.quantity !== row.quantity) {
+      try {
+        await this.stripe.client.subscriptionItems.update(keep.itemId, {
+          quantity: row.quantity,
+          proration_behavior: "create_prorations",
+        });
+      } catch (err) {
+        this.logger.error(
+          `Checkout add-on "${sku}" tenant ${tenantId}: could not set item ${keep.itemId} to the row's quantity ${row.quantity}: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+    }
     const adopted = await this.claimAddonItem(
       tenantId,
       sku,
@@ -1832,10 +1849,12 @@ export class SubscriptionMutationService {
       keep.itemId,
       price,
       keep.quantity,
+      row.quantity,
       ctx,
     );
-    // The row changed under us (switched off / given another item): fail so the retry re-reads it
-    // and lands on (a) or (b) — the item is never left unowned and billing.
+    // The row changed under us (switched off / given another item / another quantity): fail so the
+    // retry re-reads it and lands on (a), (b) or a fresh reconcile — the item is never left unowned
+    // and billing.
     if (!adopted) throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
     for (const i of extra) await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
     return true;
@@ -1843,8 +1862,14 @@ export class SubscriptionMutationService {
 
   /**
    * The adoption write: under the tenant row lock (house order), re-read the row and — only while it
-   * is still ACTIVE with NO item — set its item, price and quantity, and book its ONE stored → actual
-   * delta. Compare-and-swap, so a redelivery (or a racing writer) books nothing twice.
+   * is still ACTIVE, still holds NO item and still has the quantity Stripe was just set to — set its
+   * item and price and book its ledger delta. Compare-and-swap, so a redelivery (or a racing writer)
+   * books nothing twice. The row KEEPS its own quantity (`rowQuantity`); `itemQuantity` is what the
+   * Stripe item carried when it was adopted:
+   *  1. adoption: stored → actual (price × itemQuantity), then
+   *  2. when the two quantities differ, the quantity change at the actual price (itemQuantity →
+   *     rowQuantity) — the +/- the reconcile above bills or credits in Stripe.
+   * Both are signed amounts of the one run-rate; their sum is actual price × rowQuantity − stored.
    */
   private async claimAddonItem(
     tenantId: string,
@@ -1852,30 +1877,41 @@ export class SubscriptionMutationService {
     rowId: string,
     itemId: string,
     price: number,
-    quantity: number,
+    itemQuantity: number,
+    rowQuantity: number,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
       const current = await tx.tenantAddon.findUnique({ where: { id: rowId } });
-      if (!current?.active || current.stripeItemId) return false;
+      if (!current?.active || current.stripeItemId || current.quantity !== rowQuantity)
+        return false;
       const { count } = await tx.tenantAddon.updateMany({
-        where: { id: rowId, active: true, stripeItemId: null },
-        data: { stripeItemId: itemId, priceSnapshot: price, quantity },
+        where: { id: rowId, active: true, stripeItemId: null, quantity: rowQuantity },
+        data: { stripeItemId: itemId, priceSnapshot: price },
       });
       if (count !== 1) return false;
+      const payload = {
+        billed: true,
+        source: "checkout",
+        ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+      };
       await emitAddonDelta(tx, this.events, {
         tenantId,
         sku,
-        before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
-        after: { priceSnapshot: price, quantity },
-        payload: {
-          quantity,
-          billed: true,
-          source: "checkout",
-          ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
-        },
+        before: { priceSnapshot: current.priceSnapshot, quantity: rowQuantity },
+        after: { priceSnapshot: price, quantity: itemQuantity },
+        payload: { quantity: itemQuantity, ...payload },
       });
+      if (itemQuantity !== rowQuantity) {
+        await emitAddonDelta(tx, this.events, {
+          tenantId,
+          sku,
+          before: { priceSnapshot: price, quantity: itemQuantity },
+          after: { priceSnapshot: price, quantity: rowQuantity },
+          payload: { quantity: rowQuantity, reconciled: true, ...payload },
+        });
+      }
       return true;
     });
   }
@@ -1906,7 +1942,8 @@ export class SubscriptionMutationService {
       );
       return false;
     }
-    const quantity = Math.max(1, row.quantity);
+    if (!(row.quantity >= 1)) return false; // a row always carries at least one unit
+    const quantity = row.quantity;
     const billed = await this.adoptOrCreateAddonItem(tenantId, sku, skuDef, subId, quantity);
     try {
       const adopted = await this.claimAddonItem(
@@ -1916,6 +1953,7 @@ export class SubscriptionMutationService {
         billed.itemId,
         Number(skuDef.monthlyPrice),
         quantity,
+        row.quantity,
         ctx,
       );
       // The row went away under us: remove the item THIS call created so nothing bills unowned.

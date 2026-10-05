@@ -159,6 +159,7 @@ interface Opts {
   /** The session was already applied (flag-on redelivery). */
   alreadyApplied?: boolean;
   delFails?: boolean;
+  updateFails?: boolean;
   baseSub?: Record<string, unknown>;
 }
 
@@ -248,7 +249,12 @@ function make(opts: Opts = {}) {
         stripeItems.push(item);
         return item;
       }),
-      update: jest.fn().mockResolvedValue({}),
+      update: jest.fn(async (id: string, args: any) => {
+        if (opts.updateFails) throw new Error("stripe down: internal detail");
+        const i = stripeItems.find((x) => x.id === id);
+        if (i && args?.quantity != null) i.quantity = args.quantity;
+        return { id };
+      }),
       del: jest.fn(async (id: string) => {
         if (opts.delFails) throw new Error("stripe down: internal detail");
         const i = stripeItems.findIndex((x) => x.id === id);
@@ -584,21 +590,140 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  it("the row takes STRIPE's unit price and quantity, not the catalog's or the row's", async () => {
+  it("the row takes STRIPE's unit price (not the catalog's) and keeps its OWN quantity", async () => {
     const h = make({
-      rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
-      items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 1)],
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+      items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 2)],
     });
     await h.completed();
-    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 45, quantity: 1 });
-    // stored 0×3 → actual 45×1 = +45. (emitAddonDelta labels a shrinking quantity ADDON_DISABLED
-    // whatever the sign; only the signed amount feeds the run-rate, so the amount is the pin.)
-    expect(
-      h
-        .ledger()
-        .filter((e: any) => ADDON_TYPES.includes(e.type))
-        .map((e: any) => e.delta),
-    ).toEqual([45]);
+    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 45, quantity: 2 });
+    expect(h.client.subscriptionItems.update).not.toHaveBeenCalled(); // quantities agree: nothing to reconcile
+    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([
+      { type: BILLING_EVENTS.ADDON_ENABLED, delta: 90, sku: "CUSTOMER_PACK_100" },
+    ]);
+  });
+
+  describe("the ROW's quantity wins: Stripe is brought to it through the billed quantity-change path", () => {
+    const events = (h: ReturnType<typeof make>) =>
+      h.ledger().filter((e: any) => e.sku === "CUSTOMER_PACK_100");
+
+    it("row 3 / item 2: the item is updated to 3 with prorations, the row stays 3, and +50 is booked for the raise", async () => {
+      const h = make({
+        status: "TRIAL",
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.update).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+        quantity: 3,
+        proration_behavior: "create_prorations",
+      });
+      expect(h.stripeItems.find((i) => i.id === "si_pack")?.quantity).toBe(3);
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50, quantity: 3 });
+      // the adoption (stored 0 → 50×2) then the raise (2 → 3 at 50): 150 = 50×3 in all, never retro-billed
+      expect(events(h).map((e: any) => e.delta)).toEqual([100, 50]);
+      expect(h.ledgerSum()).toBe(99 + 150);
+    });
+
+    it("row 1 / item 2: the item is updated to 1 with prorations (a credit), the row stays 1, and -50 is booked", async () => {
+      const h = make({
+        status: "TRIAL",
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 1 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+        quantity: 1,
+        proration_behavior: "create_prorations",
+      });
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50, quantity: 1 });
+      expect(events(h).map((e: any) => e.delta)).toEqual([100, -50]);
+      expect(h.ledgerSum()).toBe(99 + 50);
+    });
+
+    it("the quantity change is labelled by the money it moves: a positive delta is addon.enabled, a negative one addon.disabled", async () => {
+      const raise = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await raise.completed();
+      expect(events(raise).map((e: any) => e.type)).toEqual([
+        BILLING_EVENTS.ADDON_ENABLED,
+        BILLING_EVENTS.ADDON_ENABLED,
+      ]);
+
+      const cut = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 1 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await cut.completed();
+      expect(events(cut).map((e: any) => e.type)).toEqual([
+        BILLING_EVENTS.ADDON_ENABLED, // adoption: +100
+        BILLING_EVENTS.ADDON_DISABLED, // the reduce: -50
+      ]);
+
+      // a quantity that SHRANK while the money is POSITIVE (stored 0×3 → 45×1) is still addon.enabled
+      const shrinkPositive = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 1)],
+      });
+      await shrinkPositive.completed();
+      expect(events(shrinkPositive).map((e: any) => [e.type, e.delta])).toEqual([
+        [BILLING_EVENTS.ADDON_ENABLED, 45],
+        [BILLING_EVENTS.ADDON_ENABLED, 90],
+      ]);
+    });
+
+    it("a Stripe failure updating the quantity fails the webhook and leaves the row unadopted and unbooked", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+        updateFails: true,
+      });
+      await expect(h.completed()).rejects.toBeDefined();
+      expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0, quantity: 3 });
+      expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+    });
+
+    it("a redelivery after a reconcile changes nothing (no second update, nothing booked)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await h.completed();
+      const ledger = h.ledger();
+      h.client.subscriptionItems.update.mockClear();
+      await h.completed();
+      expect(h.ledger()).toEqual(ledger);
+      expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
+    });
+
+    it("the row's quantity changed between the Stripe update and the write: nothing is adopted, the webhook fails and the retry reconciles", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      h.client.subscriptionItems.update.mockImplementationOnce(async (id: string, args: any) => {
+        h.rows[0].quantity = 4; // a concurrent writer raised it after we read the row
+        const i = h.stripeItems.find((x) => x.id === id);
+        if (i) i.quantity = args.quantity;
+        return { id };
+      });
+      await expect(h.completed()).rejects.toBeDefined();
+      expect(h.rows[0].stripeItemId).toBeNull();
+
+      await h.completed(); // the retry: the item is brought to 4
+      expect(h.client.subscriptionItems.update).toHaveBeenLastCalledWith("si_pack", {
+        quantity: 4,
+        proration_behavior: "create_prorations",
+      });
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 4 });
+    });
   });
 
   it("a REDELIVERED webhook finds the item already set: no write, no Stripe call, NOTHING booked", async () => {
@@ -815,7 +940,7 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
       expect(bundled.rows[0].stripeItemId).toBeNull();
     });
 
-    it("(c) PIN: an add-on enabled AFTER the session was created is billed once by the enable path — one item, one +delta, no double booking, even redelivered", async () => {
+    it("(c) PIN: an add-on enabled (and a quantity raised) AFTER the session was created is billed once — one item per SKU, no double booking, even redelivered", async () => {
       // The session was created with CUSTOMER_PACK_100 only (its line became si_pack). Before the
       // card was entered the tenant also enabled FORECASTING — a row with no item and no session line —
       // and raised CUSTOMER_PACK_100's quantity from 2 to 3.
@@ -838,14 +963,18 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
         metadata: { tenantId: "t1", sku: "FORECASTING" },
       });
       expect(h.rows[1]).toMatchObject({ stripeItemId: "si_new1", priceSnapshot: 19, quantity: 1 });
-      // CUSTOMER_PACK_100: its checkout item is adopted at what Stripe bills (2), not the later 3
-      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50, quantity: 2 });
-      // crossing first (stored 0s), then one delta per row; nothing twice. (CUSTOMER_PACK_100's
-      // quantity shrank 3 → 2 at adoption, so emitAddonDelta labels it addon.disabled whatever the
-      // sign; only the signed amount feeds the run-rate, so amounts are the pin.)
+      // CUSTOMER_PACK_100: adopted, and the ROW's later quantity (3) wins — the item (2) is raised to it
+      expect(h.client.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+        quantity: 3,
+        proration_behavior: "create_prorations",
+      });
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50, quantity: 3 });
+      // crossing first (stored 0s), then the adoption (+100) and the raise (+50) for the pack, then
+      // the forecasting item; nothing twice
       expect(h.ledger().map((e: any) => [e.sku ?? e.type, e.delta])).toEqual([
         [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99],
         ["CUSTOMER_PACK_100", 100],
+        ["CUSTOMER_PACK_100", 50],
         ["FORECASTING", 19],
       ]);
       // exactly one item per SKU on the subscription
@@ -855,10 +984,12 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
       const ledger = h.ledger();
       h.client.subscriptionItems.create.mockClear();
       h.client.subscriptionItems.del.mockClear();
+      h.client.subscriptionItems.update.mockClear();
       await h.completed();
       expect(h.ledger()).toEqual(ledger);
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
       expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
       expect(h.stripeItems).toHaveLength(3);
     });
 

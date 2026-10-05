@@ -165,7 +165,11 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           items.push(item);
           return item;
         }),
-        update: jest.fn().mockResolvedValue({}),
+        update: jest.fn(async (id: string, args: any) => {
+          const i = items.find((x) => x.id === id);
+          if (i && args?.quantity != null) i.quantity = args.quantity;
+          return { id };
+        }),
         del: jest.fn(async (id: string) => {
           const i = items.findIndex((x) => x.id === id);
           if (i >= 0) items.splice(i, 1);
@@ -324,6 +328,45 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect(ledger.filter((e) => e.sku === "FORECASTING")).toHaveLength(1);
     expect(await r.ledgerSum()).toBe(218);
     expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+  });
+
+  it("the ROW's quantity wins: row 3 / item 2 raises the item to 3 (+50), row 1 / item 2 cuts it to 1 (-50), row quantity untouched", async () => {
+    const raise = await rig({
+      rows: [{ sku: "CUSTOMER_PACK_100", quantity: 3 }],
+      items: [
+        base(),
+        stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+      ],
+    });
+    await raise.completed();
+    expect(raise.stripeClient.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+      quantity: 3,
+      proration_behavior: "create_prorations",
+    });
+    expect(raise.items.find((i) => i.id === "si_pack").quantity).toBe(3);
+    expect((await raise.rows())[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 3 });
+    expect(
+      (await raise.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100").map((e) => e.delta),
+    ).toEqual([100, 50]);
+    expect(await raise.ledgerSum()).toBe(99 + 150);
+
+    const cut = await rig({
+      rows: [{ sku: "CUSTOMER_PACK_100", quantity: 1 }],
+      items: [
+        base(),
+        stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+      ],
+    });
+    await cut.completed();
+    expect(cut.stripeClient.subscriptionItems.update).toHaveBeenCalledWith("si_pack", {
+      quantity: 1,
+      proration_behavior: "create_prorations",
+    });
+    expect((await cut.rows())[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 1 });
+    expect(
+      (await cut.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100").map((e) => e.delta),
+    ).toEqual([100, -50]);
+    expect(await cut.ledgerSum()).toBe(99 + 50);
   });
 
   it("(a) a row switched off before completion: its item is deleted with prorations, only the crossing is booked", async () => {
