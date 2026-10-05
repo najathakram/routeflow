@@ -18,3 +18,4 @@ export * from "./component-price";
 export * from "./largest-remainder";
 export * from "./component-pieces";
 export * from "./pending-unit";
+export * from "./invoice-totals";

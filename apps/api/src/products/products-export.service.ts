@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { buildProductListWhere } from "./product-list-where";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Most product rows one export streams before the trailing truncation row. */
 export const PRODUCTS_EXPORT_MAX_ROWS = 50_000;
@@ -96,7 +97,14 @@ export class ProductsExportService {
       const from = blank(query.from) ?? addCalendarDays(to, -(DEFAULT_WINDOW_DAYS - 1));
       range = resolveInsightRange({ from, to }, today);
     } catch (err) {
-      if (err instanceof InsightWindowError) throw new BadRequestException(err.message);
+      if (err instanceof InsightWindowError) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.INSIGHT_WINDOW_INVALID,
+          message: err.message,
+          reason: err.reason,
+          ...err.params,
+        });
+      }
       throw err;
     }
     return {

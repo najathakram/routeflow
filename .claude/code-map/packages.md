@@ -464,3 +464,10 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `src/shell-handoff.ts` (#2765, #2653) — NEW, exported as `@routeflow/ui/shell-handoff`: `HANDOFF_ENTRY_PATH="/handoff"`, `HandoffWebRealm`, `HANDOFF_MINT_PATH`, `HANDOFF_EXCHANGE_PATH`, `HANDOFF_DEVICE_ID`, `buildHandoffFragment({code, realm, seller?})`, `parseHandoffLocation(hash, search)` -> `ParsedHandoff` (code only in the URL fragment).
 - `src/shell-bridge.ts` (#2793) — +`SHELL_UA_PATTERN` (regex source shared with the web pre-paint head script); `isShellUserAgent` uses it.
 - `src/web/ScrollShadow.tsx` (#2876) — NEW `ScrollShadow({...}: ScrollShadowProps)`; `Table.tsx` now wraps its scroller in it; both exported from `web/index.ts`.
+
+## Landed 2026-10-04 (window 1)
+
+### `@routeflow/types`
+
+- `api/fulfilment.ts` (#3188) — NEW: `FULFILMENT_MODE_VALUES`/`FulfilmentMode`, `COUNTER_SALES_MODE_VALUES`/`CounterSalesMode`, `FulfilmentMethod`, `FulfilmentCapability`, `TenantCapabilities`; `api/features.ts` imports `TenantCapabilities` for the `capabilities` field of the effective-features response; `api/error-codes.ts` +`FULFILMENT_MODE_NEEDS_FLEET`.
+- `api/price-history.ts` (#3192) — NEW: `PriceHistorySource`, `PriceHistoryRow`, `PriceHistorySummary`, `PriceHistoryResponse`. Both files are re-exported from `index.ts`.

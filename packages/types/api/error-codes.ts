@@ -133,6 +133,25 @@
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
 //                    report and the parked-reversal resolver), REGULATED_POD_REQUIRED (the 400s of the regulated proof-of-delivery guard).
+//   B987-E1 — import and statement/payment refusals that now carry a code and structured fields (status and message unchanged):
+//                    IMPORT_COLUMN_NEEDS_ENTITLEMENT — `body.code` of the import 403 when a CSV column needs an entitlement the tenant lacks;
+//                    body carries `requires` (MSRP | TOBACCO_DEALER | FORECASTING) and `column` (the user's own header, capped at 120).
+//                    INSIGHT_WINDOW_INVALID — `body.code` of the products export's 400 when its from/to window is refused; body carries
+//                    `reason` (NOT_A_DAY | TO_NOT_A_DAY | FROM_NOT_A_DAY | BAD_GRAIN | TO_BEFORE_FROM | WINDOW_TOO_LONG | TOO_MANY_BUCKETS)
+//                    and numeric params (maxMonths, buckets, maxBuckets) or a validated grain; the message is unchanged. Opt-in: other
+//                    endpoints that map InsightWindowError keep their code-less body.
+//                    STATEMENT_APPLY_* — `body.code` of the 400s of POST /supplier-statements/:id/apply (SA-634; status and message
+//                    unchanged; numbers are the same rounded values the message interpolates): DISCARDED, NOT_MATCHED, NOTHING (no
+//                    fields); DUPLICATE_BILL {billId: a REQUEST ECHO}; WRONG_SUPPLIER, BILL_VOID, BILL_DRAFT {billId, billNumber,
+//                    line: CONFIRMED | IMPLIED_PAID}; NO_BACKING_LINE {billId, billNumber}; OVER_LINE {billId, billNumber, amount,
+//                    lineAmount}; OVER_BALANCE {billId, billNumber, amount, remaining}. An unknown or other tenant's bill id stays the
+//                    uncoded 404.
+//                    SUPPLIER_PAYMENT_* / SUPPLIER_ALLOCATION* — `body.code` of the 400s of recording a supplier payment (SA-634; status and
+//                    message unchanged): SUPPLIER_PAYMENT_NOT_POSITIVE {}; SUPPLIER_PAYMENT_FULLY_PAID {billId: a REQUEST ECHO of the path
+//                    id}; SUPPLIER_PAYMENT_OVER_BALANCE {remaining}; SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT {allocatedTotal: the rounded
+//                    requested sum the message prints, totalAmount: the request's UNROUNDED value}; SUPPLIER_ALLOCATION_WRONG_SUPPLIER and
+//                    SUPPLIER_ALLOCATION_BILL_VOID {billId, billNumber}; SUPPLIER_ALLOCATION_OVER_BALANCE {billId, billNumber, amount,
+//                    remaining}. An unknown or other tenant's bill id stays the uncoded 404.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -190,6 +209,9 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
+  PRICE_ADJUSTMENT_OVERPAYS: "PRICE_ADJUSTMENT_OVERPAYS",
+  PRICE_ADJUSTMENT_REFUSED: "PRICE_ADJUSTMENT_REFUSED",
   TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
   PLAN_GATE: "PLAN_GATE",
   PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
@@ -209,6 +231,9 @@ export const API_ERROR_CODES = {
   UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
+  ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
+  INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
@@ -262,6 +287,11 @@ export const API_ERROR_CODES = {
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
+  FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
+  BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
+  BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
+  PROFILE_PLAN_CHANGED: "PROFILE_PLAN_CHANGED",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
@@ -285,6 +315,25 @@ export const API_ERROR_CODES = {
   PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
   PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
+  IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
+  INSIGHT_WINDOW_INVALID: "INSIGHT_WINDOW_INVALID",
+  STATEMENT_APPLY_DISCARDED: "STATEMENT_APPLY_DISCARDED",
+  STATEMENT_APPLY_NOT_MATCHED: "STATEMENT_APPLY_NOT_MATCHED",
+  STATEMENT_APPLY_NOTHING: "STATEMENT_APPLY_NOTHING",
+  STATEMENT_APPLY_DUPLICATE_BILL: "STATEMENT_APPLY_DUPLICATE_BILL",
+  STATEMENT_APPLY_WRONG_SUPPLIER: "STATEMENT_APPLY_WRONG_SUPPLIER",
+  STATEMENT_APPLY_BILL_VOID: "STATEMENT_APPLY_BILL_VOID",
+  STATEMENT_APPLY_BILL_DRAFT: "STATEMENT_APPLY_BILL_DRAFT",
+  STATEMENT_APPLY_NO_BACKING_LINE: "STATEMENT_APPLY_NO_BACKING_LINE",
+  STATEMENT_APPLY_OVER_LINE: "STATEMENT_APPLY_OVER_LINE",
+  STATEMENT_APPLY_OVER_BALANCE: "STATEMENT_APPLY_OVER_BALANCE",
+  SUPPLIER_PAYMENT_NOT_POSITIVE: "SUPPLIER_PAYMENT_NOT_POSITIVE",
+  SUPPLIER_PAYMENT_FULLY_PAID: "SUPPLIER_PAYMENT_FULLY_PAID",
+  SUPPLIER_PAYMENT_OVER_BALANCE: "SUPPLIER_PAYMENT_OVER_BALANCE",
+  SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT: "SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT",
+  SUPPLIER_ALLOCATION_WRONG_SUPPLIER: "SUPPLIER_ALLOCATION_WRONG_SUPPLIER",
+  SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
+  SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

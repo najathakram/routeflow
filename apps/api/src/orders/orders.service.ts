@@ -11,6 +11,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibility";
 import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
@@ -182,6 +183,16 @@ import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
+import type { OrderCancelBlockedField } from "@routeflow/types";
+import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
+import * as carrierGuard from "./order-carrier-guard";
+import {
+  throwIfWithCarrier,
+  invoicesAtShipment,
+  settleOrderInvoice,
+  settledAtShipment,
+} from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -189,19 +200,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
- * (`postDeliveryEdit`) instead of reconciled as an open pending-mirror draft. Read by
- * `updateOrderItems` AND by `replayMergeReconcile`, so a replayed merge routes the
- * convergent reconcile exactly as the fold that landed did — the list may not drift
- * between the two callers.
- */
-const POST_DELIVERY_EDIT_STATUSES: string[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -223,7 +221,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // provider must be a DI error, not a silent bypass of a jurisdiction ban.
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
-    private readonly messaging: MessagingService,
+    readonly messaging: MessagingService, // not `private`: shipment-notifications.ts / order-lifecycle.ts read it off `self`
     readonly creditNotes: CreditNotesService,
     readonly commissionEngine: CommissionEngineService,
     readonly entitlements: EntitlementsService,
@@ -244,7 +242,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
-    @Optional() private readonly featureConfig?: FeatureConfigService,
+    @Optional() readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -524,7 +522,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         },
         // P5-08: version history + the run state that governs the edit window.
-        revisions: { orderBy: { revisionNumber: "asc" } },
+        revisions: EDIT_REVISIONS, // ship-state markers are not edits ("Edited N×")
         // P5-09: post-dispatch change requests, newest first.
         changeRequests: { orderBy: { createdAt: "desc" } },
         // `driverId` feeds the F2-005 driver-ownership gate below.
@@ -559,6 +557,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+    // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
+    Object.assign(order, {
+      cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
+    } satisfies OrderCancelBlockedField);
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -1608,10 +1610,9 @@ export class OrdersService implements OnApplicationBootstrap {
     const catalogIds = items.map((i) => i.productId).filter(Boolean) as string[];
     const products =
       catalogIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: catalogIds } },
-          })
+        ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
+    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     assertSellableLines(products); // WS8: a FAMILY is never a line
@@ -2438,8 +2439,13 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
 
-    // Refuse the cancel BEFORE writing the status — a rejection must leave the
-    // order exactly as it was, not cancelled-but-not-unwound.
+    // Refuse the cancel BEFORE writing the status — a rejection must leave the order exactly as it
+    // was. A DRAFT demotion is refused the same way (#3207 D1): it credits all the stock back and a
+    // DRAFT can then be cancelled or deleted, with the goods still out.
+    const demote = dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.DRAFT;
+    const carrier = demote ? await carrierGuard.carrierEditGuard(this, order) : null; // + S5 re-check
+    // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
+    if (carrier?.withCarrier) throwIfWithCarrier("WITH_CARRIER");
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
     const statusUpdateData = {
@@ -2452,6 +2458,10 @@ export class OrdersService implements OnApplicationBootstrap {
       // A reopened order is no longer delivered — a stale deliveredAt would
       // keep it in delivered-on-date reports and reconcile passes.
       ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
+      // E-b: shippedAt is stamped ONLY by the ship transition (never by saving tracking) and survives an unmark.
+      ...(dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? { shippedAt: order.shippedAt ?? new Date() }
+        : {}),
       ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
     };
 
@@ -2583,6 +2593,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { id },
                 select: { status: true },
               }))!.status;
+              carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
               const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
               const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
@@ -2646,6 +2657,7 @@ export class OrdersService implements OnApplicationBootstrap {
       return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
     })();
 
+    await recordShipStateChange(this, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
@@ -2659,55 +2671,21 @@ export class OrdersService implements OnApplicationBootstrap {
     // happened and the customer must still hear about it.
     let invoiceFailure: ConflictException | undefined;
 
-    // Settle the order's invoice on a manual status change.
+    // Settle the order's invoice on a manual status change: at DELIVERED, and (carrier orders of a
+    // shipping tenant) at SHIPPED. Same body for both: order-status-invoicing.ts.
+    if (
+      await invoicesAtShipment(this.featureConfig, this.prisma.getTenantId(), order, dto.status)
+    ) {
+      invoiceFailure = await settleOrderInvoice(this, id, this.logger, "shipped");
+    }
     if (dto.status === OrderStatus.DELIVERED) {
-      // Manual "mark delivered" = fully delivered. If the order has a pending
-      // mirror draft, reconcile it to the order and leave it DRAFT for staff to
-      // review & send (awaited so it runs inside the tenant context). Otherwise
-      // keep the old behaviour: fire-and-forget auto-create (explicit tenantId).
-      const draft = await this.invoicesService.findOpenOrderDraft(id);
-      if (draft) {
-        await this.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      } else {
-        // B105 (REG-B105): genuinely awaited, with up to 3 attempts retrying
-        // ONLY a ConflictException (the order-number race
-        // createInvoiceFromOrderWithTenant regenerates internally on the next
-        // attempt). The old `.catch()` fired the request and never inspected
-        // the outcome — a failed auto-create silently left the order
-        // DELIVERED with nothing billed and no one told. A non-Conflict error
-        // breaks the loop immediately and surfaces through the same throw
-        // below. The status write above is NOT reverted: the order stays
-        // DELIVERED and staff retries invoicing from the order page.
-        const capturedTenantId = this.prisma.getTenantId();
-        const MAX_INVOICE_ATTEMPTS = 3;
-        let lastErr: any;
-        let attemptsMade = 0;
-        for (let attempt = 0; attempt < MAX_INVOICE_ATTEMPTS; attempt++) {
-          attemptsMade = attempt + 1;
-          try {
-            await this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId);
-            lastErr = undefined;
-            break;
-          } catch (err: any) {
-            lastErr = err;
-            if (!(err instanceof ConflictException)) break;
-          }
-        }
-        if (lastErr) {
-          this.logger.error(
-            `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
-          );
-          // Raised AFTER the notification block below, not here: the goods
-          // physically arrived, so the customer's "Order Delivered" push and
-          // messaging event must still fire. Throwing inline would make an
-          // invoicing failure silently suppress the delivery notification.
-          invoiceFailure = new ConflictException(
-            `The order was marked delivered, but its invoice could not be created ` +
-              `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
-              `the order page to retry — the order stays delivered and nothing has been billed yet.`,
-          );
-        }
-      }
+      invoiceFailure = await settleOrderInvoice(
+        this,
+        id,
+        this.logger,
+        "delivered",
+        await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order),
+      );
 
       // B108 (REG-B108): retry transient contention (serializable-isolation
       // write conflicts) up to 3 times with a short backoff before giving up.
@@ -2783,7 +2761,14 @@ export class OrdersService implements OnApplicationBootstrap {
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
     const messagingEvent = messagingEventMap[dto.status];
-    if (messagingEvent) {
+    if (
+      messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
+      order.fulfillPath === FulfillPath.SHIP
+    ) {
+      // Carrier-shipped: ORDER_SHIPPED, not "out for delivery today" (customised wording kept per channel).
+      // E-c: an unmark + re-ship keeps shippedAt, so the customer is told once.
+      if (isFirstShipment(order)) void notifyOrderShipped(this, order, user.sub || null);
+    } else if (messagingEvent) {
       let driverName = "your driver";
       if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
         const run = await this.prisma.forTenant().routeRun.findFirst({
@@ -2791,13 +2776,6 @@ export class OrdersService implements OnApplicationBootstrap {
           select: { driver: { select: { contactName: true } } },
         });
         driverName = run?.driver?.contactName ?? "your driver";
-      } else if (
-        messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
-        order.fulfillPath === FulfillPath.SHIP
-      ) {
-        // Ad-hoc trips + fulfillment mode: a SHIP order has no route run, so the
-        // "Out for Delivery" notification names the carrier instead of a driver.
-        driverName = order.shippingCarrier ?? "the carrier";
       }
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
@@ -3061,10 +3039,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
+    const carrier = await carrierGuard.carrierEditGuard(this, order);
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
-    if (!postDeliveryEdit) {
-      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+    if (!postDeliveryEdit && !carrier.billsShip) {
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId); // ship-billing: under the lock (S2)
     }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
@@ -3154,6 +3134,14 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
+          tx,
+          orderId,
+          carrier,
+          postDeliveryEdit,
+          () =>
+            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+        );
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
           // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
@@ -3214,7 +3202,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-          const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+          const products = await tx.product.findMany(portalGateArgs(productIds));
+          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3624,8 +3613,9 @@ export class OrdersService implements OnApplicationBootstrap {
             ];
             const addProducts =
               addProductIds.length > 0
-                ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
+                ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
+            assertBuyerLines(user?.role, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
@@ -4243,6 +4233,7 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
+            blockCredits: carrierLocked,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -4489,6 +4480,7 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id: orderId, customerId },
       select: {
         status: true,
+        ...{ id: true, tenantId: true, fulfillPath: true, shippedAt: true }, // #3219 S4: carrier routing
         lineItems: { select: { qty: true, invoicedQty: true } },
       },
     });
@@ -4496,10 +4488,11 @@ export class OrdersService implements OnApplicationBootstrap {
       this.logger.warn(`replay reconcile skipped: order not found order=${orderId}`);
       return;
     }
-    // Derived from the CURRENT status, which is provably the same routing the fold used: the
-    // only status the fold itself changes is CONFIRMED -> PENDING, and both are outside
-    // POST_DELIVERY_EDIT_STATUSES.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // Routed by the SAME rule as the fold (`resyncsInPlace`, order-carrier-guard.ts), on the order's
+    // CURRENT state. That matches the fold's routing unless the state moved in between (a ship /
+    // unmark after the fold committed changes `withCarrier`); then the current state decides.
+    const carrierNow = await carrierGuard.carrierEditGuard(this, order); // #3219 S4: as the fold routed
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
     let skipInPlaceResync = false;
     if (postDeliveryEdit) {
       // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
@@ -5252,6 +5245,8 @@ export class OrdersService implements OnApplicationBootstrap {
       include: { invoices: { select: { id: true } }, transaction: { select: { id: true } } },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
+    throwIfWithCarrier(await carrierGuard.carrierBlocked(this, order));
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
