@@ -35,6 +35,9 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
+  FULFIL_CAPABILITY_UNAVAILABLE:
+    "Couldn't check how this business fulfils orders. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",

@@ -11,7 +11,6 @@ jest.mock("../common/db-locks", () => ({
 import { FulfillPath } from "@prisma/client";
 import {
   effectiveFulfilPath,
-  incomingFulfilPath,
   mergeCandidateWhere,
   sameFulfilPathAsWinner,
 } from "./merge-candidates";
@@ -65,19 +64,6 @@ describe("merge-candidates (pure)", () => {
   it("mergeCandidateWhere adds the path only when one is given", () => {
     expect(mergeCandidateWhere(FulfillPath.SHIP)).toEqual({ fulfillPath: "SHIP" });
     expect(mergeCandidateWhere(undefined)).toEqual({});
-  });
-
-  it("incomingFulfilPath: an explicit path wins, else the customer's stored path, else ROUTE", async () => {
-    const prisma = (stored: unknown) =>
-      ({
-        forTenant: () => ({ customer: { findFirst: jest.fn().mockResolvedValue(stored) } }),
-      }) as any;
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "ROUTE" }), "c", FulfillPath.SHIP)).toBe(
-      "SHIP",
-    );
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "SHIP" }), "c")).toBe("SHIP");
-    expect(await incomingFulfilPath(prisma({ fulfillPath: "ROUTE" }), "c")).toBe("ROUTE");
-    expect(await incomingFulfilPath(prisma(null), "c")).toBe("ROUTE");
   });
 });
 

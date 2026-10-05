@@ -580,7 +580,7 @@ export class BuyerController {
             // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
-              mergeAs: {},
+              mergeAs: { audience: "buyer" },
             });
             if (!activeOrder) return null;
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over

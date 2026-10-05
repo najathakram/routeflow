@@ -12,6 +12,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { activeFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
@@ -849,11 +850,30 @@ export class OrderTemplatesService {
           customerId: template.customerId,
         })
       : (allowOversellArg ?? isStaffRole);
+    // Fulfil path: ONLY a ship-only business resolves one here (the shared resolver); every other
+    // tenant keeps the column default, byte-identical to before.
+    const storedPath = this.featureConfig
+      ? (
+          await this.prisma.forTenant().customer.findFirst({
+            where: { id: template.customerId },
+            select: { fulfillPath: true },
+          })
+        )?.fulfillPath
+      : undefined;
+    const fulfillPath = await activeFulfilPath(
+      {
+        featureConfig: this.featureConfig,
+        tenantId: this.prisma.getTenantId(),
+        logger: this.logger,
+      },
+      { stored: storedPath, audience: "staff" },
+    );
     const created = await this.prisma.tenantTransaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           customerId: template.customerId,
           templateId: template.id,
+          ...(fulfillPath ? { fulfillPath } : {}),
           orderNumber,
           subtotal,
           tax,
