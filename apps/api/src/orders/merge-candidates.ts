@@ -22,6 +22,16 @@ export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): Fu
 }
 
 /**
+/**
+ * An order that has already SHIPPED (`shippedAt` is stamped only by the ship transition and survives an
+ * unmark and a reopen) is never a merge candidate, winner or loser: a fold deletes the losers, which would
+ * destroy a shipped order and its `shippedAt` (and walk around the carrier-order cancel/delete guard).
+ */
+export function unshipped<T extends { shippedAt?: Date | null }>(orders: T[]): T[] {
+  return orders.filter((o) => !o.shippedAt);
+}
+
+/**
  * The orders that fold together in one pass: the first path (most recent first) that has MORE THAN ONE
  * order, so [SHIP newest, ROUTE, ROUTE] still merges the ROUTE pair and never touches the SHIP order;
  * with no path holding two, just the winner (the most recent), which is a no-op fold. Orders on other
@@ -108,6 +118,7 @@ export async function findActiveOrderImpl(
       skipAutoMerge: false,
       // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
       ...mergeGuard,
+      shippedAt: null, // an already-shipped order is never a merge target (see `unshipped`)
       ...mergeCandidateWhere(fulfillPath),
     },
     include: {
