@@ -28,7 +28,13 @@ export class CustomerPriceHistoryController {
     @Param("productId") productId: string,
     @Query("limit") limit: string | undefined,
     @CurrentUser() user: JwtPayload,
+    /** The order being edited: its own lines and invoices are not "history" (hunt2 F6). */
+    @Query("excludeOrderId") excludeOrderId?: string,
   ): Promise<PriceHistoryResponse> {
-    return this.history.getHistory(customerId, productId, { limit, role: user.role });
+    return this.history.getHistory(customerId, productId, {
+      limit,
+      role: user.role,
+      excludeOrderId,
+    });
   }
 }

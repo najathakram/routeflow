@@ -307,6 +307,50 @@ describe("CustomerPriceHistoryService", () => {
     });
   });
 
+  describe("hunt2 F6: the order being edited is not its own history (excludeOrderId)", () => {
+    // stores that honour the two exclusion filters, so the RESULT is pinned, not just the query
+    const arrange = () => {
+      const editing = openOrder({
+        id: "o-edit",
+        orderNumber: "ORD-EDIT",
+        createdAt: new Date("2026-08-01T09:00:00Z"), // newest: today it shows as "Last"
+        lineItems: [openItem({ id: "oi-edit", unitPrice: D("99.00") })],
+      });
+      const older = openOrder();
+      prisma.order.findMany.mockImplementation(async (args: any) =>
+        [editing, older].filter((o) => o.id !== args.where.id?.not),
+      );
+      const own = invoice({ id: "inv-own", orderId: "o-edit", items: [invLine({ id: "ii-own" })] });
+      const loose = invoice({ id: "inv-loose", orderId: null, order: null });
+      const other = invoice();
+      prisma.invoice.findMany.mockImplementation(async (args: any) => {
+        if (args?.where?.items?.some?.orderItemId) return [];
+        const ex = args.where.OR?.[1]?.orderId?.not;
+        return [own, loose, other].filter((i) => !ex || i.orderId !== ex);
+      });
+    };
+
+    it("drops the edited order's open line and its invoices; an invoice with no order stays", async () => {
+      arrange();
+      const out = await service.getHistory("c1", "p1", {
+        role: UserRole.OPERATOR,
+        excludeOrderId: "o-edit",
+      });
+      const ids = out.rows.map((r) => r.orderId);
+      expect(ids).not.toContain("o-edit");
+      expect(out.rows.map((r) => r.invoiceId)).toEqual(
+        expect.arrayContaining(["inv-loose", "inv1"]),
+      );
+      expect(out.rows[0].unitPrice).not.toBe(99); // "Last" is never the price being edited
+    });
+
+    it("without it (order entry, a new order) every row stays, as today", async () => {
+      arrange();
+      const out = await run();
+      expect(out.rows[0]).toMatchObject({ orderId: "o-edit", unitPrice: 99 });
+    });
+  });
+
   describe("avg cost at the sale date", () => {
     it("uses the latest movement at or before each sale, null before the first", async () => {
       prisma.stockMovement.findMany.mockResolvedValue([

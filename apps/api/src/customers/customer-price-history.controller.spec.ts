@@ -35,4 +35,16 @@ describe("CustomerPriceHistoryController", () => {
       role: UserRole.TENANT_ADMIN,
     });
   });
+
+  it("hunt2 F6: passes the edited order's id through as excludeOrderId", async () => {
+    const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
+    const controller = new CustomerPriceHistoryController(service as any);
+    const caller = { role: UserRole.OPERATOR } as any;
+    await controller.getPriceHistory("c1", "p1", undefined, caller, "o9");
+    expect(service.getHistory).toHaveBeenCalledWith("c1", "p1", {
+      limit: undefined,
+      role: UserRole.OPERATOR,
+      excludeOrderId: "o9",
+    });
+  });
 });
