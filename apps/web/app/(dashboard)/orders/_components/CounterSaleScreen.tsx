@@ -280,6 +280,10 @@ export function CounterSaleScreen() {
     writeAutoPrint(on);
   };
 
+  // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
+  // "not turned on").
+  if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.
   if (!gate.showButton) {

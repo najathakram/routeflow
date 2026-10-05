@@ -30,6 +30,7 @@ const expectDark = () => {
   expect(screen.queryByRole("button", { name: "Complete sale" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cash" })).toBeNull();
   expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
+  expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
 };
 
 describe("CounterSaleScreen: the capability gate (missing means dark)", () => {
@@ -61,10 +62,31 @@ describe("CounterSaleScreen: the capability gate (missing means dark)", () => {
     expectDark();
   });
 
-  it("still loading: no scan field", () => {
+  it("still loading: an empty non-interactive placeholder, NO copy (never a false 'not turned on')", () => {
     features = { data: undefined, isLoading: true };
     renderWithProviders(<CounterSaleScreen />);
+    const placeholder = screen.getByTestId("counter-sale-loading");
+    expect(placeholder.textContent).toBe("");
+    expect(placeholder.querySelector("input, button, a")).toBeNull();
+    expect(screen.queryByTestId("counter-sale-off")).toBeNull();
+    expect(screen.queryByText(DISABLED_COPY)).toBeNull();
+    expect(screen.queryByLabelText("Scan or search items")).toBeNull();
+    expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
+  });
+
+  it("loading resolves: the sale UI once the capability arrives, the disabled copy if it is off", () => {
+    features = {
+      data: { capabilities: { fulfilment: { counter: "optional" } } },
+      isLoading: false,
+    };
+    const { unmount } = renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
+    unmount();
+    features = { data: { capabilities: { fulfilment: { counter: "off" } } }, isLoading: false };
+    renderWithProviders(<CounterSaleScreen />);
     expectDark();
+    expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
   });
 
   it("the features request errored: dark", () => {

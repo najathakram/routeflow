@@ -46,7 +46,6 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
   });
 
   it.each([
-    ["loading", { data: undefined, isLoading: true }],
     ["errored", { data: undefined, isError: true }],
     ["a response without capabilities", { data: { tenantId: "t1" } }],
     ["capabilities without fulfilment", { data: { capabilities: {} } }],
@@ -54,6 +53,19 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
     ["an unknown counter value", { data: { capabilities: { fulfilment: { counter: "bogus" } } } }],
   ])("%s: no button, no open-as-counter", (_label, f) => {
     expect(gateFor(f)).toMatchObject(NONE);
+  });
+
+  it("loading is exposed as `loading` (and nothing else is open)", () => {
+    expect(gateFor({ data: undefined, isLoading: true })).toMatchObject({ ...NONE, loading: true });
+  });
+
+  it.each([
+    ["errored", { data: undefined, isError: true }],
+    ["resolved without the capability", { data: { tenantId: "t1" } }],
+    ["resolved with counter off", { data: { capabilities: { fulfilment: { counter: "off" } } } }],
+    ["resolved optional", { data: { capabilities: { fulfilment: { counter: "optional" } } } }],
+  ])("%s: not loading", (_label, f) => {
+    expect(gateFor(f).loading).toBe(false);
   });
 
   it("optional: the button only; always: the button and open-as-counter", () => {

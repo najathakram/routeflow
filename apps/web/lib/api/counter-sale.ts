@@ -9,11 +9,12 @@ import { useTenantFeatures } from "../tenant-features";
  * Nothing shows until the answer is in, so a slow or failed request leaves the old screens exactly as they were.
  */
 export function useCounterSaleGate() {
-  const { data } = useTenantFeatures();
+  const { data, isLoading } = useTenantFeatures();
   const cap = (
     data as unknown as { capabilities?: { fulfilment?: FulfilmentCapabilityLike } } | undefined
   )?.capabilities?.fulfilment;
-  return { ...counterSaleGate(cap), capability: cap };
+  // `loading`: the answer is not in yet. The screen shows an empty placeholder (never "not turned on", which would be false).
+  return { ...counterSaleGate(cap), capability: cap, loading: isLoading === true };
 }
 
 export function useCreateCounterSale() {
