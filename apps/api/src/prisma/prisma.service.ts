@@ -248,13 +248,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                     : { ...args.data, tenantId };
                   args = { ...args, data };
                 } else if (method === "upsert") {
-                  // Same scoping as the `forTenant()` extension: the tenant filter rides in
-                  // `where` (tenant models only), so an upsert keyed by a foreign row's id
-                  // can neither update nor read it.
-                  const where = isTenantModel(modelName) ? { ...args.where, tenantId } : args.where;
+                  // `where` is deliberately NOT tenant-scoped here: Prisma compiles an
+                  // extra non-unique filter in an upsert `where` into the
+                  // `ON CONFLICT DO UPDATE … WHERE` predicate, so a row whose `tenantId`
+                  // column is NULL (legacy `PaymentCounter` rows, created before the
+                  // create-side injection landed) makes the upsert resolve `null` and the
+                  // caller 500s. Scoping `where` needs (1) a null guard throwing
+                  // `tenantNotFound` and (2) a backfill migration for legacy rows —
+                  // tracked follow-on; today every tx-proxy upsert caller keys on the
+                  // tenant id or a compound unique, so the gap is unexploited.
                   args = {
                     ...args,
-                    where,
                     create: { ...args.create, tenantId },
                   };
                 }
