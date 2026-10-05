@@ -20,6 +20,14 @@ const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
 export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.ORDER_CONFIRMED]: CUSTOMER_CHANNELS,
   [NotificationEvent.OUT_FOR_DELIVERY]: CUSTOMER_CHANNELS,
+  // Carrier-shipped (fulfillPath SHIP) orders: ORDER_SHIPPED replaces OUT_FOR_DELIVERY for them
+  // (unless the business customised its OUT_FOR_DELIVERY wording); SHIPMENT_TRACKING_ADDED is the
+  // one-time follow-up when tracking is first added after the order was already marked shipped.
+  [NotificationEvent.ORDER_SHIPPED]: CUSTOMER_CHANNELS,
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: CUSTOMER_CHANNELS,
+  // Pickup orders: fired by the pickup flow (not by this module's PR). {{pickupLine}} is "" or
+  // " Pick up at <address>. Hours: <hours>." built by the caller from the business's pickup settings.
+  [NotificationEvent.READY_FOR_PICKUP]: CUSTOMER_CHANNELS,
   [NotificationEvent.DELIVERED]: CUSTOMER_CHANNELS,
   // N1 (2026-09-16): real order-cancelled event, alongside the real EMAIL
   // channel — CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this
@@ -60,6 +68,20 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   [NotificationEvent.OUT_FOR_DELIVERY]: {
     label: "Out for delivery",
     body: "Hi {{customerName}}, your order {{orderNumber}} is out for delivery today with {{driverName}}.",
+  },
+  // Variables: carrier (label, or "the carrier"), trackingLine (" Tracking: <no> — <url>" when known,
+  // else ""). The 20261003120100 seed migration carries this exact body (pinned by a spec).
+  [NotificationEvent.ORDER_SHIPPED]: {
+    label: "Order shipped",
+    body: "Hi {{customerName}}, your order {{orderNumber}} has shipped with {{carrier}}.{{trackingLine}}",
+  },
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: {
+    label: "Tracking added",
+    body: "Hi {{customerName}}, tracking for order {{orderNumber}}: {{trackingNumber}} — {{trackingUrl}}",
+  },
+  [NotificationEvent.READY_FOR_PICKUP]: {
+    label: "Ready for pickup",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is ready for pickup.{{pickupLine}}",
   },
   [NotificationEvent.DELIVERED]: {
     label: "Delivered",
@@ -142,6 +164,12 @@ export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.ORDER_CONFIRMED}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${PORTAL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${EMAIL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${PORTAL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${EMAIL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${PORTAL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${EMAIL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${PORTAL}`,
   `${NotificationEvent.DELIVERED}:${EMAIL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
   `${NotificationEvent.CANCELLED}:${EMAIL}`,

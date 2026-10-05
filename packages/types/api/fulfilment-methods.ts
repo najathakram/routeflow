@@ -43,17 +43,8 @@ export function fulfilmentStatusLabel(
   return def?.labels[status] ?? fallback;
 }
 
-/** An account with no fulfilment mode set: exactly today's behaviour (ROUTE/SHIP both offered). */
-export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
-  methods: ["ROUTE", "SHIP"],
-  staffDefault: "ROUTE",
-  staffOpensAs: "order",
-  portalMethods: [],
-  portalDefault: null,
-  counter: "off",
-  fleet: true,
-  consistent: true,
-};
+// UNSET_FULFILMENT_CAPABILITIES lives in ./fulfilment (#3210): one copy, pinned by the api's
+// fulfil-path-resolver spec; index.ts re-exports both files, so a second copy here would collide (TS2308).
 
 /** The method to pre-select for an order/customer: the customer's own saved path first, but only when
  *  the account offers it; otherwise the account's staffDefault. */

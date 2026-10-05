@@ -78,6 +78,9 @@ import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
+import { settledAtShipment } from "../orders/order-status-invoicing";
+import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
+import { resolvePendingMirror } from "./pending-mirror";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -116,10 +119,13 @@ import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-a
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
+  applyBulkPriceAdjustment,
+  assertAdjustedTotalsSane,
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
+  preflightBulkPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -1766,6 +1772,8 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
+    // Keyed on the BILLING MOMENT: an order settled at SHIPMENT (and really shipped) is not restated at DELIVERED.
+    if (await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order)) return null;
 
     return this.rebuildSiblingDrafts(
       order,
@@ -3031,7 +3039,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3052,6 +3060,7 @@ export class InvoicesService {
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
+      pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 
@@ -3087,6 +3096,9 @@ export class InvoicesService {
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // SA-674b: with the carrier, the shipment invoice keeps its lines and quantities (checked in the tx)
+      const carrierDeps = { featureConfig: this.featureConfig, prisma: this.prisma };
+      const carrierLocked = await invoiceOrderWithCarrier(carrierDeps, inv.orderId);
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
@@ -3103,6 +3115,7 @@ export class InvoicesService {
         // and reasoning: invoice-edit-plan.ts.
         const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
         const matches = matchEditLines(items, storedRows);
+        if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),
@@ -3437,9 +3450,12 @@ export class InvoicesService {
     if (opts?.allowPreDelivery) return;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: inv.orderId },
-      select: { status: true, orderNumber: true },
+      select: { status: true, orderNumber: true, fulfillPath: true },
     });
-    if (order && order.status !== "DELIVERED" && order.status !== "PARTIALLY_DELIVERED") {
+    if (
+      order &&
+      (await resolvePendingMirror(this.featureConfig, this.prisma.getTenantId(), inv, order))
+    ) {
       throw new BadRequestException(
         `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
       );
@@ -5809,7 +5825,11 @@ export class InvoicesService {
     const productIdMap = new Map(invoice.items.map((li) => [li.id, li.productId]));
 
     // Helper: update items on a single invoice and recalculate totals
-    const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
+    const applyToInvoice = async (
+      inv: typeof invoice,
+      localPriceMap: Map<string, number>,
+      onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
+    ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
@@ -5833,6 +5853,7 @@ export class InvoicesService {
           unitsPerBoxByProduct,
           isTaxExempt,
         });
+        assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
@@ -5851,6 +5872,7 @@ export class InvoicesService {
           resync: (...a) => this.resyncInvoiceLedger(...a),
         });
       });
+      onCommitted?.();
       // Sales agents & commissions: still OUTSIDE the transaction above on purpose (B662 wrapped only
       // the invoice + ledger writes). Pass no tx; the Safe wrapper opens its own transaction, and the
       // hourly reconciliation cron heals the gap if the process dies mid-loop.
@@ -5882,8 +5904,10 @@ export class InvoicesService {
         },
         // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
         include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }], // B1058: applied / skipped follow a stable order
       });
 
+      const plans: Array<{ inv: typeof invoice; localMap: Map<string, number> }> = [];
       for (const inv of targetInvoices) {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
@@ -5892,10 +5916,12 @@ export class InvoicesService {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }
-        if (localMap.size > 0) {
-          await applyToInvoice(inv, localMap);
-        }
+        if (localMap.size > 0) plans.push({ inv, localMap });
       }
+      // B1031/B1058: judge every target (bad line, totals, overpayment) BEFORE writing any.
+      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant());
+      // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
+      await applyBulkPriceAdjustment(plans, applyToInvoice);
     }
 
     return this.prisma.forTenant().invoice.findUnique({

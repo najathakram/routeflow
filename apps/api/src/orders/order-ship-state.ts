@@ -1,0 +1,119 @@
+/**
+ * Marker revisions that tell a deliberate UNMARK from a REOPEN after delivery (there is no order status
+ * history table, and `shippedAt` survives both, by design: E-c's "no second shipped email").
+ *
+ * For a carrier (SHIP) order, `changeStatus` appends one `OrderRevision` with a marker `source` on:
+ *  - OUT_FOR_DELIVERY -> CONFIRMED ("Unmark shipped"): the parcel never left, so a later cancel is fine
+ *    (after ANY delivery it records a reopen instead: the rest is still out, #3219 S1);
+ *  - DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED (a reopen): the goods went out, so the order is
+ *    "with the carrier" again and is not cancelled (`carrierCancelBlockedReason`).
+ * The LAST marker decides. `OrderRevision.source` is a free string (not a Prisma enum): no migration.
+ * Written only for a business that bills at shipment (the only one the guard reads them for), and kept
+ * out of the order's edit history (`SHIP_STATE_SOURCES`): a marker is not an edit.
+ */
+import { Logger } from "@nestjs/common";
+import { FulfillPath, OrderStatus } from "@prisma/client";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import type { PrismaService } from "../prisma/prisma.service";
+import { appendOrderRevision } from "./order-revisions";
+import { billsAtShipment } from "./order-status-invoicing";
+
+export const SHIP_STATE_UNMARKED = "UNMARKED_SHIPPED";
+export const SHIP_STATE_REOPENED = "REOPENED_FROM_DELIVERY";
+export const SHIP_STATE_SOURCES: string[] = [SHIP_STATE_UNMARKED, SHIP_STATE_REOPENED];
+/** `findOne`'s revisions include: the order's edit history, without the markers. */
+export const EDIT_REVISIONS = {
+  where: { source: { notIn: SHIP_STATE_SOURCES } },
+  orderBy: { revisionNumber: "asc" as const },
+};
+type ShipStateDeps = {
+  prisma: PrismaService;
+  featureConfig?: Parameters<typeof billsAtShipment>[0];
+};
+const logger = new Logger("OrderShipState");
+
+/** The marker a status change leaves (SHIP orders only), or null when it is not one. */
+export function shipStateMarker(
+  fulfillPath: FulfillPath,
+  from: OrderStatus,
+  to: OrderStatus,
+): string | null {
+  if (fulfillPath !== FulfillPath.SHIP) return null;
+  if (from === OrderStatus.OUT_FOR_DELIVERY && to === OrderStatus.CONFIRMED)
+    return SHIP_STATE_UNMARKED;
+  if (
+    from === OrderStatus.DELIVERED &&
+    (to === OrderStatus.CONFIRMED || to === OrderStatus.PARTIALLY_DELIVERED)
+  ) {
+    return SHIP_STATE_REOPENED;
+  }
+  return null;
+}
+
+/** Record the marker for this status change, if it is one. Never throws: the status write is done. */
+export async function recordShipStateChange(
+  { prisma, featureConfig }: ShipStateDeps,
+  order: {
+    id: string;
+    tenantId?: string | null;
+    status: OrderStatus;
+    fulfillPath: FulfillPath;
+    subtotal: unknown;
+    tax: unknown;
+    total: unknown;
+  },
+  to: OrderStatus,
+  user: JwtPayload | undefined,
+  reason?: string | null,
+): Promise<void> {
+  let source = shipStateMarker(order.fulfillPath, order.status, to);
+  if (!source) return;
+  if (!(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order)))
+    return;
+  // #3219 S1 (lead ruling): after ANY delivery, "Unmark shipped" never makes the order cancellable
+  // again (the rest is still with the carrier): it records a reopen. An unreadable answer fails closed.
+  if (source === SHIP_STATE_UNMARKED && (await anyLineDelivered(prisma, order.id))) {
+    source = SHIP_STATE_REOPENED;
+  }
+  try {
+    await appendOrderRevision(
+      prisma,
+      order.id,
+      user,
+      { subtotal: Number(order.subtotal), tax: Number(order.tax), total: Number(order.total) },
+      source,
+      reason,
+    );
+  } catch (err) {
+    // best effort: a missing marker reads as "unmarked" (cancellable), never as a failed status change
+    logger.warn(`ship-state marker ${source} not written order=${order.id}: ${String(err)}`);
+  }
+}
+
+async function anyLineDelivered(
+  prisma: Pick<PrismaService, "forTenant">,
+  orderId: string,
+): Promise<boolean> {
+  try {
+    const line = await prisma.forTenant().orderItem.findFirst({
+      where: { orderId, deliveredQty: { gt: 0 } },
+      select: { id: true },
+    });
+    return line != null;
+  } catch {
+    return true;
+  }
+}
+
+/** The source of the LAST ship-state marker on the order, or null when there is none. */
+export async function lastShipStateSource(
+  prisma: Pick<PrismaService, "forTenant">,
+  orderId: string,
+): Promise<string | null> {
+  const row = await prisma.forTenant().orderRevision.findFirst({
+    where: { orderId, source: { in: SHIP_STATE_SOURCES } },
+    orderBy: { revisionNumber: "desc" },
+    select: { source: true },
+  });
+  return row?.source ?? null;
+}

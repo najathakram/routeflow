@@ -65,6 +65,19 @@ describe("FeatureConfigStore", () => {
     });
   });
 
+  it("SA-678: a failed read is NOT cached, so the next read retries and sees the real mode", async () => {
+    prisma.tenantFeatureConfig.findUnique
+      .mockRejectedValueOnce(new Error("connection reset"))
+      .mockResolvedValueOnce({ mode: "ship" });
+
+    expect((await store.getMode("tenant-a", "fulfilment_model")).source).toBe("REGISTRY_DEFAULT");
+    expect(await store.getMode("tenant-a", "fulfilment_model")).toEqual({
+      value: "ship",
+      source: "TENANT",
+    });
+    expect(prisma.tenantFeatureConfig.findUnique).toHaveBeenCalledTimes(2);
+  });
+
   it("caches a result for 30s (only one DB read across two calls within the window)", async () => {
     prisma.tenantFeatureConfig.findUnique.mockResolvedValue({ mode: "adhoc" });
 
