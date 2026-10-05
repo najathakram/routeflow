@@ -39,7 +39,7 @@ const { InvoicesService: RealInvoicesService } = jest.requireActual("../invoices
 
 const ORDER_TOTAL = 305.27; // 10 boxes x 12 pieces, 282.00 + 23.27 tax
 
-const sum = (rows: Array<{ total: unknown }>) =>
+const sum = (rows: Array<Record<string, unknown>>) =>
   Math.round(rows.reduce((s, i) => s + Number(i.total), 0) * 100) / 100;
 
 /** A 10-box order split 6 / 4 by the real writers, then REPLACED (same lines) by the real updateOrderItems. */
