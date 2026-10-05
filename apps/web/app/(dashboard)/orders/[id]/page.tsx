@@ -3368,6 +3368,7 @@ export default function OrderDetailPage() {
               carrier={order.shippingCarrier}
               trackingNumber={order.shippingTrackingNumber}
               shippedAt={order.shippedAt}
+              orderStatus={localStatus}
               isSaving={updateShipment.isPending}
               onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
               openSignal={shipmentOpenSignal}

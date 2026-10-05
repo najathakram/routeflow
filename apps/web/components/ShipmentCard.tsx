@@ -16,10 +16,23 @@ import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
  *
  * Mirrors the Radix Modal + Card design system used across the dashboard.
  */
+/** Order statuses at/after "marked shipped" (mirrors the server's SHIPPED_STATUSES). */
+const SHIPPED_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+]);
+
 export interface ShipmentCardProps {
   carrier?: string | null;
   trackingNumber?: string | null;
   shippedAt?: string | null;
+  /**
+   * The linked order's CURRENT status, when there is one. `shippedAt` survives an "Unmark shipped" on
+   * purpose (the customer is told once), so the "Shipped <date>" line shows only while the order is
+   * actually shipped. Undefined (a standalone invoice) = show the date as before.
+   */
+  orderStatus?: string | null;
   /** Persist a new carrier + tracking number. Empty strings clear the shipment. */
   onSave: (values: { shippingCarrier: string; shippingTrackingNumber: string }) => Promise<unknown>;
   isSaving?: boolean;
@@ -38,6 +51,7 @@ export function ShipmentCard({
   carrier,
   trackingNumber,
   shippedAt,
+  orderStatus,
   onSave,
   isSaving,
   readOnly = false,
@@ -109,7 +123,7 @@ export function ShipmentCard({
                 ) : (
                   <p className="break-all text-sm text-navy/80">{trackingNumber}</p>
                 )}
-                {shippedAt && (
+                {shippedAt && (!orderStatus || SHIPPED_ORDER_STATUSES.has(orderStatus)) && (
                   <p className="mt-0.5 text-xs text-navy/70">
                     Shipped {new Date(shippedAt).toLocaleDateString()}
                   </p>

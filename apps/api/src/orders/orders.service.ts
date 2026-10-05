@@ -184,6 +184,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import { shippedPushCopy } from "./shipped-push-copy";
 import {
   assertCarrierOrderNotInTransit,
   invoicesAtShipment,
@@ -2745,7 +2746,11 @@ export class OrdersService implements OnApplicationBootstrap {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status];
+    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
+    const notif =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? shippedPushCopy(order)
+        : notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
