@@ -25,6 +25,7 @@ import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 import { addonCodeOf, findAddonRow } from "./addon-row";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -283,6 +284,9 @@ export class AddonService {
             );
           }
 
+          // SA-693 (M3): an uncomp keeps the comp's own quantity (a comp of 3 is billed as 3, never cut to
+          // 1); every other enable is a boolean grant whose Stripe item is quantity 1.
+          const qty = uncomp && existing?.isComp ? existing.quantity : 1;
           const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
           const isBridged = LEGACY_ADDON_KEY_TO_SKU[addonKey] !== undefined;
 
@@ -340,7 +344,7 @@ export class AddonService {
               const item = await this.stripe.client.subscriptionItems.create({
                 subscription: sub.stripeSubId,
                 price: stripePriceId,
-                quantity: 1,
+                quantity: qty,
               });
               stripeItemId = item.id;
               this.logger.log(
@@ -411,9 +415,9 @@ export class AddonService {
                 stripePriceId: stripePriceId ?? null,
                 stripeItemId,
                 active: true,
-                // The Stripe item (when one exists) is always quantity 1 — mirror it here so a
-                // stale quantity from a prior admin-only grant never survives a re-enable.
-                quantity: 1,
+                // The Stripe item (when one exists) carries `qty` — mirror it here so a stale
+                // quantity from a prior admin-only grant never survives a re-enable.
+                quantity: qty,
                 priceSnapshot,
                 isComp: comp,
               },
@@ -432,10 +436,11 @@ export class AddonService {
                 // create branch below may legitimately write a fresh row's sku as null.
                 sku: skuToStore ?? undefined,
                 stripePriceId: comp ? null : (stripePriceId ?? undefined),
-                stripeItemId: stripeItemId ?? undefined,
-                // B865 / SA-277: the Stripe item is always quantity 1 — a stale quantity from an
-                // earlier grant must not survive a re-enable.
-                quantity: 1,
+                // SA-693: a comp never carries a Stripe item pointer, so a stale one is cleared.
+                stripeItemId: comp ? null : (stripeItemId ?? undefined),
+                // B865 / SA-277: the Stripe item carries `qty` — a stale quantity from an earlier
+                // grant must not survive a re-enable.
+                quantity: qty,
                 priceSnapshot,
               },
             });
@@ -445,7 +450,7 @@ export class AddonService {
               tenantId,
               sku,
               before: { priceSnapshot: 0, quantity: 0 },
-              after: { priceSnapshot, quantity: 1 },
+              after: { priceSnapshot, quantity: qty },
             });
             return row;
           });
@@ -497,7 +502,7 @@ export class AddonService {
   async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, name: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -511,6 +516,14 @@ export class AddonService {
     }
 
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    // A manually-invoiced tenant (externalPayment, no Stripe subscription): turning the comp off means
+    // the owner now invoices it by hand, exactly like a self-serve enable there. Priced at the catalog
+    // price and booked, with the same ADDON_MANUAL_INVOICE_DUE notice; without a catalog SKU it stays flag-only.
+    const manual = !sub?.stripeSubId && sub?.externalPayment === true;
+    const manualSkuDef = manual
+      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((k) => k.sku === lockSku) ??
+        null)
+      : null;
     if (sub?.stripeSubId) {
       if (!stripePriceId) {
         throw new BadRequestException(
@@ -533,7 +546,41 @@ export class AddonService {
                 `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
               );
             }
-            return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+            if (!manualSkuDef) {
+              return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+            }
+            const price = Number(manualSkuDef.monthlyPrice);
+            const row = await tx.tenantAddon.update({
+              where: { id: current.id },
+              data: { isComp: false, priceSnapshot: price },
+            });
+            await emitAddonDelta(tx, this.events, {
+              tenantId,
+              sku: lockSku,
+              before: { priceSnapshot: 0, quantity: current.quantity },
+              after: { priceSnapshot: price, quantity: current.quantity },
+            });
+            await tx.auditLog.create({
+              data: {
+                tenantId,
+                userId: null,
+                action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE,
+                entityType: ADMIN_AUDIT_ENTITY,
+                entityId: tenantId,
+                meta: {
+                  platformAdmin: true,
+                  sku: lockSku,
+                  quantity: current.quantity,
+                  monthlyPrice: price,
+                  addonName: manualSkuDef.name,
+                  kind: "add",
+                  fromQty: 0,
+                  toQty: current.quantity,
+                  message: `Add-on ${manualSkuDef.name} comp removed for ${tenant.name ?? tenant.slug}: add to their next manual invoice`,
+                },
+              },
+            });
+            return row;
           });
           this.entitlements.invalidate(tenantId);
           this.featureResolver.invalidate(tenantId);

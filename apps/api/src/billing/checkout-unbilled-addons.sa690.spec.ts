@@ -195,7 +195,7 @@ describe("SA-690 createCheckoutSession refuses while self-serve add-ons are unbi
     expect(sessionCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("SA-693: a comp does not mask a real unbilled row � only the non-comp one is named", async () => {
+  it("SA-693: a comp does not mask a real unbilled row — only the non-comp one is named", async () => {
     const { svc, sessionCreate } = make([
       row({ sku: "FORECASTING", isComp: true }),
       row({ sku: "CUSTOMER_PACK_100", isComp: false }),

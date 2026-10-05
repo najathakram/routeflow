@@ -562,7 +562,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     // SA-693: a comp is a platform grant, not the tenant's to drop. subscribe() reconciles the tenant's
     // self-serve add-ons against the payload, and a /choose-plan cycle switch sends none: without the
     // isComp exclusion every plan choice would silently remove a comp.
-    describe("SA-693 � comp rows survive subscribe()", () => {
+    describe("SA-693 — comp rows survive subscribe()", () => {
       const comp = {
         ...billedRow,
         quantity: 1,

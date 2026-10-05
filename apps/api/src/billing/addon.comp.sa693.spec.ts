@@ -47,6 +47,8 @@ function make(
   opts: {
     rows?: Array<Record<string, unknown>>;
     stripeSubId?: string | null;
+    /** A manually-invoiced tenant: externalPayment set, no Stripe subscription. */
+    externalPayment?: boolean;
     create?: jest.Mock;
   } = {},
 ) {
@@ -55,17 +57,21 @@ function make(
   const del = jest.fn().mockResolvedValue({});
   const prisma = {
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }),
+      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme", name: "Acme Foods" }),
       findUniqueOrThrow: jest.fn().mockResolvedValue(PAYING_TENANT),
     },
     tenantAddon: store,
     tenantSubscription: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue(
-          opts.stripeSubId === undefined ? null : { stripeSubId: opts.stripeSubId },
-        ),
+      findUnique: jest.fn().mockResolvedValue(
+        opts.stripeSubId === undefined && !opts.externalPayment
+          ? null
+          : {
+              stripeSubId: opts.stripeSubId ?? null,
+              externalPayment: opts.externalPayment ?? false,
+            },
+      ),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn(async (fn: any) => fn(prisma)),
     $queryRaw: jest.fn().mockResolvedValue([]),
   } as any;
@@ -88,7 +94,7 @@ function make(
     authority,
     events,
   );
-  return { svc: svc as AddonService, prisma, store, create, del, events };
+  return { svc: svc as AddonService, prisma, store, create, del, events, audit: prisma.auditLog };
 }
 
 const compRow = (over: Record<string, unknown> = {}) => ({
@@ -164,6 +170,17 @@ describe("SA-693 admin comp enable", () => {
     expect(store.rows[0]).toMatchObject({ isComp: false, stripeItemId: null, priceSnapshot: 0 });
   });
 
+  it("a comp enable never keeps a stale Stripe item pointer on the row", async () => {
+    const { svc, store } = make({
+      stripeSubId: "sub_1",
+      rows: [compRow({ active: false, isComp: false, stripeItemId: "si_stale" })],
+    });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", undefined, undefined, { comp: true });
+
+    expect(store.rows[0]).toMatchObject({ isComp: true, stripeItemId: null });
+  });
+
   it("a billed re-enable of a disabled comp row resets isComp to false", async () => {
     const { svc, store } = make({
       stripeSubId: "sub_1",
@@ -231,6 +248,68 @@ describe("SA-693 admin uncomp", () => {
     await expect(svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x")).rejects.toThrow();
 
     expect(store.rows[0]).toMatchObject({ active: true, isComp: true, priceSnapshot: 0 });
+  });
+
+  it("M3: a billed uncomp PRESERVES the comp's quantity: the Stripe item, the row and the booking all carry it", async () => {
+    const { svc, create, store, events } = make({
+      stripeSubId: "sub_1",
+      rows: [compRow({ quantity: 3 })],
+    });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x");
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ quantity: 3 }));
+    expect(store.rows[0]).toMatchObject({ isComp: false, quantity: 3, priceSnapshot: 10 });
+    expect(events.emit).toHaveBeenCalledWith(
+      "t1",
+      "addon.enabled",
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 30 }),
+    );
+  });
+
+  it("M3: a flag-only uncomp leaves the quantity alone", async () => {
+    const { svc, store } = make({ rows: [compRow({ quantity: 4 })] });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({ isComp: false, quantity: 4 });
+  });
+
+  it("a MANUALLY-invoiced tenant: uncomp raises the manual-invoice notice and books the catalog price (the owner now invoices it)", async () => {
+    const { svc, store, events, audit } = make({
+      externalPayment: true,
+      rows: [compRow({ quantity: 2 })],
+    });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(store.rows[0]).toMatchObject({
+      isComp: false,
+      quantity: 2,
+      priceSnapshot: 10,
+      stripeItemId: null,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      "t1",
+      "addon.enabled",
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 20 }),
+    );
+    expect(audit.create).toHaveBeenCalledTimes(1);
+    expect(audit.create.mock.calls[0][0].data).toMatchObject({
+      tenantId: "t1",
+      action: "ADDON_MANUAL_INVOICE_DUE",
+      meta: expect.objectContaining({ sku: "REGULATED_ITEMS", quantity: 2, monthlyPrice: 10 }),
+    });
+  });
+
+  it("a tenant that is neither Stripe-billed nor manually invoiced raises no manual-invoice notice", async () => {
+    const { svc, audit } = make({ rows: [compRow()] });
+
+    await svc.uncompAddon("t1", "REGULATED_ITEMS");
+
+    expect(audit.create).not.toHaveBeenCalled();
   });
 
   it("404s a tenant with no such row; 409s a row that is not an active comp", async () => {

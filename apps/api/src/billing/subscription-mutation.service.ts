@@ -1634,6 +1634,10 @@ export class SubscriptionMutationService {
     if (!skuDef) return null;
     const included = await this.planIncludedRefusal(tenantId, skuDef);
     if (included) return included;
+    // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
+    // call throws (and therefore no charge line), never a price for something that would not be billed.
+    const row = await findAddonRow(this.prisma, tenantId, sku);
+    if (row?.active && row.isComp) return ADDON_COMP_REFUSAL;
     const { sub, mode } = await this.addonBillingContext(tenantId);
     return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
   }
