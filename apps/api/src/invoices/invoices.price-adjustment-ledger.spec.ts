@@ -14,6 +14,8 @@ import { Test } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
 import { assertNotOverpaidByPriceChange } from "./price-adjustment-ledger";
+
+const INV = { id: "inv-1", invoiceNumber: "INV-1" };
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -317,19 +319,19 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
 // PARTIAL invoice with $100 paid) is price-adjustment-overpay-b1051.db.spec.ts.
 describe("assertNotOverpaidByPriceChange (B1051)", () => {
   it("refuses a new total below the confirmed payments and names the exact overage", () => {
-    expect(() => assertNotOverpaidByPriceChange(100, 80)).toThrow(BadRequestException);
-    expect(() => assertNotOverpaidByPriceChange(100, 80)).toThrow("overpaid by $20.00");
-    expect(() => assertNotOverpaidByPriceChange(100.01, 100)).toThrow("overpaid by $0.01");
+    expect(() => assertNotOverpaidByPriceChange(100, 80, INV)).toThrow(BadRequestException);
+    expect(() => assertNotOverpaidByPriceChange(100, 80, INV)).toThrow("overpaid by $20.00");
+    expect(() => assertNotOverpaidByPriceChange(100.01, 100, INV)).toThrow("overpaid by $0.01");
   });
 
   it("allows a new total equal to, or above, the confirmed payments", () => {
-    expect(() => assertNotOverpaidByPriceChange(80, 80)).not.toThrow();
-    expect(() => assertNotOverpaidByPriceChange(60, 80)).not.toThrow();
-    expect(() => assertNotOverpaidByPriceChange(0, 80)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(80, 80, INV)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(60, 80, INV)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(0, 80, INV)).not.toThrow();
   });
 
   it("compares in cents: float noise on the paid sum is not an overpayment", () => {
     expect(0.1 + 0.2 > 0.3).toBe(true); // the raw comparison WOULD refuse
-    expect(() => assertNotOverpaidByPriceChange(0.1 + 0.2, 0.3)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(0.1 + 0.2, 0.3, INV)).not.toThrow();
   });
 });

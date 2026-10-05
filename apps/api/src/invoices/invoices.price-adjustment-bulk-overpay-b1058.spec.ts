@@ -21,6 +21,7 @@ import {
   assertNotOverpaidByPriceChange,
   overpaymentOf,
   preflightBulkPriceAdjustment,
+  totalsFromLines,
 } from "./price-adjustment-ledger";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -58,6 +59,7 @@ const line = (id: string, over: Record<string, unknown> = {}) => ({
 });
 const paid = (amount: number, status = "PAID") => ({ status, amount, method: "CASH" });
 const money = (n: number) => `$${n.toFixed(2)}`;
+const INV = { id: "inv-x", invoiceNumber: "INV-X" };
 
 const invoiceOf = (n: number, payments: any[], over: Record<string, unknown> = {}) => ({
   id: `inv-${n}`,
@@ -323,8 +325,8 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       expect(err.getResponse()).toEqual({
         code: API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL,
         message:
-          "2 of 3 invoices were updated; invoice INV-2 was updated, but its order totals could " +
-          "not be refreshed. Review it, then run the change again.",
+          "2 of 3 invoices were updated; invoice INV-2 was updated, but its follow-up sync " +
+          "(order totals and commissions) did not finish. Review it, then run the change again.",
         applied: ["inv-1", "inv-2"],
         syncFailed: { invoiceId: "inv-2", invoiceNumber: "INV-2" },
         skipped: ["inv-3"],
@@ -346,7 +348,9 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       expect(body.applied).toEqual(["inv-1"]);
       expect(body.syncFailed).toEqual({ invoiceId: "inv-1", invoiceNumber: "INV-1" });
       expect(body.skipped).toEqual([]);
-      expect(body.message).toMatch(/^1 of 1 invoices were updated; invoice INV-1 was updated, but/);
+      expect(body.message).toMatch(
+        /^1 of 1 invoices were updated; invoice INV-1 was updated, but its follow-up sync \(order totals and commissions\) did not finish/,
+      );
     });
   });
 
@@ -432,6 +436,75 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
     });
   });
 
+  describe("the overpay 400 ALWAYS carries the overpaid list (SINGLE scope and the first-invoice race)", () => {
+    const entry = {
+      invoiceId: "inv-1",
+      invoiceNumber: "INV-1",
+      paid: 40,
+      newTotal: 20,
+      overpaidBy: 20,
+    };
+
+    it("(v) SINGLE scope: the in-tx guard's 400 has code, message and a ONE-entry overpaid list", async () => {
+      arrange([invoiceOf(1, [paid(40)])]);
+      const err = await caught(
+        service.applyPriceAdjustment("inv-1", {
+          items: [{ itemId: "l1", newUnitPrice: 20 }],
+          scope: "SINGLE",
+        }),
+      );
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toEqual({
+        code: API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
+        message: `This price change would leave the invoice overpaid by ${money(20)} (paid ${money(40)}, new total ${money(20)}). Issue a credit note instead.`,
+        overpaid: [entry],
+      });
+      // The line write is inside the tx and rolls back with the refusal (price-adjustment-overpay-b1051.db.spec.ts);
+      // no invoice, ledger or commission write follows it.
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
+      expect(commission.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
+    });
+
+    it("(w) a bulk FIRST-invoice race refusal (nothing committed yet) keeps the list under the 'Invoice X:' prefix", async () => {
+      const batch = [invoiceOf(1, []), invoiceOf(2, [])];
+      arrange(batch);
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) =>
+        where.id === "inv-1"
+          ? { ...batch[0], payments: [paid(40)] } // a payment landed after the pre-flight read
+          : (batch.find((b) => b.id === where.id) ?? null),
+      );
+      const err = await caught(run());
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toEqual({
+        code: API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
+        message: `Invoice INV-1: This price change would leave the invoice overpaid by ${money(20)} (paid ${money(40)}, new total ${money(20)}). Issue a credit note instead.`,
+        overpaid: [entry],
+      });
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("totalsFromLines: the ONE totals arithmetic (pre-flight projection and tx write)", () => {
+    it("(x) rounds the sums and the tax once: 83.70 at 5% + an 8.37 levy is 96.26", () => {
+      expect(
+        totalsFromLines([{ subtotal: 83.7, taxRate: 0.05, categoryTaxAmount: 8.37 }], {
+          discount: 0,
+          shippingFee: 0,
+        }),
+      ).toEqual({ subtotal: 83.7, taxAmount: 12.56, total: 96.26, discount: 0 });
+    });
+
+    it("(y) a discount and a shipping fee enter the total, not the tax", () => {
+      expect(
+        totalsFromLines([{ subtotal: 100, taxRate: 0.1, categoryTaxAmount: 0 }], {
+          discount: 5,
+          shippingFee: 2.5,
+        }),
+      ).toEqual({ subtotal: 100, taxAmount: 10, total: 107.5, discount: 5 });
+    });
+  });
+
   describe("fold 5: the bulk targets read in a stable order", () => {
     it("(s) the targets query orders by createdAt ascending, id as the tie-break", async () => {
       arrange([invoiceOf(1, [])]);
@@ -450,12 +523,12 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
 describe("overpaymentOf / assertNotOverpaidByPriceChange: nothing paid is never an overpayment", () => {
   it("(t) $0 confirmed against a legacy NEGATIVE total is not overpaid; the improving re-price may save", () => {
     expect(overpaymentOf(0, -60)).toBe(0);
-    expect(() => assertNotOverpaidByPriceChange(0, -60)).not.toThrow();
-    expect(() => assertNotOverpaidByPriceChange(0, 0)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(0, -60, INV)).not.toThrow();
+    expect(() => assertNotOverpaidByPriceChange(0, 0, INV)).not.toThrow();
   });
 
   it("(u) money that WAS paid against a negative total still is: paid 10 over -60 is $70 over", () => {
     expect(overpaymentOf(10, -60)).toBe(70);
-    expect(() => assertNotOverpaidByPriceChange(10, -60)).toThrow("overpaid by $70.00");
+    expect(() => assertNotOverpaidByPriceChange(10, -60, INV)).toThrow("overpaid by $70.00");
   });
 });

@@ -45,7 +45,7 @@ function partial(data: Record<string, any>): PriceAdjustmentFailure {
   if (data.syncFailed) {
     const syncWho = numberOf(data.syncFailed.invoiceNumber) ?? "One invoice";
     lines.push(
-      `${syncWho} was updated, but its order totals could not be refreshed. Check its order.`,
+      `${syncWho} was updated, but its follow-up sync did not finish, so its order totals and commissions may be out of date. Check its order.`,
     );
   }
   const skipped = countOf(data.skipped);
@@ -56,15 +56,36 @@ function partial(data: Record<string, any>): PriceAdjustmentFailure {
 
 function overpays(data: Record<string, any>): PriceAdjustmentFailure {
   const rows: unknown[] = Array.isArray(data.overpaid) ? data.overpaid : [];
-  const shown = rows.slice(0, MAX_ROWS).map((r: any) => {
+  const credit = "Issue a credit note instead.";
+  const title = "Prices not changed";
+  // SINGLE scope (and a bulk first-invoice race) carries exactly one entry; an old or odd body may carry none.
+  // Never "0 invoices": with nothing to name, say so in one safe sentence.
+  if (rows.length === 0) {
+    return {
+      title,
+      lines: ["This change would leave an invoice overpaid, so nothing was updated.", credit],
+      committed: false,
+    };
+  }
+  const row = (r: any, noun: string): string => {
+    const num = numberOf(r?.invoiceNumber);
+    const who = num ? (noun ? `${noun} ${num}` : num) : "An invoice";
     const amount = usd(r?.overpaidBy);
-    return `${numberOf(r?.invoiceNumber) ?? "An invoice"} would be overpaid${amount ? ` by ${amount}` : ""}`;
-  });
+    return `${who} would be overpaid${amount ? ` by ${amount}` : ""}`;
+  };
+  if (rows.length === 1) {
+    return {
+      title,
+      lines: [`${row(rows[0], "Invoice")}, so nothing was updated.`, credit],
+      committed: false,
+    };
+  }
+  const shown = rows.slice(0, MAX_ROWS).map((r) => row(r, ""));
   if (rows.length > MAX_ROWS) shown.push(`and ${rows.length - MAX_ROWS} more`);
   return {
-    title: "Prices not changed",
+    title,
     lines: [
-      `This change would leave ${rows.length} ${rows.length === 1 ? "invoice" : "invoices"} overpaid, so nothing was updated.`,
+      `This change would leave ${rows.length} invoices overpaid, so nothing was updated.`,
       ...shown,
       "Issue a credit note on each of them instead.",
     ],

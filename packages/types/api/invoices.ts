@@ -20,11 +20,13 @@ export interface InvoiceKpiSummary {
 //
 // `POST /invoices/:id/price-adjustment` with scope ALL_CUSTOMER_SINCE. Two structured bodies the invoice
 // page renders from fixed copy (B980: never the server `message`):
-//   400 PRICE_ADJUSTMENT_OVERPAYS — the pre-flight found invoices the re-price would leave overpaid
-//        (confirmed payments above the new total). Collected across the whole batch; NOTHING was written.
+//   400 PRICE_ADJUSTMENT_OVERPAYS — a re-price would leave invoices overpaid (confirmed payments above the
+//        new total); nothing was written. `overpaid` is ALWAYS present: the bulk pre-flight collects every
+//        offender across the batch, SINGLE scope and a bulk first-invoice race carry exactly one entry.
 //   409 PRICE_ADJUSTMENT_PARTIAL — a race stopped the run after >= 1 invoice committed. `applied` are
 //        invoice ids; exactly one of `refused` (that invoice was refused in its transaction) or `syncFailed`
-//        (that invoice committed, then its order-totals sync threw; it is also in `applied`) is present;
+//        (that invoice committed, then its follow-up sync of order totals and commissions threw; it is also
+//        in `applied`) is present;
 //        `skipped` were never attempted. Re-running the same request finishes them.
 
 export interface PriceAdjustmentOverpaidInvoice {

@@ -59,6 +59,9 @@ const applyBulk = () => {
   fireEvent.click(screen.getByLabelText(/All invoices for/));
   fireEvent.click(screen.getByRole("button", { name: /Apply Price Changes/ }));
 };
+/** SINGLE is the panel's default scope: no radio click, straight to Apply. */
+const applySingle = () =>
+  fireEvent.click(screen.getByRole("button", { name: /Apply Price Changes/ }));
 const invalidatedInvoices = (spy: jest.SpyInstance) =>
   spy.mock.calls.some(
     ([f]) => JSON.stringify((f as any)?.queryKey) === JSON.stringify(["invoices"]),
@@ -110,9 +113,8 @@ describe("AdjustPricesPanel failure display (B1058)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("2 invoices were updated");
-    expect(alert).toHaveTextContent(
-      "INV-2 was updated, but its order totals could not be refreshed",
-    );
+    expect(alert).toHaveTextContent("INV-2 was updated, but its follow-up sync did not finish");
+    expect(alert).toHaveTextContent("order totals and commissions may be out of date");
     expect(alert).toHaveTextContent("1 invoice was not attempted");
     expect(document.body).not.toHaveTextContent(RAW);
     expect(toast).toHaveBeenCalledTimes(1);
@@ -166,6 +168,44 @@ describe("AdjustPricesPanel failure display (B1058)", () => {
     expect(toast.mock.calls[0][0].title).toBe("Prices not changed");
     expect(invalidatedInvoices(invalidate)).toBe(false);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("SINGLE scope 400 with ONE overpaid entry reads as one invoice, never '0 invoices'", async () => {
+    reject(400, {
+      code: "PRICE_ADJUSTMENT_OVERPAYS",
+      message: RAW,
+      overpaid: [
+        { invoiceId: "x", invoiceNumber: "INV-9", paid: 100, newTotal: 80, overpaidBy: 20 },
+      ],
+    });
+    const { invalidate } = setup();
+    applySingle();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Prices not changed");
+    expect(alert).toHaveTextContent("Invoice INV-9 would be overpaid by $20.00");
+    expect(alert).toHaveTextContent("Issue a credit note instead");
+    expect(alert).not.toHaveTextContent(/0 invoices|1 invoices/);
+    expect(document.body).not.toHaveTextContent(RAW);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(invalidatedInvoices(invalidate)).toBe(false);
+  });
+
+  it.each([
+    ["no list at all", {}],
+    ["an empty list", { overpaid: [] }],
+  ])("400 OVERPAYS with %s: a safe generic line, never '0 invoices'", async (_n, extra) => {
+    reject(400, { code: "PRICE_ADJUSTMENT_OVERPAYS", message: RAW, ...extra });
+    setup();
+    applySingle();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Prices not changed");
+    expect(alert).toHaveTextContent("This change would leave an invoice overpaid");
+    expect(alert).toHaveTextContent("Issue a credit note instead");
+    expect(alert).not.toHaveTextContent(/\b0 invoices/);
+    expect(document.body).not.toHaveTextContent(RAW);
+    expect(toast).toHaveBeenCalledTimes(1);
   });
 
   it("any other failure keeps today's behaviour: the panel's own 'Failed to adjust prices' toast with the server sentence", async () => {
