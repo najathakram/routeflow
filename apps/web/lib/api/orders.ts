@@ -99,6 +99,8 @@ export interface Order {
   shippedAt?: string | null;
   /** P5-08: append-only edit history (one row per pre-dispatch edit). */
   revisions?: OrderRevision[];
+  /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
+  cancelBlockedReason?: "WITH_CARRIER" | null;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;

@@ -132,20 +132,38 @@ export async function settleOrderInvoice(
 }
 
 /**
- * L6: a CARRIER (SHIP) order that is out with the carrier is not cancelled — cancelling credits its
- * units back to stock while the parcel is still in transit. It goes through the return flow instead.
+ * L6 / B1082 / B1083: a CARRIER (SHIP) order whose parcel is with the carrier is not cancelled or
+ * deleted: that would credit its units back to stock while the parcel is still out. It goes through the
+ * return flow instead. "With the carrier" = out for delivery / partly delivered, OR still open but
+ * already shipped (`shippedAt` is stamped only by the ship transition and survives an unmark and a
+ * cancel -> reopen, so a reopened shipped order is still blocked).
  * GATED on the billing moment (`billsAtShipment`: ship / both / pickup_ship businesses only), so an
- * unset-mode business cancels exactly as before. A coded 409 before any write.
+ * unset-mode business is untouched. Returns the reason the web reads to disable Cancel, or null.
  */
+export type CancelBlockedReason = "WITH_CARRIER";
+export async function carrierCancelBlockedReason(
+  featureConfig: Parameters<typeof billsAtShipment>[0],
+  tenantId: string | null | undefined,
+  order: { status: OrderStatus; fulfillPath: FulfillPath; shippedAt?: Date | null },
+): Promise<CancelBlockedReason | null> {
+  const shippedOpen =
+    !!order.shippedAt &&
+    (order.status === OrderStatus.PENDING || order.status === OrderStatus.CONFIRMED);
+  const inTransit =
+    order.status === OrderStatus.OUT_FOR_DELIVERY ||
+    order.status === OrderStatus.PARTIALLY_DELIVERED ||
+    shippedOpen;
+  if (!inTransit) return null;
+  return (await billsAtShipment(featureConfig, tenantId, order)) ? "WITH_CARRIER" : null;
+}
+
+/** The coded 409 for a blocked cancel / delete (see `carrierCancelBlockedReason`). */
 export async function assertCarrierOrderNotInTransit(
   featureConfig: Parameters<typeof billsAtShipment>[0],
   tenantId: string | null | undefined,
-  order: { status: OrderStatus; fulfillPath: FulfillPath },
+  order: { status: OrderStatus; fulfillPath: FulfillPath; shippedAt?: Date | null },
 ): Promise<void> {
-  const inTransit =
-    order.status === OrderStatus.OUT_FOR_DELIVERY ||
-    order.status === OrderStatus.PARTIALLY_DELIVERED;
-  if (!inTransit || !(await billsAtShipment(featureConfig, tenantId, order))) return;
+  if (!(await carrierCancelBlockedReason(featureConfig, tenantId, order))) return;
   throw new ConflictException({
     code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CANCEL,
     message: "This order is already with the carrier. Use a return instead of cancelling.",
