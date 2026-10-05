@@ -9,6 +9,7 @@
  * does not understand throws, so a drifted query fails loudly rather than matching nothing.
  */
 import type { MockPrisma } from "../../testing/prisma-mock";
+import { INVOICE_LINE_CAS_FIELDS } from "../partial-invoice-cas";
 
 type Row = Record<string, any>;
 
@@ -195,7 +196,14 @@ export class SplitInvoiceFakeDb {
 
 /** A fully-populated boxed (or plain) order line — every CAS basis column present. */
 export function fakeOrderLine(over: Row = {}): Row {
+  // The four category-tax columns come from the CAS list (all null: an unregulated line), not literals.
+  const categoryTax = Object.fromEntries(
+    INVOICE_LINE_CAS_FIELDS.filter(
+      (f) => f.startsWith("categoryTax") || f === "categoryPriceIncludesTax",
+    ).map((f) => [f, null]),
+  );
   return {
+    ...categoryTax,
     id: "oi-1",
     productId: "p-1",
     qty: 120,
@@ -207,10 +215,6 @@ export function fakeOrderLine(over: Row = {}): Row {
     subtotal: 282,
     status: "PENDING",
     promoFreeUnits: null,
-    categoryTaxAmount: 0,
-    categoryTaxType: null,
-    categoryTaxRate: null,
-    categoryPriceIncludesTax: null,
     unitLabel: null,
     originalPrice: null,
     priceType: "STANDARD",

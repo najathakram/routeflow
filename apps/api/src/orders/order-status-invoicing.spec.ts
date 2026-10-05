@@ -80,8 +80,18 @@ describe("settleOrderInvoice", () => {
     await settleOrderInvoice(self, "ord-1", logger, "delivered");
     expect(invoicesService.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
       basis: "order",
+      shortDraftIsPartial: true,
     });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("SA-681: a 'partials' reconcile (the open draft is one of several invoices) falls through to bill only the remainder", async () => {
+    const { self, invoicesService } = harness();
+    invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "d1" });
+    invoicesService.reconcileOrderDraftInvoice.mockResolvedValue("partials");
+    await expect(settleOrderInvoice(self, "ord-1", logger, "delivered")).resolves.toBeUndefined();
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledWith("ord-1", "t1");
   });
 
   it("M1: DELIVERED after a shipment-time settle does NOT reconcile the draft (staff edits since shipment survive)", async () => {

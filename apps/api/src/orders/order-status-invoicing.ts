@@ -17,6 +17,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -94,8 +95,13 @@ export async function settleOrderInvoice(
       : await self.invoicesService.findOpenOrderDraft(id);
   if (draft) {
     try {
-      await self.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      return undefined;
+      // SA-681: "partials" = the draft is one of several invoices (or a lone partial) and was left
+      // untouched; fall through to bill only the un-invoiced remainder (qty - invoicedQty).
+      const res = await self.invoicesService.reconcileOrderDraftInvoice(id, {
+        basis: "order",
+        shortDraftIsPartial: true,
+      });
+      if (res !== RECONCILE_PARTIALS) return undefined;
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);

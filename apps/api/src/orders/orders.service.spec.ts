@@ -2862,7 +2862,10 @@ describe("OrdersService", () => {
 
       await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
 
-      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
+      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
+        basis: "order",
+        shortDraftIsPartial: true, // SA-681: Mark Delivered only
+      });
       expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
     });
 
@@ -3100,6 +3103,7 @@ describe("OrdersService", () => {
 
       expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
         basis: "order",
+        shortDraftIsPartial: true, // SA-681: Mark Delivered only
       });
       expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalledWith(
         "ord-1",
