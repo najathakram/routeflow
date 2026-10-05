@@ -4,6 +4,8 @@ jest.mock("../common/db-locks", () => ({
     acquired: true,
     value: await fn(),
   })),
+  // the confirm's multi-key lock: a pass-through here (no DB); its own spec is db-locks.multi.spec.ts
+  withAdvisoryLocks: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => fn()),
 }));
 /**
  * Business profiles — the platform-admin routes. Red-first: written before the routes existed.
@@ -340,19 +342,44 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     expect(a.planFingerprint).not.toBe(b.planFingerprint);
   });
 
-  it("plan-then-apply holds the add-on enable path's locks (billing family, addon:<tenant>:<sku>, sorted)", async () => {
+  it("plan-then-apply holds the add-on enable path's keys (billing family, addon:<tenant>:<sku>) in ONE multi-key lock", async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { withAdvisoryLock } = require("../common/db-locks");
-    (withAdvisoryLock as jest.Mock).mockClear();
+    const { withAdvisoryLocks } = require("../common/db-locks");
+    (withAdvisoryLocks as jest.Mock).mockClear();
     const t = fakeTenant({});
     await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin);
-    const keys = (withAdvisoryLock as jest.Mock).mock.calls.map(([o]: any) => [o.family, o.key]);
-    expect(keys.length).toBe(3);
-    expect(keys.every(([family]: string[]) => family === "billing")).toBe(true);
-    const names = keys.map(([, k]: string[]) => k);
-    expect(names).toEqual([...names].sort());
-    for (const k of names) expect(k.startsWith(`addon:${T}:`)).toBe(true);
+    expect(withAdvisoryLocks).toHaveBeenCalledTimes(1); // one connection for all three keys
+    const [opts] = (withAdvisoryLocks as jest.Mock).mock.calls[0];
+    expect(opts.family).toBe("billing");
+    expect(opts.keys).toHaveLength(3);
+    for (const k of opts.keys) expect(k.startsWith(`addon:${T}:`)).toBe(true);
   });
+
+  it.each([
+    [
+      "a lock timeout",
+      () => new (jest.requireActual("../common/db-locks").LockTimeoutError)("billing", "k", 10_000),
+    ],
+    [
+      "no lock connection",
+      () => new (jest.requireActual("../common/db-locks").LockUnavailableError)(null),
+    ],
+  ])(
+    "%s on the confirm lock is a 503 LOCK_UNAVAILABLE and nothing is written",
+    async (_name, err) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { withAdvisoryLocks } = require("../common/db-locks");
+      (withAdvisoryLocks as jest.Mock).mockRejectedValueOnce(err());
+      const t = fakeTenant({});
+      await expect(
+        t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" } as any, admin),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: expect.objectContaining({ code: "LOCK_UNAVAILABLE" }),
+      });
+      expect(t.writes).toEqual([]);
+    },
+  );
 
   it("the previewed fingerprint confirms", async () => {
     const t = fakeTenant({});

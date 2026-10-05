@@ -14,7 +14,7 @@ import type {
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
+import { LockTimeoutError, LockUnavailableError, withAdvisoryLocks } from "../common/db-locks";
 import { AddonService } from "./addon.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
@@ -247,26 +247,17 @@ export class BusinessProfileService {
   }
 
   /**
-   * Plan-then-apply runs holding the SAME advisory locks the add-on enable takes (family "billing",
-   * `addon:<tenant>:<sku>`, one per profile module, in a fixed order so two confirms cannot
-   * deadlock). An add-on enabled mid-confirm therefore waits for the confirm, and is never DENIED
-   * with its billing still running. `disableAddon` takes none of these locks (no re-entry).
+   * Plan-then-apply runs holding the SAME advisory locks the add-on enable takes (`addon:<tenant>:<sku>`,
+   * one per profile module, in the "billing" lock family, which is the advisory-lock namespace and its
+   * own small connection pool), so an add-on enabled mid-confirm waits for the confirm and is never
+   * DENIED with its billing still running. All keys are taken SORTED on ONE connection
+   * (`withAdvisoryLocks`), so a confirm pins one pool slot, not three. `disableAddon` takes none of
+   * these locks (no re-entry). A lock that cannot be had in time is a 503 LOCK_UNAVAILABLE.
    */
   async withConfirmLock<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-    const keys = [
-      ...new Set(PROFILE_MODULE_KEYS.map((k) => `addon:${tenantId}:${addonCodeOf(k)}`)),
-    ].sort();
-    const run = async (i: number): Promise<T> => {
-      if (i === keys.length) return fn();
-      const r = await withAdvisoryLock(
-        { family: "billing", key: keys[i], mode: "wait", waitMs: 10_000 },
-        () => run(i + 1),
-      );
-      if (!r.acquired) throw new LockUnavailableError(null); // unreachable under "wait"
-      return r.value;
-    };
+    const keys = PROFILE_MODULE_KEYS.map((k) => `addon:${tenantId}:${addonCodeOf(k)}`);
     try {
-      return await run(0);
+      return await withAdvisoryLocks({ family: "billing", keys, waitMs: 10_000 }, fn);
     } catch (e) {
       if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
         throw new ServiceUnavailableException({
