@@ -31,7 +31,7 @@
   "src/orders/orders.lifecycle-conservation.spec.ts": 9,
   "src/orders/orders.merge-idempotency.spec.ts": 1,
   "src/orders/orders.scan-hardening.spec.ts": 13,
-  "src/orders/orders.service.spec.ts": 305,
+  "src/orders/orders.service.spec.ts": 304,
   "src/orders/orders.service.tracking-contract.pins.spec.ts": 2,
   "src/orders/orders.service.tracking-contract.spec.ts": 2,
   "src/orders/orders.update-items-guards.spec.ts": 29,

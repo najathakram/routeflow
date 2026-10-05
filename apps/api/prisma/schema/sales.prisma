@@ -625,6 +625,10 @@ model Order {
   shippingCarrier        String?
   shippingTrackingNumber String?
   shippedAt              DateTime?
+  // Set (atomically, once) when the customer was told this order's tracking: either inside the
+  // ORDER_SHIPPED email, or by the one-time SHIPMENT_TRACKING_ADDED follow-up. Never cleared, so
+  // a later edit/clear/re-add of the tracking number can't send a second "tracking added" email.
+  trackingNotifiedAt     DateTime?
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
   skipAutoMerge          Boolean     @default(false)
