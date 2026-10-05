@@ -332,6 +332,7 @@
   DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
   agents (whose job is to read, not build) should run read-only against the target checkout with
   no worktree of their own at all.**
+- **Recurred 2026-10-03:** a reviewer's `cmd /c rmdir` of its `node_modules` junction was blocked by the harness, and the following plain `git worktree remove` still deleted THROUGH the junction, emptying the builder's live install (restored with `npm ci`). If a junction cannot be removed, NEVER remove the worktree: leave it and report the path. Better, reviewers do not junction into a builder's live install at all.
 - **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
   `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
   junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
@@ -391,7 +392,7 @@
 
 - **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
 - **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
-- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link the main checkout's `node_modules` for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
+- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
 - **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
 
 ### L-255 · 2026-10-02 · tooling · a file on the size ratchet is checked by the api ratchet spec before every push that grows it, in any workspace
@@ -495,13 +496,6 @@
   the same PR; then boot the real container.**
 - **Guard:** the compose boot gate (`local:up`) proves the real DI graph; no automated
   construction-site scan yet.
-
-### L-252 · 2026-10-01 · testing · a test of host-dependent behaviour proves the host condition and asserts what the host cannot change (B954, B950)
-
-- **Symptom:** a PDF date spec was red on the UTC CI runner but green on a west-of-UTC dev host (its own vacuity guard "the host is west of UTC" caught it); a webhook flood spec asserted every client read a 401 and failed deterministically on macOS, where some clients saw EPIPE or ECONNRESET.
-- **Root cause:** both asserted an observation the host controls: V8 caches the process timezone at first Date use, so setting `process.env.TZ` inside a Jest worker is unreliable; whether a client reads a response from a socket the server closed first is OS- and timing-dependent.
-- **Lesson:** **Run the host-dependent code in a CHILD process with the environment set (`TZ`) and keep a vacuity guard that proves the condition. For network security and resource properties assert on the SERVER (status sent, handler work run, bytes read) and count a client reset after an early response as a rejection; never require a client to read a response from a connection the server closed first. A spy keyed on `socket.localPort` misses responses on destroyed sockets; key on `server.address().port`.**
-- **Guard:** `common/pdf-date.spec.ts` (child process, `TZ=America/Los_Angeles`, vacuity guard); `apps/control/test/wp7-security.spec.ts` (server-side spy, forced-reset test, over-cap test, mutation-proven).
 
 ### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
 
@@ -669,12 +663,12 @@
 - **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
   (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
 
-### L-251 · 2026-10-01 · domain · dropping a double-counted term means re-proving every remaining bound covers DERIVED inputs (B960, #2986)
+### L-260 · 2026-10-04 · domain · a missing stored money value is "not provable", never a fabricated 0 (B1030, #3135)
 
-- **Symptom:** once the order pool became the one source for itemless refund lumps, `create()`'s own-invoice line check still ran the per-invoice legacy term and over-refused; skipping it exposed that the qty bound applied only to rows where the operator TYPED a qty, so an amount-only credit row (derived qty) escaped the product's pieces cap when lines of one product carried different prices.
-- **Root cause:** the removed term had been covering the derived-qty case implicitly; the bound that remained keyed on "explicit qty".
-- **Lesson:** **When you remove one term to stop a double-count, list every input the old term bounded and re-prove that each remaining bound covers DERIVED inputs too (amount-only rows, defaults, unit conversions), not just typed ones; bind qty always, on the one unit axis.**
-- **Guard:** `credit-notes/own-line-pool-b960.spec.ts` (skip-legacy with the pool active, derived qty binds in pieces); cf. [[L-167]], [[L-222]].
+- **Symptom:** an invoice edit could store a discount above the subtotal (a negative total). The first guard exempted "legacy" rows by comparing against stored totals, and a row with missing totals read as 0 and was exempted too.
+- **Root cause:** the not-worse legacy exemption coerced an absent subtotal or total to 0, so unknown old state looked like a provably insane one and the edit passed.
+- **Lesson:** **When a rule is relaxed by comparing to the stored value, a missing or non-numeric stored value returns "unknown" (undefined) and the check runs strictly; coercing it to 0 turns the relaxation into a bypass. An absent optional amount (discount) may default to 0; an absent required one may not.**
+- **Guard:** `storedInvoiceTotals` returns undefined for missing or non-finite totals; pinned by the money-invariants util spec and the invoices update specs (#3135).
 
 ## security
 
@@ -689,6 +683,13 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
+
+### L-259 · 2026-10-04 · security · a guard and the write it protects share ONE normalized value; one allowlist drives every copy of a field set (#3191, #3190)
+
+- **Symptom:** an admin-protection check compared the raw request value while the stored value was normalized (trim, case), so a padded or re-cased value slipped past the guard yet wrote the same account, or a harmless edit was refused. Separately, a customer-facing write body and its read filter each kept a hand-typed field list that drifted apart.
+- **Root cause:** the guard, the changed-field test and the write each normalized (or did not) on their own. Two hand lists of the same fields are two sources of truth; patching one list left the other open.
+- **Lesson:** **Normalize an identity input once, then feed that single value to the guard, the changed-field comparison, the write and every side effect. Derive a field-restricted DTO and its read filter from one allowlist const (PickType over it), never a second list.**
+- **Guard:** `customers/customers.self-service-allowlist.spec.ts` (body type and filter both from `SELF_SERVICE_FIELDS`) and the users service specs for #3191; the normalization lives in one block in `users.service.ts`.
 
 ## deploy
 

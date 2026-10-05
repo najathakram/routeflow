@@ -89,6 +89,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
   ["ITEM_STATUS_VALUES", "ItemStatus"],
   ["PAYMENT_METHOD_VALUES", "PaymentMethod"],
+  ["FULFILL_PATH_VALUES", "FulfillPath"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
@@ -259,6 +260,8 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
 // `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
 // Triage for HandoffRealm (#2653, landed on master): mirrored as `HANDOFF_REALM_VALUES` (112 → 113 once merged with the bundle).
+// Triage for FulfillPath (SA-650): an existing enum gaining PICKUP — a value, not a new enum, so the count stays 113;
+// mirrored as `FULFILL_PATH_VALUES` + its `ENUM_TABLE` row.
 const PINNED_PRISMA_ENUM_COUNT = 113;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
