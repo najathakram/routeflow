@@ -2757,7 +2757,20 @@ export class OrdersService implements OnApplicationBootstrap {
       // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
-    // A PICKUP order has no driver: no driver-named template (the push above says "ready for pickup").
+    // A PICKUP order has no driver: never the driver-named OUT_FOR_DELIVERY template (the push above says
+    // "ready for pickup"). Its handover fires READY_FOR_PICKUP instead; the messaging path honours the
+    // customer's orderStatusEmails opt-out, and a failure never fails the move.
+    if (isPickupHandover(order, dto.status)) {
+      this.messaging
+        .notifyEvent(NotificationEvent.READY_FOR_PICKUP, {
+          customerId: order.customerId,
+          senderId: user.sub || null,
+          // pickupLine: the template's optional address/hours tail; "" until the pickup settings feed it
+          // (never leave the placeholder unfilled).
+          vars: { orderNumber: order.orderNumber ?? "", pickupLine: "" },
+        })
+        .catch(() => {});
+    }
     const messagingEvent = isPickupHandover(order, dto.status)
       ? undefined
       : messagingEventMap[dto.status];
