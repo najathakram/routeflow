@@ -83,8 +83,12 @@ interface Opts {
   updateFails?: unknown;
   txFails?: boolean;
   stripeProrationCents?: number | null;
-  /** Overrides the whole pending-invoice-items list Stripe answers with (real-shape items). */
+  /** The pending proration lines Stripe ADDS when the (first) item change happens (real-shape items). */
   invoiceItems?: any[];
+  /** Pending proration lines that already exist BEFORE the call (an earlier change, still unbilled). */
+  priorInvoiceItems?: any[];
+  /** What Stripe adds per item change, for a test that makes several (n = 1, 2, ...). Overrides `invoiceItems`. */
+  stripeLines?: (call: { n: number; itemId: string; quantity: number }) => any[];
   stripeTenantSubFor?: string;
   /** TenantSubscription.planKey (the tenant's current plan); undefined leaves the fixture's own. */
   planKey?: string | null;
@@ -102,9 +106,16 @@ const NOW_S = () => Math.floor(Date.now() / 1000);
  * called `created`.) Never rebuild this with `created` — that is how F1 hid: the old fixture
  * carried a field the real object does not have.
  */
-function prorationItem(o: { amount: number; date?: number; item?: string; proration?: boolean }) {
+let iiSeq = 0;
+function prorationItem(o: {
+  amount: number;
+  date?: number;
+  item?: string;
+  proration?: boolean;
+  id?: string;
+}) {
   return {
-    id: "ii_1UN35eB7KzYEvmBqc5LbMWYU",
+    id: o.id ?? `ii_1UN35e${String(++iiSeq).padStart(6, "0")}`,
     object: "invoiceitem",
     amount: o.amount,
     currency: "usd",
@@ -149,6 +160,44 @@ function make(opts: Opts = {}) {
   // The subscription's items as Stripe holds them, so a lost response leaves a REAL orphan.
   const stripeItems: any[] = [];
   let itemSeq = 0;
+  // The customer's PENDING proration invoice items, as Stripe holds them: lines that existed before the
+  // call, plus whatever each item change adds. `readStripeProration` takes a before/after diff by id, so
+  // a line from an earlier change can never leak into a later call's figure, however close in time.
+  const defaultLines = () =>
+    opts.stripeProrationCents == null
+      ? []
+      : [
+          prorationItem({ amount: opts.stripeProrationCents }),
+          prorationItem({ amount: 99999, item: "si_OTHER" }), // another item
+          prorationItem({ amount: 55555, proration: false }), // not a proration line of ours
+        ];
+  const pending: any[] = [
+    ...(opts.priorInvoiceItems ??
+      (opts.stripeProrationCents == null || opts.invoiceItems
+        ? []
+        : // on an item that ALREADY exists, an OLDER proration line (an earlier quantity change): not ours.
+          // (A brand-new item has no earlier lines.)
+          opts.addonRow?.stripeItemId
+          ? [
+              prorationItem({
+                amount: 7777,
+                date: NOW_S() - 86400,
+                item: opts.addonRow.stripeItemId,
+              }),
+            ]
+          : [])),
+  ];
+  let changeNo = 0;
+  const stripeAddsLines = (itemId: string, quantity: number) => {
+    changeNo += 1;
+    pending.push(
+      ...(opts.stripeLines
+        ? opts.stripeLines({ n: changeNo, itemId, quantity })
+        : changeNo === 1
+          ? (opts.invoiceItems ?? defaultLines())
+          : []),
+    );
+  };
   const stripeClient = {
     products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
     subscriptionItems: {
@@ -162,6 +211,7 @@ function make(opts: Opts = {}) {
               subscription: args.subscription,
             };
             stripeItems.push(item);
+            stripeAddsLines(item.id, args.quantity);
             if (opts.createTimesOutAfterCreating) throw new Error("ETIMEDOUT");
             return item;
           }),
@@ -170,7 +220,10 @@ function make(opts: Opts = {}) {
       })),
       update: opts.updateFails
         ? jest.fn().mockRejectedValue(opts.updateFails)
-        : jest.fn().mockResolvedValue({ id: "si_1" }),
+        : jest.fn(async (id: string, args: any) => {
+            stripeAddsLines(id, args?.quantity);
+            return { id };
+          }),
       del: opts.delFails
         ? jest.fn().mockRejectedValue(opts.delFails)
         : jest.fn(async (id: string) => {
@@ -179,22 +232,7 @@ function make(opts: Opts = {}) {
             return {};
           }),
     },
-    invoiceItems: {
-      list: jest.fn().mockResolvedValue({
-        data:
-          opts.invoiceItems ??
-          (opts.stripeProrationCents == null
-            ? []
-            : [
-                prorationItem({ amount: opts.stripeProrationCents }),
-                // an OLDER proration line of the same item (e.g. an earlier quantity change): not ours
-                prorationItem({ amount: 7777, date: NOW_S() - 86400 }),
-                prorationItem({ amount: 99999, item: "si_OTHER" }),
-                // not a proration line of ours, same item: must not be summed
-                prorationItem({ amount: 55555, proration: false }),
-              ]),
-      }),
-    },
+    invoiceItems: { list: jest.fn(async () => ({ data: [...pending] })) },
   };
   const stripe = {
     isConfigured: opts.stripeConfigured ?? true,
@@ -389,11 +427,7 @@ describe("self-serve enableAddon — billed through Stripe", () => {
     expect(res.proratedNow).toBe(6.37); // not the 6.4 estimate
     // only the invoice items of THIS subscription item are summed
     expect(stripeClient.invoiceItems.list).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customer: "cus_t1",
-        pending: true,
-        created: { gte: expect.any(Number) },
-      }),
+      expect.objectContaining({ customer: "cus_t1", pending: true }),
     );
   });
 
@@ -1153,10 +1187,10 @@ describe("F1: Stripe's proration is read from the InvoiceItem `date` (2026-08-26
   it("a quantity raise nets the unused-time credit and the remaining-time line of THIS item only", async () => {
     const { svc, events } = make({
       addonRow: billedPack(2),
+      priorInvoiceItems: [prorationItem({ amount: 7777, date: NOW_S() - 86400 })], // an earlier change: not this call
       invoiceItems: [
         prorationItem({ amount: -10000 }), // credit for the unused 2x
         prorationItem({ amount: 14999 }), // remaining-time charge at 3x
-        prorationItem({ amount: 7777, date: NOW_S() - 86400 }), // an earlier change: not this call
         prorationItem({ amount: 99999, item: "si_OTHER" }), // another item
         prorationItem({ amount: 55555, proration: false }), // not a proration line
       ],
@@ -1171,11 +1205,91 @@ describe("F1: Stripe's proration is read from the InvoiceItem `date` (2026-08-26
 
   it("only lines older than this call exist: proratedNow is null, the add-on is still on", async () => {
     const { svc, getRow } = make({
-      invoiceItems: [prorationItem({ amount: 5000, date: NOW_S() - 3600 })],
+      addonRow: billedPack(1),
+      priorInvoiceItems: [prorationItem({ amount: 5000, date: NOW_S() - 3600, item: "si_1" })],
+      invoiceItems: [], // this call added nothing readable
     });
-    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
     expect(res.proratedNow).toBeNull();
-    expect(getRow()).toMatchObject({ active: true, quantity: 1 });
+    expect(getRow()).toMatchObject({ active: true, quantity: 2 });
+  });
+});
+
+describe("F6 (B1110): each change reports only ITS OWN proration lines", () => {
+  /**
+   * Real figures from the sandbox (RESULTS-142170de, item at 5000/month): q1 -> 3 adds -4907 / +14720,
+   * q3 -> 2 adds -14720 / +9813. Before the fix a 2-second backdated window made a change within 2 s
+   * of the previous one return 147.20 and 49.06 (the earlier line leaked in). Lines now are told apart
+   * by id against what was pending BEFORE the call, so the clock never decides.
+   */
+  const lines = (c: { n: number; itemId: string; quantity: number }) =>
+    c.n === 1
+      ? [
+          prorationItem({ amount: -4907, item: c.itemId }),
+          prorationItem({ amount: 14720, item: c.itemId }),
+        ]
+      : [
+          prorationItem({ amount: -14720, item: c.itemId }),
+          prorationItem({ amount: 9813, item: c.itemId }),
+        ];
+
+  it("two changes in the SAME second: 98.13 then -49.07, never 147.20 / 49.06", async () => {
+    const { svc, events } = make({ addonRow: billedPack(1), stripeLines: lines });
+
+    const raise: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    const lower: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+
+    expect(raise.proratedNow).toBe(98.13);
+    expect(lower.proratedNow).toBe(-49.07);
+    const prorated = events.emit.mock.calls
+      .filter(
+        (c: any[]) =>
+          c[1] === BILLING_EVENTS.ADDON_ENABLED || c[1] === BILLING_EVENTS.ADDON_DISABLED,
+      )
+      .map((c: any[]) => c[2]?.prorated);
+    expect(prorated).toEqual([98.13, -49.07]); // the ledger payload carries the same honest figures
+  });
+
+  it("two changes one second apart report only their own lines", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      const { svc } = make({
+        addonRow: billedPack(1),
+        stripeLines: (c) =>
+          lines(c).map((l: any) => ({ ...l, date: Math.floor(Date.now() / 1000) })),
+      });
+      const raise: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+      jest.setSystemTime(Date.now() + 1000);
+      const lower: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+      expect(raise.proratedNow).toBe(98.13);
+      expect(lower.proratedNow).toBe(-49.07);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("a pending line of the same item from an EARLIER change is not summed in", async () => {
+    const { svc } = make({
+      addonRow: billedPack(1),
+      priorInvoiceItems: [prorationItem({ amount: 4907, item: "si_1" })], // still pending from before
+      stripeLines,
+    });
+    function stripeLines(c: { itemId: string }) {
+      return [
+        prorationItem({ amount: -4907, item: c.itemId }),
+        prorationItem({ amount: 14720, item: c.itemId }),
+      ];
+    }
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(res.proratedNow).toBe(98.13);
+  });
+
+  it("if the before-state cannot be read the figure is null (never a guess), and the change still happens", async () => {
+    const m = make({ addonRow: billedPack(1), stripeLines: lines });
+    m.stripeClient.invoiceItems.list.mockRejectedValueOnce(new Error("stripe blip"));
+    const res: any = await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(res.proratedNow).toBeNull();
+    expect(m.getRow()).toMatchObject({ quantity: 3 });
   });
 });
 

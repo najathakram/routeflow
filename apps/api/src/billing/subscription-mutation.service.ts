@@ -2022,45 +2022,67 @@ export class SubscriptionMutationService {
   }
 
   /**
-   * What Stripe actually prorated for `itemId` — the pending proration invoice items of this
-   * subscription item, in dollars. null when it cannot be read (the add-on is on and billed
-   * regardless; the amount then simply shows on the next invoice). Never throws.
+   * The pending proration invoice items of `itemId` on the customer's next invoice, as Stripe holds
+   * them right now. API 2026-08-26.dahlia (pinned, verified against the sandbox + the SDK types): an
+   * InvoiceItem has NO `created` field (its creation time is `date`), and the subscription item a
+   * proration line belongs to is `parent.subscription_details.subscription_item` (the old top-level
+   * `subscription_item` is gone). null when Stripe cannot be read. Never throws.
    */
-  private async readStripeProration(
+  private async pendingProrationLines(
     sub: { stripeCustomerId?: string | null } | null,
     itemId: string,
-    callStartSec: number,
-  ): Promise<number | null> {
+  ): Promise<any[] | null> {
     if (!sub?.stripeCustomerId) return null;
     try {
       const list = await this.stripe.client.invoiceItems.list({
         customer: sub.stripeCustomerId,
         pending: true,
-        // Only lines this call produced: an older proration line of the same item (an earlier
-        // quantity change still pending on the next invoice) must not be summed in. (`created` is
-        // the list REQUEST filter; the object itself carries its creation time as `date`.)
-        created: { gte: callStartSec },
         limit: 100,
       });
-      // API 2026-08-26.dahlia (pinned, verified against the sandbox + the SDK types): an InvoiceItem
-      // has NO `created` field, its creation time is `date`; the subscription item a proration line
-      // belongs to is `parent.subscription_details.subscription_item` (the old top-level
-      // `subscription_item` is gone). Reading `created` here made `proratedNow` null on every call.
-      const mine = (list?.data ?? []).filter(
+      return (list?.data ?? []).filter(
         (ii: any) =>
-          ii?.proration === true &&
-          Number(ii?.date ?? 0) >= callStartSec &&
-          ii?.parent?.subscription_details?.subscription_item === itemId,
+          ii?.proration === true && ii?.parent?.subscription_details?.subscription_item === itemId,
       );
-      if (mine.length === 0) return null;
-      const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
-      return roundMoney(cents / 100);
     } catch (err) {
       this.logger.warn(
-        `Could not read Stripe's proration for item ${itemId}: ${(err as Error).message}`,
+        `Could not read Stripe's pending proration for item ${itemId}: ${(err as Error).message}`,
       );
       return null;
     }
+  }
+
+  /**
+   * The ids of `itemId`'s pending proration lines BEFORE a change — the baseline `readStripeProration`
+   * diffs against. null when unreadable (the figure is then null too, never a guess).
+   */
+  private async pendingProrationIds(
+    sub: { stripeCustomerId?: string | null } | null,
+    itemId: string,
+  ): Promise<Set<string> | null> {
+    const lines = await this.pendingProrationLines(sub, itemId);
+    return lines ? new Set(lines.map((l: any) => String(l.id))) : null;
+  }
+
+  /**
+   * What Stripe actually prorated for `itemId` in THIS call — the pending proration lines of that
+   * subscription item that were not there before the call (`before`, from `pendingProrationIds`), in
+   * dollars. B1110 / F6: told apart by id, not by a time window: a clock window (the old `now - 2 s`)
+   * let a change made within seconds of the previous one pull that change's lines into its own
+   * figure (147.20 for 98.13, 49.06 for -49.07). A brand-new item has no prior lines, so `before` is
+   * empty. null when it cannot be read (the add-on is on and billed regardless; the amount then simply
+   * shows on the next invoice). Never throws.
+   */
+  private async readStripeProration(
+    sub: { stripeCustomerId?: string | null } | null,
+    itemId: string,
+    before: ReadonlySet<string> | null,
+  ): Promise<number | null> {
+    if (!before) return null;
+    const lines = await this.pendingProrationLines(sub, itemId);
+    const mine = (lines ?? []).filter((ii: any) => !before.has(String(ii.id)));
+    if (mine.length === 0) return null;
+    const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
+    return roundMoney(cents / 100);
   }
 
   /**
@@ -2224,8 +2246,6 @@ export class SubscriptionMutationService {
     let createdItemId: string | null = null;
     let proratedNow: number | null = 0;
     let priceSnapshot: number;
-    // Seconds; Stripe's `created` clock. Only proration lines produced AFTER this are ours.
-    const callStartSec = Math.floor(Date.now() / 1000) - 2;
     // Set only for a MANUAL tenant: what the owner must change on the manual invoice.
     let manualNotice: { action: string; kind: "enable" | "reduce" } | null = null;
 
@@ -2241,6 +2261,9 @@ export class SubscriptionMutationService {
       if (!this.stripe.isConfigured) {
         throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
       }
+      // What is already pending for this item BEFORE the change (B1110): this call's own lines are the
+      // ones that appear after it.
+      const priorLines = await this.pendingProrationIds(sub, existing.stripeItemId);
       try {
         await this.stripe.client.subscriptionItems.update(existing.stripeItemId, {
           quantity: qty,
@@ -2254,7 +2277,7 @@ export class SubscriptionMutationService {
       }
       stripeItemId = existing.stripeItemId;
       priceSnapshot = Number(existing.priceSnapshot ?? 0);
-      proratedNow = await this.readStripeProration(sub, stripeItemId, callStartSec);
+      proratedNow = await this.readStripeProration(sub, stripeItemId, priorLines);
     } else if (existing?.active) {
       // Already on with NO Stripe item (a legacy / pilot / manual row): never retro-bill.
       if (mode === "STRIPE" && qty > existing.quantity) {
@@ -2291,7 +2314,7 @@ export class SubscriptionMutationService {
       priceSnapshot = Number(skuDef.monthlyPrice);
       // An adopted item's proration happened in an earlier attempt: no figure to show for it.
       proratedNow = createdItemId
-        ? await this.readStripeProration(sub, createdItemId, callStartSec)
+        ? await this.readStripeProration(sub, createdItemId, new Set()) // a new item has no earlier lines
         : null;
     } else if (mode === "MANUAL") {
       // Manually-invoiced tenant (owner ruling 2026-10-03): on at the CATALOG price, counted as
