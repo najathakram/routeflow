@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
   computeCategoryTax,
+  inferredGoodsFlatRate,
   regulatedUnitBasis,
   roundMoney,
   type CategoryTaxType,
@@ -13,7 +14,32 @@ import {
   assertNoNegativeLineSubtotal,
   storedInvoiceTotals,
 } from "../common/money-invariants.util";
-import { sumConfirmed } from "./payment-predicates";
+import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
+import { isNsfLine } from "./nsf-line";
+import { sumConfirmed, type ConfirmablePaymentRow } from "./payment-predicates";
+
+const logger = new Logger("PriceAdjustment");
+
+/** The `code` a Nest exception body carries (a plain-string exception has none). */
+function codeOf(e: BadRequestException | ConflictException): string | undefined {
+  const body = e.getResponse();
+  return typeof body === "object" ? (body as { code?: string }).code : undefined;
+}
+
+/**
+ * B1058 (SA-651/SA-683): the guards below throw plain-string 400s (shared with create()/update()). Tag the
+ * ones THIS flow owns with MONEY_INVARIANT at the source, same message, so a bulk run can tell a re-judge
+ * refusal from an unknown fault by its code instead of guessing from "is it a 400".
+ */
+function tagMoneyInvariant<T>(guard: () => T): T {
+  try {
+    return guard();
+  } catch (e) {
+    if (e instanceof BadRequestException && !codeOf(e))
+      throw new BadRequestException({ code: API_ERROR_CODES.MONEY_INVARIANT, message: e.message });
+    throw e;
+  }
+}
 
 /**
  * B662: keep the regulated ledger equal to a re-priced invoice, inside the SAME transaction as the invoice
@@ -114,68 +140,147 @@ export function buildPriceAdjustmentUpdates(args: {
   // B1031: the SAME guard create() and update() run, over the lines THIS re-price writes (a stored line it
   // leaves alone is not re-judged, SA-640): `newPrice * multiplier - lineDiscount` below zero stored a
   // negative line subtotal and lowered the invoice total. Pure, so it also covers the in-transaction call.
-  assertNoNegativeLineSubtotal(
-    updates.map((u) => ({
-      description: items.find((i) => i.id === u.id)?.description ?? "item",
-      subtotal: u.data.subtotal,
-    })),
+  tagMoneyInvariant(() =>
+    assertNoNegativeLineSubtotal(
+      updates.map((u) => ({
+        description: items.find((i) => i.id === u.id)?.description ?? "item",
+        subtotal: u.data.subtotal,
+      })),
+    ),
   );
   return updates;
 }
 
+type InvoiceTotalsFacts = {
+  items: any[];
+  discount?: unknown;
+  shippingFee?: unknown;
+  subtotal?: unknown;
+  total?: unknown;
+};
+
 /**
- * B1031 (SA ruling): the same invoice-level totals guard `create()` and `update()` run (discount above the
- * subtotal, negative total), judged on the invoice AS IT WOULD BE after this re-price: the re-priced lines
- * take their new subtotal and levy, every other line keeps its stored one. A lower price against a stored
- * invoice discount can leave discount > subtotal on a SENT invoice, and one bulk action can do it to many.
- * Pure, so it runs before any write, in the same pass as the line guard.
+ * THE totals arithmetic of a re-priced invoice, in one place: round the line sums, `taxAmount =
+ * round(round(Σ subtotal x taxRate) + round(Σ categoryTaxAmount))`, `total = round(subtotal - discount +
+ * shippingFee + taxAmount)`. The pre-flight projection (`projectedTotals`) and the tx write
+ * (`commitPriceAdjustment`) BOTH call it, so the figure judged before a write is the figure the write stores
+ * (B1058; the projected == written db case pins it).
  */
-export function assertAdjustedTotalsSane(
-  inv: {
-    items: any[];
-    discount?: unknown;
-    shippingFee?: unknown;
-    subtotal?: unknown;
-    total?: unknown;
-  },
-  updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
-): void {
-  const byId = new Map(updates.map((u) => [u.id, u.data]));
-  const lines = inv.items.map((li) => (byId.has(li.id) ? { ...li, ...byId.get(li.id) } : li));
+export function totalsFromLines(
+  lines: ReadonlyArray<{ subtotal?: unknown; taxRate?: unknown; categoryTaxAmount?: unknown }>,
+  invoice: { discount?: unknown; shippingFee?: unknown },
+): { subtotal: number; taxAmount: number; total: number; discount: number } {
   const subtotal = roundMoney(lines.reduce((s, li) => s + Number(li.subtotal), 0));
   const regularTax = roundMoney(
     lines.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
   );
   const categoryTax = roundMoney(lines.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0));
-  const discount = Number(inv.discount ?? 0);
-  const total = roundMoney(
-    subtotal - discount + Number(inv.shippingFee ?? 0) + roundMoney(regularTax + categoryTax),
-  );
-  // SA-651 NOT-WORSE: judged against the invoice's STORED totals, so a legacy invoice that is already
-  // insane still takes a re-price that does not make it worse (a price raise), never refusing every one.
-  assertInvoiceTotalsSane({ discount, subtotal, total }, storedInvoiceTotals(inv));
+  const taxAmount = roundMoney(regularTax + categoryTax);
+  const discount = Number(invoice.discount ?? 0);
+  const total = roundMoney(subtotal - discount + Number(invoice.shippingFee ?? 0) + taxAmount);
+  return { subtotal, taxAmount, total, discount };
 }
 
-/** A bulk refusal: the re-judge's own 400 (a bad line or totals) or 409 (the invoice moved under its lock). */
+/**
+ * The invoice's totals AS THEY WOULD BE after this re-price: the re-priced lines take their new subtotal and
+ * levy, every other line keeps its stored one, then `totalsFromLines`. `flatRate` is B294's inferred rate,
+ * which the tx stamps on every non-NSF line still at taxRate 0 BEFORE it totals; pass it only where the
+ * projection must equal the stored total (the overpay judgment).
+ */
+function projectedTotals(
+  inv: InvoiceTotalsFacts,
+  updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
+  flatRate?: number,
+): { discount: number; subtotal: number; total: number } {
+  const byId = new Map(updates.map((u) => [u.id, u.data]));
+  const lines = inv.items.map((li) => {
+    const line = byId.has(li.id) ? { ...li, ...byId.get(li.id) } : li;
+    return flatRate != null && Number(line.taxRate ?? 0) === 0 && !isNsfLine(line)
+      ? { ...line, taxRate: flatRate }
+      : line;
+  });
+  return totalsFromLines(lines, inv);
+}
+
+/**
+ * B1031 (SA ruling): the same invoice-level totals guard `create()` and `update()` run (discount above the
+ * subtotal, negative total), judged on the invoice AS IT WOULD BE after this re-price (`projectedTotals`).
+ * A lower price against a stored invoice discount can leave discount > subtotal on a SENT invoice, and one
+ * bulk action can do it to many. Pure, so it runs before any write, in the same pass as the line guard.
+ */
+export function assertAdjustedTotalsSane(
+  inv: InvoiceTotalsFacts,
+  updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
+): void {
+  const after = projectedTotals(inv, updates);
+  // SA-651 NOT-WORSE: judged against the invoice's STORED totals, so a legacy invoice that is already
+  // insane still takes a re-price that does not make it worse (a price raise), never refusing every one.
+  tagMoneyInvariant(() => assertInvoiceTotalsSane(after, storedInvoiceTotals(inv)));
+}
+
+/**
+ * The two reads the category-tax reference needs: a tenant client (the pre-flight) or a transaction (the write).
+ * Structural, so a Prisma client, a tenant-extended client and a test double all fit.
+ */
+export type PriceReferenceDb = {
+  trackedCategory: { findMany(args: any): PromiseLike<any[]> };
+  product: { findMany(args: any): PromiseLike<any[]> };
+};
+
+/** A bulk refusal: the re-judge's own 400 (a bad line, totals or an overpayment) or 409 (the invoice moved under its lock). */
 type BulkRefusal = BadRequestException | ConflictException;
 const isBulkRefusal = (e: unknown): e is BulkRefusal =>
   e instanceof BadRequestException || e instanceof ConflictException;
 
 type BulkTarget = { id: string; invoiceNumber?: string | null };
 const invoiceLabel = (inv: BulkTarget): string => inv.invoiceNumber || inv.id;
+const money = (n: number): string => `$${n.toFixed(2)}`;
 
 /**
- * SA-651 MED-1 (a): the refusal of one invoice inside a bulk run, same status and same `code` (when it carries
- * one), its message prefixed "Invoice X:" so the operator can see WHICH of the batch it was.
+ * SA-683: the refusal codes this flow OWNS. Each guard tags its own 400/409 at the source (MONEY_INVARIANT for
+ * a line or the totals, PRICE_ADJUSTMENT_OVERPAYS for the payment guard, INVOICE_CHANGED_CONCURRENTLY for the
+ * lock's 409s), so the bulk report echoes exactly these. Anything else (an untagged or foreign refusal) is the
+ * generic PRICE_ADJUSTMENT_REFUSED: a code the client was never told about is not guessed into a money label.
+ */
+const KNOWN_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.MONEY_INVARIANT,
+  API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
+  API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+]);
+const reportedCode = (e: BulkRefusal): string => {
+  const code = codeOf(e);
+  return code && KNOWN_REFUSAL_CODES.has(code) ? code : API_ERROR_CODES.PRICE_ADJUSTMENT_REFUSED;
+};
+
+/**
+ * SA-651 MED-1 (a): the refusal of one invoice inside a bulk run, same status and same body (code and any
+ * structured fields), its message prefixed "Invoice X:" so the operator can see WHICH of the batch it was.
  */
 function refusalNamingInvoice(inv: BulkTarget, e: BulkRefusal): BulkRefusal {
   const message = `Invoice ${invoiceLabel(inv)}: ${e.message}`;
-  const body = e.getResponse();
-  const code = typeof body === "object" ? (body as { code?: string }).code : undefined;
-  const response = code ? { code, message } : message;
+  const code = codeOf(e);
+  // A coded body keeps its structured fields (B1058: the overpay refusal's `overpaid` list), only the message is prefixed.
+  const response = code ? { ...(e.getResponse() as object), message } : message;
   return e instanceof ConflictException
     ? new ConflictException(response)
     : new BadRequestException(response);
+}
+
+/**
+ * B1058 (SA-683): ONE 400 for every invoice a bulk re-price would leave overpaid, each with its number and the
+ * overage in cents (`roundMoney`), so the operator fixes the whole batch at once instead of one refusal per
+ * run. Nothing was written when this is thrown.
+ */
+function collectedOverpayRefusal(rows: PriceAdjustmentOverpaidInvoice[]): BadRequestException {
+  const list = rows.map((r) => `${r.invoiceNumber || r.invoiceId} by ${money(r.overpaidBy)}`);
+  const noun = rows.length === 1 ? "invoice" : "invoices";
+  return new BadRequestException({
+    code: API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
+    message:
+      `This price change would leave ${rows.length} ${noun} overpaid: ${list.join(", ")}. ` +
+      `Nothing was changed. Issue a credit note on each of them instead.`,
+    overpaid: rows,
+  });
 }
 
 /**
@@ -183,41 +288,74 @@ function refusalNamingInvoice(inv: BulkTarget, e: BulkRefusal): BulkRefusal {
  * refusal found on invoice N would leave invoices 1..N-1 already re-priced. Judge every target first, from
  * the lines as read, writing nothing; a refusal names the invoice.
  *
+ * Two kinds of refusal, both before ANY write. A bad line or insane totals (B1031/B1030) stops at the FIRST
+ * offender, named. An OVERPAYMENT (B1051, collected here under B1058) is gathered across the WHOLE batch and
+ * thrown once, listing every offender. The new total it judges is `projectedTotals` with the same regular
+ * tax, category tax (re-derived from the new subtotals, so the reference data is read through `db`) and B294
+ * flat rate the tx will write; the paid side is CONFIRMED payments only (DRAFT / PENDING money is ignored,
+ * exactly as the tx and the status recompute do).
+ *
  * ALL-OR-NOTHING IS JUDGED HERE, AT PRE-FLIGHT; THE TX RE-JUDGES PER INVOICE (SA-651 MED-1). The pre-flight
  * holds no lock (a lock across a whole batch is not worth its footprint), so each invoice's tx re-judges the
- * lines it re-reads under that invoice's own Invoice lock: every invoice stays sane, a race can still refuse,
- * never store a negative line. What a race can leave is a PARTIAL batch (1..N-1 committed, N refused), which
- * `applyBulkPriceAdjustment` reports as a structured result, never as a bare error.
+ * lines and payments it re-reads under that invoice's own Invoice lock: every invoice stays sane and never
+ * overpaid, a race can still refuse, never store a negative line or an overpayment. What a race can leave is
+ * a PARTIAL batch (1..N-1 committed, N refused), which `applyBulkPriceAdjustment` reports as a structured
+ * result, never as a bare error.
+ *
+ * Returns each target's PROJECTED new total (invoice id -> cents), the figure the overpay judgment used; the
+ * db spec compares it to the total the real run then writes, to the cent.
  */
-export function preflightBulkPriceAdjustment(
+export async function preflightBulkPriceAdjustment(
   plans: ReadonlyArray<{
-    inv: {
-      id: string;
-      invoiceNumber?: string | null;
+    inv: BulkTarget & {
       items: any[];
       discount?: unknown;
       shippingFee?: unknown;
       subtotal?: unknown;
+      taxAmount?: unknown;
       total?: unknown;
+      payments?: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null;
     };
     localMap: Map<string, number>;
   }>,
   isTaxExempt: boolean,
-): void {
+  db: PriceReferenceDb,
+): Promise<ReadonlyMap<string, number>> {
+  const overpaid: PriceAdjustmentOverpaidInvoice[] = [];
+  const projected = new Map<string, number>();
   for (const { inv, localMap } of plans) {
     try {
+      const reference = await loadPriceAdjustmentReference(db, inv.items, localMap);
       const updates = buildPriceAdjustmentUpdates({
         items: inv.items,
         localPriceMap: localMap,
-        categoriesById: new Map(),
-        unitsPerBoxByProduct: new Map(),
         isTaxExempt,
+        ...reference,
       });
       assertAdjustedTotalsSane(inv, updates);
+      const flat = inferredGoodsFlatRate({
+        subtotal: inv.subtotal,
+        taxAmount: inv.taxAmount,
+        lines: inv.items,
+      });
+      const newTotal = projectedTotals(inv, updates, flat?.verified ? flat.rate : undefined).total;
+      projected.set(inv.id, newTotal);
+      const entry = overpaidEntry(inv, sumConfirmed(inv.payments), newTotal);
+      if (entry) overpaid.push(entry);
     } catch (e) {
       throw isBulkRefusal(e) ? refusalNamingInvoice(inv, e) : e;
     }
   }
+  if (overpaid.length > 0) throw collectedOverpayRefusal(overpaid);
+  return projected;
+}
+
+/** SA-683: what a bulk run that stopped after >= 1 commit leaves in the log (ids only, no money, no names). */
+function logPartial(what: string, applied: string[], failingId: string, error: unknown): void {
+  logger.warn(
+    `bulk price adjustment ${what}: applied [${applied.join(", ")}], failing ${failingId}: ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 /**
@@ -225,15 +363,22 @@ export function preflightBulkPriceAdjustment(
  * ONE invoice and calls `onCommitted` the moment its transaction has committed (before the post-commit
  * commission and order syncs), so only a refusal from the tx re-judge or the Invoice lock is treated as one.
  *
- * Semantics: STOP at the first tx refusal. A refusal here means the invoices changed since the pre-flight
- * read them, so the premise of the rest of the batch is gone; nothing further is written. Re-running the
- * same bulk request later is safe (a re-price to the same price re-derives the same subtotal) and finishes
- * the skipped invoices.
+ * Semantics: STOP at the first failure. A refusal here means the invoices changed since the pre-flight read
+ * them, so the premise of the rest of the batch is gone; nothing further is written. Re-running the same bulk
+ * request later is safe (a re-price to the same price re-derives the same subtotal) and finishes the skipped
+ * invoices.
  *   - nothing committed yet: the refusal is rethrown as is, named "Invoice X:" (the batch is still
  *     all-or-nothing);
  *   - 1..N-1 committed: a 409 `PRICE_ADJUSTMENT_PARTIAL` whose body lists `applied` (invoice ids),
- *     `refused` ({invoiceId, code, message}) and `skipped` (ids never attempted), with fixed copy.
- * A fault that is not a refusal (the database failing) propagates unchanged.
+ *     `refused` ({invoiceId, invoiceNumber, code, message}; the code is echoed only when it is a KNOWN
+ *     refusal code, else PRICE_ADJUSTMENT_REFUSED) and `skipped` (ids never attempted), with fixed copy;
+ *   - B1058: invoice N COMMITTED and a post-commit sync then threw (the follow-up sync: the linked order's totals, then commissions): the same 409
+ *     with `applied` INCLUDING N and `syncFailed` ({invoiceId, invoiceNumber}) in place of `refused`. Never a
+ *     bare error: the invoice is priced, so the operator must be told which order to look at. The raw error
+ *     goes to the log, not the body. (Chosen over swallowing the throw: the order totals have no healing
+ *     cron, so a swallowed failure would leave them stale with nothing to say so; the run is idempotent.)
+ * A fault that is not a refusal and not post-commit (the database failing inside the tx) propagates unchanged,
+ * after a warn naming what had committed and which invoice failed (SA-683: a 500 hides that).
  */
 export async function applyBulkPriceAdjustment<T extends BulkTarget>(
   plans: ReadonlyArray<{ inv: T; localMap: Map<string, number> }>,
@@ -242,30 +387,42 @@ export async function applyBulkPriceAdjustment<T extends BulkTarget>(
   const applied: string[] = [];
   for (const [index, { inv, localMap }] of plans.entries()) {
     let committed = false;
+    const base = {
+      code: API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL,
+      applied,
+      skipped: plans.slice(index + 1).map((p) => p.inv.id),
+    };
+    const invoiceNumber = inv.invoiceNumber ?? null;
     try {
       await apply(inv, localMap, () => {
         committed = true;
         applied.push(inv.id);
       });
     } catch (e) {
-      if (committed || !isBulkRefusal(e)) throw e;
+      if (committed) {
+        logPartial("post-commit sync failed", applied, inv.id, e);
+        throw new ConflictException({
+          ...base,
+          message: `${applied.length} of ${plans.length} invoices were updated; invoice ${invoiceLabel(inv)} was updated, but its follow-up sync (order totals and commissions) did not finish. Review it, then run the change again.`,
+          syncFailed: { invoiceId: inv.id, invoiceNumber },
+        });
+      }
+      if (!isBulkRefusal(e)) {
+        if (applied.length > 0) logPartial("fault", applied, inv.id, e);
+        throw e;
+      }
       const refusal = refusalNamingInvoice(inv, e);
       if (applied.length === 0) throw refusal;
-      const body = refusal.getResponse() as { code?: string };
+      logPartial("refused", applied, inv.id, e);
       throw new ConflictException({
-        code: API_ERROR_CODES.PRICE_ADJUSTMENT_PARTIAL,
+        ...base,
         message: `${applied.length} of ${plans.length} invoices were updated; invoice ${invoiceLabel(inv)} changed while saving — review it`,
-        applied,
         refused: {
           invoiceId: inv.id,
-          code:
-            body.code ??
-            (e instanceof ConflictException
-              ? API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY
-              : API_ERROR_CODES.MONEY_INVARIANT),
+          invoiceNumber,
+          code: reportedCode(e),
           message: refusal.message,
         },
-        skipped: plans.slice(index + 1).map((p) => p.inv.id),
       });
     }
   }
@@ -284,7 +441,7 @@ export async function applyBulkPriceAdjustment<T extends BulkTarget>(
  * unitsPerBox on the first re-price (the same fetch orders.service.recomputeLineCategoryTaxes carries).
  */
 export async function loadPriceAdjustmentReference(
-  tx: any,
+  tx: PriceReferenceDb,
   items: any[],
   localPriceMap: Map<string, number>,
 ): Promise<{
@@ -333,9 +490,10 @@ export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<
     live.status === InvoiceStatus.WRITTEN_OFF ||
     live.status === InvoiceStatus.VOID
   ) {
-    throw new ConflictException(
-      `The invoice became ${live.status} while the price was being adjusted. Issue a credit note instead.`,
-    );
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+      message: `The invoice became ${live.status} while the price was being adjusted. Issue a credit note instead.`,
+    });
   }
   const ids = (rows: any[]) =>
     rows
@@ -343,20 +501,85 @@ export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<
       .sort()
       .join("|");
   if (ids(live.items ?? []) !== ids(inv.items ?? [])) {
-    throw new ConflictException(
-      "The invoice's lines changed while the price was being adjusted. Retry.",
-    );
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+      message: "The invoice's lines changed while the price was being adjusted. Retry.",
+    });
   }
   return { ...inv, ...live };
+}
+
+/**
+ * B1051: dollars by which the CONFIRMED payments exceed the invoice's new total (0 when they do not). Both
+ * sides are rounded to cents BEFORE the comparison (L-170), so paid == new total is NOT an overpayment.
+ * Nothing paid is never an overpayment: an invoice that is ALREADY insane (a negative total, SA-651 NOT-WORSE)
+ * may still be re-priced when the edit improves it, and "$0 paid > -$60" must not read as $60 overpaid.
+ * The one place the figure is derived: the pre-flight (`preflightBulkPriceAdjustment`) and the in-tx guard
+ * below both call it.
+ */
+export function overpaymentOf(confirmedPaid: number, newTotal: number): number {
+  const paid = roundMoney(confirmedPaid);
+  return paid > 0 ? Math.max(0, roundMoney(paid - roundMoney(newTotal))) : 0;
+}
+
+/**
+ * The overpaid-list entry of one invoice (null when the CONFIRMED payments do not exceed its new total): what
+ * both the pre-flight's collected 400 and the in-tx guard's 400 carry, so every overpay refusal has the SAME
+ * `overpaid` shape (B1058).
+ */
+function overpaidEntry(
+  inv: BulkTarget,
+  confirmedPaid: number,
+  newTotal: number,
+): PriceAdjustmentOverpaidInvoice | null {
+  const overpaidBy = overpaymentOf(confirmedPaid, newTotal);
+  return overpaidBy > 0
+    ? {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber ?? null,
+        paid: roundMoney(confirmedPaid),
+        newTotal: roundMoney(newTotal),
+        overpaidBy,
+      }
+    : null;
+}
+
+/**
+ * B1051: a price adjustment must never take an invoice's total BELOW what the customer has already paid
+ * (CONFIRMED payments, the same basis the status recompute uses, read under the Invoice lock). A settled
+ * (PAID) invoice is refused up front with "issue a credit note instead"; a re-price that would MAKE the
+ * invoice overpaid is the same act and gets the same answer. DRAFT and PENDING payments are not counted.
+ * B1058: this is the RACE re-judge for a bulk run (its pre-flight judges every target first); it is the
+ * only judge for the SINGLE scope. Tagged PRICE_ADJUSTMENT_OVERPAYS, and the body ALWAYS carries the
+ * one-entry `overpaid` list (the client renders from it, never from `message`).
+ */
+export function assertNotOverpaidByPriceChange(
+  confirmedPaid: number,
+  newTotal: number,
+  inv: BulkTarget,
+): void {
+  const entry = overpaidEntry(inv, confirmedPaid, newTotal);
+  if (entry) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
+      message:
+        `This price change would leave the invoice overpaid by ${money(entry.overpaidBy)} ` +
+        `(paid ${money(entry.paid)}, new total ${money(entry.newTotal)}). ` +
+        `Issue a credit note instead.`,
+      overpaid: [entry],
+    });
+  }
 }
 
 /**
  * The transaction body of `applyPriceAdjustment` (B662), AFTER the line writes (those stay in the service so the
  * order/invoice line-writer coverage scanners still see this writer): recompute the invoice totals from the fresh
  * lines, persist them with the status recomputed from CONFIRMED payments against the NEW total
- * (F03/R4/T-B74: a lowered total a payment already covered must not keep a stale SENT/PARTIAL status; an
- * overpayment needs no special handling, recomputeStatus flips to PAID and balanceDue floors at 0), and sync
- * the regulated ledger, all in `tx` so they commit or fail TOGETHER. Category (excise) tax is persisted per
+ * (F03/R4/T-B74: a lowered total a payment already covered must not keep a stale SENT/PARTIAL status), and
+ * sync the regulated ledger, all in `tx` so they commit or fail TOGETHER. B1051: a total BELOW the CONFIRMED
+ * payments is refused (`assertNotOverpaidByPriceChange`), never written: recomputeStatus would land PAID and
+ * balanceDue floors at 0, so the customer's overpayment would show nowhere. The refusal throws before any
+ * write of this function, and the caller's line writes roll back with it. Category (excise) tax is persisted per
  * line and is NOT part of taxRate: omitting it would under-bill excise and propagate the shortfall to the
  * linked order. The per-line write honours exemption, so this sum is exemption-correct by construction.
  * paidAt is paired with the status like every sibling status writer, or a PAID invoice keeps paidAt NULL and
@@ -373,24 +596,11 @@ export async function commitPriceAdjustment(args: {
 }): Promise<void> {
   const { inv, itemUpdates, auditLine, tx, recomputeStatus } = args;
   const updatedItems: any[] = await tx.invoiceItem.findMany({ where: { invoiceId: inv.id } });
-  const subtotal = roundMoney(updatedItems.reduce((s, li) => s + Number(li.subtotal), 0));
-  const regularTax = roundMoney(
-    updatedItems.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
-  );
-  const categoryTaxTotal = roundMoney(
-    updatedItems.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-  );
-  const taxAmount = roundMoney(regularTax + categoryTaxTotal);
-  const total = roundMoney(
-    subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
-  );
+  const { subtotal, taxAmount, total } = totalsFromLines(updatedItems, inv);
   const existingInternal = inv.internalNotes ?? "";
-  const newStatus = recomputeStatus(
-    sumConfirmed(inv.payments),
-    total,
-    inv.dueDate ?? null,
-    inv.status,
-  );
+  const confirmedPaid = sumConfirmed(inv.payments);
+  assertNotOverpaidByPriceChange(confirmedPaid, total, inv); // B1051: before ANY invoice or ledger write
+  const newStatus = recomputeStatus(confirmedPaid, total, inv.dueDate ?? null, inv.status);
   await tx.invoice.update({
     where: { id: inv.id },
     data: {
