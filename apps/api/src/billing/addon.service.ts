@@ -51,6 +51,14 @@ export function isStripeResourceMissing(err: unknown): boolean {
  * of logging and continuing, so a tenant is never billed for something disabled
  * only in our database, or granted something never billed in Stripe (B107).
  */
+/** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
+export interface EnableAddonOptions {
+  /** Grant free on purpose: isComp true, price 0, no Stripe item, nothing booked. */
+  comp?: boolean;
+  /** Internal: `uncompAddon`'s billed branch re-enters here to bill an active comp row. */
+  uncomp?: boolean;
+}
+
 @Injectable()
 export class AddonService {
   private readonly logger = new Logger(AddonService.name);
@@ -224,7 +232,15 @@ export class AddonService {
     addonKey: string,
     stripePriceId?: string,
     acknowledgeUnmetRequires?: boolean,
+    opts?: EnableAddonOptions,
   ) {
+    // SA-693: `comp` is an EXPLICIT choice, never derived from "no Stripe item". A comp is granted free
+    // on purpose: no Stripe item even on a subscribed tenant (a price id that rides along is ignored),
+    // price 0, nothing booked. `uncomp` is the internal re-entry of `uncompAddon`'s billed branch: it
+    // may re-activate (bill) a row that is currently an ACTIVE comp, which a plain enable refuses.
+    const comp = opts?.comp === true;
+    const uncomp = opts?.uncomp === true;
+    if (comp) stripePriceId = undefined;
     // Check tenant exists — not part of the race (immutable for this call), so it stays
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
@@ -261,7 +277,7 @@ export class AddonService {
           // Check if add-on already exists — keyed either way (#2188 / SA-385).
           const existing = await findAddonRow(this.prisma, tenantId, lockSku);
 
-          if (existing?.active) {
+          if (existing?.active && !(uncomp && existing.isComp)) {
             throw new ConflictException(
               `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
             );
@@ -364,7 +380,7 @@ export class AddonService {
             // created (mirroring disableAddon's own Stripe-cleanup handling) rather than leave
             // a live item nothing points to.
             const current = await findAddonRow(tx, tenantId, lockSku);
-            if (current?.active) {
+            if (current?.active && !(uncomp && current.isComp)) {
               if (stripeItemId) {
                 try {
                   await this.stripe.client.subscriptionItems.del(stripeItemId);
@@ -399,9 +415,13 @@ export class AddonService {
                 // stale quantity from a prior admin-only grant never survives a re-enable.
                 quantity: 1,
                 priceSnapshot,
+                isComp: comp,
               },
               update: {
                 active: true,
+                // SA-693: written on EVERY enable, so a re-activated row never keeps a stale flag
+                // (a billed enable of a disabled comp resets it; a comp enable sets it).
+                isComp: comp,
                 // FIX-865B finding #1 (r2): `skuToStore` is null whenever this enable is
                 // unbridged with no resolvable catalog SKU (e.g. a legacy key re-enabled by
                 // an admin with no stripePriceId) — that says nothing about whether the
@@ -411,7 +431,7 @@ export class AddonService {
                 // `undefined` (leave the column untouched) instead of clobbering it; only the
                 // create branch below may legitimately write a fresh row's sku as null.
                 sku: skuToStore ?? undefined,
-                stripePriceId: stripePriceId ?? undefined,
+                stripePriceId: comp ? null : (stripePriceId ?? undefined),
                 stripeItemId: stripeItemId ?? undefined,
                 // B865 / SA-277: the Stripe item is always quantity 1 — a stale quantity from an
                 // earlier grant must not survive a re-enable.
@@ -464,7 +484,87 @@ export class AddonService {
   }
 
   /**
+   * SA-693: turn an ACTIVE comp row back into a normal (non-comp) one. It NEVER silently starts billing:
+   *  - tenant WITHOUT a Stripe subscription: only the flag flips (the row stays unbilled, price 0, as it
+   *    was); the SA-690 checkout gate then treats it like any other unbilled self-serve row.
+   *  - tenant WITH a Stripe subscription: the normal BILLED enable path runs (a catalog price id is
+   *    required, a Stripe item is created, the price is booked) via `enableAddon(..., { uncomp: true })`.
+   *    It refuses 400 without a price id rather than leave an active unbilled row on a paying tenant. A
+   *    Stripe failure leaves the comp exactly as it was.
+   * Takes the SAME advisory key as enableAddon and the self-serve path. Disable is a different path and
+   * takes no lock (see `disableAddon`).
+   */
+  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, slug: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+
+    const lockSku = addonCodeOf(addonKey);
+    const row = await findAddonRow(this.prisma, tenantId, lockSku);
+    if (!row) throw new NotFoundException(`Add-on "${addonKey}" not found for tenant ${tenantId}`);
+    if (!row.active || !row.isComp) {
+      throw new ConflictException(
+        `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
+      );
+    }
+
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    if (sub?.stripeSubId) {
+      if (!stripePriceId) {
+        throw new BadRequestException(
+          `Tenant ${tenant.slug} has a Stripe subscription — pass the add-on's stripePriceId to bill ` +
+            `"${addonKey}", or disable it; uncomping must never leave an active add-on unbilled`,
+        );
+      }
+      return this.enableAddon(tenantId, addonKey, stripePriceId, true, { uncomp: true });
+    }
+
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: `addon:${tenantId}:${lockSku}`, mode: "wait", waitMs: 10_000 },
+        async () => {
+          const updated = await this.prisma.$transaction(async (tx) => {
+            await lockTenantForLedger(tx, tenantId);
+            const current = await findAddonRow(tx, tenantId, lockSku);
+            if (!current?.active || !current.isComp) {
+              throw new ConflictException(
+                `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
+              );
+            }
+            return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+          });
+          this.entitlements.invalidate(tenantId);
+          this.featureResolver.invalidate(tenantId);
+          this.logger.log(`Add-on "${addonKey}" uncomped (flag only) for tenant ${tenant.slug}`);
+          return updated;
+        },
+      );
+      if (!result.acquired) {
+        throw new ServiceUnavailableException(
+          `Could not uncomp add-on "${addonKey}" for tenant ${tenant.slug} — lock unavailable`,
+        );
+      }
+      return result.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException(
+          `Could not serialise uncomping add-on "${addonKey}" for tenant ${tenant.slug} — retry shortly`,
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Disable an add-on for a tenant.
+   *
+   * SA-671d: this path takes NO advisory lock, and must never gain one. Business-profile confirm
+   * (`withConfirmLock`, #3199) calls it while already holding the add-on advisory keys, so a lock here
+   * would wait on a key its own caller holds and self-block the confirm. The row-level `FOR UPDATE` in
+   * the transaction below is the only serialisation. Pinned in addon.comp.sa693.spec.ts.
+   *
    * If the add-on has a Stripe subscription item, it must actually be removed
    * (or already gone) before the entitlement is turned off — a Stripe failure
    * other than "already deleted" refuses the call so we never keep billing for

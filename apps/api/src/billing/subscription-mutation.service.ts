@@ -149,6 +149,13 @@ const ADDON_ANNUAL_REFUSAL: AddonRefusal = {
   message: ADDON_ANNUAL_NOT_SUPPORTED,
 };
 
+/** SA-693: the fixed refusal of a tenant's quantity change on an ACTIVE comp row. */
+const ADDON_COMP_REFUSAL: AddonRefusal = {
+  code: API_ERROR_CODES.ADDON_COMP_MANAGED_BY_SUPPORT,
+  message:
+    "This add-on was set up for you by support, so its quantity can't be changed here. Please contact support.",
+};
+
 /** The fixed refusal for an add-on the tenant's plan already bundles (F3). */
 function addonIncludedRefusal(addonName: string): AddonRefusal {
   return {
@@ -381,6 +388,7 @@ export class SubscriptionMutationService {
           x.code != null &&
           !desired.has(x.code) &&
           isSelfServiceAddon(x.code) &&
+          !x.row.isComp &&
           x.row.stripeItemId,
       );
     for (const { row, code } of droppedBilled) {
@@ -472,7 +480,16 @@ export class SubscriptionMutationService {
       const byAge = [...lockedAddons].sort(
         (a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0),
       );
-      const codes = new Set<string>(desired.keys());
+      // SA-693: an ACTIVE comp is a platform grant, not the tenant's to drop or re-price. A plan
+      // choice / cycle switch (which sends no add-ons) must never remove it, and naming it in addons[]
+      // must not turn it into a billable row: it is left exactly as it is, for support to manage.
+      const compCodes = new Set<string>();
+      for (const row of lockedAddons) {
+        const code = addonSkuCode(row);
+        if (code && row.isComp) compCodes.add(code);
+      }
+      const desiredNow = new Map([...desired].filter(([code]) => !compCodes.has(code)));
+      const codes = new Set<string>(desiredNow.keys());
       for (const row of lockedAddons) {
         const code = addonSkuCode(row);
         if (code) codes.add(code);
@@ -490,9 +507,12 @@ export class SubscriptionMutationService {
       // every add-on the trial had enabled — and the card checkout that bills them never saw one. They
       // stay on, price 0 and unbilled, until that checkout puts them on Stripe items; the crossing
       // below books them through `bookAddonsOnCrossing` like any other kept add-on.
+      // SA-693: an ACTIVE comp is never the tenant's to drop either (`compCodes`).
       const toDisable = wasTrial
         ? []
-        : [...priorByCode.keys()].filter((c) => !desired.has(c) && isSelfServiceAddon(c));
+        : [...priorByCode.keys()].filter(
+            (c) => !desiredNow.has(c) && !compCodes.has(c) && isSelfServiceAddon(c),
+          );
 
       // B1 guard: a dropped add-on whose Stripe item was NOT removed above (it appeared after the
       // pre-tx read) must never be switched off while its item keeps billing — refuse, retryable.
@@ -550,7 +570,7 @@ export class SubscriptionMutationService {
           readOnlyReason: null,
         },
       });
-      for (const [code, qty] of desired) {
+      for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
         // the admin path keyed on a legacy addonKey, active or not — else create it.
@@ -564,8 +584,16 @@ export class SubscriptionMutationService {
             quantity: qty,
             active: true,
             priceSnapshot: meta.monthlyPrice,
+            isComp: false,
           },
-          update: { sku: code, quantity: qty, active: true, priceSnapshot: meta.monthlyPrice },
+          update: {
+            sku: code,
+            quantity: qty,
+            active: true,
+            priceSnapshot: meta.monthlyPrice,
+            // SA-693: self-serve is billable; an INACTIVE comp row re-activated here stops being one.
+            isComp: false,
+          },
         });
       }
       for (const code of toDisable) {
@@ -601,7 +629,7 @@ export class SubscriptionMutationService {
       // already-booked add-on nets its real change); otherwise {0,0}, since a non-paying
       // tenant's add-on never booked anything to begin with, so the crossing books its FULL
       // current contribution instead of the (unbooked) prior→new delta.
-      for (const [code, qty] of desired) {
+      for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         const prior = priorByCode.get(code);
         const before =
@@ -672,7 +700,7 @@ export class SubscriptionMutationService {
       // tenant was already paying, its contribution is already on the ledger and nothing changes.
       const kept = lockedAddons.filter((row) => {
         const code = addonSkuCode(row);
-        return code != null && !desired.has(code) && !toDisable.includes(code);
+        return code != null && !desiredNow.has(code) && !toDisable.includes(code);
       });
       if (kept.length > 0) {
         await bookAddonsOnCrossing(
@@ -2280,6 +2308,11 @@ export class SubscriptionMutationService {
       return { changed: false, proratedNow: 0, billing: existingBilling };
     }
 
+    // SA-693: an ACTIVE comp is a platform grant: its quantity is support's to manage, never the
+    // tenant's (a change here would otherwise start billing a row nobody agreed to bill). Refused
+    // before any Stripe call, write or ledger event. A DISABLED comp falls through and re-bills below.
+    if (existing?.active && existing.isComp) throw refusalException(ADDON_COMP_REFUSAL);
+
     let stripeItemId: string | null = null;
     let createdItemId: string | null = null;
     let proratedNow: number | null = 0;
@@ -2394,12 +2427,15 @@ export class SubscriptionMutationService {
             active: true,
             priceSnapshot,
             stripeItemId,
+            isComp: false,
           },
           update: {
             sku,
             quantity: qty,
             active: true,
             priceSnapshot,
+            // SA-693: self-serve is billable: it never writes a comp and resets a re-activated one.
+            isComp: false,
             ...(stripeItemId ? { stripeItemId } : {}),
           },
         });
