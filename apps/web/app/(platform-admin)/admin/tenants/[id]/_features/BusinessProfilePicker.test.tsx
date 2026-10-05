@@ -364,6 +364,21 @@ describe("BusinessProfilePicker — a stale preview is re-run before Confirm (#3
     );
   });
 
+  it("while the fresh preview is still loading, Confirm is disabled and says Refreshing…", async () => {
+    mockApply.mockRejectedValueOnce(apiError(409, { code: API_ERROR_CODES.PROFILE_PLAN_CHANGED }));
+    await renderPicker();
+    const dialog = await openPreview();
+    let finish: (v: unknown) => void = () => {};
+    mockPreview.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    const button = await within(dialog).findByRole("button", { name: "Refreshing…" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(mockApply).toHaveBeenCalledTimes(1); // no second apply while refreshing
+    finish(shippingPreviewWithBilling({ planFingerprint: "d".repeat(64) }));
+    expect(await within(dialog).findByRole("button", { name: "Confirm" })).toBeEnabled();
+  });
+
   it("a partial apply (billing stopped for some) reloads the page AND re-previews before Confirm", async () => {
     mockApply.mockRejectedValueOnce(
       apiError(503, {

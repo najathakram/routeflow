@@ -17,6 +17,7 @@ export function BusinessProfilePreviewModal({
   profileLabel,
   response,
   confirming,
+  refreshing = false,
   error,
   onConfirm,
   onClose,
@@ -25,6 +26,8 @@ export function BusinessProfilePreviewModal({
   profileLabel: string;
   response: BusinessProfilePreviewResponse | null;
   confirming: boolean;
+  /** The preview is being fetched again (a stale plan): Confirm waits for the fresh one. */
+  refreshing?: boolean;
   error: string | null;
   onConfirm: () => void;
   onClose: () => void;
@@ -36,7 +39,8 @@ export function BusinessProfilePreviewModal({
   const manualBilling = billing.filter((b) => b.manual);
   const changeLines = response.changes ?? [];
   const empty = billing.length === 0 && changeLines.length === 0;
-  const handleClose = confirming ? () => {} : onClose;
+  const busy = confirming || refreshing;
+  const handleClose = busy ? () => {} : onClose;
 
   return (
     <AdminModal
@@ -48,7 +52,7 @@ export function BusinessProfilePreviewModal({
           <button
             type="button"
             onClick={handleClose}
-            disabled={confirming}
+            disabled={busy}
             className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-50"
           >
             Cancel
@@ -56,10 +60,10 @@ export function BusinessProfilePreviewModal({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={confirming || empty}
+            disabled={busy || empty}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {confirming ? "Applying..." : "Confirm"}
+            {refreshing ? "Refreshing…" : confirming ? "Applying..." : "Confirm"}
           </button>
         </>
       }

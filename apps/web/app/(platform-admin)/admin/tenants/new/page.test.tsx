@@ -303,8 +303,8 @@ describe("B956 create-tenant refused business name", () => {
 });
 
 // Business profiles: a new account can start with one. The create API takes no `profile`, so the page creates the
-// tenant first and then applies the profile to the new id (a brand-new tenant pays for nothing, so there is no
-// billing to preview). A failed apply never hides the fact that the account WAS created.
+// tenant first, previews the profile for the new id and confirms that plan; a plan that would stop billing opens
+// the preview for the admin instead of applying (#3220). A failed apply never hides that the account WAS created.
 describe("create-tenant business profile", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -323,6 +323,15 @@ describe("create-tenant business profile", () => {
   }
   function submit() {
     fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+  }
+  async function createWithProfile() {
+    (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
+      data: { id: "new-tenant-id", slug: "acme" },
+    });
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
+    fillForm();
+    submit();
   }
 
   it("offers the four profiles (in-store ones disabled) plus 'set up later', defaulting to none", async () => {
@@ -434,6 +443,44 @@ describe("create-tenant business profile", () => {
     fillForm();
     submit();
     expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+
+  it("#3220: a profile that would STOP billing is never auto-applied: the preview opens for the admin", async () => {
+    mockPreviewProfile.mockResolvedValueOnce({
+      profile: "shipping_wholesaler",
+      plan: {
+        overrides: [],
+        modes: [],
+        billing: [{ featureKey: "driver_payments", action: "disable", manual: false }],
+      },
+      summary: ["At-door payment collection will be switched off and its billing stopped"],
+      changes: [],
+      planFingerprint: "e".repeat(64),
+      before: [],
+      after: [],
+      changed: [],
+    });
+    await createWithProfile();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Billing stops as soon as you confirm.")).toBeInTheDocument();
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(mockApplyProfile).toHaveBeenCalledWith(
+        "new-tenant-id",
+        "shipping_wholesaler",
+        "e".repeat(64),
+      ),
+    );
+  });
+
+  it("#3220: a failed preview applies NOTHING and says so", async () => {
+    mockPreviewProfile.mockRejectedValueOnce(new Error("Network Error"));
+    await createWithProfile();
+    expect(await screen.findByTestId("profile-apply-failed")).toHaveTextContent(
+      "The account was created, but its business profile was not applied.",
+    );
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 });

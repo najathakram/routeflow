@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { PLAN_KEYS, type BusinessProfileKey, type BusinessProfileSummary } from "@routeflow/types";
+import {
+  PLAN_KEYS,
+  type BusinessProfileKey,
+  type BusinessProfilePreviewResponse,
+  type BusinessProfileSummary,
+} from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
@@ -12,6 +17,7 @@ import {
 } from "@/lib/platform-admin/business-profiles";
 import { BusinessProfileChoices } from "../[id]/_features/BusinessProfileChoices";
 import { profileErrorCopy } from "../[id]/_features/profile-errors";
+import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePreviewModal";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
@@ -54,6 +60,15 @@ export default function AdminCreateTenantPage() {
   const [profileResult, setProfileResult] = React.useState<
     { status: "applied"; label: string } | { status: "failed"; message: string } | null
   >(null);
+  /** A profile that would stop billing is never auto-applied: the admin reviews it here first. */
+  const [profileReview, setProfileReview] = React.useState<{
+    tenantId: string;
+    key: BusinessProfileKey;
+    label: string;
+    response: BusinessProfilePreviewResponse;
+  } | null>(null);
+  const [reviewApplying, setReviewApplying] = React.useState(false);
+  const [reviewError, setReviewError] = React.useState<string | null>(null);
 
   // The plan list is catalog-driven (GROWTH/SCALE ship without a web release), but the server
   // only accepts a PLAN_KEYS member (create-tenant.dto.ts's @IsIn(PLAN_KEYS)) — a legacy or
@@ -126,12 +141,15 @@ export default function AdminCreateTenantPage() {
       if (profile && res.data?.id) {
         try {
           // confirm needs the plan it applies (#3199): preview the new tenant, confirm that plan
-          const { planFingerprint } = await previewBusinessProfile(res.data.id, profile);
-          await applyBusinessProfile(res.data.id, profile, planFingerprint);
-          setProfileResult({
-            status: "applied",
-            label: profiles?.find((p) => p.key === profile)?.label ?? "",
-          });
+          const label = profiles?.find((p) => p.key === profile)?.label ?? "";
+          const preview = await previewBusinessProfile(res.data.id, profile);
+          if ((preview.plan?.billing?.length ?? 0) > 0) {
+            // stopping billing is never silent: show the preview and let the admin confirm (#3220)
+            setProfileReview({ tenantId: res.data.id, key: profile, label, response: preview });
+            return;
+          }
+          await applyBusinessProfile(res.data.id, profile, preview.planFingerprint);
+          setProfileResult({ status: "applied", label });
         } catch (applyErr: unknown) {
           const reason = profileErrorCopy(applyErr, "");
           setProfileResult({
@@ -157,6 +175,25 @@ export default function AdminCreateTenantPage() {
       setIsLoading(false);
     }
   };
+
+  async function confirmProfileReview() {
+    if (!profileReview || reviewApplying) return;
+    setReviewApplying(true);
+    setReviewError(null);
+    try {
+      await applyBusinessProfile(
+        profileReview.tenantId,
+        profileReview.key,
+        profileReview.response.planFingerprint,
+      );
+      setProfileResult({ status: "applied", label: profileReview.label });
+      setProfileReview(null);
+    } catch (err: unknown) {
+      setReviewError(profileErrorCopy(err, "Could not apply that business profile. Try again."));
+    } finally {
+      setReviewApplying(false);
+    }
+  }
 
   return (
     <div className="p-6">
@@ -223,6 +260,23 @@ export default function AdminCreateTenantPage() {
                 </a>
               </div>
             )}
+            <BusinessProfilePreviewModal
+              open={profileReview !== null}
+              profileLabel={profileReview?.label ?? ""}
+              response={profileReview?.response ?? null}
+              confirming={reviewApplying}
+              error={reviewError}
+              onConfirm={confirmProfileReview}
+              onClose={() => {
+                setProfileReview(null);
+                setReviewError(null);
+                setProfileResult({
+                  status: "failed",
+                  message:
+                    "The account was created, but its business profile was not applied. Apply it from the tenant's Setup tab.",
+                });
+              }}
+            />
             {profileResult?.status === "applied" && (
               <p className="mt-3 text-sm text-green-300" data-testid="profile-applied">
                 Business profile applied{profileResult.label ? `: ${profileResult.label}` : ""}.

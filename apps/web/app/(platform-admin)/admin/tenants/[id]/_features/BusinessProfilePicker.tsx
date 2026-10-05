@@ -169,7 +169,8 @@ export function BusinessProfilePicker({
         open={pending !== null}
         profileLabel={pending?.profile.label ?? ""}
         response={pending?.response ?? null}
-        confirming={applying || refreshing}
+        confirming={applying}
+        refreshing={refreshing}
         error={applyError}
         onConfirm={confirm}
         onClose={() => {
