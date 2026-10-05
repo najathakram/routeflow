@@ -226,7 +226,7 @@ describeDb("a lower re-price never leaves an invoice overpaid or silently PAID (
   /** One SENT $150.00 invoice per entry of `paid` (0 = unpaid), one customer: a bulk batch of N targets. */
   async function seedBatch(label: string, paid: number[]) {
     const base = await seedBase(label);
-    const rows = [];
+    const rows: Array<{ invoiceId: string; lineId: string; number: string }> = [];
     for (const [i, amount] of paid.entries()) {
       const row = await base.makeInvoice(i + 1);
       if (amount > 0) await pay(base.tenantId, row.invoiceId, amount);
