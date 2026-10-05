@@ -132,12 +132,43 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
     expect(invoices.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledWith("ord-1");
   });
 
-  it("D6: an order shipped between the pre-read and the row lock still refuses the reduction", async () => {
+  it("D6 / #3219 S2: an order shipped between the pre-read and the row lock is refused with NOTHING reverted", async () => {
     seed(order({ shippedAt: null }), "OUT_FOR_DELIVERY"); // CONFIRMED when read, OFD under the lock
     await expect(edit(2)).rejects.toMatchObject({
       status: 409,
-      response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_REDUCE" }),
+      response: expect.objectContaining({ code: "ORDER_CHANGED_DURING_EDIT" }),
     });
+    // the shipment invoice Mark shipped just issued is never flipped to DRAFT and stranded
+    expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+  });
+
+  it("#3219 S2: a ship-billing order that is not shipped reverts its invoice INSIDE the edit tx, under the lock", async () => {
+    seed(order({ shippedAt: null }));
+    await edit(2);
+    expect(invoices.revertLinkedInvoicesForOrderEdit).toHaveBeenCalledTimes(1);
+    const [id, tx, opts] = invoices.revertLinkedInvoicesForOrderEdit.mock.calls[0];
+    expect(id).toBe("ord-1");
+    expect(tx).toBeDefined(); // the edit's own transaction, never a separate connection
+    expect(opts).toEqual({ lockRows: true });
+  });
+
+  it("#3219 S4: a replayed merge into a reopened with-carrier order re-syncs in place, as the fold did", async () => {
+    seed(order({ status: "PENDING" }));
+    reopened();
+    await h.service.replayMergeReconcile("ord-1", "cust-1", undefined);
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+    expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+  });
+
+  it("#3219 S5: a cancel that finds the order shipped under its lock is refused, nothing cancelled", async () => {
+    seed(order({ shippedAt: null }), "OUT_FOR_DELIVERY"); // CONFIRMED when read, OFD under the lock
+    await expect(
+      h.service.changeStatus("ord-1", { status: "CANCELLED" } as never, staff),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_CANCEL" }),
+    });
+    expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
   });
 
   it("D1: a PENDING -> DRAFT demotion of a reopened shipped order is refused before any write", async () => {

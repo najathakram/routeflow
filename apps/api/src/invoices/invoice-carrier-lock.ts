@@ -24,8 +24,8 @@ export async function invoiceOrderWithCarrier(
   return !!order && (await carrierBlocked(deps, order)) !== null;
 }
 
-const same = (a: unknown, b: unknown) =>
-  a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
+/** null and 0 are the same quantity: the web resends a locked line's null pieces as 0 (#3219 N2). */
+const same = (a: unknown, b: unknown) => Math.abs(Number(a ?? 0) - Number(b ?? 0)) < 1e-9;
 
 /** What the edit changes on the lines themselves (not their money), or null when it changes none. */
 export function carrierLineChange(

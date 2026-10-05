@@ -3,7 +3,8 @@
  * history table, and `shippedAt` survives both, by design: E-c's "no second shipped email").
  *
  * For a carrier (SHIP) order, `changeStatus` appends one `OrderRevision` with a marker `source` on:
- *  - OUT_FOR_DELIVERY -> CONFIRMED ("Unmark shipped"): the parcel never left, so a later cancel is fine;
+ *  - OUT_FOR_DELIVERY -> CONFIRMED ("Unmark shipped"): the parcel never left, so a later cancel is fine
+ *    (after ANY delivery it records a reopen instead: the rest is still out, #3219 S1);
  *  - DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED (a reopen): the goods went out, so the order is
  *    "with the carrier" again and is not cancelled (`carrierCancelBlockedReason`).
  * The LAST marker decides. `OrderRevision.source` is a free string (not a Prisma enum): no migration.
@@ -65,10 +66,15 @@ export async function recordShipStateChange(
   user: JwtPayload | undefined,
   reason?: string | null,
 ): Promise<void> {
-  const source = shipStateMarker(order.fulfillPath, order.status, to);
+  let source = shipStateMarker(order.fulfillPath, order.status, to);
   if (!source) return;
   if (!(await billsAtShipment(featureConfig, order.tenantId ?? prisma.getTenantId(), order)))
     return;
+  // #3219 S1 (lead ruling): after ANY delivery, "Unmark shipped" never makes the order cancellable
+  // again (the rest is still with the carrier): it records a reopen. An unreadable answer fails closed.
+  if (source === SHIP_STATE_UNMARKED && (await anyLineDelivered(prisma, order.id))) {
+    source = SHIP_STATE_REOPENED;
+  }
   try {
     await appendOrderRevision(
       prisma,
@@ -81,6 +87,21 @@ export async function recordShipStateChange(
   } catch (err) {
     // best effort: a missing marker reads as "unmarked" (cancellable), never as a failed status change
     logger.warn(`ship-state marker ${source} not written order=${order.id}: ${String(err)}`);
+  }
+}
+
+async function anyLineDelivered(
+  prisma: Pick<PrismaService, "forTenant">,
+  orderId: string,
+): Promise<boolean> {
+  try {
+    const line = await prisma.forTenant().orderItem.findFirst({
+      where: { orderId, deliveredQty: { gt: 0 } },
+      select: { id: true },
+    });
+    return line != null;
+  } catch {
+    return true;
   }
 }
 

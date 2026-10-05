@@ -145,7 +145,7 @@ describe("OrdersService wiring", () => {
  * history table exists, so the markers are OrderRevision rows. Real helpers over an in-memory revision store.
  */
 describe("B1: unmark vs reopen (ship-state markers)", () => {
-  const makeStore = () => {
+  const makeStore = (opts: { delivered?: boolean } = {}) => {
     const revisions: Array<{ orderId: string; revisionNumber: number; source: string }> = [];
     const tx = {
       orderRevision: {
@@ -164,7 +164,11 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       getTenantId: () => "t1",
       tenantTransaction: async (fn: any) => fn(tx),
       forTenant: () => ({
-        orderItem: { findMany: async () => [] },
+        orderItem: {
+          findMany: async () => [],
+          // a line with deliveredQty > 0 (a partial delivery happened)
+          findFirst: async () => (opts.delivered ? { id: "li-1" } : null),
+        },
         orderRevision: {
           findFirst: async ({ where }: any) => {
             const rows = revisions
@@ -230,6 +234,13 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     expect(await blocked(b, OrderStatus.CONFIRMED)).toBe("WITH_CARRIER");
   });
 
+  it("#3219 S1: partial delivery -> re-dispatch -> Unmark shipped -> cancel is still BLOCKED", async () => {
+    const prisma = makeStore({ delivered: true });
+    await change(prisma, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CONFIRMED);
+    expect(await lastShipStateSource(prisma, "o1")).toBe("REOPENED_FROM_DELIVERY");
+    expect(await blocked(prisma, OrderStatus.CONFIRMED)).toBe("WITH_CARRIER");
+  });
+
   it("out for delivery is blocked whatever the markers say; no marker at all reads as unmarked", async () => {
     const prisma = makeStore();
     await change(prisma, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CONFIRMED);
@@ -267,11 +278,16 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       "utf8",
     );
     expect(src).toMatch(/await recordShipStateChange\(this, order, dto\.status/);
-    expect(src).toMatch(/blockCredits: await blockCreditsUnderLock\(tx, orderId, carrier\)/);
+    // S2: the locked re-read (and, ship-billing, the revert) runs inside the edit transaction
+    expect(src).toMatch(/const carrierLocked = await carrierGuard\.carrierRevertUnderLock\(/);
+    expect(src).toMatch(/blockCredits: carrierLocked,/);
     expect(src).toMatch(/revisions: EDIT_REVISIONS/);
-    // D2: the guard is computed once, BEFORE the un-tx'd invoice revert
-    const guardAt = src.indexOf("carrierEditGuard(this, order)");
-    expect(guardAt).toBeGreaterThan(0);
-    expect(guardAt).toBeLessThan(src.indexOf("revertLinkedInvoicesForOrderEdit(orderId)"));
+    // S5: the cancel transaction re-checks under its lock
+    expect(src).toMatch(/carrierGuard\.throwIfInTransitUnderLock\(carrier, lockedStatus\)/);
+    // D2: the edit's guard is computed once, BEFORE the un-tx'd invoice revert
+    const editAt = src.indexOf("async updateOrderItems(");
+    const guardAt = src.indexOf("carrierGuard.carrierEditGuard(this, order)", editAt);
+    expect(guardAt).toBeGreaterThan(editAt);
+    expect(guardAt).toBeLessThan(src.indexOf("revertLinkedInvoicesForOrderEdit(orderId)", editAt));
   });
 });

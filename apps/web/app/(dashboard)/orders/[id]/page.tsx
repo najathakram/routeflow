@@ -2609,45 +2609,47 @@ export default function OrderDetailPage() {
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
                 />
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                {/* #3219 S3: an order with the carrier is not deleted either (the server 409s) */}
+                {!order.cancelBlockedReason &&
+                  (showDeleteConfirm ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-danger font-medium">Delete order?</span>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        loading={deleteOrder.isPending}
+                        onClick={() => {
+                          deleteOrder.mutate(order.id, {
+                            onSuccess: () => {
+                              toast({ title: "Order deleted", variant: "success" });
+                              router.push("/orders");
+                            },
+                            onError: (e) => {
+                              toast({ title: orderErrorText(e), variant: "error" });
+                              setShowDeleteConfirm(false);
+                            },
+                          });
+                        }}
+                      >
+                        Confirm Delete
+                      </Button>
+                      <button
+                        onClick={() => setShowDeleteConfirm(false)}
+                        className="text-sm text-navy/70 hover:text-navy transition-colors"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
                     <Button
                       size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Order deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
+                      variant="ghost"
+                      leftIcon={<Trash2 className="h-4 w-4" />}
+                      onClick={() => setShowDeleteConfirm(true)}
                     >
-                      Confirm Delete
+                      Delete
                     </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete
-                  </Button>
-                )}
+                  ))}
               </ActionTier>
             </>
           )}
@@ -2694,7 +2696,8 @@ export default function OrderDetailPage() {
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
                 />
-                {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+                {!order.cancelBlockedReason &&
+                  renderDeleteOrderAction("Delete this order? This can't be undone.")}
               </ActionTier>
             </>
           )}
@@ -2727,9 +2730,10 @@ export default function OrderDetailPage() {
                   blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
                 />
-                {renderDeleteOrderAction(
-                  "Delete this order? It's out for delivery — this can't be undone.",
-                )}
+                {!order.cancelBlockedReason &&
+                  renderDeleteOrderAction(
+                    "Delete this order? It's out for delivery — this can't be undone.",
+                  )}
               </ActionTier>
             </>
           )}

@@ -186,7 +186,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
-import { blockCreditsUnderLock, carrierBlocked, carrierEditGuard } from "./order-carrier-guard";
+import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
   invoicesAtShipment,
@@ -200,19 +200,6 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
- * (`postDeliveryEdit`) instead of reconciled as an open pending-mirror draft. Read by
- * `updateOrderItems` AND by `replayMergeReconcile`, so a replayed merge routes the
- * convergent reconcile exactly as the fold that landed did — the list may not drift
- * between the two callers.
- */
-const POST_DELIVERY_EDIT_STATUSES: string[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -572,7 +559,7 @@ export class OrdersService implements OnApplicationBootstrap {
     (order as any).editWindow = computeEditWindow(order, user.role);
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
     Object.assign(order, {
-      cancelBlockedReason: await carrierBlocked(this, order),
+      cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
@@ -2455,10 +2442,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Refuse the cancel BEFORE writing the status — a rejection must leave the order exactly as it
     // was. A DRAFT demotion is refused the same way (#3207 D1): it credits all the stock back and a
     // DRAFT can then be cancelled or deleted, with the goods still out.
-    if (dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.DRAFT) {
-      // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
-      throwIfWithCarrier(await carrierBlocked(this, order));
-    }
+    const demote = dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.DRAFT;
+    const carrier = demote ? await carrierGuard.carrierEditGuard(this, order) : null; // + S5 re-check
+    // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
+    if (carrier?.withCarrier) throwIfWithCarrier("WITH_CARRIER");
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
     const statusUpdateData = {
@@ -2606,6 +2593,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { id },
                 select: { status: true },
               }))!.status;
+              carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
               const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
               const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
@@ -3052,12 +3040,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
     // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
-    const carrier = await carrierEditGuard(this, order);
-    const postDeliveryEdit =
-      POST_DELIVERY_EDIT_STATUSES.includes(order.status) || carrier.withCarrier;
+    const carrier = await carrierGuard.carrierEditGuard(this, order);
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
-    if (!postDeliveryEdit) {
-      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+    if (!postDeliveryEdit && !carrier.billsShip) {
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId); // ship-billing: under the lock (S2)
     }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
@@ -3147,6 +3134,14 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
+          tx,
+          orderId,
+          carrier,
+          postDeliveryEdit,
+          () =>
+            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+        );
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
           // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
@@ -4238,7 +4233,7 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
-            blockCredits: await blockCreditsUnderLock(tx, orderId, carrier),
+            blockCredits: carrierLocked,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -4485,6 +4480,7 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id: orderId, customerId },
       select: {
         status: true,
+        ...{ id: true, tenantId: true, fulfillPath: true, shippedAt: true }, // #3219 S4: carrier routing
         lineItems: { select: { qty: true, invoicedQty: true } },
       },
     });
@@ -4493,9 +4489,10 @@ export class OrdersService implements OnApplicationBootstrap {
       return;
     }
     // Derived from the CURRENT status, which is provably the same routing the fold used: the
-    // only status the fold itself changes is CONFIRMED -> PENDING, and both are outside
-    // POST_DELIVERY_EDIT_STATUSES.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // only status the fold itself changes is CONFIRMED -> PENDING, and both route the same way
+    // (`resyncsInPlace`, order-carrier-guard.ts).
+    const carrierNow = await carrierGuard.carrierEditGuard(this, order); // #3219 S4: as the fold routed
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
     let skipInPlaceResync = false;
     if (postDeliveryEdit) {
       // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
@@ -5249,7 +5246,7 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
-    throwIfWithCarrier(await carrierBlocked(this, order));
+    throwIfWithCarrier(await carrierGuard.carrierBlocked(this, order));
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;

@@ -40,7 +40,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { InvoiceStatus } from "@prisma/client";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
-import { carrierLineChange } from "./invoice-carrier-lock";
+import { carrierLineChange, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 
 const ROW = {
   id: "item-1",
@@ -67,6 +67,13 @@ describe("carrierLineChange (pure)", () => {
     );
     expect(carrierLineChange([ROW as any], [m(ROW, true)], [ROW])).toBe("changes a line's product");
   });
+  it("#3219 N2: a boxed line's null pieces resent as 0 is not a quantity change", () => {
+    const boxed = { ...ROW, boxes: 2, pieces: null };
+    expect(
+      carrierLineChange([{ ...boxed, pieces: 0, unitPrice: 4 } as any], [m(boxed)], [boxed]),
+    ).toBeNull();
+  });
+
   it("a price or discount change on the same lines is not", () => {
     expect(
       carrierLineChange([{ ...ROW, unitPrice: 4, discount: 1 } as any], [m(ROW)], [ROW]),
@@ -224,5 +231,30 @@ describe("InvoicesService.update() — SA-674b shipment invoice of an order with
     arrange("unset", "DELIVERED");
     await service.update("inv-ship", { items: [{ ...ROW, qty: 2 }] } as any);
     expect(prisma.invoice.update).toHaveBeenCalled();
+  });
+});
+
+describe("invoiceOrderWithCarrier — the mode gate (#3219 N1)", () => {
+  const deps = (mode: string, status: string) => ({
+    featureConfig: { getEffectiveMode: jest.fn().mockResolvedValue(mode) },
+    prisma: {
+      forTenant: () => ({
+        order: {
+          findFirst: jest.fn().mockResolvedValue({
+            id: "ord-1",
+            tenantId: "t-1",
+            status,
+            fulfillPath: "SHIP",
+            shippedAt: new Date("2026-10-01T00:00:00Z"),
+          }),
+        },
+        orderRevision: { findFirst: jest.fn().mockResolvedValue(null) },
+      }),
+    } as any,
+  });
+  it("an OUT_FOR_DELIVERY order is with the carrier only for a business billing at shipment", async () => {
+    expect(await invoiceOrderWithCarrier(deps("ship", "OUT_FOR_DELIVERY"), "ord-1")).toBe(true);
+    expect(await invoiceOrderWithCarrier(deps("unset", "OUT_FOR_DELIVERY"), "ord-1")).toBe(false);
+    expect(await invoiceOrderWithCarrier(deps("ship", "OUT_FOR_DELIVERY"), null)).toBe(false);
   });
 });
