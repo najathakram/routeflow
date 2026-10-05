@@ -351,12 +351,33 @@ export async function lockInvoiceForPriceAdjustment(tx: any, inv: any): Promise<
 }
 
 /**
+ * B1051: a price adjustment must never take an invoice's total BELOW what the customer has already paid
+ * (CONFIRMED payments, the same basis the status recompute uses, read under the Invoice lock). A settled
+ * (PAID) invoice is refused up front with "issue a credit note instead"; a re-price that would MAKE the
+ * invoice overpaid is the same act and gets the same answer. Both sides are rounded to cents before the
+ * comparison (L-170), so paid == new total is NOT an overpayment and still settles PAID.
+ */
+export function assertNotOverpaidByPriceChange(confirmedPaid: number, newTotal: number): void {
+  const paid = roundMoney(confirmedPaid);
+  const overpaidBy = roundMoney(paid - newTotal);
+  if (overpaidBy > 0) {
+    throw new BadRequestException(
+      `This price change would leave the invoice overpaid by $${overpaidBy.toFixed(2)} ` +
+        `(paid $${paid.toFixed(2)}, new total $${newTotal.toFixed(2)}). ` +
+        `Issue a credit note instead.`,
+    );
+  }
+}
+
+/**
  * The transaction body of `applyPriceAdjustment` (B662), AFTER the line writes (those stay in the service so the
  * order/invoice line-writer coverage scanners still see this writer): recompute the invoice totals from the fresh
  * lines, persist them with the status recomputed from CONFIRMED payments against the NEW total
- * (F03/R4/T-B74: a lowered total a payment already covered must not keep a stale SENT/PARTIAL status; an
- * overpayment needs no special handling, recomputeStatus flips to PAID and balanceDue floors at 0), and sync
- * the regulated ledger, all in `tx` so they commit or fail TOGETHER. Category (excise) tax is persisted per
+ * (F03/R4/T-B74: a lowered total a payment already covered must not keep a stale SENT/PARTIAL status), and
+ * sync the regulated ledger, all in `tx` so they commit or fail TOGETHER. B1051: a total BELOW the CONFIRMED
+ * payments is refused (`assertNotOverpaidByPriceChange`), never written: recomputeStatus would land PAID and
+ * balanceDue floors at 0, so the customer's overpayment would show nowhere. The refusal throws before any
+ * write of this function, and the caller's line writes roll back with it. Category (excise) tax is persisted per
  * line and is NOT part of taxRate: omitting it would under-bill excise and propagate the shortfall to the
  * linked order. The per-line write honours exemption, so this sum is exemption-correct by construction.
  * paidAt is paired with the status like every sibling status writer, or a PAID invoice keeps paidAt NULL and
@@ -385,12 +406,9 @@ export async function commitPriceAdjustment(args: {
     subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
   );
   const existingInternal = inv.internalNotes ?? "";
-  const newStatus = recomputeStatus(
-    sumConfirmed(inv.payments),
-    total,
-    inv.dueDate ?? null,
-    inv.status,
-  );
+  const confirmedPaid = sumConfirmed(inv.payments);
+  assertNotOverpaidByPriceChange(confirmedPaid, total); // B1051: before ANY invoice or ledger write
+  const newStatus = recomputeStatus(confirmedPaid, total, inv.dueDate ?? null, inv.status);
   await tx.invoice.update({
     where: { id: inv.id },
     data: {
