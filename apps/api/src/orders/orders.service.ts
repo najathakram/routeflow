@@ -185,9 +185,9 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
-import { lastShipStateSource, recordShipStateChange } from "./order-ship-state";
+import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
+import { blockCreditsUnderLock, carrierBlocked, carrierEditGuard } from "./order-carrier-guard";
 import {
-  carrierCancelBlockedReason,
   throwIfWithCarrier,
   invoicesAtShipment,
   settleOrderInvoice,
@@ -255,7 +255,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
-    @Optional() private readonly featureConfig?: FeatureConfigService,
+    @Optional() readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -441,14 +441,6 @@ export class OrdersService implements OnApplicationBootstrap {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
-  private carrierBlocked(
-    order: Parameters<typeof carrierCancelBlockedReason>[2] & { tenantId?: string | null },
-  ) {
-    return carrierCancelBlockedReason(this.featureConfig, order.tenantId, order, (id) =>
-      lastShipStateSource(this.prisma, id),
-    );
-  }
-
   async findOne(id: string, user: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id },
@@ -543,7 +535,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         },
         // P5-08: version history + the run state that governs the edit window.
-        revisions: { orderBy: { revisionNumber: "asc" } },
+        revisions: EDIT_REVISIONS, // ship-state markers are not edits ("Edited N×")
         // P5-09: post-dispatch change requests, newest first.
         changeRequests: { orderBy: { createdAt: "desc" } },
         // `driverId` feeds the F2-005 driver-ownership gate below.
@@ -580,7 +572,7 @@ export class OrdersService implements OnApplicationBootstrap {
     (order as any).editWindow = computeEditWindow(order, user.role);
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
     Object.assign(order, {
-      cancelBlockedReason: await this.carrierBlocked(order),
+      cancelBlockedReason: await carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
@@ -2460,13 +2452,14 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
 
-    // Refuse the cancel BEFORE writing the status — a rejection must leave the
-    // order exactly as it was, not cancelled-but-not-unwound.
-    if (dto.status === OrderStatus.CANCELLED) {
+    // Refuse the cancel BEFORE writing the status — a rejection must leave the order exactly as it
+    // was. A DRAFT demotion is refused the same way (#3207 D1): it credits all the stock back and a
+    // DRAFT can then be cancelled or deleted, with the goods still out.
+    if (dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.DRAFT) {
       // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
-      throwIfWithCarrier(await this.carrierBlocked(order));
-      await this.assertCancellableOrThrow(id);
+      throwIfWithCarrier(await carrierBlocked(this, order));
     }
+    if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
     const statusUpdateData = {
       status: dto.status,
@@ -2676,7 +2669,7 @@ export class OrdersService implements OnApplicationBootstrap {
       return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
     })();
 
-    await recordShipStateChange(this.prisma, order, dto.status, user, dto.reason);
+    await recordShipStateChange(this, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
@@ -3058,7 +3051,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
+    const carrier = await carrierEditGuard(this, order);
+    const postDeliveryEdit =
+      POST_DELIVERY_EDIT_STATUSES.includes(order.status) || carrier.withCarrier;
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit) {
       await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
@@ -4242,7 +4238,7 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
-            blockCredits: (await this.carrierBlocked(order)) !== null,
+            blockCredits: await blockCreditsUnderLock(tx, orderId, carrier),
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -5253,7 +5249,7 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
-    throwIfWithCarrier(await this.carrierBlocked(order));
+    throwIfWithCarrier(await carrierBlocked(this, order));
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;

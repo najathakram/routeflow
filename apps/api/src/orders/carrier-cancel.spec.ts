@@ -6,7 +6,12 @@
  */
 import { OrderStatus } from "@prisma/client";
 import { carrierCancelBlockedReason } from "./order-status-invoicing";
-import { lastShipStateSource, recordShipStateChange, shipStateMarker } from "./order-ship-state";
+import {
+  EDIT_REVISIONS,
+  lastShipStateSource,
+  recordShipStateChange,
+  shipStateMarker,
+} from "./order-ship-state";
 import { OrdersService } from "./orders.service";
 
 const cfg = (mode: string) => ({ getEffectiveMode: jest.fn().mockResolvedValue(mode) });
@@ -88,8 +93,6 @@ describe("OrdersService wiring", () => {
       featureConfig: cfg(mode),
       cancelImpact: jest.fn(),
     };
-    self.carrierBlocked = (ord: any) =>
-      (OrdersService.prototype as any).carrierBlocked.call(self, ord);
     return { db, self };
   };
   const operator = { sub: "u1", role: "OPERATOR", tenantId: "t1" } as any;
@@ -179,8 +182,14 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     carrierCancelBlockedReason(cfg("ship"), "t1", { ...order(status), id: "o1" }, (id) =>
       lastShipStateSource(prisma, id),
     );
-  const change = (prisma: any, from: OrderStatus, to: OrderStatus) =>
-    recordShipStateChange(prisma, { ...base, status: from }, to, undefined, "r");
+  const change = (prisma: any, from: OrderStatus, to: OrderStatus, mode = "ship") =>
+    recordShipStateChange(
+      { prisma, featureConfig: cfg(mode) },
+      { ...base, status: from },
+      to,
+      undefined,
+      "r",
+    );
 
   it("shipMarker: only the two transitions leave a marker, and only on SHIP orders", () => {
     expect(shipStateMarker("SHIP", OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CONFIRMED)).toBe(
@@ -228,6 +237,19 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     expect(await blocked(makeStore(), OrderStatus.CONFIRMED)).toBeNull();
   });
 
+  it("D3: a business that does not bill at shipment gets no marker (nothing for the guard to read)", async () => {
+    const prisma = makeStore();
+    await change(prisma, OrderStatus.DELIVERED, OrderStatus.CONFIRMED, "unset");
+    expect(await lastShipStateSource(prisma, "o1")).toBeNull();
+  });
+
+  it("D3: the order's edit history (findOne's revisions) leaves the markers out", () => {
+    expect(EDIT_REVISIONS.where.source.notIn).toEqual([
+      "UNMARKED_SHIPPED",
+      "REOPENED_FROM_DELIVERY",
+    ]);
+  });
+
   it("a marker write that fails never fails the status change", async () => {
     const prisma = makeStore();
     prisma.tenantTransaction = async () => {
@@ -244,7 +266,12 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       require("path").join(__dirname, "orders.service.ts"),
       "utf8",
     );
-    expect(src).toMatch(/await recordShipStateChange\(this\.prisma, order, dto\.status/);
-    expect(src).toMatch(/blockCredits: \(await this\.carrierBlocked\(order\)\) !== null/);
+    expect(src).toMatch(/await recordShipStateChange\(this, order, dto\.status/);
+    expect(src).toMatch(/blockCredits: await blockCreditsUnderLock\(tx, orderId, carrier\)/);
+    expect(src).toMatch(/revisions: EDIT_REVISIONS/);
+    // D2: the guard is computed once, BEFORE the un-tx'd invoice revert
+    const guardAt = src.indexOf("carrierEditGuard(this, order)");
+    expect(guardAt).toBeGreaterThan(0);
+    expect(guardAt).toBeLessThan(src.indexOf("revertLinkedInvoicesForOrderEdit(orderId)"));
   });
 });

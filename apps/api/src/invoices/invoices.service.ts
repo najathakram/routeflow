@@ -79,6 +79,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
+import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
 import {
   CheckStatus,
@@ -3092,6 +3093,9 @@ export class InvoicesService {
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // SA-674b: with the carrier, the shipment invoice keeps its lines and quantities (checked in the tx)
+      const carrierDeps = { featureConfig: this.featureConfig, prisma: this.prisma };
+      const carrierLocked = await invoiceOrderWithCarrier(carrierDeps, inv.orderId);
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
@@ -3108,6 +3112,7 @@ export class InvoicesService {
         // and reasoning: invoice-edit-plan.ts.
         const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
         const matches = matchEditLines(items, storedRows);
+        if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),
