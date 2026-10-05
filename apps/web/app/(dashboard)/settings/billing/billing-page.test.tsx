@@ -796,7 +796,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
 
 describe("BillingSettingsPage — checkout errors", () => {
   const PENDING_MESSAGE =
-    "Turn off Route Plus before adding your card, or contact support to set them up.";
+    "Turn off Customer pack (+100) before adding your card, or contact support to set them up.";
   beforeEach(() => {
     jest.clearAllMocks();
     mockAuthUser = { role: "TENANT_ADMIN" };
@@ -828,7 +828,33 @@ describe("BillingSettingsPage — checkout errors", () => {
       message: PENDING_MESSAGE,
     });
     await clickComplete();
-    expect(await screen.findByRole("alert")).toHaveTextContent(PENDING_MESSAGE);
+    // EXACTLY the server's text (it names the add-ons), not a generic toast or fixed copy.
+    expect(await screen.findByText(PENDING_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(PENDING_MESSAGE);
+    expect(screen.queryByText(/couldn't start checkout/i)).toBeNull();
+  });
+
+  it("is keyed on response.data.code, not the status: the same code on a non-409 still shows the message", async () => {
+    failCheckout(400, {
+      code: API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT,
+      message: PENDING_MESSAGE,
+    });
+    await clickComplete();
+    expect(await screen.findByText(PENDING_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("a later retry clears the previous checkout error", async () => {
+    failCheckout(409, {
+      code: API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT,
+      message: PENDING_MESSAGE,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+    await user.click(await screen.findByRole("button", { name: "Complete payment" }));
+    expect(await screen.findByText(PENDING_MESSAGE)).toBeInTheDocument();
+    mockCheckoutMutate.mockReset(); // the retry succeeds (navigates away): no onError
+    await user.click(screen.getByRole("button", { name: "Complete payment" }));
+    expect(screen.queryByText(PENDING_MESSAGE)).toBeNull();
   });
 
   it("any other checkout failure shows fixed copy, never the server's text", async () => {
