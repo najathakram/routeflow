@@ -121,7 +121,7 @@ export class CustomerOrderSuggestionsService {
         where: {
           productId: { not: null },
           status: { not: ItemStatus.CANCELLED },
-          product: { isActive: true },
+          product: { tenantId, isActive: true },
           order: {
             tenantId,
             customerId,

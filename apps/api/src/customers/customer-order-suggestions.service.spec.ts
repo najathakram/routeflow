@@ -150,7 +150,8 @@ describe("CustomerOrderSuggestionsService", () => {
         { orderDate: null, createdAt: { gte: since } },
       ]);
       expect(args.where.productId).toEqual({ not: null });
-      expect(args.where.product).toEqual({ isActive: true });
+      // The product must be this tenant's too: a corrupt cross-tenant line can never put a foreign id in the chips.
+      expect(args.where.product).toEqual({ tenantId: "test-tenant", isActive: true });
       // The line read is the aggregate: nothing is pulled into memory to be counted.
       expect(prisma.orderItem.findMany).not.toHaveBeenCalled();
     });
