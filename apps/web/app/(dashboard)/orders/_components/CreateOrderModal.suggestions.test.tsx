@@ -5,8 +5,9 @@ import { CreateOrderModal } from "./CreateOrderModal";
 
 /**
  * Staff New Order: "Usually buys" chips + "Order again" for the selected customer. Every line they
- * add goes through the modal's normal add-line path, so it is priced TODAY (the customer's tier /
- * special price) — never the price an old order paid or the customer's last-given price.
+ * add goes through the modal's normal add-line path, exactly like a manual add, so it is priced by
+ * today's normal pricing (the customer's tier / special price and the usual last-given pre-fill) —
+ * never the price an old order paid.
  */
 
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
@@ -62,12 +63,13 @@ const ol = (productId: string, o: Record<string, unknown> = {}) => ({
 });
 
 let mockSuggestions: unknown;
+let mockTier = 2; // tier 1 = no special price, so the last-given pre-fill applies (as for a manual add)
 let mockLastGiven: Record<string, { lastPrice: number }> | undefined;
 const mockApiGet = jest.fn();
 const mockFetchUnits = jest.fn();
 
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [acme] } }),
+  useCustomers: () => ({ data: { data: [{ ...acme, pricingTier: mockTier }] } }),
   useCustomerPrices: () => ({ data: [] }),
   useCustomer: () => ({ data: undefined }),
 }));
@@ -79,7 +81,7 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/orders", () => ({
   useCreateOrder: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
-  // The customer's remembered last-given prices: a manual add pre-fills from it; suggestions must not.
+  // The customer's remembered last-given prices: a manual add pre-fills from it, and so do suggestions.
   useCustomerPriceHistory: () => ({ data: mockLastGiven }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
@@ -167,6 +169,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSuggestions = suggestions();
   mockLastGiven = undefined;
+  mockTier = 2;
   mockApiGet.mockImplementation((url: string) =>
     url === "/customers/c1/order-suggestions"
       ? Promise.resolve({ data: mockSuggestions })
@@ -195,15 +198,25 @@ describe("Usually buys chips", () => {
     expect(within(bar).queryByRole("button", { name: /Retired Gum/ })).not.toBeInTheDocument();
   });
 
-  it("a tap adds a line at TODAY's tier price, not the customer's last-given price", async () => {
-    mockLastGiven = { p1: { lastPrice: 1 } }; // a manual add would pre-fill $1.00
-    await openWithCustomer();
+  const tapCola = () =>
     fireEvent.click(
       within(screen.getByTestId("order-suggestions")).getByRole("button", { name: /Sample Cola/ }),
     );
+
+  it("a tap adds a line at TODAY's tier price", async () => {
+    await openWithCustomer();
+    tapCola();
     await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
     await waitFor(() => expect(lineFor("Sample Cola").textContent).toContain("$4.50"));
-    expect(lineFor("Sample Cola").textContent).not.toContain("$1.00");
+  });
+
+  it("a tap behaves exactly like a manual add: the customer's last-given price pre-fills the same way", async () => {
+    mockLastGiven = { p1: { lastPrice: 1 } };
+    mockTier = 1;
+    await openWithCustomer();
+    tapCola();
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    await waitFor(() => expect(lineFor("Sample Cola").textContent).toContain("$1.00"));
   });
 
   it("a second tap merges into the same line (the picker's rule), never a duplicate", async () => {
@@ -237,7 +250,6 @@ describe("Order again", () => {
   });
 
   it("adds that order's lines as ordered, re-priced today (not what the old order paid)", async () => {
-    mockLastGiven = { p1: { lastPrice: 1 } };
     await openWithCustomer();
     await pickOrder(/ORD-o1/);
 
@@ -247,7 +259,6 @@ describe("Order again", () => {
         .value,
     ).toBe("3");
     expect(lineFor("Sample Cola").textContent).toContain("$4.50");
-    expect(lineFor("Sample Cola").textContent).not.toContain("$1.00");
 
     // boxed: 2 cases + 6 loose = 30 pieces, at today's tier-2 case price
     await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
@@ -257,6 +268,16 @@ describe("Order again", () => {
     expect(mockToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Added 2 lines from ORD-o1" }),
     );
+  });
+
+  it("prices through the same path as a manual add, including the last-given pre-fill", async () => {
+    mockLastGiven = { p1: { lastPrice: 1 } };
+    mockTier = 1;
+    await openWithCustomer();
+    await pickOrder(/ORD-o1/);
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    expect(lineFor("Sample Cola").textContent).toContain("$1.00");
+    expect(lineFor("Sample Cola").textContent).not.toContain("$99");
   });
 
   it("skips retired products and says how many are no longer available", async () => {

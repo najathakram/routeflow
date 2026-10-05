@@ -600,8 +600,6 @@ export function CreateOrderModal({
       startOnDefaultUnit?: boolean;
       /** "Order again": add this quantity (in this unit) instead of one; priced today like any add. */
       ordered?: OrderedAdd;
-      /** Suggestions: price from the catalog / tier only, never from the customer's last-given price. */
-      noHistoryPrice?: boolean;
     },
   ): { created: boolean; refused?: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
@@ -652,8 +650,7 @@ export function CreateOrderModal({
     // Pre-fill from customer's last-given price for this product (only when below
     // the effective tier price, and only when this isn't already a SPECIAL price
     // — SPECIAL prices are permanent, the discount is already in tierPrice).
-    // Suggestions (usually buys / order again) skip it: they price from today's tier / special price only.
-    const histEntry = opts?.noHistoryPrice ? undefined : priceHistory?.[product.id as string];
+    const histEntry = priceHistory?.[product.id as string];
     const hasHistDiscount =
       priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills

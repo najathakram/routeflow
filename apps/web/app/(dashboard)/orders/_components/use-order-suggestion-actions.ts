@@ -13,7 +13,7 @@ import { planOrderAgain, unavailableMessage, type OrderedAdd } from "./order-aga
 export type SuggestionAddLine = (
   product: OrderSuggestionProduct,
   level: "BOX",
-  opts: { startOnDefaultUnit?: boolean; ordered?: OrderedAdd; noHistoryPrice?: boolean },
+  opts: { startOnDefaultUnit?: boolean; ordered?: OrderedAdd },
 ) => { created: boolean; refused?: boolean };
 
 interface Deps {
@@ -38,15 +38,16 @@ const ladderProductOf = (p: OrderSuggestionProduct): LadderProduct => ({
 
 /**
  * The two actions of the staff New Order suggestions bar. Both go through the modal's own add-line
- * path with `noHistoryPrice`, so a line is priced from TODAY's catalog (customer tier / special
- * price) and never from the customer's last-given price or from what an old order paid.
+ * path, exactly as a manual add does: a line is priced by today's normal pricing (customer tier /
+ * special price, plus the same last-given-price pre-fill a manual add applies), never from what the
+ * past order paid.
  */
 export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast }: Deps) {
   const qc = useQueryClient();
 
   /** A chip tap: exactly a picker tap (the product's default unit, one case), priced today. */
   const addProduct = (product: OrderSuggestionProduct) => {
-    addLine(product, "BOX", { startOnDefaultUnit: true, noHistoryPrice: true });
+    addLine(product, "BOX", { startOnDefaultUnit: true });
   };
 
   /** The unit option a past line sold by, from the product's CURRENT ladder; null = gone. */
@@ -87,7 +88,6 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
       }
       const res = addLine(item.product, "BOX", {
         ordered: { qty: item.qty, unit: unit ?? undefined },
-        noHistoryPrice: true,
       });
       if (!res.refused) added += 1;
     }
