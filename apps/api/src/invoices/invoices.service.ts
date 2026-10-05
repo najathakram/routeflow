@@ -12,7 +12,11 @@ import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
-import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
+import {
+  assertInvoiceTotalsSane,
+  assertNoNegativeLineSubtotal,
+  storedInvoiceTotals,
+} from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { recomputeInvoiceStatus } from "./invoice-status";
@@ -74,6 +78,8 @@ import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
+import { settledAtShipment } from "../orders/order-status-invoicing";
+import { resolvePendingMirror } from "./pending-mirror";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -426,15 +432,9 @@ export class InvoicesService {
     const taxTotal = roundMoney(regularTax + categoryTaxTotal);
     const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
 
-    // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
-    if (invDiscount > subtotal) {
-      throw new BadRequestException(
-        `Invoice discount (${invDiscount}) cannot exceed subtotal (${subtotal}).`,
-      );
-    }
-    if (total < 0) {
-      throw new BadRequestException(`Invoice total cannot be negative (calculated: ${total}).`);
-    }
+    // Validate invoice-level discount doesn't exceed subtotal and total is non-negative — B1030:
+    // shared with update(), which runs the same two checks on both of its paths.
+    assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total });
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
@@ -1768,6 +1768,8 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
+    // Keyed on the BILLING MOMENT: an order settled at SHIPMENT (and really shipped) is not restated at DELIVERED.
+    if (await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order)) return null;
 
     return this.rebuildSiblingDrafts(
       order,
@@ -3033,7 +3035,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3054,6 +3056,7 @@ export class InvoicesService {
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
+      pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 
@@ -3136,7 +3139,7 @@ export class InvoicesService {
         const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
         const cur = await tx.invoice.findUnique({
           where: { id },
-          select: { discount: true, shippingFee: true },
+          select: { discount: true, shippingFee: true, subtotal: true, total: true },
         });
         const invDiscount = dto.discount ?? Number(cur.discount);
         const shipping = dto.shippingFee ?? Number(cur.shippingFee);
@@ -3146,6 +3149,10 @@ export class InvoicesService {
           invDiscount,
           shipping,
         );
+        assertInvoiceTotalsSane(
+          { discount: invDiscount, subtotal, total },
+          storedInvoiceTotals(cur),
+        ); // B1030 / SA-651: not worse than stored, before any write
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3243,12 +3250,14 @@ export class InvoicesService {
       );
       const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
       const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
+      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+      assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }, storedInvoiceTotals(inv)); // B1030 / SA-651
       recalcData = {
         subtotal,
         taxAmount: taxTotal,
         discount: invDiscount,
         shippingFee: shipping,
-        total: roundMoney(subtotal - invDiscount + shipping + taxTotal),
+        total,
       };
     }
 
@@ -3433,9 +3442,12 @@ export class InvoicesService {
     if (opts?.allowPreDelivery) return;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: inv.orderId },
-      select: { status: true, orderNumber: true },
+      select: { status: true, orderNumber: true, fulfillPath: true },
     });
-    if (order && order.status !== "DELIVERED" && order.status !== "PARTIALLY_DELIVERED") {
+    if (
+      order &&
+      (await resolvePendingMirror(this.featureConfig, this.prisma.getTenantId(), inv, order))
+    ) {
       throw new BadRequestException(
         `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
       );

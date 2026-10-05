@@ -19,6 +19,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { SHIPPED_STATUSES, notifyTrackingAdded } from "./shipment-notifications";
 
 export async function updateShipmentImpl(
   self: OrdersService,
@@ -26,16 +27,27 @@ export async function updateShipmentImpl(
   dto: UpdateShipmentDto,
   _user?: JwtPayload,
 ) {
-  const order = await self.prisma
-    .forTenant()
-    .order.findFirst({ where: { id: orderId }, select: { id: true, shippedAt: true } });
+  const order = await self.prisma.forTenant().order.findFirst({
+    where: { id: orderId },
+    select: {
+      id: true,
+      shippedAt: true,
+      status: true,
+      fulfillPath: true,
+      customerId: true,
+      orderNumber: true,
+      shippingTrackingNumber: true,
+    },
+  });
   if (!order) throw new NotFoundException("Order not found");
 
   const carrier = dto.shippingCarrier?.trim() || null;
   const tracking = dto.shippingTrackingNumber?.trim() || null;
-  // Stamp shippedAt the first time a tracking number is set; clear it when the
-  // tracking number is removed; otherwise keep the original ship date.
-  const shippedAt = tracking ? (order.shippedAt ?? new Date()) : null;
+  // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving
+  // tracking on an order that has not shipped. Saving tracking keeps whatever is there; it only
+  // backfills a legacy already-shipped order that has none.
+  const shippedAt =
+    order.shippedAt ?? (tracking && SHIPPED_STATUSES.has(order.status) ? new Date() : null);
 
   const updated = await self.prisma.forTenant().order.update({
     where: { id: orderId },
@@ -47,6 +59,27 @@ export async function updateShipmentImpl(
     where: { orderId, status: { not: "VOID" } },
     data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
   });
+
+  // Tracking added for the FIRST time (empty -> set) to a carrier order that is ALREADY shipped: tell the
+  // customer once. The atomic `trackingNotifiedAt` claim inside notifyTrackingAdded makes it never repeat.
+  if (
+    tracking &&
+    !order.shippingTrackingNumber?.trim() &&
+    order.fulfillPath === FulfillPath.SHIP &&
+    SHIPPED_STATUSES.has(order.status)
+  ) {
+    void notifyTrackingAdded(
+      self,
+      {
+        id: order.id,
+        customerId: order.customerId,
+        orderNumber: order.orderNumber,
+        shippingCarrier: carrier,
+        shippingTrackingNumber: tracking,
+      },
+      _user?.sub || null,
+    );
+  }
 
   return updated;
 }
