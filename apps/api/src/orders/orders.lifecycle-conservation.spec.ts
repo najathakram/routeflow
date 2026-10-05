@@ -559,7 +559,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       // order stays DELIVERED and staff retries invoicing from the order page.
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
+          where: { id: "ord-1", status: "CONFIRMED" },
           data: expect.objectContaining({ status: "DELIVERED" }),
         }),
       );

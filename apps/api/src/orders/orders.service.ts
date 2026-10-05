@@ -79,6 +79,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
+import { writeStatusIfUnchanged } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -2658,7 +2659,13 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+      // B1095: compare-and-set on the status this transition was validated against (a cancel that
+      // committed since the pre-read is a 409, never overwritten).
+      return writeStatusIfUnchanged(() =>
+        this.prisma
+          .forTenant()
+          .order.update({ where: { id, status: order.status }, data: statusUpdateData }),
+      );
     })();
 
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {

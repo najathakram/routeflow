@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
+import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -491,8 +492,13 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
     }
   >({
-    mutationFn: (dto) => buyerApiClient.post("/buyer/orders", dto).then((r) => r.data),
+    // B1094: the same cart carries the same key, so a double tap / timeout retry applies once.
+    mutationFn: (dto) =>
+      buyerApiClient
+        .post("/buyer/orders", dto, { headers: { "Idempotency-Key": buyerSubmitKeyFor(dto) } })
+        .then((r) => r.data),
     onSuccess: () => {
+      clearBuyerSubmitKey();
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
       qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
     },
