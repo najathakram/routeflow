@@ -1,11 +1,12 @@
 import * as React from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCreateCounterSale } from "./counter-sale";
+import { useCounterSaleGate, useCreateCounterSale } from "./counter-sale";
 
 const post = jest.fn();
 jest.mock("../api-client", () => ({ apiClient: { post: (...a: unknown[]) => post(...a) } }));
-jest.mock("../tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
+let features: { data?: unknown; isLoading?: boolean; isError?: boolean } = { data: undefined };
+jest.mock("../tenant-features", () => ({ useTenantFeatures: () => features }));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider
@@ -31,5 +32,36 @@ describe("useCreateCounterSale: the Idempotency-Key header", () => {
       headers: { "Idempotency-Key": "key-abc" },
     });
     expect(res).toEqual(body);
+  });
+});
+
+describe("useCounterSaleGate: a missing capability is DARK (entry points and screen alike)", () => {
+  const NONE = { showButton: false, opensAsCounter: false, offerShipInstead: false };
+  const gateFor = (f: typeof features) => {
+    features = f;
+    return renderHook(() => useCounterSaleGate()).result.current;
+  };
+  afterEach(() => {
+    features = { data: undefined };
+  });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true }],
+    ["errored", { data: undefined, isError: true }],
+    ["a response without capabilities", { data: { tenantId: "t1" } }],
+    ["capabilities without fulfilment", { data: { capabilities: {} } }],
+    ["counter off", { data: { capabilities: { fulfilment: { counter: "off" } } } }],
+    ["an unknown counter value", { data: { capabilities: { fulfilment: { counter: "bogus" } } } }],
+  ])("%s: no button, no open-as-counter", (_label, f) => {
+    expect(gateFor(f)).toMatchObject(NONE);
+  });
+
+  it("optional: the button only; always: the button and open-as-counter", () => {
+    expect(
+      gateFor({ data: { capabilities: { fulfilment: { counter: "optional" } } } }),
+    ).toMatchObject({ showButton: true, opensAsCounter: false });
+    expect(
+      gateFor({ data: { capabilities: { fulfilment: { counter: "always" } } } }),
+    ).toMatchObject({ showButton: true, opensAsCounter: true });
   });
 });

@@ -17,6 +17,7 @@ import { useProducts } from "@/lib/api/products";
 import { useCounterSaleGate, useCreateCounterSale } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
 import {
+  COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
   cartTotals,
   changeDue,
@@ -246,11 +247,12 @@ export function CounterSaleScreen() {
     writeAutoPrint(on);
   };
 
-  // The capability said "off": this business does not use counter sales (a deep link or a stale tab).
-  if (gate.capability && !gate.showButton) {
+  // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
+  // (a deep link or a stale tab). Only "optional" / "always" open the screen.
+  if (!gate.showButton) {
     return (
       <div className="mx-auto max-w-md p-4 text-sm" data-testid="counter-sale-off">
-        Counter sales are not turned on for this business.
+        {COUNTER_SALES_DISABLED_COPY}
       </div>
     );
   }
