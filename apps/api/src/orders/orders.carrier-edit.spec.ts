@@ -69,6 +69,7 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
   let invoices: {
     revertLinkedInvoicesForOrderEdit: jest.Mock;
     resyncOrderInvoicesForEdit: jest.Mock;
+    reconcileOrderDraftInvoice: jest.Mock;
   };
 
   const seed = (o: ReturnType<typeof order>, lockedStatus?: string) => {
