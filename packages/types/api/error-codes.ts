@@ -333,6 +333,12 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  /**
+   * 409 on a createSale replay whose order was changed (e.g. cancelled) after the first attempt. The sale
+   * EXISTS — the client must treat it as an UNKNOWN outcome: never as "nothing was charged", never drop the
+   * Idempotency-Key and re-ring (that would double-sell). Open the order from the orders list instead.
+   */
+  COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const;
 

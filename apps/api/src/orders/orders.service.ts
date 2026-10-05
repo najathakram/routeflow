@@ -2273,7 +2273,11 @@ export class OrdersService implements OnApplicationBootstrap {
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
     );
     if (replay && order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DELIVERED) {
-      throw new ConflictException("This sale's order was changed after it was created");
+      // The sale EXISTS (and may be charged): this is an UNKNOWN outcome, not a clean refusal, so it is coded.
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
+        message: "This sale's order was changed after it was created",
+      });
     }
 
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()

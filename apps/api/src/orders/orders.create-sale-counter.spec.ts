@@ -140,9 +140,14 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     it("a replayed order that was since CANCELLED is a 409, not a resumed sale", async () => {
       const { h, invoices, setReplayed } = await setup("CANCELLED");
       setReplayed(true);
-      await expect(h.service.createSale(keyed, operatorPayload as never)).rejects.toBeInstanceOf(
-        ConflictException,
+      const e = await h.service.createSale(keyed, operatorPayload as never).then(
+        () => null,
+        (err) => err,
       );
+      expect(e).toBeInstanceOf(ConflictException);
+      // The sale EXISTS: a client that reads every 409 as "nothing was charged" would re-ring it as a double
+      // sale, so this conflict carries its own code (an unknown outcome, not a clean refusal).
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_ORDER_CHANGED" });
       expect(h.prisma.order.update).not.toHaveBeenCalled();
       expect(invoices.createInvoiceFromOrder).not.toHaveBeenCalled();
     });
