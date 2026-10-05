@@ -4488,9 +4488,9 @@ export class OrdersService implements OnApplicationBootstrap {
       this.logger.warn(`replay reconcile skipped: order not found order=${orderId}`);
       return;
     }
-    // Derived from the CURRENT status, which is provably the same routing the fold used: the
-    // only status the fold itself changes is CONFIRMED -> PENDING, and both route the same way
-    // (`resyncsInPlace`, order-carrier-guard.ts).
+    // Routed by the SAME rule as the fold (`resyncsInPlace`, order-carrier-guard.ts), on the order's
+    // CURRENT state. That matches the fold's routing unless the state moved in between (a ship /
+    // unmark after the fold committed changes `withCarrier`); then the current state decides.
     const carrierNow = await carrierGuard.carrierEditGuard(this, order); // #3219 S4: as the fold routed
     const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
     let skipInPlaceResync = false;
