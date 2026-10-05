@@ -224,6 +224,59 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
     });
   });
 
+  describe("a key held by ANOTHER customer's order", () => {
+    // The service's staff-facing body names the holder (`orderId`); a buyer must never be handed
+    // another customer's order id (or any foreign identifier) through the key probe.
+    const foreignHolder = () =>
+      new ConflictException({
+        code: "IDEMPOTENCY_KEY_CONFLICT",
+        reason: "HELD_BY_OTHER_ORDER",
+        orderId: "ord-OTHER-CUSTOMER",
+        message: "Idempotency-Key already used for a different order",
+      });
+
+    it("is the coded 409 with NO foreign identifiers, and nothing is folded", async () => {
+      seedOpenOrder();
+      svc.findOrderIdByIdempotencyKey.mockRejectedValueOnce(foreignHolder());
+      const err: any = await controller
+        .createOrder(dto() as any, CTX as any, "key-1")
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: "IDEMPOTENCY_KEY_CONFLICT",
+        reason: "HELD_BY_OTHER_ORDER",
+      });
+      expect(JSON.stringify(err.getResponse())).not.toContain("ord-OTHER-CUSTOMER");
+      expect(err.getResponse()).not.toHaveProperty("orderId");
+      expect(folds).toBe(0);
+    });
+
+    it("the fold's in-transaction backstop 409 (already id-free) passes through unchanged", async () => {
+      seedOpenOrder();
+      svc.updateOrderItems.mockRejectedValueOnce(
+        new ConflictException("Idempotency-Key already used for a different order"),
+      );
+      await expect(controller.createOrder(dto() as any, CTX as any, "key-1")).rejects.toMatchObject(
+        { response: { message: "Idempotency-Key already used for a different order" } },
+      );
+    });
+
+    it("control: the buyer's OWN cart-mismatch 409 keeps its orderId (open the existing order)", async () => {
+      seedOpenOrder();
+      svc.findOrderIdByIdempotencyKey.mockRejectedValueOnce(
+        new ConflictException({
+          code: "IDEMPOTENCY_KEY_CONFLICT",
+          reason: "CART_MISMATCH",
+          orderId: "ord-open",
+          message: "different cart",
+        }),
+      );
+      await expect(controller.createOrder(dto() as any, CTX as any, "key-1")).rejects.toMatchObject(
+        { response: { reason: "CART_MISMATCH", orderId: "ord-open" } },
+      );
+    });
+  });
+
   describe("create branch (no open order)", () => {
     it("two concurrent first submits with the SAME key create ONE order", async () => {
       const [a, b] = await Promise.all([

@@ -7,6 +7,11 @@ jest.mock("./driver-edit-access", () => ({
 // (@react-pdf/renderer, expo-server-sdk) that Jest's CommonJS transform cannot parse.
 jest.mock("../invoices/invoices.service", () => ({ InvoicesService: jest.fn() }));
 jest.mock("../notifications/notifications.service", () => ({ NotificationsService: jest.fn() }));
+// The delivered-invoice settle is observed, not run: a lost CAS must never reach it.
+jest.mock("./order-status-invoicing", () => ({
+  ...jest.requireActual("./order-status-invoicing"),
+  settleOrderInvoice: jest.fn().mockResolvedValue(undefined),
+}));
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
@@ -15,6 +20,7 @@ import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { OrdersService } from "./orders.service";
+import { settleOrderInvoice } from "./order-status-invoicing";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -91,6 +97,7 @@ describe("B1095 — changeStatus vs a cancel that commits between the read and t
   };
 
   beforeEach(async () => {
+    (settleOrderInvoice as jest.Mock).mockClear();
     prisma = createMockPrisma();
     const perm = () =>
       new Proxy(
@@ -151,6 +158,21 @@ describe("B1095 — changeStatus vs a cancel that commits between the read and t
       expect(gateway.emitOrderStatusChanged).not.toHaveBeenCalled(); // nothing announced
     },
   );
+
+  it("CONFIRMED -> DELIVERED that loses the CAS never settles the invoice (a cancelled order is not billed)", async () => {
+    arrange("CONFIRMED", true);
+    await expect(
+      service.changeStatus("ord-1", { status: "DELIVERED" as never }, operator),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(row.status).toBe("CANCELLED");
+    expect(settleOrderInvoice).not.toHaveBeenCalled();
+  });
+
+  it("control: CONFIRMED -> DELIVERED with no cancel in between settles the invoice once", async () => {
+    arrange("CONFIRMED", false);
+    await service.changeStatus("ord-1", { status: "DELIVERED" as never }, operator);
+    expect(settleOrderInvoice).toHaveBeenCalledTimes(1);
+  });
 
   it("control: no cancel in between => the transition lands", async () => {
     arrange("CONFIRMED", false);

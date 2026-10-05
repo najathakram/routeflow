@@ -74,7 +74,11 @@ import {
   mapLockError,
 } from "../orders/merge-contention";
 import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
-import { buyerSubmitHash, normalizeBuyerIdempotencyKey } from "./buyer-order-idempotency";
+import {
+  buyerSubmitHash,
+  normalizeBuyerIdempotencyKey,
+  scrubForeignOrderId,
+} from "./buyer-order-idempotency";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -594,11 +598,9 @@ export class BuyerController {
             // B1094: the fold writes ABSOLUTE totals, so a retry that serialized behind the submit that
             // already folded this cart must replay it, not fold it in a second time (2 + 3 + 3 = 8).
             if (idempotencyKey) {
-              const replayed = await this.ordersService.findOrderIdByIdempotencyKey(
-                idempotencyKey,
-                ctx.customerId,
-                requestHash,
-              );
+              const replayed = await this.ordersService
+                .findOrderIdByIdempotencyKey(idempotencyKey, ctx.customerId, requestHash)
+                .catch(scrubForeignOrderId); // never hand a buyer another customer's order id
               if (replayed) {
                 // The fold's convergent tail may not have run (the key commits inside the fold's tx).
                 await this.ordersService.replayMergeReconcile(

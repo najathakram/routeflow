@@ -13,9 +13,15 @@ function mintKey(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** The key for this cart: the in-flight one when the payload is unchanged, else a fresh one. */
-export function buyerSubmitKeyFor(payload: unknown): string {
-  const fingerprint = JSON.stringify(payload);
+/**
+ * The key for this cart: the in-flight one when the payload is unchanged, else a fresh one. `scope`
+ * is WHO is submitting (buyer account + active seller): the server's replay identity is
+ * customer-scoped, so one customer's key must never ride onto another's cart (a different
+ * scope is a different cart here, whatever the payload). `clearBuyerSubmitKey` also runs on
+ * logout and on a seller switch.
+ */
+export function buyerSubmitKeyFor(payload: unknown, scope = ""): string {
+  const fingerprint = JSON.stringify([scope, payload]);
   if (!current || current.fingerprint !== fingerprint) current = { fingerprint, key: mintKey() };
   return current.key;
 }

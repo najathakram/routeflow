@@ -1,5 +1,28 @@
-import { BadRequestException } from "@nestjs/common";
-import { mergeRequestHash } from "../orders/merge-idempotency";
+import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
+import { IDEMPOTENCY_KEY_CONFLICT, mergeRequestHash } from "../orders/merge-idempotency";
+
+/**
+ * B1094: `findOrderIdByIdempotencyKey`'s HELD_BY_OTHER_ORDER 409 names the order that holds the key
+ * (`orderId`) — right for staff, a cross-customer leak for a buyer (the key is client-chosen, so a
+ * probe would be handed another customer's order id). Re-throw it as the same coded 409 with no
+ * identifiers; every other error (the buyer's OWN cart-mismatch 409 included) passes through.
+ */
+export function scrubForeignOrderId(e: unknown): never {
+  const body = e instanceof HttpException ? e.getResponse() : null;
+  if (
+    body &&
+    typeof body === "object" &&
+    (body as { code?: string }).code === IDEMPOTENCY_KEY_CONFLICT &&
+    (body as { reason?: string }).reason === "HELD_BY_OTHER_ORDER"
+  ) {
+    throw new ConflictException({
+      code: IDEMPOTENCY_KEY_CONFLICT,
+      reason: "HELD_BY_OTHER_ORDER",
+      message: "Idempotency-Key already used for a different order",
+    });
+  }
+  throw e;
+}
 
 /**
  * B1094: the `Idempotency-Key` for `POST /buyer/orders` — the same client-chosen, bounded token the
