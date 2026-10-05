@@ -69,7 +69,7 @@ import { ShipmentSection, ShipmentEditModal } from "../../../../components/Shipm
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
-import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { cancelBlockedNote, statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -187,7 +187,11 @@ export default function OrderDetailScreen() {
   // pins its signature to the narrower `OrderStatus` union so a typo'd status
   // string is caught at the call site instead of silently falling through to
   // the switch's `default: []`.
-  const actions = statusActions(order.status as OrderStatus, order.fulfillPath);
+  const actions = statusActions(
+    order.status as OrderStatus,
+    order.fulfillPath,
+    order.cancelBlockedReason,
+  );
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -892,7 +896,7 @@ export default function OrderDetailScreen() {
           ) : null}
 
           {/* Status transitions */}
-          {actions.length > 0 ? (
+          {actions.length > 0 || cancelBlockedNote(order.cancelBlockedReason) ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Status</Text>
               <View style={styles.actionsCol}>
@@ -936,6 +940,9 @@ export default function OrderDetailScreen() {
                   </Pressable>
                 ))}
               </View>
+              {cancelBlockedNote(order.cancelBlockedReason) ? (
+                <Text style={styles.shipHint}>{cancelBlockedNote(order.cancelBlockedReason)}</Text>
+              ) : null}
               {order.fulfillPath === "SHIP" &&
               actions.some((a) => a.toStatus === "OUT_FOR_DELIVERY") ? (
                 <Text style={styles.shipHint}>
