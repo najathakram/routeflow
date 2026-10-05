@@ -45,16 +45,27 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
   });
 });
 
-describe("preselectFulfilment: the customer's own path first, then the staff default (SA rule)", () => {
-  it("a SHIP-default customer stays SHIP even when the staff default is PICKUP", () => {
-    expect(preselectFulfilment("SHIP", "PICKUP")).toBe("SHIP");
+describe("preselectFulfilment: mirrors the resolver (the customer's stored path only if it is a method here)", () => {
+  const both = {
+    methods: ["ROUTE", "SHIP"] as ("ROUTE" | "SHIP")[],
+    staffDefault: "ROUTE" as const,
+  };
+  const shipOnly = { methods: ["SHIP"] as "SHIP"[], staffDefault: "SHIP" as const };
+  it("a stored path that is one of the methods wins over the staff default", () => {
+    expect(preselectFulfilment("SHIP", both)).toBe("SHIP");
+    expect(preselectFulfilment("ROUTE", { ...both, staffDefault: "SHIP" })).toBe("ROUTE");
   });
-  it("no customer path: the staff default", () => {
-    expect(preselectFulfilment(null, "PICKUP")).toBe("PICKUP");
-    expect(preselectFulfilment(undefined, "SHIP")).toBe("SHIP");
+  it("a stored ROUTE on a ship-only capability falls to SHIP", () => {
+    expect(preselectFulfilment("ROUTE", shipOnly)).toBe("SHIP");
+    expect(preselectFulfilment("PICKUP", shipOnly)).toBe("SHIP");
   });
-  it("neither: null", () => {
-    expect(preselectFulfilment(null, undefined)).toBeNull();
+  it("no stored path: the staff default", () => {
+    expect(preselectFulfilment(null, shipOnly)).toBe("SHIP");
+    expect(preselectFulfilment(undefined, both)).toBe("ROUTE");
+  });
+  it("no capability: null", () => {
+    expect(preselectFulfilment("SHIP", null)).toBeNull();
+    expect(preselectFulfilment("SHIP", undefined)).toBeNull();
   });
 });
 

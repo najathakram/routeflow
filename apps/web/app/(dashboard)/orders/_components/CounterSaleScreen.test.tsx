@@ -32,7 +32,10 @@ jest.mock("@/lib/api/products", () => ({
     };
   },
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+let customersFor: unknown[] = [];
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: customersFor } }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
 }));
@@ -49,6 +52,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   window.print = printSpy;
+  customersFor = [];
   productFor = { "012345678905": COLA, WATER: WATER_CASE };
   gate = {
     showButton: true,
@@ -254,6 +258,21 @@ describe("CounterSaleScreen", () => {
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.click(screen.getByRole("button", { name: "Ship this order instead" }));
     expect(push).toHaveBeenCalledWith(expect.stringContaining("/orders?action=new&ship=1"));
+  });
+
+  it("'Ship this order instead' preselects SHIP for a customer whose stored ROUTE is not a method here", () => {
+    customersFor = [{ id: "c1", businessName: "Acme Co", fulfillPath: "ROUTE" }];
+    gate = {
+      showButton: true,
+      opensAsCounter: true,
+      offerShipInstead: true,
+      capability: { counter: "always", methods: ["SHIP"], staffDefault: "SHIP" },
+    };
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ship this order instead" }));
+    expect(push).toHaveBeenCalledWith("/orders?action=new&ship=1&preselect=SHIP");
   });
 
   it("a business with the counter off shows nothing to sell with", () => {

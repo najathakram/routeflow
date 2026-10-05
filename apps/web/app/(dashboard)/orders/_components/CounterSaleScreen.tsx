@@ -119,8 +119,7 @@ export function CounterSaleScreen() {
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
-  const shipPreselected =
-    preselectFulfilment(customer?.fulfillPath, gate.capability?.staffDefault) === "SHIP";
+  const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
   const [lookup, setLookup] = React.useState<{ search?: string; scanCode?: string } | null>(null);
   const { data: found, isFetching } = useProducts(

@@ -45,12 +45,17 @@ export function counterSaleGate(cap: FulfilmentCapabilityLike | null | undefined
   return NO_COUNTER;
 }
 
-/** SA rule: the CUSTOMER's own fulfilment path first, then `capabilities.fulfilment.staffDefault`. A SHIP-default customer stays SHIP. */
+/**
+ * Mirrors the server resolver: the CUSTOMER's stored path is used only if it is one of `capability.methods`, otherwise
+ * `capability.staffDefault`. A stored ROUTE on a ship-only business therefore preselects SHIP.
+ */
 export function preselectFulfilment(
   customerPath: string | null | undefined,
-  staffDefault: string | null | undefined,
+  cap: Pick<FulfilmentCapabilityLike, "methods" | "staffDefault"> | null | undefined,
 ): string | null {
-  return customerPath ?? staffDefault ?? null;
+  if (!cap) return null;
+  if (customerPath && (cap.methods ?? []).includes(customerPath)) return customerPath;
+  return cap.staffDefault ?? null;
 }
 
 export interface CartLine {
