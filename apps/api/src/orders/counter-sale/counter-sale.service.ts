@@ -16,9 +16,9 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
-import type { OrderItemDto } from "../dto/create-order.dto";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { counterSaleGate } from "./capability-shape";
+import { toCounterOrderItem } from "./counter-sale-lines";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -117,7 +117,7 @@ export class CounterSaleService {
     assertPaymentShape(dto.payment, walkIn);
 
     // 3. Tenant-scoped existence checks (another tenant's ids are simply not found).
-    await this.assertProductsExist(dto.items.map((i) => i.productId));
+    const packs = await this.assertProductsExist(dto.items.map((i) => i.productId));
     let customerId: string;
     if (walkIn) {
       customerId = await this.walkIns.getOrCreateWalkIn();
@@ -138,7 +138,7 @@ export class CounterSaleService {
     const primary = await this.orders.createSale(
       {
         customerId,
-        items: dto.items.map(toOrderItem),
+        items: dto.items.map((i) => toCounterOrderItem(i, packs.get(i.productId) ?? null)),
         notes: dto.notes,
         deliveredNow: true,
         idempotencyKey,
@@ -251,13 +251,17 @@ export class CounterSaleService {
     return { invoices, planError };
   }
 
-  private async assertProductsExist(productIds: string[]): Promise<void> {
+  /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */
+  private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
     const unique = [...new Set(productIds)];
     const found = await this.prisma.forTenant().product.findMany({
       where: { id: { in: unique } },
-      select: { id: true },
+      select: { id: true, unitsPerBox: true },
     });
     if (found.length !== unique.length) throw new NotFoundException("Product not found");
+    return new Map(
+      found.map((p: { id: string; unitsPerBox: number | null }) => [p.id, p.unitsPerBox]),
+    );
   }
 
   private async assertNoOpenCredit(customerId: string): Promise<void> {
@@ -335,15 +339,4 @@ export class CounterSaleService {
       ...(replayed ? { replayed: true } : {}),
     };
   }
-}
-
-function toOrderItem(i: CounterSaleDto["items"][number]): OrderItemDto {
-  return {
-    productId: i.productId,
-    ...(i.qty != null ? { qty: i.qty } : {}),
-    ...(i.boxes != null ? { boxes: i.boxes } : {}),
-    ...(i.pieces != null ? { pieces: i.pieces } : {}),
-    ...(i.unitPrice != null ? { unitPrice: i.unitPrice } : {}),
-    ...(i.priceReason ? { overrideReason: i.priceReason } : {}),
-  } as OrderItemDto;
 }

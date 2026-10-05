@@ -334,7 +334,8 @@ describe("CounterSaleService.ring", () => {
 
   // ── 4. lines + 5. sequence ─────────────────────────────────────────────────
   describe("lines and sequence", () => {
-    it("hands create() (via createSale) the lines unchanged; priceReason becomes overrideReason", async () => {
+    it("hands create() (via createSale) the lines as the writer stores them (qty always set); priceReason becomes overrideReason", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 4 }]);
       await service.ring(
         named(
           { method: "CASH" },
@@ -357,7 +358,14 @@ describe("CounterSaleService.ring", () => {
         idempotencyKey: "key-1",
       });
       expect(dto.items).toEqual([
-        { productId: "p1", boxes: 1, pieces: 3, unitPrice: 4.5, overrideReason: "damaged box" },
+        {
+          productId: "p1",
+          qty: 7, // 1 box of 4 + 3 pieces: the integer the writer stores, so a same-key replay matches
+          boxes: 1,
+          pieces: 3,
+          unitPrice: 4.5,
+          overrideReason: "damaged box",
+        },
         { productId: "p1", qty: 2 },
       ]);
     });
