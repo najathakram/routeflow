@@ -3449,3 +3449,33 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Run the host-dependent code in a CHILD process with the environment set (`TZ`) and keep a vacuity guard that proves the condition. For network security and resource properties assert on the SERVER (status sent, handler work run, bytes read) and count a client reset after an early response as a rejection; never require a client to read a response from a connection the server closed first. A spy keyed on `socket.localPort` misses responses on destroyed sockets; key on `server.address().port`.**
 - **Guard:** `common/pdf-date.spec.ts` (child process, `TZ=America/Los_Angeles`, vacuity guard); `apps/control/test/wp7-security.spec.ts` (server-side spy, forced-reset test, over-cap test, mutation-proven).
   (Archived 2026-10-04 whole and verbatim to make room at cap: L-251 is guarded by credit-notes/own-line-pool-b960.spec.ts, L-252 by common/pdf-date.spec.ts and its child-process vacuity guard; each had one outside citation (the register's own _meta.json note) that still resolves; window 1 bookkeeping.)
+
+### L-253 · 2026-10-01 · process · a public CI window closes on state, never on a reply (a lead restart stranded one)
+
+- **Symptom:** the lead session restarted mid-window (17:22Z to 17:50Z) and the repo stayed public until the coordinator flipped it about five minutes before the watchdog's deadline, because the close routine was waiting for the lead's go.
+- **Root cause:** closing a window was gated on a reply instead of on the watchdog deadline and the deploy state.
+- **Lesson:** **The window owner starts the watchdog FIRST and closes on state: flip PRIVATE when the deploys are SUCCESS, or about five minutes before the deadline even if a deploy is still building (Railway keeps deploying privately), read the visibility back, then report. A lead outage neither extends nor blocks the close.**
+- **Guard:** `scripts/visibility-watchdog.mjs` (flips private at its deadline with verified retries); the lead's 2026-10-01 rule (flip at about deadline minus five minutes and keep watching the deploy).
+
+### L-255 · 2026-10-02 · tooling · a file on the size ratchet is checked by the api ratchet spec before every push that grows it, in any workspace
+
+- **Symptom:** #2865's first Verify went red in a public window: `size-ratchet.spec.ts` reported `apps/mobile/components/NewOrderScreen.tsx` at 2637 lines (baseline 2560 + 25 headroom = 2585, +52 over). The window landed nothing; the extraction shipped as a re-pin (2535 lines).
+- **Root cause:** the ratchet lives in the API workspace but caps web and mobile files too, so a mobile- or web-only local check never runs it.
+- **Lesson:** **Before pushing a change that grows a ratcheted file, run `cd apps/api && npx jest -c jest.repo-truth.config.js size-ratchet` (or `npm run test:repo-truth -w apps/api`; a plain `npx jest` finds no tests, the spec is in the repo-truth config) or the full `npm run verify` and extract the new code into its own module in the same PR; never raise a baseline without the owner. Cf. [[L-215]], [[L-227]].**
+- **Guard:** `apps/api/src/common/size-ratchet.spec.ts`, run by CI in the api `test:repo-truth` step.
+
+### L-256 · 2026-10-02 · tooling · a master merge commit goes through lint-staged and reformats master's own files
+
+- **Symptom:** finishing a conflicted merge of master into a PR branch with a plain `git commit` ran `prettier --write` over the staged files that came from master, so about 30 files that are not the PR's (handoff notes, `LEAD-LOG.md`, a data file) landed in the PR; the author compared two file lists of 57 and never compared 57 to the PR's own 27.
+- **Root cause:** lint-staged formats every staged file, and in a merge commit master's files are staged too.
+- **Lesson:** **Finish a conflicted merge by `git add`-ing ONLY the conflicted files, and after any master merge compare `git diff --name-only <master-parent> HEAD | wc -l` with the PR's own count (own set = `git diff --name-only <old-base> <pre-merge-tip>`). Restoring from the master parent is the repair, and a plain commit re-runs prettier and undoes it. Hand-kept notes are listed in `.prettierignore` (#3055).**
+- **Guard:** `.prettierignore` (#3055, hand-kept notes and generated files); the file-count comparison.
+  (Archived 2026-10-05 whole and verbatim to make room at cap: L-253 is guarded by scripts/visibility-watchdog.mjs, L-255 by apps/api/src/common/size-ratchet.spec.ts, L-256 by .prettierignore; each had zero outside citations.)
+
+### L-259 · 2026-10-04 · security · a guard and the write it protects share ONE normalized value; one allowlist drives every copy of a field set (#3191, #3190)
+
+- **Symptom:** an admin-protection check compared the raw request value while the stored value was normalized (trim, case), so a padded or re-cased value slipped past the guard yet wrote the same account, or a harmless edit was refused. Separately, a customer-facing write body and its read filter each kept a hand-typed field list that drifted apart.
+- **Root cause:** the guard, the changed-field test and the write each normalized (or did not) on their own. Two hand lists of the same fields are two sources of truth; patching one list left the other open.
+- **Lesson:** **Normalize an identity input once, then feed that single value to the guard, the changed-field comparison, the write and every side effect. Derive a field-restricted DTO and its read filter from one allowlist const (PickType over it), never a second list.**
+- **Guard:** `customers/customers.self-service-allowlist.spec.ts` (body type and filter both from `SELF_SERVICE_FIELDS`) and the users service specs for #3191; the normalization lives in one block in `users.service.ts`.
+  (Archived 2026-10-05 whole and verbatim to make room at cap: L-259 is guarded by customers/customers.self-service-allowlist.spec.ts and the users service specs, with no citation outside the code-map bookkeeping.)

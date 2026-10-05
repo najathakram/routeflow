@@ -38,6 +38,7 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
@@ -176,7 +177,7 @@ function isAnnualStripeBilled(
  *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`) or Stripe not configured — on, priced 0,
  *              books no revenue.
  */
-export type AddonBilling = "STRIPE" | "MANUAL" | "UNBILLED";
+export type AddonBilling = AddonBillingMode;
 
 /**
  * Subscription state MUTATIONS (Plans & Billing Phase 4). Owns the tenant's
