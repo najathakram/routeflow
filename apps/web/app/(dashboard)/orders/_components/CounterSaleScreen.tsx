@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn } from "@routeflow/ui/web";
-import { getTierPrice } from "@routeflow/pricing";
+import { getTierPrice, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -75,6 +75,8 @@ export function CounterSaleScreen() {
     dto: CounterSaleRequest;
     next: boolean;
   } | null>(null);
+  // The total the clerk SAW (the client estimate) when the sale was submitted: compared with the server's on the way out.
+  const estimateRef = React.useRef(0);
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
   const submittingRef = React.useRef(false);
 
@@ -254,6 +256,7 @@ export function CounterSaleScreen() {
       },
     };
     attemptRef.current = { key: newIdempotencyKey(), dto, next };
+    estimateRef.current = totals.total;
     return send(attemptRef.current);
   };
 
@@ -267,8 +270,10 @@ export function CounterSaleScreen() {
       if (autoPrint) window.print(); // once per completed sale, before any reset
       // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
       // (whose own "New sale" starts the next one).
+      // The same holds when the server's total is not the estimate the clerk collected on: its receipt shows first.
       const unpaid = res.paymentRecorded === false || res.balanceDue > 0;
-      if (next && !unpaid) resetSale();
+      const totalDiffers = roundMoney(res.total) !== roundMoney(estimateRef.current);
+      if (next && !unpaid && !totalDiffers) resetSale();
       else setReceipt(res);
     } finally {
       submittingRef.current = false;
@@ -328,7 +333,7 @@ export function CounterSaleScreen() {
           </div>
         ) : null}
         <dl className="space-y-1 text-sm">
-          <div className="flex justify-between">
+          <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">
             <dt>Total</dt>
             <dd>{money(receipt.total)}</dd>
           </div>
@@ -477,7 +482,7 @@ export function CounterSaleScreen() {
       </ul>
 
       <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-        <span>Total</span>
+        <span>Estimated total</span>
         <span>{money(totals.total)}</span>
       </div>
 

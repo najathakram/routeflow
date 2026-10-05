@@ -61,10 +61,10 @@ beforeEach(() => {
     orderNumber: "ORD-1",
     invoiceId: "i1",
     invoiceNumber: "INV-1",
-    total: 7.5,
+    total: 2.5, // the default cart (one Cola) estimates $2.50: the server agrees
     paid: 20,
     balanceDue: 0,
-    change: 12.5,
+    change: 17.5,
     paymentRecorded: true,
   });
   // a deterministic key source: key-1, key-2, ...
@@ -548,6 +548,88 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await completeAndNext();
       await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
       expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
+    });
+  });
+
+  describe("the displayed total is an ESTIMATE; the receipt carries the server's number", () => {
+    it("the running figure is labelled 'Estimated total' (and still drives quick tender / change)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      const running = screen.getByTestId("running-total");
+      expect(running).toHaveTextContent("Estimated total");
+      expect(running).toHaveTextContent("$2.50");
+      expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
+    });
+
+    it("the receipt's total is prominent and is the server's number", async () => {
+      mutateAsync.mockResolvedValue({
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.7,
+        paid: 20,
+        balanceDue: 0,
+        change: 17.3,
+        paymentRecorded: true,
+      });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      const total = await screen.findByTestId("receipt-total");
+      expect(total).toHaveTextContent("$2.70");
+      expect(total.className).toMatch(/text-lg/);
+    });
+
+    it("Complete & next sale whose server total DIFFERS from the estimate shows the receipt first, not reset", async () => {
+      mutateAsync.mockResolvedValue({
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.7,
+        paid: 20,
+        balanceDue: 0,
+        change: 17.3,
+        paymentRecorded: true,
+      });
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      expect(await screen.findByTestId("receipt-total")).toHaveTextContent("$2.70");
+      expect(screen.queryByText("No items yet.")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+      expect(await screen.findByText("No items yet.")).toBeInTheDocument();
+    });
+
+    it("auto-print fires once when the receipt is held for a total mismatch", async () => {
+      window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+      mutateAsync.mockResolvedValue({
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.7,
+        paid: 20,
+        balanceDue: 0,
+        change: 17.3,
+        paymentRecorded: true,
+      });
+      renderWithProviders(<CounterSaleScreen />);
+      await waitFor(() =>
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
+      );
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      await screen.findByTestId("receipt-total");
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a server total equal to the estimate still resets (the clerk already saw that number)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await fillCola();
+      fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
+      await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
     });
   });
 
