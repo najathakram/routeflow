@@ -1867,10 +1867,16 @@ export class SubscriptionMutationService {
     }
     const [keep, ...extra] = items;
     if (keep.unitAmountCents == null || keep.quantity < 1 || !(row.quantity >= 1)) {
+      // The item exists and BILLS, so it can never be skipped quietly: refuse with a code (the webhook
+      // is retried and the failure is loud) rather than leave a live item nothing owns.
       this.logger.error(
-        `Checkout add-on "${sku}" tenant ${tenantId}: item ${keep.itemId} has no readable price/quantity — not adopted`,
+        `Checkout add-on "${sku}" tenant ${tenantId}: item ${keep.itemId} has no readable price/quantity — refused`,
       );
-      return false;
+      throw new ConflictException({
+        code: API_ERROR_CODES.ADDON_CHECKOUT_ITEM_UNREADABLE,
+        message:
+          "A checkout add-on item has no readable price or quantity, so it was not attached. The checkout is retried.",
+      });
     }
     const price = fromCents(keep.unitAmountCents);
     // The ROW's quantity wins (SA ruling): the tenant may have changed it after the session was

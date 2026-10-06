@@ -176,9 +176,16 @@ interface Opts {
   alreadyApplied?: boolean;
   delFails?: boolean;
   updateFails?: boolean;
+  cancelFails?: boolean;
+  /** The duplicate subscription's first invoice at Stripe (default paid). */
+  invoiceStatus?: string;
   baseSub?: Record<string, unknown>;
   /** The customer RouteFlow stored for the tenant (default cus_1; null = none on file). */
   storedCustomer?: string | null;
+  /** The Stripe subscription RouteFlow already stores for the tenant (default none). */
+  storedSubId?: string | null;
+  /** That stored subscription's status at Stripe (default active = live). */
+  storedSubStatus?: string;
   /** The customer on the Stripe subscription the completion retrieves (default cus_1). */
   subCustomer?: string;
   /** The retrieved subscription's status (default active). */
@@ -203,7 +210,7 @@ function make(opts: Opts = {}) {
     planKey: opts.planKey === undefined ? "STARTER" : opts.planKey,
     basePriceSnapshot: 99,
     discount: 0,
-    stripeSubId: null,
+    stripeSubId: opts.storedSubId ?? null,
     stripeCustomerId: opts.storedCustomer === undefined ? "cus_1" : opts.storedCustomer,
     billingInterval: opts.interval === undefined ? "month" : opts.interval,
     cycle: opts.interval === "year" ? "ANNUAL" : "MONTHLY",
@@ -289,17 +296,47 @@ function make(opts: Opts = {}) {
     },
     invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
   };
-  const stripeSubObject = () => ({
-    id: "sub_1",
+  // The subscriptions Stripe holds: the session's (any id, built on demand) and the tenant's stored one.
+  const canceledSubs = new Set<string>();
+  const stripeSubObject = (id = "sub_1") => ({
+    id,
     object: "subscription",
-    status: opts.subStatus ?? "active",
+    status: canceledSubs.has(id) ? "canceled" : (opts.subStatus ?? "active"),
     customer: opts.subCustomer ?? "cus_1",
+    latest_invoice: `in_${id}`,
     items: { object: "list", data: stripeItems.map((i) => ({ ...i })) },
   });
   const stripe = {
     isConfigured: true,
     client,
-    getSubscription: jest.fn(async () => stripeSubObject()),
+    getSubscription: jest.fn(async (id: string) => {
+      if (opts.storedSubId && id === opts.storedSubId) {
+        return {
+          id,
+          object: "subscription",
+          customer: "cus_1",
+          status: canceledSubs.has(id) ? "canceled" : (opts.storedSubStatus ?? "active"),
+          items: { object: "list", data: [] },
+        };
+      }
+      if (opts.storedSubStatus === "missing" && id !== "sub_1" && !id.startsWith("sub_dup")) {
+        throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
+      }
+      return stripeSubObject(id);
+    }),
+    cancelSubscription: jest.fn(async (id: string, _params?: unknown, _options?: unknown) => {
+      if (opts.cancelFails) throw new Error("stripe down: internal detail");
+      canceledSubs.add(id);
+      return { id, status: "canceled" };
+    }),
+    getInvoice: jest.fn(async (id: string) => ({
+      id,
+      object: "invoice",
+      status: opts.invoiceStatus ?? "paid",
+      amount_due: 9900,
+      total: 9900,
+    })),
+    voidInvoice: jest.fn(async (id: string) => ({ id, status: "void" })),
     createCustomer: jest.fn(async () => {
       await new Promise((r) => setImmediate(r)); // a real network hop: lets a concurrent caller interleave
       return { id: `cus_new${++customerSeq}` };
@@ -308,6 +345,8 @@ function make(opts: Opts = {}) {
 
   // ── ledger + transaction ───────────────────────────────────────────────────────────────────────
   const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+  /** Every audit row a transaction wrote (the refusal trail and the platform notices), in order. */
+  const audits: any[] = [];
   const tx: any = {
     tenant: {
       // the activation CAS: TRIAL/READ_ONLY/... → ACTIVE, once
@@ -327,10 +366,23 @@ function make(opts: Opts = {}) {
     tenantSubscription: {
       upsert: jest.fn(async (args: any) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // the X1 re-check re-reads the stored subscription under the tenant lock
+      findUnique: jest.fn(async () => ({ ...sub })),
     },
     auditLog: {
-      create: jest.fn().mockResolvedValue({}),
-      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(async ({ data }: any) => {
+        audits.push({ ...data, createdAt: new Date() });
+        return {};
+      }),
+      findFirst: jest.fn(async ({ where }: any = {}) => {
+        const hit = audits.find(
+          (a) =>
+            (where?.entityType == null || a.entityType === where.entityType) &&
+            (where?.entityId == null || a.entityId === where.entityId) &&
+            (where?.action == null || a.action === where.action),
+        );
+        return hit ? { id: "audit-found" } : null;
+      }),
     },
     $queryRaw: jest.fn().mockResolvedValue([]),
     $executeRaw: jest.fn().mockResolvedValue(0),
@@ -353,7 +405,15 @@ function make(opts: Opts = {}) {
     tenantAddon,
     user: { findFirst: jest.fn().mockResolvedValue({ email: "admin@acme.test" }) },
     auditLog: {
-      findFirst: jest.fn().mockResolvedValue(opts.alreadyApplied ? { id: "audit1" } : null),
+      // the APPLIED marker (flag-on redelivery) and the sticky DUPLICATE decision (the audit store)
+      findFirst: jest.fn(async ({ where }: any = {}) => {
+        if (where?.action === "STRIPE_CHECKOUT_DUPLICATE") {
+          return audits.some((a) => a.action === where.action && a.entityId === where.entityId)
+            ? { id: "dup-decision" }
+            : null;
+        }
+        return opts.alreadyApplied ? { id: "audit1" } : null;
+      }),
       create: jest.fn().mockResolvedValue({}),
     },
     tenantFeatureConfigSnapshot: {
@@ -448,6 +508,7 @@ function make(opts: Opts = {}) {
     events,
     entitlements,
     billingNotification,
+    audits,
     session,
     completed,
     ledger,
@@ -1429,6 +1490,44 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+describe("S4: a checkout item whose price or quantity cannot be read is a coded refusal, never a silent skip", () => {
+  const unreadable = (over: Record<string, unknown>) => ({
+    ...checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+    ...over,
+  });
+  const noPrice = () => {
+    const i: any = checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2);
+    i.price = { ...i.price, unit_amount: null, unit_amount_decimal: null };
+    return i;
+  };
+
+  it.each([
+    ["no unit amount", noPrice],
+    ["a zero quantity", () => unreadable({ quantity: 0 })],
+    ["a non-integer quantity", () => unreadable({ quantity: "two" })],
+  ] as const)(
+    "%s: the webhook is refused with ADDON_CHECKOUT_ITEM_UNREADABLE (retried, never `return false` while the item bills)",
+    async (_n, item) => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")],
+        items: [baseItem(), item(), checkoutItem("si_fc", "FORECASTING", 1900, 1)],
+      });
+
+      const err: any = await h.completed().catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: API_ERROR_CODES.ADDON_CHECKOUT_ITEM_UNREADABLE,
+      });
+      // the unreadable one stays unadopted and unbooked; the OTHER SKU was still adopted (no stranding)
+      expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+      expect(h.rows[1]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at checkout and never blocks it", () => {
   const comp = (sku: string, o: RowOpts = {}) => addonRow(sku, { ...o, isComp: true });
 
