@@ -88,7 +88,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
-import { buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
+import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
@@ -195,7 +195,9 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
-import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
+import { shippedPushCopy } from "./shipped-push-copy";
+import { attachInvoiceStages } from "./order-invoice-stage";
+import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -499,6 +501,7 @@ export class OrdersService implements OnApplicationBootstrap {
             invoiceNumber: true,
             status: true,
             total: true,
+            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
             // Classification pending: whether this credit-note-application read
@@ -572,6 +575,7 @@ export class OrdersService implements OnApplicationBootstrap {
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
+    await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -2644,11 +2648,11 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409).
-      return writeStatusIfUnchanged(this.prisma.forTenant(), id, order.status, statusUpdateData);
+      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409), in the
+      // SAME tx as the ship-state marker when there is one (SA-689): order-ship-state.ts.
+      return updateStatusWithShipMarker(this, order, dto, user, statusUpdateData);
     })();
 
-    await recordShipStateChange(this, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
@@ -2733,7 +2737,14 @@ export class OrdersService implements OnApplicationBootstrap {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status];
+    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
+    const notif =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
+          isFirstShipment(order)
+          ? shippedPushCopy(order)
+          : undefined
+        : notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
@@ -2990,9 +3001,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
-      throw new ForbiddenException(
-        "This order is already out for delivery. Send a change request instead.",
-      );
+      throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice

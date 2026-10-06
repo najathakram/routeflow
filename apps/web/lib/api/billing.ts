@@ -138,6 +138,9 @@ export interface ProrationPreview {
   /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
    *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
   refusal?: { code: string; message: string } | null;
+  /** SA-690: true while the tenant is still on its TRIAL — the add-on is on at no charge now and is
+   *  billed when the card is added (the confirm sheet's copy), not charged today. */
+  trial?: boolean;
 }
 
 export interface QuoteInput {

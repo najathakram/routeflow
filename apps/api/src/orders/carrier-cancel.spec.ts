@@ -9,8 +9,8 @@ import { carrierCancelBlockedReason } from "./order-status-invoicing";
 import {
   EDIT_REVISIONS,
   lastShipStateSource,
-  recordShipStateChange,
   shipStateMarker,
+  updateStatusWithShipMarker,
 } from "./order-ship-state";
 import { OrdersService } from "./orders.service";
 
@@ -147,7 +147,15 @@ describe("OrdersService wiring", () => {
 describe("B1: unmark vs reopen (ship-state markers)", () => {
   const makeStore = (opts: { delivered?: boolean } = {}) => {
     const revisions: Array<{ orderId: string; revisionNumber: number; source: string }> = [];
+    const orderItem = {
+      findMany: async () => [],
+      // a line with deliveredQty > 0 (a partial delivery happened)
+      findFirst: async () => (opts.delivered ? { id: "li-1" } : null),
+    };
+    const orderUpdate = async ({ data }: any) => ({ id: "o1", ...data });
     const tx = {
+      order: { update: orderUpdate },
+      orderItem,
       orderRevision: {
         aggregate: async ({ where }: any) => ({
           _max: {
@@ -164,11 +172,8 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       getTenantId: () => "t1",
       tenantTransaction: async (fn: any) => fn(tx),
       forTenant: () => ({
-        orderItem: {
-          findMany: async () => [],
-          // a line with deliveredQty > 0 (a partial delivery happened)
-          findFirst: async () => (opts.delivered ? { id: "li-1" } : null),
-        },
+        order: { update: orderUpdate },
+        orderItem,
         orderRevision: {
           findFirst: async ({ where }: any) => {
             const rows = revisions
@@ -187,12 +192,12 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       lastShipStateSource(prisma, id),
     );
   const change = (prisma: any, from: OrderStatus, to: OrderStatus, mode = "ship") =>
-    recordShipStateChange(
+    updateStatusWithShipMarker(
       { prisma, featureConfig: cfg(mode) },
       { ...base, status: from },
-      to,
+      { status: to, reason: "r" },
       undefined,
-      "r",
+      { status: to },
     );
 
   it("shipMarker: only the two transitions leave a marker, and only on SHIP orders", () => {
@@ -261,14 +266,40 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     ]);
   });
 
-  it("a marker write that fails never fails the status change", async () => {
+  it("SA-689: a marker write that fails fails the status change (atomic: see order-ship-marker-atomic.spec.ts)", async () => {
     const prisma = makeStore();
     prisma.tenantTransaction = async () => {
       throw new Error("db down");
     };
     await expect(
       change(prisma, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CONFIRMED),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("db down");
+  });
+
+  it("KNOWN: legacy reopen without marker — an open shipped order with NO marker reads as cancellable", async () => {
+    // A reopen from DELIVERED made before markers existed left none, and there is no status history to
+    // rebuild it from, so today it is cancellable. Accepted and documented (order-ship-state.ts); if a
+    // backfill ever lands, this is the spec to flip.
+    for (const status of [OrderStatus.PENDING, OrderStatus.CONFIRMED]) {
+      expect(await lastShipStateSource(makeStore(), "o1")).toBeNull();
+      expect(await blocked(makeStore(), status)).toBeNull();
+    }
+    // ...while the same order WITH a reopen marker (any written since) is blocked
+    const marked = makeStore();
+    await change(marked, OrderStatus.DELIVERED, OrderStatus.CONFIRMED);
+    expect(await blocked(marked, OrderStatus.CONFIRMED)).toBe("WITH_CARRIER");
+  });
+
+  it("SA-689 b: the marker constants are a leaf both modules import (no import cycle)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path");
+    const read = (f: string): string => fs.readFileSync(path.join(__dirname, f), "utf8");
+    expect(read("ship-state-markers.ts")).not.toMatch(/^import .* from "\.\//m);
+    expect(read("order-status-invoicing.ts")).not.toMatch(/from "\.\/order-ship-state"/);
+    expect(read("order-status-invoicing.ts")).toMatch(/from "\.\/ship-state-markers"/);
+    expect(read("order-ship-state.ts")).toMatch(/from "\.\/ship-state-markers"/);
   });
 
   it("wiring pins: changeStatus records the marker; updateOrderItems blocks credits for a with-carrier order", () => {
@@ -277,7 +308,7 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
       require("path").join(__dirname, "orders.service.ts"),
       "utf8",
     );
-    expect(src).toMatch(/await recordShipStateChange\(this, order, dto\.status/);
+    expect(src).toMatch(/updateStatusWithShipMarker\(this, order, dto, user, statusUpdateData\)/);
     // S2: the locked re-read (and, ship-billing, the revert) runs inside the edit transaction
     expect(src).toMatch(/const carrierLocked = await carrierGuard\.carrierRevertUnderLock\(/);
     expect(src).toMatch(/blockCredits: carrierLocked,/);

@@ -2548,6 +2548,7 @@ export default function InvoiceDetailPage() {
               carrier={invoice.shippingCarrier}
               trackingNumber={invoice.shippingTrackingNumber}
               shippedAt={invoice.shippedAt}
+              orderStatus={invoice.order?.status}
               isSaving={updateShipment.isPending}
               readOnly={status === "VOID" || status === "WRITTEN_OFF"}
               onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
