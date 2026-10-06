@@ -1,3 +1,4 @@
+import { TenantStatus } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
@@ -76,8 +77,8 @@ export function billableAddonWhere(
  */
 export function keepsTrialAddons(t: { status: string; readOnlyReason?: string | null }): boolean {
   return (
-    t.status === "TRIAL" ||
-    (t.status === "READ_ONLY" &&
+    t.status === TenantStatus.TRIAL ||
+    (t.status === TenantStatus.READ_ONLY &&
       (t.readOnlyReason === "trial_expired" || t.readOnlyReason === "trial_cancelled"))
   );
 }
