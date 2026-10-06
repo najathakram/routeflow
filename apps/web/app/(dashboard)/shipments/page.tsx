@@ -9,6 +9,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { fmtDate } from "@/lib/formatting";
+import { shipmentListShippedAt } from "@/lib/shipment-display";
 import { carrierLabel, getTrackingUrl } from "@/lib/shipping";
 
 // ─── Contextual status display (mirrors the invoices list) ────────────────────
@@ -163,6 +164,7 @@ export default function ShipmentsPage() {
             ) : (
               shipments.map((inv: Invoice) => {
                 const trackUrl = getTrackingUrl(inv.shippingCarrier, inv.shippingTrackingNumber);
+                const shippedOn = shipmentListShippedAt(inv);
                 return (
                   <tr
                     key={inv.id}
@@ -198,7 +200,7 @@ export default function ShipmentsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-navy">
-                      {inv.shippedAt ? fmtDate(inv.shippedAt) : "—"}
+                      {shippedOn ? fmtDate(shippedOn) : "—"}
                     </td>
                     <td className="px-4 py-3">{renderStatus(inv.status)}</td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
