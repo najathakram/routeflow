@@ -38,6 +38,17 @@ jest.mock("../storage/compress.util", () => ({
 import { Test } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { CreditNotesService } from "./credit-notes.service";
+import { InvoicesService } from "../invoices/invoices.service";
+import { EstimatesService } from "../estimates/estimates.service";
+import { EmailService } from "../email/email.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { StorageService } from "../storage/storage.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -107,6 +118,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let creditNotes: CreditNotesService;
+  let invoices: InvoicesService;
   const tenantIds: string[] = [];
   let seq = 0;
 
@@ -119,10 +131,42 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
       providers: [
         CreditNotesService,
         NumberingService,
+        // The REAL InvoicesService (its markSent is what the deadlock case drives), every other
+        // collaborator mocked at the module boundary as invoice-send-void-race.db.spec.ts does.
+        InvoicesService,
+        EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EmailService,
+          useValue: { isEmailConfigured: jest.fn().mockResolvedValue(true) },
+        },
+        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: AuthorizationGuardService,
+          useValue: {
+            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+          },
+        },
+        {
+          provide: MessagingService,
+          useValue: { notify: jest.fn(), notifyEvent: jest.fn().mockResolvedValue(undefined) },
+        },
+        { provide: StorageService, useValue: {} },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements,
         { provide: PrismaService, useValue: prisma },
         {
           provide: RouteFlowGateway,
-          useValue: { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() },
+          useValue: {
+            emitCreditNoteCreated: jest.fn(),
+            emitCreditNoteVoided: jest.fn(),
+            emitInvoiceUpdated: jest.fn(),
+          },
         },
         {
           provide: RegulatedLedgerService,
@@ -142,6 +186,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
       ],
     }).compile();
     creditNotes = mod.get(CreditNotesService);
+    invoices = mod.get(InvoicesService);
   });
 
   afterAll(async () => {
@@ -409,6 +454,61 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     const loser = await invoiceStateOf(loserId);
     expect(loser.status).not.toBe("PAID");
     expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
+  }, 60_000);
+
+  it("two concurrent markSent calls for ONE customer neither deadlock (40P01) nor spend a note twice", async () => {
+    const { tenantId, customerId } = await seedTenant("send");
+    await prisma.tenantConfig.create({ data: { tenantId, creditAutoApplyOnSend: true } });
+    // Two notes of the same customer, one named by each order's intent. Before the fix each send
+    // locked ITS note (settle) and then wanted the customer's whole set (the sweep): A held N1 and
+    // waited for N2 while B held N2 and waited for N1 — a deadlock.
+    const n1 = await tenantCtx.run(tenantId, () =>
+      creditNotes.create({ customerId, amount: 100 } as any),
+    );
+    const n2 = await tenantCtx.run(tenantId, () =>
+      creditNotes.create({ customerId, amount: 100 } as any),
+    );
+    const a = await seedOrderWithInvoice(tenantId, customerId, 100);
+    const b = await seedOrderWithInvoice(tenantId, customerId, 100);
+    await intend(tenantId, a.orderId, customerId, n1.id);
+    await intend(tenantId, b.orderId, customerId, n2.id);
+
+    // Hold each send between its settle and its sweep until its partner arrives (or BARRIER_MS):
+    // the exact window the old two-pass lock order deadlocked in.
+    const barrier = makeBarrier();
+    const realSweep = creditNotes.autoApplyOldestCreditsInTx.bind(creditNotes);
+    const sweepSpy = jest
+      .spyOn(creditNotes, "autoApplyOldestCreditsInTx")
+      .mockImplementation(async (...args: Parameters<typeof realSweep>) => {
+        await barrier.arrive();
+        return realSweep(...args);
+      });
+    let results: PromiseSettledResult<unknown>[];
+    try {
+      results = await Promise.allSettled([
+        tenantCtx.run(tenantId, () => (invoices as any).markSent(a.invoiceId, a.orderId)),
+        tenantCtx.run(tenantId, () => (invoices as any).markSent(b.invoiceId, b.orderId)),
+      ]);
+    } finally {
+      sweepSpy.mockRestore();
+    }
+
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    console.log(
+      `B1052 send-vs-send: sends=${results.map((r) => r.status).join(",")} ` +
+        `errors=${failures.map((f) => String(f.reason?.code ?? f.reason?.message)).join("|")}`,
+    );
+    // No deadlock victim (Postgres 40P01) and no failed send at all.
+    for (const f of failures)
+      expect(String(f.reason?.code ?? f.reason?.message)).not.toMatch(/40P01|deadlock/i);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    // Each note is consumed at most once, and the wallet agrees with the invoices.
+    for (const note of [n1, n2]) {
+      const ledger = await ledgerOf(note.id);
+      expect(ledger.paid).toBeLessThanOrEqual(ledger.amount);
+      expect(ledger.amountUsed).toBe(ledger.paid);
+    }
+    expect((await ledgerOf(n1.id)).paid + (await ledgerOf(n2.id)).paid).toBeLessThanOrEqual(200);
   }, 60_000);
 
   it("sequential settles (today's safe case) still spend it once", async () => {

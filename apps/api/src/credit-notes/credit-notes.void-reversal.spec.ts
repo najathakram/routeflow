@@ -179,6 +179,23 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       ]);
     });
 
+    it("B1052: every lock the void takes is tenant-scoped (a foreign id can't lock another tenant's rows)", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      const locks = exec.mock.calls
+        .map((c: any[]) => ({ sql: c[0].join("?"), values: c.slice(1) }))
+        .filter((l) => /FOR UPDATE/.test(l.sql));
+      // 2 orders + 2 invoices + the note itself (the restores' own note locks come after).
+      expect(locks.length).toBeGreaterThanOrEqual(5);
+      for (const l of locks) {
+        expect(l.sql).toMatch(/"tenantId"/);
+        expect(l.values).toContain("test-tenant");
+      }
+    });
+
     it("B949: the note's OWN void passes voidingNoteId to every restore (the one exemption from the SOURCE_DELETED guard, scoped to THAT note)", async () => {
       armNote();
       armRestore();

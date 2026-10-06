@@ -1277,13 +1277,15 @@ export class CreditNotesService {
     const invoiceIds = [
       ...new Set([...seen.map((p) => p.invoiceId as string), ...(extra?.invoiceIds ?? [])]),
     ].sort();
+    // B1052: every lock is tenant-scoped (credit-note-locks.ts): a foreign id can't lock another tenant's rows.
+    const lockTenantId = this.prisma.getTenantId();
     for (const orderId of orderIds) {
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
     for (const invoiceId of invoiceIds) {
-      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
-    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} FOR UPDATE`;
+    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
 
     const cn = await tx.creditNote.findFirst({
       where: { id },
