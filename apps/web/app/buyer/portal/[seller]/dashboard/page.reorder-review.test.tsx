@@ -80,6 +80,12 @@ jest.mock("@/lib/api/buyer", () => ({
   toPromotionRules: () => [],
 }));
 
+// The dashboard's Recent Orders badge reads the seller's capabilities (a react-query hook, kept out
+// of "@/lib/api/buyer"); this suite has no QueryClient and no recent orders, so an unset seller will do.
+jest.mock("@/lib/api/buyer-capabilities", () => ({
+  useBuyerSellerCapabilities: () => ({ data: undefined, isLoading: false }),
+}));
+
 beforeEach(() => {
   jest.clearAllMocks();
   mutateAsync.mockResolvedValue({ id: "o1" });
