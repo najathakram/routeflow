@@ -140,6 +140,42 @@ describe("addon-ledger.emitAddonDelta", () => {
     );
   });
 
+  it("the label follows the MONEY, not the quantity: a quantity that shrank for a POSITIVE amount is ADDON_ENABLED, one that grew for a negative amount ADDON_DISABLED", async () => {
+    // there is no quantity-change event type, and nothing reads the label (the run-rate is Σ amountDelta)
+    const shrinkTx = makeTx(PAYING_ROW);
+    const shrinkEvents = { emit: jest.fn().mockResolvedValue({}) } as any;
+    // checkout adoption of a row the tenant set to qty 3 at a stored price 0, onto an item of qty 1 at 45
+    const shrink = await emitAddonDelta(shrinkTx, shrinkEvents, {
+      tenantId: "t1",
+      sku: "CUSTOMER_PACK_100",
+      before: { priceSnapshot: 0, quantity: 3 },
+      after: { priceSnapshot: 45, quantity: 1 },
+    });
+    expect(shrink).toBe(45);
+    expect(shrinkEvents.emit).toHaveBeenCalledWith(
+      "t1",
+      BILLING_EVENTS.ADDON_ENABLED,
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 45 }),
+    );
+
+    const growTx = makeTx(PAYING_ROW);
+    const growEvents = { emit: jest.fn().mockResolvedValue({}) } as any;
+    const grow = await emitAddonDelta(growTx, growEvents, {
+      tenantId: "t1",
+      sku: "CUSTOMER_PACK_100",
+      before: { priceSnapshot: 50, quantity: 1 },
+      after: { priceSnapshot: 10, quantity: 3 },
+    });
+    expect(grow).toBe(-20);
+    expect(growEvents.emit).toHaveBeenCalledWith(
+      "t1",
+      BILLING_EVENTS.ADDON_DISABLED,
+      expect.anything(),
+      expect.objectContaining({ amountDelta: -20 }),
+    );
+  });
+
   it("a null stored snapshot (a free grant, D1) prices as 0 on either side", async () => {
     const tx = makeTx(PAYING_ROW);
     const events = { emit: jest.fn().mockResolvedValue({}) } as any;

@@ -21,6 +21,13 @@ export const STRIPE_CHECKOUT_APPLIED_ACTION = "STRIPE_CHECKOUT_APPLIED";
 export const STRIPE_CHECKOUT_STALE_ACTION = "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE";
 /** A checkout session refused outright (unknown tenant / a customer that is not the tenant's). */
 export const STRIPE_CHECKOUT_REFUSED_ACTION = "STRIPE_CHECKOUT_REFUSED";
+/**
+ * The STICKY decision that a completed checkout session is a DUPLICATE (a second paid session for a tenant that
+ * already has a live subscription, or one paid after the tenant moved to manual invoicing). Written, keyed by
+ * the session id, BEFORE the duplicate subscription is cancelled; a redelivery reads it first and only retries
+ * the cancel — it never re-judges.
+ */
+export const STRIPE_CHECKOUT_DUPLICATE_ACTION = "STRIPE_CHECKOUT_DUPLICATE";
 /** An automatic restore that failed or was abandoned: the plan change went ahead without it. */
 export const CONFIG_SNAPSHOT_RESTORE_FAILED_ACTION = "CONFIG_SNAPSHOT_RESTORE_FAILED";
 export const STRIPE_CHECKOUT_HOOK_FAILED_ACTION = "STRIPE_CHECKOUT_HOOK_FAILED";
