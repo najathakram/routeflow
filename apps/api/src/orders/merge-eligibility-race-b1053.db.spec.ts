@@ -40,6 +40,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import { isMergeContention } from "./merge-contention";
+import { mergeEligibleWhere } from "./merge-lock-recheck";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -105,12 +106,13 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
   const pair = async () => {
     const loser = await createOrder(LQ);
     const winner = await createOrder(WQ);
-    // harness integrity: a skipAutoMerge fixture makes every merge a silent no-op
-    const flags = await raw.order.findMany({
-      where: { id: { in: [loser, winner] } },
-      select: { skipAutoMerge: true },
-    });
-    expect(flags.map((o) => o.skipAutoMerge)).toEqual([false, false]);
+    // harness integrity: both orders must BE 'auto' merge candidates (the real predicate) before any race
+    // step; otherwise every merge is a silent no-op that looks like a PIN failure
+    expect(
+      await raw.order.count({
+        where: { id: { in: [loser, winner] }, customerId, ...mergeEligibleWhere("auto") },
+      }),
+    ).toBe(2);
     return { loser, winner };
   };
 
