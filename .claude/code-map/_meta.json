@@ -1,6 +1,6 @@
 {
-  "mappedSha": "cb9fc26785805531264ecd7276d77d9ff4db6374",
-  "generatedAt": "2026-10-05T18:00:00.000Z",
+  "mappedSha": "45aa2fc5fe39f5f8351b934906a16e2e1868e8cc",
+  "generatedAt": "2026-10-06T05:25:16.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -14,6 +14,6 @@
     "mobile": 5,
     "packages": 0
   },
-  "fileCount": 1047,
-  "notes": "**2026-10-05 — window 6 landings #3217, #3161, #3199, #3129, #3219, #3225 and #3229 (master `64922829c`) (docs-only bookkeeping).** `api/landing-2026-10-05-w6.md` has one bullet per PR, each symbol grepped at `cb9fc2678`; `packages.md` and `web/landing-2026-10-01-w12-w27.md` gain the types and web side. `mappedSha` restamped to `cb9fc2678`. #3229 is spec-only (no map entry). No source changed. See CHANGELOG.md."
+  "fileCount": 1050,
+  "notes": "**2026-10-06 — windows 4 to 10 landings #3208, #3224, #3228, #3210, #3234, #3216, #3222, #3231, #3236, #3233, #3220, #3238, #3237 and #3218 (master `45aa2fc5f`) (docs-only bookkeeping).** `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` have one bullet per PR, each symbol grepped at `45aa2fc5f`; `packages.md` gains the types section. `mappedSha` restamped to `45aa2fc5f`. #3234 is lockfile-only (no map entry). No source changed. See CHANGELOG.md."
 }

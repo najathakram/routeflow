@@ -175,6 +175,8 @@ export interface Invoice {
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
   order?: { status: string; orderNumber?: string | null };
+  /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
+  pdfVariant?: InvoicePdfVariant;
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
@@ -448,8 +450,12 @@ export type InvoicePdfVariant = "draft" | "final";
  */
 export function deriveInvoiceVariant(inv: {
   status: string;
+  /** The server's own default stage (invoice detail): wins when present. A shipment invoice is FINAL
+   *  before delivery, and only the server knows the tenant's fulfilment mode (F3). */
+  pdfVariant?: InvoicePdfVariant | null;
   order?: { status?: string | null } | null;
 }): InvoicePdfVariant {
+  if (inv.pdfVariant === "draft" || inv.pdfVariant === "final") return inv.pdfVariant;
   if (inv.status !== "DRAFT") return "final";
   if (inv.order?.status === "DELIVERED") return "final";
   return "draft";

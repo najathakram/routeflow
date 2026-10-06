@@ -22,6 +22,11 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/ship-state.ts; pinned equal by
+  // apps/api/src/orders/shipped-statuses-parity.spec.ts (which `require`s THIS file).
+  SHIPPED_ORDER_STATUSES: ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"],
+  isShippedOrderStatus: (s) =>
+    !!s && ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].includes(s),
   UserRole: {},
   FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
@@ -187,6 +192,8 @@ module.exports = {
     ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
     ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
     ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+    ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
+    ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
     ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
     FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
     FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",

@@ -81,6 +81,8 @@ import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import { resolveInvoiceVariant } from "./invoice-stage";
+import { orderShipmentFields } from "./order-shipment-fields";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -647,13 +649,7 @@ export class InvoicesService {
       ...depositFields,
       // Carry carrier shipment tracking from the order onto the invoice so the
       // shipment shows on the customer's invoice + PDF.
-      ...(order.shippingCarrier || order.shippingTrackingNumber
-        ? {
-            shippingCarrier: order.shippingCarrier ?? null,
-            shippingTrackingNumber: order.shippingTrackingNumber ?? null,
-            shippedAt: order.shippedAt ?? null,
-          }
-        : {}),
+      ...orderShipmentFields(order),
     };
 
     // Phase 4 (W4): split by regulated category — one invoice per SEPARATE_INVOICE
@@ -2566,6 +2562,8 @@ export class InvoicesService {
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       ...depositFields,
+      // F5: the invoice raised at shipment / delivery carries the order's carrier + tracking too.
+      ...orderShipmentFields(order),
     };
 
     // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
@@ -2914,6 +2912,8 @@ export class InvoicesService {
         include: {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
+          // Shipments lists hide the shipped date of an unmarked order (status only, no column).
+          order: { select: { status: true } },
         },
         skip,
         take: limit,
@@ -3038,7 +3038,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true, shippedAt: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3060,6 +3060,8 @@ export class InvoicesService {
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
+      // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
+      pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 
@@ -3095,9 +3097,6 @@ export class InvoicesService {
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
-      // SA-674b: with the carrier, the shipment invoice keeps its lines and quantities (checked in the tx)
-      const carrierDeps = { featureConfig: this.featureConfig, prisma: this.prisma };
-      const carrierLocked = await invoiceOrderWithCarrier(carrierDeps, inv.orderId);
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
@@ -3108,6 +3107,12 @@ export class InvoicesService {
         if (inv.orderId)
           await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
         await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
+        // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
+        const carrierLocked = await invoiceOrderWithCarrier(
+          { featureConfig: this.featureConfig, prisma: { forTenant: () => tx } },
+          inv.orderId,
+        );
         await assertEditStillJudged(tx, id, items, restrictionLines); // F-05: under the Invoice row lock
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules

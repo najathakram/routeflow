@@ -235,6 +235,8 @@ interface Opts {
   stripe?: any;
   /** N3: override the BillingNotificationService mock instead of the shared default. */
   billingNotification?: any;
+  /** `Tenant.readOnlyReason` as both tenant reads see it (a lapsed trial is READ_ONLY + trial_expired / trial_cancelled). */
+  readOnlyReason?: string | null;
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
@@ -286,6 +288,7 @@ function make(opts: Opts = {}) {
         plan: opts.tenantPlan ?? null,
         class: "PRODUCTION",
         deletedAt: null,
+        readOnlyReason: opts.readOnlyReason ?? null,
       }),
       // B865 / SA-277 (D2 lock shape): the add-on ledger helper's paying-set read, under the
       // tx lock. This tx-scoped default is ACTIVE (paying) even though the non-tx
@@ -331,6 +334,7 @@ function make(opts: Opts = {}) {
         plan: opts.tenantPlan ?? null,
         class: "PRODUCTION",
         deletedAt: null,
+        readOnlyReason: opts.readOnlyReason ?? null,
       }),
       // TRIAL-1: cancel() on a subscription-less trial/read-only tenant reads + writes the
       // tenant row directly (there is no TenantSubscription row to update).
@@ -459,6 +463,188 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       plan: "TEAM",
     });
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  describe("SA-690 — a TRIAL keeps its add-ons across the plan pick", () => {
+    const trialRow = (sku: string, over: Record<string, unknown> = {}) => ({
+      id: `a-${sku}`,
+      addonKey: sku,
+      sku,
+      quantity: 2,
+      active: true,
+      priceSnapshot: 0, // a trial's add-on is unbilled: priced 0, no Stripe item
+      stripeItemId: null,
+      ...over,
+    });
+
+    it("the choose-plan call sends no add-ons — a trial's rows are NOT switched off (the card checkout bills them)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100"), trialRow("FORECASTING", { quantity: 1 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled(); // nothing deactivated, no pointer cleared
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+      // the crossing books the plan and the kept rows at their STORED price (0 each): no add-on event
+      expect(emitted(events)).toEqual([
+        BILLING_EVENTS.TRIAL_CONVERTED,
+        BILLING_EVENTS.PLAN_CHANGED,
+      ]);
+      expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149);
+    });
+
+    it("a trial that was Stripe-linked early has no billed item removed either (nothing is dropped)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { stripeItemId: "si_1", priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("an ACTIVE tenant's omitted add-on is still dropped (only a trial is spared)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 },
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a-CUSTOMER_PACK_100" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(emitted(events)).toContain(BILLING_EVENTS.ADDON_DISABLED);
+    });
+  });
+
+  describe("MUST-1: a LAPSED trial keeps its add-ons across the plan pick, exactly like a trial", () => {
+    const row = (sku: string, over: Record<string, unknown> = {}) => ({
+      id: `a-${sku}`,
+      addonKey: sku,
+      sku,
+      quantity: 2,
+      active: true,
+      priceSnapshot: 0,
+      stripeItemId: null,
+      ...over,
+    });
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "READ_ONLY + %s: subscribe({planKey, cycle}) keeps every unbilled add-on row — nothing is deactivated, no item is removed, no disable event",
+      async (readOnlyReason) => {
+        const { svc, tx, events, stripe } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason,
+          priorAddons: [row("CUSTOMER_PACK_100"), row("FORECASTING", { quantity: 1 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+        // the crossing books the plan; the kept rows are priced at their stored 0 (no add-on event)
+        expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149);
+        // wasTrial's OTHER uses are untouched: a lapsed trial is not (re-)converted
+        expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+      },
+    );
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "READ_ONLY + %s: a Stripe-linked row is not removed from Stripe pre-tx either (nothing is dropped)",
+      async (readOnlyReason) => {
+        const { svc, stripe, prisma } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason,
+          priorAddons: [row("CUSTOMER_PACK_100", { stripeItemId: "si_1", priceSnapshot: 12 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(prisma.tenantAddon.findMany).not.toHaveBeenCalled(); // the droppedBilled read is skipped
+      },
+    );
+
+    it.each([["subscription_cancelled"], [null], ["something_else"]])(
+      "READ_ONLY with reason %p is NOT a lapsed trial: an omitted add-on is still dropped",
+      async (readOnlyReason) => {
+        const { svc, tx, events } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason: readOnlyReason as string | null,
+          priorAddons: [row("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+          where: { id: "a-CUSTOMER_PACK_100" },
+          data: { active: false, stripeItemId: null },
+        });
+        expect(events.emit).toHaveBeenCalled(); // (a non-paying tenant's drop books no MRR delta: the row is what matters)
+      },
+    );
+
+    it("the locked re-read decides: a trial that lapsed between the pre-tx read and the lock keeps its add-ons", async () => {
+      const { svc, tx } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [row("CUSTOMER_PACK_100")],
+      });
+      tx.tenant.findUnique.mockResolvedValue({
+        status: "READ_ONLY",
+        plan: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        readOnlyReason: "trial_expired",
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("SHOULD-2: the crossing books only BILLABLE add-ons — an admin comp is never booked as revenue", () => {
+    it("a trial's plan pick with a comp row that still carries a stale snapshot books the plan and the billable row only", async () => {
+      const { svc, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [
+          {
+            id: "a-pack",
+            addonKey: "CUSTOMER_PACK_100",
+            sku: "CUSTOMER_PACK_100",
+            quantity: 2,
+            active: true,
+            priceSnapshot: 12, // a billed row
+            stripeItemId: "si_1",
+            isComp: false,
+          },
+          {
+            id: "a-fc",
+            addonKey: "FORECASTING",
+            sku: "FORECASTING",
+            quantity: 1,
+            active: true,
+            priceSnapshot: 19, // WAS billed, then support made it a comp: the stored snapshot lingers
+            stripeItemId: null,
+            isComp: true,
+          },
+        ],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      const adds = events.emit.mock.calls
+        .filter((c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED)
+        .map((c: any[]) => [c[2]?.sku, c[3]?.amountDelta]);
+      expect(adds).toEqual([["CUSTOMER_PACK_100", 24]]); // 12 × 2 — never FORECASTING's 19
+    });
   });
 
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {

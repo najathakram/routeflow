@@ -308,10 +308,6 @@
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
-  "app/buyer/portal/[seller]/templates/page.tsx": {
-    "count": 1,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
   "app/buyer/portal/page.tsx": {
     "count": 3,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
