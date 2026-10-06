@@ -50,6 +50,17 @@ const LINE = {
   deliveredQty: 0,
   invoicedQty: 4,
 };
+/** An UNLISTED (catalog-free) line the operator added earlier: no productId, free-text name. */
+const UNL = {
+  ...LINE,
+  id: "li-U",
+  productId: null,
+  name: "Custom pallet fee",
+  qty: 2,
+  unitPrice: 5,
+  subtotal: 10,
+  invoicedQty: 2,
+};
 const order = (over: Record<string, unknown> = {}) => ({
   id: "ord-1",
   tenantId: "t-1",
@@ -83,9 +94,24 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
    * client has no real transaction): `st` is restored when the callback rejects, so what is left in
    * `st.writes` is what a real database would have COMMITTED.
    */
-  const st = { qty: LINE.qty, gone: false, added: [] as object[], writes: [] as string[] };
-  const seed = (o: ReturnType<typeof order>) => {
-    Object.assign(st, { qty: LINE.qty, gone: false, added: [], writes: [] });
+  const st = {
+    qty: LINE.qty,
+    gone: false,
+    uqty: UNL.qty,
+    ugone: false,
+    added: [] as object[],
+    writes: [] as string[],
+  };
+  const seed = (o: ReturnType<typeof order>, withUnlisted = false) => {
+    Object.assign(st, {
+      qty: LINE.qty,
+      gone: false,
+      uqty: UNL.qty,
+      ugone: false,
+      added: [],
+      writes: [],
+    });
+    const isU = (args: any) => JSON.stringify(args?.where ?? {}).includes('"li-U"');
     h.prisma.order.findUnique.mockImplementation(async (args: any) => {
       const sel = args?.select ? Object.keys(args.select) : [];
       if (sel.length === 1 && sel[0] === "status") return { status: o.status };
@@ -94,16 +120,23 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
     h.prisma.order.findFirst.mockResolvedValue(o);
     h.prisma.orderItem.findMany.mockImplementation(async () => [
       ...(st.gone ? [] : [{ ...LINE, qty: st.qty }]),
+      ...(withUnlisted && !st.ugone ? [{ ...UNL, qty: st.uqty }] : []),
       ...st.added,
     ]);
-    h.prisma.orderItem.update.mockImplementation(async ({ data }: any) => {
+    h.prisma.orderItem.update.mockImplementation(async (args: any) => {
+      const { data } = args;
       st.writes.push("orderItem.update");
+      if (isU(args)) {
+        if (data?.qty != null) st.uqty = Number(data.qty);
+        return { ...UNL, qty: st.uqty };
+      }
       if (data?.qty != null) st.qty = Number(data.qty);
       return { ...LINE, qty: st.qty };
     });
-    const remove = async () => {
+    const remove = async (args: any) => {
       st.writes.push("orderItem.remove");
-      st.gone = true;
+      if (isU(args)) st.ugone = true;
+      else st.gone = true;
       return { count: 1 };
     };
     h.prisma.orderItem.updateMany.mockImplementation(remove);
@@ -120,7 +153,14 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
       fn: (tx: unknown) => Promise<unknown>,
     ) => Promise<unknown>;
     h.prisma.tenantTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-      const before = { qty: st.qty, gone: st.gone, added: [...st.added], writes: [...st.writes] };
+      const before = {
+        qty: st.qty,
+        gone: st.gone,
+        uqty: st.uqty,
+        ugone: st.ugone,
+        added: [...st.added],
+        writes: [...st.writes],
+      };
       try {
         return await runTx(fn);
       } catch (e) {
@@ -199,6 +239,65 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
     await edit([{ ...A, qty: 4, notes: "leave at the dock" }]);
     expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
     expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+  });
+
+  describe("SA-696a: UNLISTED lines (no productId) are part of the fixed line set", () => {
+    const U = { id: "li-U" };
+    const keepA = { ...A, qty: 4 };
+    const fee = { name: "Pallet fee", qty: 1, unitPrice: 5 };
+
+    it("an added unlisted line is ORDER_WITH_CARRIER_NO_ADD, nothing written", async () => {
+      seed(order(), false);
+      await expect(edit([keepA, fee])).rejects.toMatchObject(refused("ORDER_WITH_CARRIER_NO_ADD"));
+      noWrites();
+    });
+
+    it("an unlisted quantity increase is NO_ADD, nothing written", async () => {
+      seed(order(), true);
+      await expect(edit([keepA, { ...U, qty: 3 }])).rejects.toMatchObject(
+        refused("ORDER_WITH_CARRIER_NO_ADD"),
+      );
+      noWrites();
+    });
+
+    it("an unlisted quantity decrease is NO_REDUCE, nothing written", async () => {
+      seed(order(), true);
+      await expect(edit([keepA, { ...U, qty: 1 }])).rejects.toMatchObject(
+        refused("ORDER_WITH_CARRIER_NO_REDUCE"),
+      );
+      noWrites();
+    });
+
+    it("removing an unlisted line is NO_REDUCE, nothing written", async () => {
+      seed(order(), true);
+      await expect(edit([keepA, { ...U, action: "CANCEL" }])).rejects.toMatchObject(
+        refused("ORDER_WITH_CARRIER_NO_REDUCE"),
+      );
+      noWrites();
+    });
+
+    it("a mix (the unlisted line reduced, another added) is NO_REDUCE", async () => {
+      seed(order(), true);
+      await expect(edit([keepA, { ...U, qty: 1 }, fee])).rejects.toMatchObject(
+        refused("ORDER_WITH_CARRIER_NO_REDUCE"),
+      );
+      noWrites();
+    });
+
+    it("an unlisted add WITH a product-line reduction is NO_REDUCE (one rule across both)", async () => {
+      seed(order(), false);
+      await expect(edit([{ ...A, qty: 3 }, fee])).rejects.toMatchObject(
+        refused("ORDER_WITH_CARRIER_NO_REDUCE"),
+      );
+      noWrites();
+    });
+
+    it("a price-only or note-only edit of an unlisted line (same quantity) passes and re-syncs in place", async () => {
+      seed(order(), true);
+      await edit([keepA, { ...U, qty: 2, unitPrice: 6, notes: "dock fee" }]);
+      expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+      expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    });
   });
 
   it("control: an UNSET-mode business is unchanged (an increase goes through)", async () => {

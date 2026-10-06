@@ -204,6 +204,36 @@ function carrierLineSetRefusal(deltas: number[]): void {
 }
 
 /**
+ * SA-696a: quantity deltas of the UNLISTED (no productId) lines of an order with the carrier. They never
+ * touch stock, so the product maps above cannot see them. Identity is the stored line id: a final line
+ * whose id is not held (or has no id) is NEW (+qty); a held line missing from the final set is REMOVED
+ * (-qty); otherwise the qty change. Held lines with no id cannot be identified and are skipped.
+ */
+function unlistedLineDeltas(
+  heldItems: Array<{ id?: string; productId: string | null; qty: any; status?: string }>,
+  finalActiveItems: Array<{ id?: string; productId: string | null; qty: any }>,
+): number[] {
+  const round3 = (n: number) => Math.round(n * 1000) / 1000;
+  const held = new Map<string, number>();
+  for (const li of heldItems ?? []) {
+    if (!li.productId && li.id && li.status !== "CANCELLED") held.set(li.id, Number(li.qty) || 0);
+  }
+  const deltas: number[] = [];
+  for (const li of finalActiveItems) {
+    if (li.productId) continue;
+    const qty = Number(li.qty) || 0;
+    if (li.id && held.has(li.id)) {
+      deltas.push(round3(qty - held.get(li.id)!));
+      held.delete(li.id);
+    } else {
+      deltas.push(round3(qty));
+    }
+  }
+  for (const qty of held.values()) deltas.push(round3(-qty));
+  return deltas.filter((d) => d !== 0);
+}
+
+/**
  * P5-08b + WP1 stock settle — validates the delta between the order's
  * pre-edit line set and the edited (post-edit) active line set, THEN
  * applies it to `Product.currentStock`.
@@ -277,9 +307,15 @@ export async function settleStockForEdit(
   db: any,
   order: { id: string; status: string },
   heldItems: Array<
-    StockLineUnits & { productId: string | null; qty: any; deliveredQty?: any; status?: string }
+    StockLineUnits & {
+      id?: string;
+      productId: string | null;
+      qty: any;
+      deliveredQty?: any;
+      status?: string;
+    }
   >,
-  finalActiveItems: Array<StockLineUnits & { productId: string | null; qty: any }>,
+  finalActiveItems: Array<StockLineUnits & { id?: string; productId: string | null; qty: any }>,
   user?: JwtPayload,
   /** B562 PR-2: the event the SALE rows record (default EDIT); the acting user wins over `performedById`. */
   event: { notes: string; performedById?: string | null } = { notes: "EDIT" },
@@ -290,6 +326,11 @@ export async function settleStockForEdit(
   opts?: { allowOversell?: boolean; blockCredits?: boolean },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
+
+  // SA-696a: an order with the carrier has a fixed line set, unlisted lines included (they carry no
+  // product, so the stock deltas below cannot see them). Folded into the SAME refusal as the product
+  // deltas, so a reduction anywhere wins a mix. Checked before any lock or write.
+  const unlistedDeltas = opts?.blockCredits ? unlistedLineDeltas(heldItems, finalActiveItems) : [];
 
   // Qty the order already holds per product (pre-edit, non-cancelled lines),
   // plus — over the SAME line set — how much of it has already gone out the
@@ -346,7 +387,10 @@ export async function settleStockForEdit(
     const r = requestedParts.get(id) ?? zero;
     return round3(r.fixed - h.fixed) !== 0 || round3(r.perPack - h.perPack) !== 0;
   });
-  if (touched.length === 0) return;
+  if (touched.length === 0) {
+    if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
+    return;
+  }
 
   // RF-017 parity: lock the touched product rows BEFORE reading
   // currentStock, mirroring create()'s lock (:1863-1867).
@@ -375,11 +419,14 @@ export async function settleStockForEdit(
     const delta = round3(requested.get(id)! - held.get(id)!);
     if (delta !== 0) deltas.set(id, delta);
   }
-  if (deltas.size === 0) return;
+  if (deltas.size === 0) {
+    if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
+    return;
+  }
   // B1082 (B2) + SA-696: a carrier order WITH the carrier has a fixed line set. A removal / decrease would
   // put its stock back on the shelf while the parcel is still out (returns go through the return flow);
   // an add / increase would grow a shipment that already left (extra items are a new order).
-  if (opts?.blockCredits) carrierLineSetRefusal([...deltas.values()]);
+  if (opts?.blockCredits) carrierLineSetRefusal([...deltas.values(), ...unlistedDeltas]);
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
