@@ -387,14 +387,18 @@ function make(opts: Opts = {}) {
         return {};
       }),
       findFirst: jest.fn(async ({ where }: any = {}) => {
-        const hit = audits.find(
-          (a) =>
-            (where?.entityType == null || a.entityType === where.entityType) &&
-            (where?.entityId == null || a.entityId === where.entityId) &&
-            (where?.action == null || a.action === where.action) &&
-            (where?.meta?.path == null || a.meta?.[where.meta.path[0]] === where.meta.equals),
-        );
-        return hit ? { id: "audit-found" } : null;
+        // newest first (the manual-activation marker read orders by createdAt desc)
+        const hit = [...audits]
+          .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())
+          .find(
+            (a) =>
+              (where?.tenantId == null || a.tenantId === where.tenantId) &&
+              (where?.entityType == null || a.entityType === where.entityType) &&
+              (where?.entityId == null || a.entityId === where.entityId) &&
+              (where?.action == null || a.action === where.action) &&
+              (where?.meta?.path == null || a.meta?.[where.meta.path[0]] === where.meta.equals),
+          );
+        return hit ? { id: "audit-found", createdAt: hit.createdAt } : null;
       }),
     },
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -420,6 +424,13 @@ function make(opts: Opts = {}) {
     auditLog: {
       // the APPLIED marker (flag-on redelivery) and the sticky DUPLICATE decision (the audit store)
       findFirst: jest.fn(async ({ where }: any = {}) => {
+        if (where?.action === "TENANT_MANUAL_ACTIVATION_MARKER") {
+          // the latest marker row, newest first (S3)
+          const hit = audits
+            .filter((a) => a.action === where.action && a.tenantId === where.tenantId)
+            .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0];
+          return hit ? { id: "marker", createdAt: hit.createdAt } : null;
+        }
         if (where?.action === "STRIPE_CHECKOUT_DUPLICATE") {
           return audits.some((a) => a.action === where.action && a.entityId === where.entityId)
             ? { id: "dup-decision" }
@@ -1740,6 +1751,16 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
    * refund), and nothing is written for the tenant (not the Stripe ids, not the plan, no add-on item, no MRR).
    */
   const SESSION_CREATED_S = 1791172800;
+  /** The in-transaction billing marker of a manual activation / renewal, committed `atS` (unix seconds). */
+  const markerAt = (h: ReturnType<typeof make>, atS: number) =>
+    h.audits.push({
+      tenantId: "t1",
+      action: "TENANT_MANUAL_ACTIVATION_MARKER",
+      entityType: "tenant",
+      entityId: "t1",
+      meta: { platformAdmin: true },
+      createdAt: new Date(atS * 1000),
+    });
   const dup = (h: ReturnType<typeof make>, sub = "sub_dup1", extra: Record<string, unknown> = {}) =>
     h.session({ subscription: sub, id: `cs_${sub}`, ...extra });
   const NOTICE = (invoice: string, sub: string) =>
@@ -1994,11 +2015,9 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     const h = make({
       rows: rows(),
       items: items(),
-      baseSub: {
-        externalPayment: true,
-        periodStart: new Date((SESSION_CREATED_S + 600) * 1000), // the manual activation, after the session
-      },
+      baseSub: { externalPayment: true },
     });
+    markerAt(h, SESSION_CREATED_S + 600); // the manual activation's marker, committed after the session
 
     await h.completed(dup(h));
 
@@ -2015,11 +2034,9 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     const h = make({
       rows: rows(),
       items: items(),
-      baseSub: {
-        externalPayment: true,
-        periodStart: new Date((SESSION_CREATED_S - 86_400) * 1000),
-      },
+      baseSub: { externalPayment: true },
     });
+    markerAt(h, SESSION_CREATED_S - 86_400); // activated a day before the session: a card checkout on purpose
     await h.completed();
     expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(h.sub.stripeSubId).toBe("sub_1");
@@ -2027,16 +2044,116 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     expect(noticeRows(h)).toEqual([]);
   });
 
+  describe("S3: staleness is keyed on the manual activation's own in-transaction marker, never on periodStart", () => {
+    const manual = () => ({ baseSub: { externalPayment: true } });
+    const expectStale = async (h: ReturnType<typeof make>) => {
+      await h.completed(dup(h));
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(decisionRows(h)[0].meta).toMatchObject({ reason: "stale_checkout_manual" });
+      expect(noticeRows(h)).toHaveLength(1);
+      expect(h.sub.stripeSubId).toBeNull();
+    };
+    const expectApplied = async (h: ReturnType<typeof make>) => {
+      await h.completed();
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(h.sub.stripeSubId).toBe("sub_1");
+      expect(noticeRows(h)).toEqual([]);
+    };
+
+    it("a cron cycle roll between creation and completion moves periodStart past the session and writes no marker: the session APPLIES", async () => {
+      const h = make({
+        rows: rows(),
+        items: items(),
+        baseSub: {
+          externalPayment: true,
+          periodStart: new Date((SESSION_CREATED_S + 3_600) * 1000), // rolled by rollCycles AFTER the session
+        },
+      });
+      markerAt(h, SESSION_CREATED_S - 3 * 86_400); // activated three days before the session
+      await expectApplied(h);
+    });
+
+    it("a marker 30 s BEFORE session.created counts as AFTER it (clock skew): stale", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(h, SESSION_CREATED_S - 30);
+      await expectStale(h);
+    });
+
+    it("the skew window is 60 s: a marker 59 s before is stale, 61 s before is not", async () => {
+      const inside = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(inside, SESSION_CREATED_S - 59);
+      await expectStale(inside);
+
+      const outside = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(outside, SESSION_CREATED_S - 61);
+      await expectApplied(outside);
+    });
+
+    it("a manual RENEWAL after the session counts too: the LATEST marker decides, not the first", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(h, SESSION_CREATED_S - 7 * 86_400); // the original activation, a week before
+      markerAt(h, SESSION_CREATED_S + 600); // the renewal, after the session
+      await expectStale(h);
+    });
+
+    it("scoped by externalPayment: a marker after the session on a row that is NOT on manual billing is not stale", async () => {
+      const h = make({ rows: rows(), items: items() }); // externalPayment unset
+      markerAt(h, SESSION_CREATED_S + 600);
+      await expectApplied(h);
+    });
+
+    it("no marker at all (externalPayment true from another writer): not stale — periodStart is never consulted", async () => {
+      const h = make({
+        rows: rows(),
+        items: items(),
+        baseSub: {
+          externalPayment: true,
+          periodStart: new Date((SESSION_CREATED_S + 600) * 1000),
+        },
+      });
+      await expectApplied(h);
+    });
+
+    it("the best-effort post-commit trail row (TENANT_SUBSCRIPTION_ACTIVATED) is NOT a marker", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      h.audits.push({
+        tenantId: "t1",
+        action: "TENANT_SUBSCRIPTION_ACTIVATED",
+        entityType: "tenant",
+        entityId: "t1",
+        createdAt: new Date((SESSION_CREATED_S + 600) * 1000),
+      });
+      await expectApplied(h);
+    });
+
+    it("the decisive marker read happens UNDER the tenant row lock, inside the apply transaction, newest first", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(h, SESSION_CREATED_S - 86_400);
+      await h.completed();
+
+      const call = h.tx.auditLog.findFirst.mock.calls.find(
+        (c: any[]) => c[0].where.action === "TENANT_MANUAL_ACTIVATION_MARKER",
+      );
+      expect(call?.[0]).toMatchObject({
+        where: { tenantId: "t1", entityType: "tenant" },
+        orderBy: [{ createdAt: "desc" }],
+      });
+      const readAt =
+        h.tx.auditLog.findFirst.mock.invocationCallOrder[
+          h.tx.auditLog.findFirst.mock.calls.indexOf(call as any)
+        ];
+      expect(h.tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(readAt); // after the tenant row lock
+    });
+  });
+
   it("a REDELIVERY of the applied session of a manual-then-card tenant is never mistaken for a duplicate (the stored sub IS the session's)", async () => {
     const h = make({
       storedSubId: "sub_1",
       rows: rows(),
       items: items(),
-      baseSub: {
-        externalPayment: true,
-        periodStart: new Date((SESSION_CREATED_S + 60) * 1000), // the period the applied checkout itself wrote
-      },
+      baseSub: { externalPayment: true },
     });
+    markerAt(h, SESSION_CREATED_S + 60); // even a marker after the session: the stored sub IS this session's
     await h.completed();
     expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(noticeRows(h)).toEqual([]);
@@ -2112,7 +2229,6 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     h.tx.tenantSubscription.findUnique.mockResolvedValueOnce({
       stripeSubId: "sub_raced", // another completion committed between the read and the lock
       externalPayment: false,
-      periodStart: null,
     });
     await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
     expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
@@ -2125,7 +2241,6 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     h.tx.tenantSubscription.findUnique.mockResolvedValueOnce({
       stripeSubId: "sub_1", // this session's own subscription, stored by the delivery that won the lock
       externalPayment: false,
-      periodStart: null,
     });
     await expect(h.completed()).resolves.toBeUndefined();
     expect(h.prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the idempotent write
@@ -2140,8 +2255,8 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       h.tx.tenantSubscription.findUnique.mockResolvedValueOnce({
         stripeSubId: null,
         externalPayment: true,
-        periodStart: new Date((SESSION_CREATED_S + 600) * 1000),
       });
+      markerAt(h, SESSION_CREATED_S + 600); // committed after the early read, visible under the lock
       await expect(h.completed(dup(h))).resolves.toBeUndefined();
       expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
       expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);

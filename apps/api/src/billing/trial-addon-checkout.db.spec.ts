@@ -21,6 +21,7 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
 import { MrrService } from "./mrr.service";
+import { BillingCronService } from "./billing-cron.service";
 import { BillingEventService } from "./billing-event.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
@@ -1064,19 +1065,156 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect(await notices(r)).toHaveLength(0);
     });
 
-    it("a manual activation from BEFORE the session (the owner then asked the customer to pay by card) completes normally", async () => {
+    /** The in-transaction marker of a manual activation, committed at `atS` (unix seconds). */
+    const insertMarker = (tenantId: string, atS: number) =>
+      prisma.auditLog.create({
+        data: {
+          tenantId,
+          action: "TENANT_MANUAL_ACTIVATION_MARKER",
+          entityType: "tenant",
+          entityId: tenantId,
+          createdAt: new Date(atS * 1000),
+          meta: { platformAdmin: true },
+        },
+      });
+    const markerRows = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "TENANT_MANUAL_ACTIVATION_MARKER" },
+      });
+    /** The billing cron's REAL rollCycles, confined to one tenant (the shared scratch DB holds others). */
+    const rollCyclesFor = (tenantId: string) => {
+      const scoped = {
+        tenantSubscription: {
+          findMany: (args: any) =>
+            prisma.tenantSubscription.findMany({ ...args, where: { ...args.where, tenantId } }),
+          update: (args: any) => prisma.tenantSubscription.update(args),
+        },
+      };
+      return new BillingCronService(
+        scoped as any,
+        stub(),
+        stub(),
+        stub(),
+        catalog,
+        stub(),
+        stub(),
+        planTransitionStub(false),
+      ).rollCycles();
+    };
+
+    it("a manual activation from well BEFORE the session (the owner then asked the customer to pay by card) completes normally", async () => {
       const r = await twoSessions();
       const created = hourAgo();
       await prisma.tenantSubscription.update({
         where: { tenantId: r.tenantId },
-        data: { externalPayment: true, periodStart: new Date((created - 7200) * 1000) },
+        data: { externalPayment: true },
       });
+      await insertMarker(r.tenantId, created - 7200); // two hours before the session
 
       await r.deliver({ created });
 
       expect((await sub(r)).stripeSubId).toBe("sub_qa");
       expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
       expect(await decisions(r)).toHaveLength(0);
+    });
+
+    it.each([false, true])(
+      "S3 (flag on=%s): a cron rollCycles between session creation and completion moves periodStart past the session but is NOT a manual activation — the session APPLIES, no cancel",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        const created = Math.floor(Date.now() / 1000) - 2 * 3600; // the session was created two hours ago
+        const now = Date.now();
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: {
+            externalPayment: true,
+            planKey: "STARTER",
+            cycle: "MONTHLY",
+            periodStart: new Date(now - 31 * 86_400_000),
+            periodEnd: new Date(now - 3_600_000), // ended an hour ago: the cron rolls it
+          },
+        });
+        await insertMarker(r.tenantId, created - 3 * 86_400); // activated three days before the session
+
+        await rollCyclesFor(r.tenantId);
+
+        const rolled = await sub(r);
+        expect(rolled.periodStart!.getTime()).toBeGreaterThan(created * 1000); // the OLD proxy's trigger
+        await r.deliver({ created });
+
+        expect((await sub(r)).stripeSubId).toBe("sub_qa");
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(await decisions(r)).toHaveLength(0);
+        expect(await notices(r)).toHaveLength(0);
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: "si_pack" });
+      },
+    );
+
+    it.each([
+      [30, true],
+      [59, true],
+      [61, false],
+    ])("S3 skew: a marker %i s before session.created is %s", async (secondsBefore, stale) => {
+      const r = await twoSessions();
+      const created = Math.floor(Date.now() / 1000) - 600;
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { externalPayment: true },
+      });
+      await insertMarker(r.tenantId, created - secondsBefore);
+
+      await r.deliver({ created });
+
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(stale ? 1 : 0);
+      expect((await sub(r)).stripeSubId).toBe(stale ? null : "sub_qa");
+      expect(await notices(r)).toHaveLength(stale ? 1 : 0);
+    });
+
+    it("S3: the REAL activation commits its marker with the activation, so a completion re-judging afterwards is stale (cancel + notice); a manual RENEWAL after the session counts too", async () => {
+      const r = await twoSessions();
+      const created = Math.floor(Date.now() / 1000) - 3600;
+      await insertMarker(r.tenantId, created - 7 * 86_400); // an old activation, a week before the session
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { externalPayment: true },
+      });
+
+      await activateManually(false, r.tenantId); // the renewal, after the session
+
+      const markers = await markerRows(r.tenantId);
+      expect(markers).toHaveLength(2);
+      expect(markers.map((m) => m.entityId)).toEqual([r.tenantId, r.tenantId]);
+      await r.deliver({ created });
+
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect((await decisions(r))[0].meta).toMatchObject({ reason: "stale_checkout_manual" });
+      expect(await notices(r)).toHaveLength(1);
+      expect((await sub(r)).stripeSubId).toBeNull();
+    });
+
+    it("S3: a failing activation leaves NO marker (it is written in the activation's transaction)", async () => {
+      const r = await twoSessions();
+      const failing = platformAdmin(false);
+      // an unknown plan is refused before the transaction; force a failure INSIDE it instead
+      jest
+        .spyOn((failing as any).billingEventService, "emit")
+        .mockRejectedValueOnce(new Error("ledger down"));
+
+      await expect(
+        failing.activateManualSubscription(
+          r.tenantId,
+          {
+            plan: "STARTER",
+            paymentMethod: "ZELLE",
+            paymentRef: "x",
+            billingPeriodDays: 30,
+          } as any,
+          "admin-1",
+        ),
+      ).rejects.toThrow("ledger down");
+
+      expect(await markerRows(r.tenantId)).toHaveLength(0);
+      expect((await sub(r)).externalPayment).toBe(false);
     });
 
     it.each([false, true])(

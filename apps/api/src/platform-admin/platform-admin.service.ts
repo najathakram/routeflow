@@ -1225,6 +1225,27 @@ export class PlatformAdminService {
           });
         }
 
+        // The billing MARKER of this activation, in the SAME transaction (and under the same tenant row lock) as
+        // the externalPayment write: a card checkout completing later re-reads the latest marker under that lock
+        // to tell "moved to manual invoicing AFTER the session was created" from a cron cycle roll (which also
+        // moves periodStart, and writes no marker). Never the best-effort post-commit trail row below.
+        await tx.auditLog.create({
+          data: {
+            tenantId: id,
+            userId: adminId,
+            action: AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+            entityType: ADMIN_AUDIT_ENTITY,
+            entityId: id,
+            meta: {
+              platformAdmin: true,
+              plan: dto.plan,
+              paymentMethod: dto.paymentMethod,
+              cycle,
+              periodEnd: periodEnd.toISOString(),
+            },
+          },
+        });
+
         return updated;
       }, this.planTransition.transactionOptions(preparedTransition)),
     );

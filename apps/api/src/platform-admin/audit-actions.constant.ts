@@ -22,6 +22,14 @@ export const AdminAuditAction = {
   TENANT_PLAN_CHANGED: "TENANT_PLAN_CHANGED",
   TENANT_TRIAL_EXTENDED: "TENANT_TRIAL_EXTENDED",
   TENANT_SUBSCRIPTION_ACTIVATED: "TENANT_SUBSCRIPTION_ACTIVATED",
+  /**
+   * The billing MARKER of a manual activation, written INSIDE its transaction (so it exists exactly when the
+   * activation does). A completed card checkout reads the latest one, under the same tenant row lock, to know
+   * whether the tenant moved to manual invoicing after the checkout session was created. NOT the post-commit
+   * TENANT_SUBSCRIPTION_ACTIVATED trail row, which is best-effort (AuditService swallows write errors) and
+   * lands after the commit.
+   */
+  TENANT_MANUAL_ACTIVATION_MARKER: "TENANT_MANUAL_ACTIVATION_MARKER",
   TENANT_DELETED: "TENANT_DELETED",
   TENANT_CONFIG_UPDATED: "TENANT_CONFIG_UPDATED",
   TENANT_ADMIN_PASSWORD_RESET: "TENANT_ADMIN_PASSWORD_RESET",
@@ -69,6 +77,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_PLAN_CHANGED: "Plan changed",
   TENANT_TRIAL_EXTENDED: "Trial extended",
   TENANT_SUBSCRIPTION_ACTIVATED: "Subscription activated (manual)",
+  TENANT_MANUAL_ACTIVATION_MARKER: "Manual activation recorded (billing marker)",
   TENANT_DELETED: "Tenant deleted",
   TENANT_CONFIG_UPDATED: "Configuration updated",
   TENANT_ADMIN_PASSWORD_RESET: "Admin password reset",

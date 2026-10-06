@@ -39,7 +39,7 @@ import { lockTenantForLedger } from "./addon-ledger";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
 import { writeAdminNotice } from "./manual-invoice-notice";
-import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
@@ -63,6 +63,14 @@ const PAYMENT_GRACE_DAYS = 3;
 /** #2476: the payment-failed email's portal call runs inside the webhook's claim lease — cap it so a
  *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
 const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
+
+/**
+ * Clock skew allowed between a manual-activation marker (our database clock) and `session.created` (Stripe's):
+ * a marker within this many seconds BEFORE the session counts as AFTER it, i.e. stale. Deliberately lopsided:
+ * a false "stale" costs one refund notice an operator can act on (the duplicate is cancelled, nothing is lost),
+ * a false "apply" costs the customer double billing (a card subscription on top of a manual invoice).
+ */
+const MANUAL_MARKER_SKEW_S = 60;
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
@@ -859,9 +867,10 @@ export class BillingService {
    * given (called from the early read and again, from the re-read row, under the tenant lock):
    *  - duplicate_checkout: the tenant already stores a DIFFERENT, live subscription (two sessions were
    *    paid); the stored subscription equal to the session's is the applied one — never a duplicate;
-   *  - stale_checkout_manual: the tenant was moved to manual invoicing AFTER the session was created
-   *    (the activation rolled `periodStart` past `session.created`). A manual activation from before the
-   *    session — a tenant that chose to pay by card — is not stale.
+   *  - stale_checkout_manual: the tenant is on manual invoicing (externalPayment) and its LATEST manual
+   *    activation or renewal — the in-transaction marker row — committed AFTER the session was created, to within
+   *    MANUAL_MARKER_SKEW_S. A manual activation from well before the session (a tenant that chose to pay by
+   *    card) is not stale, and neither is a cron cycle roll, which writes no marker.
    */
   private judgeDuplicate(
     session: any,
@@ -869,9 +878,9 @@ export class BillingService {
     row: {
       stripeSubId?: string | null;
       externalPayment?: boolean | null;
-      periodStart?: Date | null;
     } | null,
     storedLive: boolean,
+    manualActivatedAt: Date | null,
   ): DuplicateVerdict | null {
     const stored = row?.stripeSubId ?? null;
     if (stored === subscriptionId) return null;
@@ -880,12 +889,34 @@ export class BillingService {
     if (
       row?.externalPayment === true &&
       created != null &&
-      row.periodStart != null &&
-      row.periodStart.getTime() > created * 1000
+      manualActivatedAt != null &&
+      manualActivatedAt.getTime() >= (created - MANUAL_MARKER_SKEW_S) * 1000
     ) {
       return { reason: "stale_checkout_manual", storedSubId: stored };
     }
     return null;
+  }
+
+  /**
+   * When the tenant's LATEST manual activation (or renewal) committed, from its in-transaction marker row —
+   * never from `periodStart`, which the billing cron's cycle roll also moves, and never from the best-effort
+   * post-commit trail row. Called with the tenant lock held (inside the apply transaction) for the decisive
+   * read; null when there is no marker. Only meaningful for a row with externalPayment.
+   */
+  private async latestManualActivationAt(
+    db: { auditLog: { findFirst: (args: any) => Promise<{ createdAt: Date } | null> } },
+    tenantId: string,
+  ): Promise<Date | null> {
+    const marker = await db.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+      },
+      orderBy: [{ createdAt: "desc" }],
+      select: { createdAt: true },
+    });
+    return marker?.createdAt ?? null;
   }
 
   /**
@@ -1172,7 +1203,6 @@ export class BillingService {
         // X1: the stale/duplicate-checkout guard judges from these (and re-reads them under the lock).
         stripeSubId: true,
         externalPayment: true,
-        periodStart: true,
       },
     });
     const hasNegotiatedOverride =
@@ -1231,7 +1261,18 @@ export class BillingService {
       storedSubId && storedSubId !== subscriptionId
         ? await this.storedSubscriptionIsLive(storedSubId)
         : false;
-    const earlyVerdict = this.judgeDuplicate(session, subscriptionId, existingOverride, storedLive);
+    // Staleness is keyed on the manual activation's own marker (read only for a manual row).
+    const earlyManualAt =
+      existingOverride?.externalPayment === true
+        ? await this.latestManualActivationAt(this.prisma, tenantId)
+        : null;
+    const earlyVerdict = this.judgeDuplicate(
+      session,
+      subscriptionId,
+      existingOverride,
+      storedLive,
+      earlyManualAt,
+    );
     if (earlyVerdict) {
       await this.handleDuplicate(session, tenantId, stripeSub, earlyVerdict);
       return;
@@ -1241,7 +1282,7 @@ export class BillingService {
     const recheckUnderLock = async (tx: Prisma.TransactionClient): Promise<void> => {
       const current = await tx.tenantSubscription.findUnique({
         where: { tenantId },
-        select: { stripeSubId: true, externalPayment: true, periodStart: true },
+        select: { stripeSubId: true, externalPayment: true },
       });
       const now = current?.stripeSubId ?? null;
       // A racing delivery of THIS SAME session may have stored its own subscription since the read above:
@@ -1251,7 +1292,13 @@ export class BillingService {
           "The tenant's subscription changed while this checkout was being applied — the checkout is retried.",
         );
       }
-      const verdict = this.judgeDuplicate(session, subscriptionId, current, storedLive);
+      // The decisive marker read: AFTER the tenant row lock this transaction already holds, so a manual
+      // activation that committed since the early read (it takes the same lock) is always visible.
+      const manualAt =
+        current?.externalPayment === true
+          ? await this.latestManualActivationAt(tx, tenantId)
+          : null;
+      const verdict = this.judgeDuplicate(session, subscriptionId, current, storedLive, manualAt);
       if (verdict) throw new DuplicateCheckoutSignal(verdict);
     };
 

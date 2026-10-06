@@ -93,6 +93,8 @@ describe("PlatformAdminService — audit provenance", () => {
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      // S3: activateManualSubscription writes its billing marker row inside the transaction.
+      create: jest.fn().mockResolvedValue({}),
     };
     // createMockPrisma's default $transaction mock builds `tx` from its internal model
     // set, which — like the top level — omits tenantSubscription. updatePlan writes
@@ -3009,6 +3011,52 @@ describe("PlatformAdminService — audit provenance", () => {
         .map((c: any[]) => c[0]?.select)
         .find((x: any) => x?.status && x?.name);
       expect(select).toMatchObject({ status: true, readOnlyReason: true });
+    });
+
+    it("S3: the activation writes its billing MARKER row INSIDE the transaction (not only the best-effort post-commit trail)", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => {
+        order.push("tx-open");
+        const r = await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        order.push("tx-commit");
+        return r;
+      });
+      (prisma as any).auditLog.create.mockImplementation(async () => {
+        order.push("marker");
+        return {};
+      });
+      auditLog.mockImplementation(async () => {
+        order.push("trail");
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual(["tx-open", "marker", "tx-commit", "trail"]);
+      const [{ data }] = (prisma as any).auditLog.create.mock.calls[0];
+      expect(data).toMatchObject({
+        tenantId: TENANT_ID,
+        userId: ADMIN_ID,
+        action: "TENANT_MANUAL_ACTIVATION_MARKER",
+        entityType: "tenant",
+        entityId: TENANT_ID,
+        meta: expect.objectContaining({
+          platformAdmin: true,
+          paymentMethod: "BANK_TRANSFER",
+          cycle: "MONTHLY",
+        }),
+      });
+      // the post-commit trail row is a different action: it is never the marker
+      expect(auditLog.mock.calls[0][0]).toMatchObject({ action: "TENANT_SUBSCRIPTION_ACTIVATED" });
+    });
+
+    it("S3: a failing marker write rolls the activation back (the marker exists exactly when the activation does)", async () => {
+      tenantBefore();
+      (prisma as any).auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow("db down");
+      expect(auditLog).not.toHaveBeenCalled(); // no post-commit trail for an activation that never committed
     });
 
     it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
