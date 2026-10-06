@@ -2,13 +2,15 @@ import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
 import type { FeatureConfigService } from "./feature-config.service";
-import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
+import { featureDefByKey, gateVia } from "./feature-registry";
 
 /**
  * The two keys that make a tenant a delivery operation (the fleet modules). `driver_payments` is
  * deliberately NOT here: it is gated via "guard", so `can()` is true for almost every tenant and
  * including it would neuter the 409 on delivery/both.
  */
+// API source keeps its own literal: @routeflow/types is raw TS (a value import fails `node dist` at
+// boot). fleet-keys-parity.spec.ts pins it set-equal to the web's FLEET_MODULE_KEYS.
 export const FLEET_KEYS = ["recurring_routes", "order_delivery"] as const;
 
 /** What each stored mode offers. SHIP semantics come ONLY from the ship-family modes (SA-649 R3). */
@@ -34,12 +36,16 @@ export function deriveFulfilmentCapability(input: {
   fleet: boolean;
 }): FulfilmentCapability {
   const { fleet } = input;
-  const def = BY_MODE[input.mode];
+  // SA-666a: a stored mode the registry marks UNAVAILABLE (pickup, pickup_ship until the counter flow
+  // lands) is treated as unset, read from the registry (no second constant): a tenant that already
+  // holds one keeps today's behavior instead of an order path nothing can create.
+  const available = featureDefByKey("fulfilment_model")?.config?.modes[input.mode]?.available;
+  const def = available === false ? undefined : BY_MODE[input.mode];
   const methods: FulfilmentMethod[] = def ? [...def.methods] : ["ROUTE", "SHIP"];
   const staffDefault = methods[0];
-  const inStore = input.mode === "pickup" || input.mode === "pickup_ship";
+  const inStore = def !== undefined && (input.mode === "pickup" || input.mode === "pickup_ship");
   const counter = inStore ? "always" : input.counterSales === "on" ? "optional" : "off";
-  const needsFleet = input.mode === "delivery" || input.mode === "both";
+  const needsFleet = def !== undefined && (input.mode === "delivery" || input.mode === "both");
   return {
     methods,
     staffDefault,
@@ -96,17 +102,6 @@ export interface FulfilmentCapabilityDeps {
   featureOverrides: Pick<FeatureOverrideService, "allActive">;
 }
 
-/**
- * SA-666a: a stored mode the registry marks `available: false` reads as `unset` (today). The effective-mode
- * read only checks a mode's `requires`, so availability is honoured here, at the one place the capability is
- * built. Every fulfilment_model / counter_sales mode is available on master today, so this is dormant until
- * a mode is withdrawn.
- */
-function availableOrUnset(key: string, mode: string): string {
-  const def = FEATURE_REGISTRY.find((f) => f.key === key)?.config?.modes[mode];
-  return def && def.available === false ? "unset" : mode;
-}
-
 /** What the capability derivation reads, each read answered on its own so a caller keeps ITS failure rule. */
 export interface FulfilmentInputs {
   fulfilmentMode: string;
@@ -118,7 +113,8 @@ export interface FulfilmentInputs {
 }
 
 /**
- * The ONE place the capability's inputs are read — `getEffectiveMode` for `fulfilment_model` and
+ * The ONE place the capability's inputs are read (SA-666a availability is applied ONCE, inside
+ * deriveFulfilmentCapability) — `getEffectiveMode` for `fulfilment_model` and
  * `counter_sales`, and `isFleetHeld` — shared by the counter gate and `GET /tenants/me/features`. It never
  * throws: a failed mode read answers "unset" (+ `modesFailed`), a failed fleet read answers `null`, so each
  * caller applies its own pinned failure behaviour to the same read.
@@ -130,7 +126,7 @@ export async function readFulfilmentInputs(
   let modesFailed = false;
   const mode = (key: string) =>
     deps.featureConfig.getEffectiveMode(tenantId, key).then(
-      (m) => availableOrUnset(key, m),
+      (m) => m,
       () => {
         modesFailed = true;
         return "unset";

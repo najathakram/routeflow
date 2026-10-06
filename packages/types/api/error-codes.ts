@@ -121,6 +121,14 @@
 //                    INTAKE_SECTION_NOT_REVIEWABLE, ONBOARDING_BOOKING_HAS_CASE, ONBOARDING_CASE_CLOSED, ONBOARDING_CASE_NOT_OPEN,
 //                    ONBOARDING_GATE_BLOCKED, ONBOARDING_SIGN_OFF_NOT_AVAILABLE, ONBOARDING_STEP_BEHIND_GATE, ONBOARDING_STEP_NOT_PENDING,
 //                    ONBOARDING_STEP_NOT_REACHED, ONBOARDING_STEP_WAIVED (value == key, byte-identical to what was sent).
+//   B1029 (self-serve add-on billing) — ADDON_ANNUAL_NOT_SUPPORTED (the 409 of an add-on enable or quantity RAISE on an annual
+//                    Stripe subscription; a decrease and a disable stay allowed) and ADDON_INCLUDED_IN_PLAN (the 409 of an enable of an
+//                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
+//                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
+//                    the body's fixed copy or their own, never a Stripe message.
+//   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
+//                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
+//                    names the add-ons and says to turn them off or contact support.
 //   B987-D — regulated / common refusals, now named here (value == key, byte-identical to what was sent): MONEY_INVARIANT (the 400 of
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
@@ -212,6 +220,9 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
+  PRICE_ADJUSTMENT_OVERPAYS: "PRICE_ADJUSTMENT_OVERPAYS",
+  PRICE_ADJUSTMENT_REFUSED: "PRICE_ADJUSTMENT_REFUSED",
   TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
   PLAN_GATE: "PLAN_GATE",
   PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
@@ -231,7 +242,10 @@ export const API_ERROR_CODES = {
   UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
+  ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
+  INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
@@ -281,8 +295,15 @@ export const API_ERROR_CODES = {
   FEATURE_MODE_REQUIRES: "FEATURE_MODE_REQUIRES",
   FEATURE_REQUIRES_UNMET: "FEATURE_REQUIRES_UNMET",
   PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
+  ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
+  ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
+  ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
+  BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
+  BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
+  PROFILE_PLAN_CHANGED: "PROFILE_PLAN_CHANGED",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
   REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",

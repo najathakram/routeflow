@@ -428,3 +428,108 @@ export async function lockRowsNoWait(
     });
   }
 }
+
+/**
+ * Several advisory locks of ONE family, taken together on ONE pinned connection (#3199 review: a
+ * caller that needs N keys must not pin N pool slots for its whole critical section). Same
+ * mechanism as `withAdvisoryLock` (session-level `pg_advisory_lock`, `wait` mode only):
+ *  - keys are de-duplicated and taken in SORTED order, so two callers over overlapping key sets can
+ *    never deadlock against each other (a single-key holder can only wait, never cycle);
+ *  - a `lock_timeout` (55P03) on any key releases the keys already taken, then rejects with
+ *    `LockTimeoutError` naming that key; a connection/session failure is `LockUnavailableError`;
+ *  - every key taken is unlocked in `finally` whatever `fn` did; an unlock that fails destroys the
+ *    connection (the server then drops whatever it still held), exactly as the single-key helper.
+ * The single-key `withAdvisoryLock` is unchanged.
+ */
+export async function withAdvisoryLocks<T>(
+  opts: { family: string; keys: readonly string[]; waitMs?: number },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (
+    typeof opts.family !== "string" ||
+    opts.family.length === 0 ||
+    !Array.isArray(opts.keys) ||
+    opts.keys.length === 0 ||
+    opts.keys.some((k) => typeof k !== "string" || k.length === 0)
+  ) {
+    throw new TypeError("withAdvisoryLocks: family and every key must be non-empty strings");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(opts.family)) {
+    throw new TypeError(
+      `withAdvisoryLocks: unknown lock family "${opts.family}" (expected one of ${LOCK_FAMILIES.join(", ")})`,
+    );
+  }
+  const keys = [...new Set(opts.keys)].sort();
+  const waitMs = Number.isFinite(opts.waitMs)
+    ? Math.max(1, Math.floor(opts.waitMs as number))
+    : DEFAULT_WAIT_MS;
+  let client: PoolClient;
+  try {
+    client = await lockPool(opts.family).connect();
+  } catch (e: any) {
+    logger.error(`db-locks: could not obtain a lock connection — ${e?.message ?? e}`);
+    throw new LockUnavailableError(e);
+  }
+  let failure: unknown;
+  let hasFailure = false;
+  const recordFailure = (e: unknown) => {
+    if (hasFailure) return;
+    failure = e;
+    hasFailure = true;
+  };
+  let destroy = false;
+  const onClientError = (err: Error) => {
+    logger.error(
+      `[db-locks] pinned connection error family=${opts.family} keys=${keys.join(",")}: ${err.message}`,
+    );
+    recordFailure(err);
+    destroy = true;
+  };
+  client.on("error", onClientError);
+  const held: string[] = [];
+  try {
+    try {
+      await client.query(`SET lock_timeout = '${waitMs}ms'`);
+    } catch (e) {
+      recordFailure(e);
+      destroy = true;
+      throw new LockUnavailableError(e);
+    }
+    for (const key of keys) {
+      try {
+        await client.query(LOCK_SQL.wait, [opts.family, key]);
+        held.push(key);
+      } catch (e: any) {
+        if (e?.code === "55P03") {
+          logger.warn(`db-locks: lock timeout after ${waitMs}ms for ${opts.family}:${key}`);
+          throw new LockTimeoutError(opts.family, key, waitMs);
+        }
+        recordFailure(e);
+        destroy = true;
+        throw e;
+      }
+    }
+    try {
+      return await fn();
+    } catch (e) {
+      recordFailure(e);
+      throw e;
+    }
+  } finally {
+    // Unlock every key this call took (in reverse), whatever happened above.
+    for (const key of [...held].reverse()) {
+      try {
+        await client.query(UNLOCK_SQL, [opts.family, key]);
+      } catch (e: any) {
+        logger.error(
+          `db-locks: unlock failed for ${opts.family}:${key} — ${e?.message ?? e}; connection will be destroyed`,
+        );
+        recordFailure(e);
+        destroy = true;
+      }
+    }
+    client.removeListener("error", onClientError);
+    if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
+    else client.release();
+  }
+}

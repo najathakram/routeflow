@@ -66,3 +66,23 @@ export interface SubscriptionView<TDate = string> {
   flags?: string[];
   paymentRequired: boolean;
 }
+
+/**
+ * How a tenant's self-serve add-on is billed (`GET /billing/proration-preview` and the enable
+ * response): STRIPE = prorated onto the next Stripe bill; MANUAL = the owner adds it to the next
+ * manual invoice; UNBILLED = no Stripe subscription, so nothing is charged online. A TYPE only (no
+ * runtime value), so the API's own `AddonBilling` aliases it with `import type` and the two can
+ * never drift; the API must never value-import this package (prod boots from compiled CJS).
+ */
+export type AddonBillingMode = "STRIPE" | "MANUAL" | "UNBILLED";
+
+/**
+ * The body of `POST /billing/addons/:sku/enable`: what REALLY happened. `proratedNow` is Stripe's
+ * own prorated figure for a STRIPE tenant (null when it could not be read back), 0 for UNBILLED and
+ * null/0 for MANUAL; `subscription` is the refreshed subscription view.
+ */
+export interface EnableAddonResult {
+  proratedNow: number | null;
+  billing: AddonBillingMode;
+  subscription: SubscriptionView;
+}
