@@ -103,29 +103,35 @@ describe("(g) SA-678: a capability read failure fails OPEN to today's rule (neve
   });
 });
 
-describe("(e) SA-666/666a: pickup and pickup_ship are unavailable and a stored one reads as unset", () => {
+describe("(e) SA-666b: pickup and pickup_ship are available and a stored one derives the in-store capability", () => {
   const unset = deriveFulfilmentCapability({ mode: "unset", counterSales: "unset", fleet: true });
 
-  it("the registry marks pickup and pickup_ship available:false (every other mode stays true)", () => {
+  it("the registry marks every fulfilment_model mode available:true (the flip changed ONLY that field)", () => {
     const modes = featureDefByKey("fulfilment_model")!.config!.modes;
-    expect(modes.pickup.available).toBe(false);
-    expect(modes.pickup_ship.available).toBe(false);
-    for (const m of ["unset", "delivery", "ship", "both"]) expect(modes[m].available).toBe(true);
+    for (const m of ["unset", "delivery", "ship", "both", "pickup", "pickup_ship"])
+      expect(modes[m].available).toBe(true);
+    expect(modes.pickup).toMatchObject({ label: "In store only", lifecycle: "proposed" });
+    expect(modes.pickup_ship).toMatchObject({
+      label: "In store + shipping",
+      lifecycle: "proposed",
+    });
   });
 
-  it("a STORED pickup / pickup_ship derives exactly the unset capability (read from the registry)", () => {
-    // counter sales is its own switch: it still applies on top of the unset shape
-    expect(
-      deriveFulfilmentCapability({ mode: "pickup", counterSales: "on", fleet: false }),
-    ).toEqual({
-      ...unset,
-      counter: "optional",
-      fleet: false,
-    });
-    for (const mode of ["pickup", "pickup_ship"])
-      expect(deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true })).toEqual(
-        unset,
-      );
+  it("a STORED pickup / pickup_ship derives the in-store capability (read from the registry), never the unset one", () => {
+    for (const [mode, methods] of [
+      ["pickup", ["PICKUP"]],
+      ["pickup_ship", ["PICKUP", "SHIP"]],
+    ] as const) {
+      const c = deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true });
+      expect(c).toMatchObject({
+        methods,
+        staffDefault: "PICKUP",
+        portalMethods: methods,
+        portalDefault: "PICKUP",
+        counter: "always",
+      });
+      expect(c).not.toEqual(unset);
+    }
   });
 
   it("(f) CONTRACT: the unset capability shape the web's isUnsetCapabilities() keys on", () => {
