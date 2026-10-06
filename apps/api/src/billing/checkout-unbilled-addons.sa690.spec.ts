@@ -31,6 +31,8 @@ type Row = {
   sku: string | null;
   active: boolean;
   stripeItemId: string | null;
+  /** SA-693: a platform comp is never billed and never blocks a checkout. */
+  isComp?: boolean;
   createdAt?: Date;
 };
 
@@ -55,6 +57,8 @@ function matchRow(r: Row, where: Record<string, unknown>): boolean {
       if (r.tenantId !== v) return false;
     } else if (k === "active") {
       if (r.active !== v) return false;
+    } else if (k === "isComp") {
+      if ((r.isComp ?? false) !== v) return false;
     } else if (k === "stripeItemId") {
       if (v !== null) throw new Error(`mock cannot evaluate stripeItemId: ${String(v)}`);
       if (r.stripeItemId !== null) return false;
@@ -179,6 +183,30 @@ describe("SA-690 createCheckoutSession refuses while self-serve add-ons are unbi
     expect((err.getResponse() as { message: string }).message).toBe(
       "Turn off Forecasting before adding your card, or contact support to set them up.",
     );
+  });
+
+  it("SA-693: a comp row passes the gate (never blocks), through the same method both entry points reach", async () => {
+    const { svc, sessionCreate } = make([row({ sku: "FORECASTING", isComp: true })]);
+
+    await expect(svc.createCheckoutSession("t1", "month")).resolves.toEqual({
+      checkoutUrl: "https://checkout.stripe.test/cs_1",
+      sessionId: "cs_1",
+    });
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-693: a comp does not mask a real unbilled row — only the non-comp one is named", async () => {
+    const { svc, sessionCreate } = make([
+      row({ sku: "FORECASTING", isComp: true }),
+      row({ sku: "CUSTOMER_PACK_100", isComp: false }),
+    ]);
+
+    const err = await refusalOf(svc.createCheckoutSession("t1", "month"));
+
+    expect((err.getResponse() as { message: string }).message).toBe(
+      "Turn off Customer Pack 100 before adding your card, or contact support to set them up.",
+    );
+    expect(sessionCreate).not.toHaveBeenCalled();
   });
 
   it("(2) allows the checkout when the tenant has no add-ons", async () => {

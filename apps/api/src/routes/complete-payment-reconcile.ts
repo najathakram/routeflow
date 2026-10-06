@@ -8,6 +8,7 @@ export interface StopReconcileDeps {
     tx: any,
     orderIds: string[],
     reconcileOrderIds: string[],
+    userId?: string,
   ): Promise<void>;
 }
 
@@ -28,6 +29,7 @@ export async function reconcileDeliveredStopOrders(
   tx: any,
   stopOrders: ReadonlyArray<{ id: string; status: OrderStatus }>,
   deliveredOrderIdSet: ReadonlySet<string>,
+  userId?: string,
 ): Promise<string[]> {
   const deliveredOrderIds = stopOrders
     // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
@@ -35,7 +37,12 @@ export async function reconcileDeliveredStopOrders(
     .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
     .map((o) => o.id);
   if (deliveredOrderIds.length > 0) {
-    await deps.reconcileDeliveredOrdersInTx(tx, deliveredOrderIds, Array.from(deliveredOrderIdSet));
+    await deps.reconcileDeliveredOrdersInTx(
+      tx,
+      deliveredOrderIds,
+      Array.from(deliveredOrderIdSet),
+      userId,
+    );
   }
   return deliveredOrderIds;
 }

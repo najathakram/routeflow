@@ -81,6 +81,8 @@ import { buildPaymentsCsv } from "./payments-csv";
 import { settledAtShipment } from "../orders/order-status-invoicing";
 import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
 import { resolvePendingMirror } from "./pending-mirror";
+import { resolveInvoiceVariant } from "./invoice-stage";
+import { orderShipmentFields } from "./order-shipment-fields";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -140,6 +142,13 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
+import {
+  RECONCILE_PARTIALS,
+  assertOrderInvoicesInStep,
+  draftBillsLessThanOrder,
+  isCleanDraftPartition,
+  isSoleBillingDraftIn,
+} from "./invoice-partition";
 import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
   issueDateStamp,
@@ -567,6 +576,7 @@ export class InvoicesService {
       });
       return existing;
     }
+    await assertOrderInvoicesInStep(db, orderId, { onlyWhenRemainder: true }); // SA-687b: no re-bill
 
     // RF-079: check customer tax-exempt status
     const customer = await db.customer.findFirst({
@@ -639,13 +649,7 @@ export class InvoicesService {
       ...depositFields,
       // Carry carrier shipment tracking from the order onto the invoice so the
       // shipment shows on the customer's invoice + PDF.
-      ...(order.shippingCarrier || order.shippingTrackingNumber
-        ? {
-            shippingCarrier: order.shippingCarrier ?? null,
-            shippingTrackingNumber: order.shippingTrackingNumber ?? null,
-            shippedAt: order.shippedAt ?? null,
-          }
-        : {}),
+      ...orderShipmentFields(order),
     };
 
     // Phase 4 (W4): split by regulated category — one invoice per SEPARATE_INVOICE
@@ -1367,7 +1371,8 @@ export class InvoicesService {
    * Keeps the invoice DRAFT, rebuilds its items, recomputes totals (proportional
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
-   * consumer, so set-not-increment stays correct on repeat.
+   * consumer, so set-not-increment stays correct on repeat. SA-681: only when it IS the order's
+   * sole non-void invoice, else "partials" (untouched); `shortDraftIsPartial` adds a lone short draft.
    *
    * SIBLING-AWARE for splits: a regulated SEPARATE_INVOICE order has base + -R# open
    * drafts. `reconcileSplitOrderDrafts` rebuilds each from its OWN category group so the
@@ -1390,7 +1395,12 @@ export class InvoicesService {
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
-    opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
+    opts: {
+      basis: "order" | "delivered";
+      tx?: any;
+      after?: AfterCommit;
+      shortDraftIsPartial?: boolean;
+    },
   ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const db = opts.tx ?? this.prisma.forTenant();
@@ -1427,9 +1437,12 @@ export class InvoicesService {
       }
     }
     if (!draft) return null;
+    if (!isDepositMirror && !(await isSoleBillingDraftIn(db, orderId, draft.id))) {
+      return RECONCILE_PARTIALS; // SA-681
+    }
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
-      select: { orderItemId: true, unitsPerBox: true },
+      select: { orderItemId: true, unitsPerBox: true, qty: true },
     });
     const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
@@ -1452,6 +1465,9 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
+    if (opts.shortDraftIsPartial && draftBillsLessThanOrder(priorItems, order.lineItems)) {
+      return RECONCILE_PARTIALS; // SA-681: a lone partial (6 of 10), not a mirror of the order
+    }
 
     const tenantId = this.prisma.getTenantId();
     // SA-113a/B785: "delivered" bills the evidence-keyed basis (DeliveryMutation rows); a line
@@ -1631,32 +1647,10 @@ export class InvoicesService {
     );
     if (drafts.length === 0) return null;
 
-    // Provenance is a clean per-line partition only for createSplitInvoices siblings /
-    // a lone mirror. BAIL if a member line is also billed by a finalized (non-open-
-    // draft) invoice, or is shared across two open drafts — rebuilding those from a
-    // prior of 0 would double- or over-bill. Conservative: leave them as created.
-    const finalized = invoices.filter(
-      (i: any) => !(i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null),
-    );
-    // A finalized OR draft line with no orderItemId provenance (legacy pre-provenance
-    // rows, or a manually added / freeform invoice line) can't be matched to an order
-    // line, so we can't prove the partition is clean — bail rather than risk an
-    // over-bill (finalized) or an under-bill (dropping an untracked draft line).
-    const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
-    if (finalized.some(hasUntracked) || drafts.some(hasUntracked)) return null;
-    const finalizedLineIds = new Set<string>(
-      finalized
-        .flatMap((i: any) => (i.items ?? []).map((it: any) => it.orderItemId))
-        .filter(Boolean),
-    );
-    const seen = new Set<string>();
-    for (const d of drafts) {
-      for (const it of d.items ?? []) {
-        const id = it.orderItemId as string;
-        if (seen.has(id) || finalizedLineIds.has(id)) return null; // not a clean partition
-        seen.add(id);
-      }
-    }
+    // Provenance is a clean per-line partition only for createSplitInvoices siblings / a lone mirror.
+    // BAIL (leave the invoices as created, never a double) when it is not: an untracked line, a
+    // line also billed by a finalized invoice, or a line shared by two open drafts (SA-681).
+    if (!isCleanDraftPartition(invoices)) return null;
 
     const order = await db.order.findUnique({
       where: { id: orderId },
@@ -2568,6 +2562,8 @@ export class InvoicesService {
       issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       ...depositFields,
+      // F5: the invoice raised at shipment / delivery carries the order's carrier + tracking too.
+      ...orderShipmentFields(order),
     };
 
     // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
@@ -2670,6 +2666,7 @@ export class InvoicesService {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    await assertOrderInvoicesInStep(this.prisma.forTenant(), orderId); // SA-687: no 3rd bill
 
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
 
@@ -2915,6 +2912,8 @@ export class InvoicesService {
         include: {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
+          // Shipments lists hide the shipped date of an unmarked order (status only, no column).
+          order: { select: { status: true } },
         },
         skip,
         take: limit,
@@ -3039,7 +3038,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true, shippedAt: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3061,6 +3060,8 @@ export class InvoicesService {
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
+      // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
+      pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 
@@ -4681,6 +4682,7 @@ export class InvoicesService {
     tx: any,
     orderIds: string[],
     reconcileOrderIds?: string[],
+    userId?: string,
   ): Promise<void> {
     return reconcileDeliveredOrdersInTxImpl(
       {
@@ -4692,6 +4694,7 @@ export class InvoicesService {
       tx,
       orderIds,
       reconcileOrderIds,
+      userId,
     );
   }
 
@@ -5852,6 +5855,7 @@ export class InvoicesService {
           categoriesById,
           unitsPerBoxByProduct,
           isTaxExempt,
+          invoiceStatus: live.status,
         });
         assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {

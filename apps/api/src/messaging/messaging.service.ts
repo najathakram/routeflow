@@ -4,7 +4,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { isInternalEmail } from "../common/internal-email";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
-import { DEFAULT_TEMPLATES, EVENT_CHANNELS, seedDefaultsFor } from "./messaging-config.service";
+import {
+  DEFAULT_TEMPLATES,
+  EVENT_CHANNELS,
+  effectiveTemplateBody,
+  seedDefaultsFor,
+} from "./messaging-config.service";
 import {
   isInvoicePolicyViolation,
   isMetered,
@@ -283,7 +288,10 @@ export class MessagingService {
         where: { eventKey, channel: rule.channel, isActive: true },
       });
       if (!template) continue; // no active copy for this channel → skip
-      const bodyText = renderTemplate(template.body, args.vars ?? {});
+      const bodyText = renderTemplate(
+        effectiveTemplateBody(eventKey, template.body),
+        args.vars ?? {},
+      );
       outcomes.push(
         await this.sendMessage({
           customerId: args.customerId,

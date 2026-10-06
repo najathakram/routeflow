@@ -118,6 +118,16 @@ describe("PriceHistoryButton — availability", () => {
       params: { limit: 25 },
     });
   });
+
+  it("hunt2 F6: on the order-edit screen it asks the server to leave the edited order out", async () => {
+    renderButton({ excludeOrderId: "ord-edit" });
+    await openPanel();
+    await screen.findByText(/Price history · Sample Cola 24pk/);
+    expect(mockGet).toHaveBeenCalledWith("/customers/cust-1/products/prod-1/price-history", {
+      params: { limit: 25, excludeOrderId: "ord-edit" },
+    });
+    expect(mockGet).not.toHaveBeenCalledWith(expect.anything(), { params: { limit: 25 } });
+  });
 });
 
 describe("PriceHistoryButton — popover behaviour", () => {

@@ -1,6 +1,6 @@
 /**
  * Feature grants PR-1 — the Overrides section on the platform-admin tenant detail page's
- * Addons & Features tab (/admin/tenants/[id]). Every endpoint the page touches to reach that
+ * Setup tab (/admin/tenants/[id]). Every endpoint the page touches to reach that
  * tab is MOCKED (same pattern as 09-regulated-compliance.spec.ts's mockRegulatedApi). Auth is
  * ALSO faked client-side: (platform-admin)/layout.tsx's SuperAdminGuard only decodes the JWT
  * payload and checks role/exp locally (no server round-trip to verify the signature), so
@@ -198,7 +198,7 @@ async function gotoOverridesSection(page: Page) {
     window.localStorage.setItem("superAdminToken", token);
   }, fakeSuperAdminToken());
   await page.goto(`/admin/tenants/${TENANT_ID}`);
-  await page.getByRole("button", { name: "Addons & Features" }).click();
+  await page.getByRole("button", { name: "Setup", exact: true }).click();
   // NOT `getByRole("heading", {name: "Overrides"})` — the tenant fixture's own name ("E2E
   // Feature Overrides Tenant") contains that substring too, via the page's <h1>, so an
   // unqualified substring match on "Overrides" is satisfied by that H1 alone and never
