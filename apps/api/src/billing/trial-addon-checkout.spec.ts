@@ -1841,6 +1841,125 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       expect(h.ledger()).toEqual([]);
     });
 
+    describe("a PAID session whose own subscription is already cancelled raises the SHOULD-3 trail + admin notice (once per session)", () => {
+      const paidNotices = (h: ReturnType<typeof make>) =>
+        h.audits.filter((a: any) => a.action === "STRIPE_PAID_CHECKOUT_NOT_APPLIED");
+      const trails = (h: ReturnType<typeof make>) =>
+        h.audits.filter((a: any) => a.action === "STRIPE_CHECKOUT_REFUSED");
+      const paid = (h: ReturnType<typeof make>) => h.session({ payment_status: "paid" });
+
+      it("paid, own sub cancelled, no stored subscription: ONE trail row + ONE notice (not only a log); nothing applied", async () => {
+        const h = make({ subStatus: "canceled", rows: rows(), items: items() });
+
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+
+        expect(trails(h)).toHaveLength(1);
+        expect(trails(h)[0].meta).toMatchObject({
+          reason: "subscription_already_cancelled",
+          subscriptionId: "sub_1",
+          subscriptionStatus: "canceled",
+        });
+        const told = paidNotices(h);
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+        expect(told[0].meta).toMatchObject({
+          platformAdmin: true,
+          reason: "subscription_already_cancelled",
+          subscriptionId: "sub_1",
+          checkoutSessionId: "cs_1",
+        });
+        expect(told[0].meta.message).toBe(
+          "Paid checkout for Acme was NOT applied: its subscription sub_1 was already cancelled when the completion arrived, so nothing was attached to the tenant. Check Stripe: refund the first invoice if the cancellation did not.",
+        );
+        expect(h.sub.stripeSubId).toBeNull();
+        expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(h.ledger()).toEqual([]);
+        expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      });
+
+      it("a REDELIVERY writes neither again (one trail row and one notice per session)", async () => {
+        const h = make({ subStatus: "canceled", rows: rows(), items: items() });
+        await h.completed(paid(h));
+        await h.completed(paid(h));
+        await h.completed(paid(h));
+        expect(trails(h)).toHaveLength(1);
+        expect(paidNotices(h)).toHaveLength(1);
+      });
+
+      it("a stored subscription that is NOT live (cancelled/unknown) does not hide it: still raised", async () => {
+        const h = make({
+          subStatus: "canceled",
+          storedSubId: "sub_old",
+          storedSubStatus: "canceled",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toHaveLength(1);
+      });
+
+      it("NOT raised when the tenant is fine: its stored subscription is LIVE (the S2 sequence — A applied, sub_A cancelled, B applied, a late retry of A)", async () => {
+        const h = make({
+          subStatus: "canceled",
+          storedSubId: "sub_B",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toEqual([]);
+        expect(trails(h)).toEqual([]);
+      });
+
+      it("NOT raised when the stored subscription IS this session's own (it was applied; the deleted event governs)", async () => {
+        const h = make({
+          subStatus: "canceled",
+          storedSubId: "sub_1",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toEqual([]);
+      });
+
+      it("NOT raised when the session already has its APPLIED row", async () => {
+        const h = make({
+          flagOn: true,
+          alreadyApplied: true,
+          subStatus: "canceled",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toEqual([]);
+      });
+
+      it("NOT raised when the session was not paid (an unpaid session charged nothing)", async () => {
+        const h = make({ subStatus: "canceled", rows: rows(), items: items() });
+        await h.completed(h.session({ payment_status: "unpaid" }));
+        expect(paidNotices(h)).toEqual([]);
+        await h.completed(h.session({ id: "cs_2" })); // no payment_status at all
+        expect(paidNotices(h)).toEqual([]);
+      });
+
+      it("a notice that cannot be written never fails the webhook (the 200 is unchanged)", async () => {
+        const h = make({ subStatus: "canceled", rows: rows(), items: items() });
+        h.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+      });
+
+      it("a transient Stripe error reading the stored subscription still fails the webhook (A2: only resource_missing is 'not live')", async () => {
+        const h = make({
+          subStatus: "canceled",
+          storedSubId: "sub_old",
+          storedSubStatus: "transient",
+          rows: rows(),
+          items: items(),
+        });
+        await expect(h.completed(paid(h))).rejects.toMatchObject({ type: "StripeConnectionError" });
+        expect(paidNotices(h)).toEqual([]);
+      });
+    });
+
     it("the session already has its APPLIED row (flag on): an idempotent redelivery — adopted, never re-judged, no notice, no cancel, no plan write", async () => {
       const h = make({
         flagOn: true,

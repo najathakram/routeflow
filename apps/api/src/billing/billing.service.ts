@@ -815,6 +815,65 @@ export class BillingService {
     else await written.catch(() => undefined);
   }
 
+  /**
+   * A PAID session whose own subscription was already cancelled when its completion arrived and that was never
+   * applied: money moved and nothing was attached to the tenant, so — beyond the log — it leaves the SHOULD-3
+   * trail row and the platform notice (once per session, written together). Raised only when it would be news:
+   *  - the session was not paid: nothing was charged;
+   *  - it was applied already (its APPLIED row, or the stored subscription IS this one): a late retry of a
+   *    session that was handled — the cancellation arrives through customer.subscription.deleted;
+   *  - the tenant is on a different LIVE subscription (the A applied, sub_A cancelled, B applied, A retried
+   *    sequence): it is billed fine, and an alert would send an operator to refund a legitimate charge.
+   * The flag-off apply writes no APPLIED row, so "stored is live" is the signal that works for both flags. A
+   * Stripe error reading the stored subscription rethrows (only resource_missing means not live): the webhook is
+   * retried. Best-effort otherwise: a failing write never changes the 200.
+   */
+  private async noticePaidSessionAlreadyCancelled(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    stored: { stripeSubId?: string | null; stripeCustomerId?: string | null } | null,
+  ): Promise<void> {
+    if (session.payment_status !== "paid") return;
+    const subscriptionId: string = stripeSub.id;
+    const storedSubId = stored?.stripeSubId ?? null;
+    if (storedSubId === subscriptionId) return;
+    if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) return;
+    if (storedSubId && (await this.storedSubscriptionIsLive(storedSubId))) return;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    const message =
+      `Paid checkout for ${label} was NOT applied: its subscription ${subscriptionId} was already cancelled ` +
+      `when the completion arrived, so nothing was attached to the tenant. Check Stripe: refund the first ` +
+      `invoice if the cancellation did not.`;
+    const trail = this.checkoutCustomerTrail(session, stored, stripeSub);
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "subscription_already_cancelled", ...trail },
+      {
+        alsoWrite: tenant
+          ? (tx) =>
+              writeAdminNotice(tx, {
+                tenantId,
+                action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+                message,
+                meta: {
+                  reason: "subscription_already_cancelled",
+                  checkoutSessionId: session.id ?? null,
+                  sessionPaymentStatus: session.payment_status ?? null,
+                  ...trail,
+                },
+              })
+          : undefined,
+      },
+    );
+  }
+
   /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
   private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
     const row = await this.prisma.auditLog.findFirst({
@@ -1254,6 +1313,7 @@ export class BillingService {
       this.logger.warn(
         `checkout.session.completed ${session.id ?? "?"} for tenant ${tenantId}: its subscription ${subscriptionId} is already cancelled — nothing applied`,
       );
+      await this.noticePaidSessionAlreadyCancelled(session, tenantId, stripeSub, existingOverride);
       return;
     }
     if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) {

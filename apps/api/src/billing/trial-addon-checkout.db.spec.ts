@@ -907,6 +907,51 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
+    it.each([false, true])(
+      "S2 carry (flag on=%s): a PAID session whose own subscription is already cancelled and that was never applied — nothing applied, ONE trail row + ONE admin notice however often it is redelivered",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+          items: [
+            base(),
+            stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          ],
+        });
+        r.subs.sub_qa.status = "canceled";
+
+        await r.deliver({ payment_status: "paid" });
+        await r.deliver({ payment_status: "paid" });
+        await r.deliver({ payment_status: "paid" });
+
+        expect((await prisma.tenant.findUniqueOrThrow({ where: { id: r.tenantId } })).status).toBe(
+          TenantStatus.TRIAL,
+        );
+        expect((await sub(r)).stripeSubId).toBeNull();
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+        expect(await r.ledger()).toEqual([]);
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        const trail = await prisma.auditLog.findMany({
+          where: {
+            entityType: "stripe_checkout_session",
+            entityId: r.sessionId,
+            action: "STRIPE_CHECKOUT_REFUSED",
+          },
+        });
+        expect(trail).toHaveLength(1);
+        expect(trail[0].meta).toMatchObject({ reason: "subscription_already_cancelled" });
+        const told = await prisma.auditLog.findMany({
+          where: { tenantId: r.tenantId, action: "STRIPE_PAID_CHECKOUT_NOT_APPLIED" },
+        });
+        expect(told).toHaveLength(1);
+        expect(told[0].meta).toMatchObject({
+          reason: "subscription_already_cancelled",
+          subscriptionId: "sub_qa",
+          message: expect.stringContaining("was already cancelled when the completion arrived"),
+        });
+      },
+    );
+
     it("S2: a session that already has its APPLIED row is an idempotent redelivery even when a different live subscription is stored now", async () => {
       const r = await twoSessions(true);
       await r.completed(); // A applied (APPLIED row written)
