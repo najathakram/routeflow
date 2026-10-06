@@ -55,6 +55,18 @@ describe("handleMutationError (#1965)", () => {
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
   });
 
+  // B1135: the buyer's request form says this refusal inline; a second generic toast would repeat it.
+  it("swallows ORDER_WITH_CARRIER_NO_CHANGE_REQUEST (the request form renders it itself)", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      axiosErr({ code: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST", message: "x" }),
+      {},
+      toast,
+      router,
+    );
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   // B956: a refused formula-led name is FIXED copy with a human field label here too, never the raw
   // server message ("businessName must not start with …") or the raw axios text.
   describe("a refused name (TEXT_CELL_FORMULA_LEAD)", () => {
