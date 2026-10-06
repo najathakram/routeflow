@@ -264,6 +264,23 @@ export interface RecipeDto {
   components: RecipeComponentDto[];
 }
 
+/** Staff product read shapes (GET /products/:id and list rows) carry the buyer-portal flag. */
+export interface ProductPortalVisibilityFields {
+  portalVisible: boolean;
+}
+
+/** PATCH /products/portal-visibility body (1..200 unique ids). */
+export interface BulkSetPortalVisibilityPayload {
+  ids: string[];
+  portalVisible: boolean;
+}
+
+export interface BulkSetPortalVisibilityResult {
+  portalVisible: boolean;
+  updated: number;
+  unchanged: number;
+}
+
 // ─── Reuse API 409 bodies (SA-603a/603i; flat keys, one shape for codes and names) ───────────────────
 /** One ACTIVE product blocking a reactivation, for one code or the name. */
 export interface ProductReactivationHolder {

@@ -130,6 +130,7 @@ function requireDbLocksMock(): any {
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
+import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
 import {
   BadRequestException,
   ConflictException,
@@ -1380,7 +1381,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
       2,
       "cust-1",
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "ord-new" }, // M2: folds only the new order's path
       { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });
@@ -1622,9 +1623,9 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     // normalizeScanCode instead of matching the raw string.
     const candidates = normalizeScanCode(SCANNED);
     expect(candidates).toContain("012345678905");
-    // M4a-1: the shared findScanMatches ANDs the buyer's scope ({ isActive: true }) with the code OR.
+    // M4a-1: the shared findScanMatches ANDs the caller's scope (the ONE buyer visibility builder) with the code OR.
     const where = scopedProductFindMany.mock.calls[0][0].where;
-    expect(where.AND[0]).toEqual({ isActive: true });
+    expect(where.AND[0]).toEqual(buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS));
     expect(where.AND[1].OR).toEqual(
       expect.arrayContaining([
         { barcode: { in: candidates } },

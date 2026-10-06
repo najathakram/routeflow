@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
+import { CustomerPriceHistoryController } from "./customer-price-history.controller";
+import { CustomerPriceHistoryService } from "./customer-price-history.service";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 // CustomersService reads the CUSTOMERS meter + published catalog for the
@@ -36,8 +38,8 @@ import { EmailModule } from "../email/email.module";
     RegulatedModule,
     EmailModule,
   ],
-  controllers: [CustomersController],
-  providers: [CustomersService, StatementService, StatementPdfService],
+  controllers: [CustomersController, CustomerPriceHistoryController],
+  providers: [CustomersService, CustomerPriceHistoryService, StatementService, StatementPdfService],
   exports: [CustomersService],
 })
 export class CustomersModule {}
