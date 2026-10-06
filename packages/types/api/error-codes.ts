@@ -380,8 +380,9 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
   /**
-   * PLACEHOLDER until #3211's own entry lands (byte-align then). 409 from GET .../by-key/:key: the sale exists but staff
-   * changed it after it was rung. FINAL for a till: unlock, drop the key, never retry or re-POST.
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
+   * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
+   * (A moved order that still has a live invoice reads back as the normal sale.)
    */
   COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */

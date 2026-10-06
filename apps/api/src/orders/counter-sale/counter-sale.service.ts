@@ -18,7 +18,7 @@ import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { counterSaleGate } from "./capability-shape";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
-import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
+import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
 import {
   buildCounterSaleResponse,
@@ -257,7 +257,7 @@ export class CounterSaleService {
    * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
    * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all) is a coded 409
    * COUNTER_SALE_INCOMPLETE (re-POST finishes it); a voided or cancelled one is COUNTER_SALE_VOIDED (start a
-   * new sale); nothing stored for the key is a definitive 404.
+   * new sale); a moved order with no invoice is COUNTER_SALE_CHANGED (check with the office, do not re-ring); nothing stored for the key is a definitive 404.
    */
   async byKey(key: string, method?: CounterPaymentMethod): Promise<CounterSaleResponse> {
     // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
@@ -283,6 +283,7 @@ export class CounterSaleService {
       all.map((r: { status: string }) => r.status),
     );
     if (state === "voided") throw saleVoidedConflict();
+    if (state === "changed") throw saleChangedConflict();
     if (state === "incomplete") {
       throw new ConflictException({
         code: API_ERROR_CODES.COUNTER_SALE_INCOMPLETE,
