@@ -85,6 +85,8 @@ import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
 import { ShipWithTrackingDialog } from "./ShipWithTrackingDialog";
 import { shipWithTracking } from "@/lib/ship-with-tracking";
+import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
+import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
@@ -1855,6 +1857,7 @@ export default function OrderDetailPage() {
   // tracking-entry dialog open — see openSignal prop below.
   const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
   const [showShipDialog, setShowShipDialog] = React.useState(false);
+  const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -2729,7 +2732,11 @@ export default function OrderDetailPage() {
                   size="sm"
                   variant="secondary"
                   leftIcon={<RefreshCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("CONFIRMED")}
+                  onClick={() =>
+                    order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+                      ? setShowUnmarkConfirm(true)
+                      : setDemoteTarget("CONFIRMED")
+                  }
                 >
                   {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
                 </Button>
@@ -3554,6 +3561,15 @@ export default function OrderDetailPage() {
         confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
         loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
+      />
+
+      <UnmarkShippedConfirm
+        open={showUnmarkConfirm}
+        onClose={() => setShowUnmarkConfirm(false)}
+        onConfirm={() => {
+          setShowUnmarkConfirm(false);
+          setDemoteTarget("CONFIRMED");
+        }}
       />
 
       {/* Demote reason modal */}
