@@ -2983,8 +2983,6 @@ export class InvoicesService {
       };
     });
 
-    // Customer-facing fields only for the customer, and only confirmed (PAID) payment rows — the
-    // money above is already derived (common/staff-only-fields.ts). Staff rows as computed.
     const rows =
       user?.role === UserRole.CUSTOMER
         ? computedData.map((inv) => pickCustomerInvoiceFields(inv, { confirmedPaymentsOnly: true }))
@@ -3054,8 +3052,7 @@ export class InvoicesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
-      // A DRAFT is the seller's unissued working copy: to the customer it does not exist yet (the
-      // same 404 as a missing id, as the buyer portal answers).
+      // A DRAFT is the seller's unissued working copy: the customer gets the 404 of a missing id.
       if (inv.status === InvoiceStatus.DRAFT) throw new NotFoundException("Invoice not found");
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
@@ -3071,7 +3068,6 @@ export class InvoicesService {
       hideOriginalPrice,
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
-    // Customer-facing fields only for the customer (common/staff-only-fields.ts); staff as read.
     return user?.role === UserRole.CUSTOMER ? pickCustomerInvoiceFields(detail) : detail;
   }
 
