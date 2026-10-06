@@ -236,12 +236,14 @@ function unlistedLineDeltas(
 
 /**
  * B1050 (SA-703): per-line booking. `deliveredQty` is never rewritten by an edit, so a line can sit
- * with qty < delivered; delivered goods are gone, so a line books `max(qty, delivered)`. A line is the
- * SAME line only when both sides carry the same NON-NULL id (an undefined id never matches — a
- * replace-all rebuild re-creates its lines with fresh ids, so they fall in the unmatched bucket).
- * Per product: C = Σ matched max(q, d) + max(Σ unmatched final q, Σ unmatched held d); an edit moves the
- * counter by C_after − C_before. Unmatched lines pool, so an id-less / replace-all set keeps the old
- * pooled behaviour; there is no per-product credit cap on top.
+ * with qty < delivered; delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
+ * says how the final lines relate to the held ones (`lineIdentity`):
+ *  - "stable" (default; an in-place diff edit): a line is the SAME line when both sides carry the same
+ *    NON-NULL id (undefined never matches). C_after = Σ matched max(q, d) + Σ removed held d + Σ new q;
+ *    a struck delivered line stays booked (its d) and never nets against a new line of the product.
+ *  - "recreated" (the deleteMany + re-create paths: operator replaceAll, CUSTOMER/DRIVER non-diff):
+ *    ids are fresh, so nothing can match; C_after = max(Σ final q, Σ held d), the pooled behaviour.
+ * C_before = Σ held max(q, d) either way; the counter moves by C_after − C_before. No credit cap.
  */
 export type BookedParts = { fixed: number; perPack: number };
 type BookedTerm = {
@@ -273,10 +275,17 @@ const termPieces = (t: BookedTerm, pack: unknown): number => {
   return t.b ? Math.max(a, piecesOfParts(t.b, pack)) : a;
 };
 
+export type LineIdentity = "stable" | "recreated";
+
 /** The booked-qty terms of ONE product's lines (held = non-cancelled pre-edit lines, final = post-edit). */
-export function bookedTerms(held: BookedLine[], final: BookedLine[]): BookedTerm[] {
+export function bookedTerms(
+  held: BookedLine[],
+  final: BookedLine[],
+  identity: LineIdentity = "stable",
+): BookedTerm[] {
   const finalById = new Map<string, BookedLine>();
-  for (const f of final) if (f.id != null && !finalById.has(f.id)) finalById.set(f.id, f);
+  if (identity === "stable")
+    for (const f of final) if (f.id != null && !finalById.has(f.id)) finalById.set(f.id, f);
   const matchedFinal = new Set<BookedLine>();
   const terms: BookedTerm[] = [];
   let heldD = ZERO_PARTS;
@@ -284,17 +293,24 @@ export function bookedTerms(held: BookedLine[], final: BookedLine[]): BookedTerm
   for (const h of held) {
     const d = partsOf(h, h.deliveredQty ?? 0);
     const f = h.id != null ? finalById.get(h.id) : undefined;
+    terms.push({ bucket: f ? "matched" : "unmatched", side: "before", a: partsOf(h, h.qty), b: d });
     if (f && !matchedFinal.has(f)) {
       matchedFinal.add(f);
-      terms.push({ bucket: "matched", side: "before", a: partsOf(h, h.qty), b: d });
       terms.push({ bucket: "matched", side: "after", a: partsOf(f, f.qty), b: d });
+    } else if (identity === "stable") {
+      terms.push({ bucket: "unmatched", side: "after", a: d }); // removed: delivered stays booked
     } else {
-      terms.push({ bucket: "unmatched", side: "before", a: partsOf(h, h.qty), b: d });
       heldD = plusParts(heldD, d);
     }
   }
-  for (const f of final) if (!matchedFinal.has(f)) finalQ = plusParts(finalQ, partsOf(f, f.qty));
-  terms.push({ bucket: "unmatched", side: "after", a: finalQ, b: heldD });
+  for (const f of final) {
+    if (matchedFinal.has(f)) continue;
+    if (identity === "stable")
+      terms.push({ bucket: "unmatched", side: "after", a: partsOf(f, f.qty) });
+    else finalQ = plusParts(finalQ, partsOf(f, f.qty));
+  }
+  if (identity === "recreated")
+    terms.push({ bucket: "unmatched", side: "after", a: finalQ, b: heldD });
   return terms;
 }
 
@@ -302,10 +318,16 @@ export function bookedTerms(held: BookedLine[], final: BookedLine[]): BookedTerm
  * Shared by the stock settle and the read-only reconciliation report: one product's booked pieces,
  * `matched` and `unmatched` kept as SEPARATE buckets (never folded), each with its before/after.
  */
-export function bookedPieces(held: BookedLine[], final: BookedLine[], livePack?: unknown) {
+export function bookedPieces(
+  held: BookedLine[],
+  final: BookedLine[],
+  livePack?: unknown,
+  identity: LineIdentity = "stable",
+) {
   const r3 = (n: number) => Math.round(n * 1000) / 1000;
   const out = { matched: { before: 0, after: 0 }, unmatched: { before: 0, after: 0 } };
-  for (const t of bookedTerms(held, final)) out[t.bucket][t.side] += termPieces(t, livePack);
+  for (const t of bookedTerms(held, final, identity))
+    out[t.bucket][t.side] += termPieces(t, livePack);
   return {
     matched: { before: r3(out.matched.before), after: r3(out.matched.after) },
     unmatched: { before: r3(out.unmatched.before), after: r3(out.unmatched.after) },
@@ -423,7 +445,7 @@ export async function settleStockForEdit(
    * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
-  opts?: { allowOversell?: boolean; blockCredits?: boolean },
+  opts?: { allowOversell?: boolean; blockCredits?: boolean; lineIdentity?: LineIdentity },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -500,7 +522,10 @@ export async function settleStockForEdit(
     return round3(r.fixed - h.fixed) !== 0 || round3(r.perPack - h.perPack) !== 0;
   });
   const terms = new Map(
-    productIds.map((id) => [id, bookedTerms(heldLines.get(id) ?? [], finalLines.get(id) ?? [])]),
+    productIds.map((id) => [
+      id,
+      bookedTerms(heldLines.get(id) ?? [], finalLines.get(id) ?? [], opts?.lineIdentity),
+    ]),
   );
   const effTouched = productIds.filter((id) => {
     const d = effectiveDeltaParts(terms.get(id)!);

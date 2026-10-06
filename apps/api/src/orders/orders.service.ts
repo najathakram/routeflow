@@ -3131,6 +3131,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
@@ -3180,9 +3181,8 @@ export class OrdersService implements OnApplicationBootstrap {
           unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
-        // Customer/Driver path: replace items by productId. A4: a DRIVER diff
-        // payload skips this branch entirely — it merges below like an operator
-        // edit (with prices already stripped), so untouched lines survive.
+        // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
+        // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         if (
           (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
@@ -3252,6 +3252,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
+          lineIdentity = "recreated";
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3534,6 +3535,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -4231,6 +4233,7 @@ export class OrdersService implements OnApplicationBootstrap {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
             blockCredits: carrierLocked,
+            lineIdentity,
           });
           creditGate = () =>
             assertWithinCreditLimit(

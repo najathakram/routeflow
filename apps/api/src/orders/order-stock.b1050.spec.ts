@@ -1,5 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { readFileSync } from "fs";
+import * as path from "path";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { restoreStockForReopen, settleStockForEdit, type OrderStockDeps } from "./order-stock";
 
@@ -173,18 +175,55 @@ describe("B1050 T7 — #3244's carrier refusals run on RAW deltas, before any ef
 });
 
 describe("B1050 — green pins that must hold before AND after the fix", () => {
-  it("replace-all with new ids: {x,10,d10} → {y,6} writes nothing; → {y,12} decrements 2", async () => {
+  it("recreated (replace-all): {x,10,d10} → {y,6} writes nothing; → {y,12} decrements 2", async () => {
     const a = [prod(90)];
     const fa = fakeTx(a);
-    await settleStockForEdit(deps, fa.tx, order, [held("x", 10, 10)], [line("y", 6)]);
+    await settleStockForEdit(
+      deps,
+      fa.tx,
+      order,
+      [held("x", 10, 10)],
+      [line("y", 6)],
+      undefined,
+      undefined,
+      {
+        lineIdentity: "recreated",
+      },
+    );
     expect(fa.updates()).toBe(0);
     expect(a[0].currentStock).toBe(90);
 
     const b = [prod(90)];
     const fb = fakeTx(b);
-    await settleStockForEdit(deps, fb.tx, order, [held("x", 10, 10)], [line("y", 12)]);
+    await settleStockForEdit(
+      deps,
+      fb.tx,
+      order,
+      [held("x", 10, 10)],
+      [line("y", 12)],
+      undefined,
+      undefined,
+      {
+        lineIdentity: "recreated",
+      },
+    );
     expect(b[0].currentStock).toBe(88);
     expect(fb.rows()).toEqual([-2]);
+  });
+
+  it("stable: a struck delivered line never nets against a NEW line — A{5,d5}+B{5}, strike A, add C{3} → −3", async () => {
+    // a8a56aca: pooled cap credits 2 (counter 92). 8c72eb3f (pooled unmatched term): delta 0 (counter 90).
+    const products = [prod(90)];
+    const { tx, rows } = fakeTx(products);
+    await settleStockForEdit(
+      deps,
+      tx,
+      order,
+      [held("a", 5, 5), held("b", 5, 0)],
+      [line("b", 5), line("c", 3)],
+    );
+    expect(products[0].currentStock).toBe(87);
+    expect(rows()).toEqual([-3]);
   });
 
   it("two id-less lines are never paired with each other (pooled behaviour)", async () => {
@@ -199,5 +238,23 @@ describe("B1050 — green pins that must hold before AND after the fix", () => {
     );
     expect(products[0].currentStock).toBe(97);
     expect(rows()).toEqual([-3]);
+  });
+});
+
+describe("B1050 — updateOrderItems wires lineIdentity per branch (SA-703 M1)", () => {
+  const src = readFileSync(path.join(__dirname, "orders.service.ts"), "utf8");
+  it("flips to recreated right before BOTH deleteMany + re-create branches", () => {
+    // CUSTOMER/DRIVER non-diff, then operator replaceAll.
+    expect(src).toMatch(
+      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{\s*where: \{\s*orderId,\s*\.\.\.\(isBuyerEdit/,
+    );
+    expect(src).toMatch(
+      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{ where: \{ orderId \} \}\);/,
+    );
+    expect(src.match(/lineIdentity = "recreated"/g)).toHaveLength(2);
+  });
+  it("defaults to stable and hands the value to the edit settle", () => {
+    expect(src).toMatch(/let lineIdentity: "stable" \| "recreated" = "stable";/);
+    expect(src).toMatch(/blockCredits: carrierLocked,\s*lineIdentity,/);
   });
 });
