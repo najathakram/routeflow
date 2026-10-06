@@ -88,6 +88,18 @@ function activePath(
   const { explicit, stored } = input;
 
   if (cap.methods.includes(PICKUP)) {
+    if (!buyer && !cap.methods.includes(SHIP)) {
+      // Pickup-ONLY: never ships. An explicit SHIP equal to the stored path is the web/mobile habit of
+      // sending the stored path (treated as omitted, logged); a different explicit SHIP is refused.
+      if (explicit === SHIP) {
+        if (explicit !== stored) throw notOffered();
+        deps.logger?.warn(
+          `fulfil path: explicit "SHIP" equals the customer's stored path but is not offered ` +
+            `(methods PICKUP); treated as omitted tenant=${deps.tenantId}`,
+        );
+      }
+      return PICKUP;
+    }
     if (!buyer) {
       // ROUTE is "no preference" in an in-store business (it is the column default and what old clients send).
       if (explicit === SHIP || explicit === PICKUP) return explicit;

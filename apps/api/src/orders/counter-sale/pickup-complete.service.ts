@@ -2,10 +2,10 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash } from "crypto";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
@@ -14,6 +14,12 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
+import { settleOrderInvoice } from "../order-status-invoicing";
+import {
+  autoApplyCandidateWhere,
+  creditAutoApplyOnSend,
+  hasOpenCreditBalance,
+} from "../../credit-notes/auto-apply-candidates";
 import {
   allocateOldestFirst,
   assertPaymentShape,
@@ -30,6 +36,7 @@ type OrderRow = {
   status: string;
   fulfillPath: string;
   deliveredAt: Date | null;
+  customerId: string | null;
   customer: { isWalkIn: boolean | null } | null;
 };
 
@@ -93,15 +100,35 @@ export class PickupCompleteService {
       });
     }
     const walkIn = !!order.customer?.isWalkIn;
-    let payment: CounterPaymentInput = dto.payment ?? { method: "ON_ACCOUNT" };
-    // Nothing owed (same invoice set and capacity rule as the tender below: VOID / WRITTEN_OFF excluded):
-    // the till takes no money, so there is nothing to refuse and no $0 payment row. A payment sent anyway
-    // is ignored (no row). Judged BEFORE the shape check so a walk-in with nothing owed is not a 400.
-    if (await this.nothingOwed(id, alreadyPickedUp ? order.deliveredAt : undefined)) {
-      payment = { method: "ON_ACCOUNT" };
-    } else {
-      assertPaymentShape(payment, walkIn);
+    // The request's real payment: never overwritten. Absent + nothing owed (same invoice set and capacity
+    // rule as the tender below) = EXCUSED: no shape check, no row. Absent + owing = on account (a walk-in
+    // has none: 400 before any write). Re-judged on the invoices FINAL after the hand-over (step 3).
+    const sent = dto.payment;
+    const preRows = await this.readInvoices(id);
+    const preOwed = this.owedBalance(
+      preRows,
+      alreadyPickedUp ? isHandOverTender(order.deliveredAt) : undefined,
+    );
+    const excused = !sent && preRows.length > 0 && preOwed <= 0;
+    if (sent) assertPaymentShape(sent, walkIn);
+    else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
+    if (walkIn) {
+      // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
+      if (
+        sent &&
+        sent.method !== "ON_ACCOUNT" &&
+        sent.amount != null &&
+        preRows.length > 0 &&
+        roundMoney(sent.amount) < preOwed
+      ) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.COUNTER_TENDER_SHORT,
+          message: "A walk-in customer must pay the full balance",
+        });
+      }
+      await this.assertNoOpenCredit(order.customerId);
     }
+    await this.claimHandOver(id, _idempotencyKey, sent, user);
 
     // 2. The hand-over: the existing status change (invoice + no stock). Its own refusals propagate,
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
@@ -120,33 +147,50 @@ export class PickupCompleteService {
     // 3. Issue every draft invoice.
     let invoices = await this.readInvoices(id);
     if (invoices.length === 0) {
-      throw new ConflictException(
-        "The order is picked up but has no invoice. Use Generate Invoice on the order page.",
-      );
+      // Delivered with no invoice (the settle failed at the hand-over): create it through the SAME settle
+      // changeStatus(DELIVERED) uses, so a retry never strands the order.
+      const failure = await settleOrderInvoice(this.orders, id, this.logger, "delivered");
+      if (failure) this.logger.warn(`pickup complete ${id}: invoice repair failed`);
+      invoices = await this.readInvoices(id);
+      if (invoices.length === 0) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.PICKUP_INVOICE_MISSING,
+          message:
+            "The order is picked up but has no invoice yet. Retry, or use Generate Invoice on the order page.",
+        });
+      }
     }
     const sendOpts = walkIn ? [{ suppressNotify: true }] : [];
-    let sent = false;
+    let issued = false;
     for (const inv of invoices) {
       if (inv.status !== "DRAFT") continue;
       try {
         await this.invoices.send(inv.id, ...sendOpts);
-        sent = true;
+        issued = true;
       } catch (e) {
         // A concurrent call may have issued it first: only a still-DRAFT invoice is a real failure.
         const fresh = (await this.readInvoices(id)).find((i) => i.id === inv.id);
         if (!fresh || fresh.status === "DRAFT") throw e;
-        sent = true;
+        issued = true;
       }
     }
-    if (sent) invoices = await this.readInvoices(id);
+    if (issued) invoices = await this.readInvoices(id);
 
-    // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock.
+    // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
+    // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
+    const owedNow =
+      this.owedBalance(invoices, alreadyPickedUp ? isHandOverTender(handedOverAt) : undefined) > 0;
     let planError: string | undefined;
-    if (payment.method !== "ON_ACCOUNT") {
+    let shown: { method: string; amount?: number } = sent ?? { method: "ON_ACCOUNT" };
+    if (!sent && excused) {
+      // Excused before the hand-over; never report a forced ON_ACCOUNT as settled when money is owed now.
+      shown = { method: "NONE" };
+      if (owedNow) planError = API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED;
+    } else if (sent && sent.method !== "ON_ACCOUNT" && owedNow) {
       try {
         const locked = await withAdvisoryLock(
           { family: "counter-tender", key: id, mode: "wait" },
-          () => this.tender(id, payment, handedOverAt),
+          () => this.tender(id, sent, handedOverAt, walkIn),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", id, 0);
         ({ invoices, planError } = locked.value);
@@ -161,7 +205,90 @@ export class PickupCompleteService {
       }
     }
 
-    return this.respond(order, invoices, payment, handedOverAt, planError, alreadyPickedUp);
+    return this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp);
+  }
+
+  /**
+   * The hand-over key, persisted as an AuditLog row (action is free text: no schema change). Its OWN short
+   * section under the per-order `counter-tender` lock (released before the tender takes it again): read the
+   * claim; none -> write it BEFORE changeStatus (a crash after the commit keeps it); same key + same body
+   * (an earlier no-payment claim may be completed by a retry that sends one) -> proceed as the replay; any
+   * other key, or the same key with a different payment -> 409 PICKUP_KEY_CONFLICT before any write.
+   */
+  private async claimHandOver(
+    orderId: string,
+    key: string,
+    payment: CounterPaymentInput | undefined,
+    user: JwtPayload,
+  ): Promise<void> {
+    const bodyHash = payment
+      ? createHash("sha256")
+          .update(
+            JSON.stringify([payment.method, payment.amount ?? null, payment.reference ?? null]),
+          )
+          .digest("hex")
+      : null;
+    const db = this.prisma.forTenant();
+    const locked = await withAdvisoryLock(
+      { family: "counter-tender", key: orderId, mode: "wait" },
+      async () => {
+        const row = await db.auditLog.findFirst({
+          where: {
+            tenantId: user.tenantId,
+            entityType: "Order",
+            entityId: orderId,
+            action: "PICKUP_COMPLETE_CLAIM",
+          },
+          orderBy: { createdAt: "asc" },
+        });
+        if (!row) {
+          await db.auditLog.create({
+            data: {
+              tenantId: user.tenantId,
+              userId: user.sub,
+              action: "PICKUP_COMPLETE_CLAIM",
+              entityType: "Order",
+              entityId: orderId,
+              meta: { idempotencyKey: key, bodyHash },
+            },
+          });
+          return;
+        }
+        const meta = (row.meta ?? {}) as { idempotencyKey?: string; bodyHash?: string | null };
+        if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.PICKUP_KEY_CONFLICT,
+            message: "This order's hand-over was already started with a different request",
+          });
+        }
+        // A same-key retry that ADDS the payment the first call lacked (PICKUP_PAYMENT_REQUIRED) is adopted
+        // on the claim, so a later, different payment under this key is a conflict, not a second tender.
+        if (!meta.bodyHash && bodyHash) {
+          await db.auditLog.update({
+            where: { id: row.id },
+            data: { meta: { ...meta, bodyHash } },
+          });
+        }
+      },
+    );
+    if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
+  }
+
+  /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
+  private async assertNoOpenCredit(customerId: string | null): Promise<void> {
+    if (!customerId) return;
+    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
+    const notes = await this.prisma.forTenant().creditNote.findMany({
+      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
+      select: { amount: true, amountUsed: true },
+    });
+    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
+        message:
+          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
+      });
+    }
   }
 
   /**
@@ -175,6 +302,7 @@ export class PickupCompleteService {
     orderId: string,
     payment: CounterPaymentInput,
     handedOverAt: Date | null,
+    walkIn: boolean,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -191,7 +319,16 @@ export class PickupCompleteService {
       amount: payment.amount,
       balance: roundMoney(balances.reduce((sum, b) => sum + b.balance, 0)),
     });
-    if (plan.kind === "refuse") {
+    if (
+      plan.kind === "pay" &&
+      walkIn &&
+      plan.amount < roundMoney(balances.reduce((t, b) => t + b.balance, 0))
+    ) {
+      // A walk-in cannot leave a partial on account (the final balance can differ from the pre-check's).
+      if (!invoices.some((i) => (i.payments ?? []).some(mine))) {
+        planError = API_ERROR_CODES.COUNTER_TENDER_SHORT;
+      }
+    } else if (plan.kind === "refuse") {
       // A refusal only stands when this hand-over took nothing yet: a stored tender means a payment went in.
       if (!invoices.some((i) => (i.payments ?? []).some(mine))) planError = plan.code;
     } else if (plan.kind === "pay") {
@@ -223,15 +360,12 @@ export class PickupCompleteService {
   }
 
   /**
-   * True when the order's non-void invoices exist and leave nothing to collect. Before the hand-over every
-   * stored payment is pre-existing; on a replay (`handedOverAt` given) this hand-over's own tender is left
-   * out, so the answer is the one the first call saw.
+   * What the non-void invoices still leave to collect (cents). Before the hand-over every stored payment is
+   * pre-existing; on a replay `mine` leaves this hand-over's own tender out, so the answer is the one the
+   * first call saw.
    */
-  private async nothingOwed(orderId: string, handedOverAt?: Date | null): Promise<boolean> {
-    const rows = await this.readInvoices(orderId);
-    if (rows.length === 0) return false;
-    const mine = handedOverAt === undefined ? () => false : isHandOverTender(handedOverAt);
-    const balance = roundMoney(
+  private owedBalance(rows: InvoiceRow[], mine: (p: any) => boolean = () => false): number {
+    return roundMoney(
       rows.reduce(
         (sum, i) =>
           sum +
@@ -242,7 +376,6 @@ export class PickupCompleteService {
         0,
       ),
     );
-    return balance <= 0;
   }
 
   private async readOrder(id: string): Promise<OrderRow | null> {
@@ -254,6 +387,7 @@ export class PickupCompleteService {
         status: true,
         fulfillPath: true,
         deliveredAt: true,
+        customerId: true,
         customer: { select: { isWalkIn: true } },
       },
     });
@@ -272,16 +406,18 @@ export class PickupCompleteService {
   private respond(
     order: { id: string; orderNumber: string | null },
     invoices: InvoiceRow[],
-    payment: CounterPaymentInput,
+    payment: { method: string; amount?: number },
     handedOverAt: Date | null,
     planError: string | undefined,
     alreadyPickedUp: boolean,
   ): PickupCompleteResponse {
     const first = invoices[0];
     if (!first) {
-      throw new InternalServerErrorException(
-        "The order was handed over but its invoice could not be found. Open the order from the orders list.",
-      );
+      throw new ConflictException({
+        code: API_ERROR_CODES.PICKUP_INVOICE_MISSING,
+        message:
+          "The order was handed over but its invoice could not be found. Retry, or open the order from the orders list.",
+      });
     }
     return {
       orderId: order.id,
