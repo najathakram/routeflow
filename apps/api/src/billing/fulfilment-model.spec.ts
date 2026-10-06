@@ -278,11 +278,11 @@ describe("one fleet resolver: the capability and the 409 agree", () => {
   });
 });
 
-describe("F-A: PICKUP is a FulfillPath value that no order write accepts yet", () => {
-  it("the FulfillPath enum includes PICKUP and the order DTO still rejects it", async () => {
+describe("F-A: PICKUP is a FulfillPath value; the order DTO accepts it and the resolver is the refusal", () => {
+  it("the FulfillPath enum includes PICKUP and the order DTO accepts it (fulfil-path-resolver.spec.ts refuses it where it is not offered)", async () => {
     expect(Object.values(FulfillPath)).toEqual(["ROUTE", "SHIP", "PICKUP"]);
-    const bad = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
-    const errs = await validate(bad as object, { skipMissingProperties: true });
-    expect(errs.some((e) => e.property === "fulfillPath")).toBe(true);
+    const ok = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
+    const errs = await validate(ok as object, { skipMissingProperties: true });
+    expect(errs.some((e) => e.property === "fulfillPath")).toBe(false);
   });
 });

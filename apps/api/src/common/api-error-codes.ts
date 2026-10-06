@@ -226,6 +226,13 @@ export const API_ERROR_CODES = {
    */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  /** 400 from POST /orders/:id/pickup-complete: the order is not a PICKUP order. Nothing was written. */
+  PICKUP_ONLY: "PICKUP_ONLY",
+  /**
+   * 409 from POST /orders/:id/pickup-complete: the pickup order is not ready to hand over (still DRAFT or
+   * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
+   */
+  PICKUP_NOT_READY: "PICKUP_NOT_READY",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
