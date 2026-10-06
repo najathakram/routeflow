@@ -168,6 +168,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     );
     await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
     await raw.invoice.deleteMany({ where: { tenantId } });
+    await raw.$executeRawUnsafe(`DELETE FROM "DeliveryBatch" WHERE "tenantId" = $1`, tenantId);
     await raw.$executeRawUnsafe(`DELETE FROM "Return" WHERE "tenantId" = $1`, tenantId);
     await raw.orderIdempotencyKey.deleteMany({ where: { tenantId } });
     await (raw as any).orderRevision?.deleteMany?.({ where: { orderId: { in: ids } } });
@@ -435,6 +436,24 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       await holder.end();
       await watcher.end();
     }
+  }, 120_000);
+
+  it("REG-B1053-FORCE-BATCH-DRAFT (no race): a loser whose only DRAFT is a batch draft is skipped, not a permanent 409", async () => {
+    const { loser, winner } = await pair();
+    const batchId = randomUUID();
+    await commitedWrite(
+      `INSERT INTO "DeliveryBatch" (id, "customerId", "tenantId") VALUES ($1, $2, $3)`,
+      [batchId, customerId, tenantId],
+    );
+    const invoiceId = await insertInvoice(loser, "DRAFT");
+    await commitedWrite(`UPDATE "Invoice" SET "deliveryBatchId" = $1 WHERE id = $2`, [
+      batchId,
+      invoiceId,
+    ]);
+    const out = await settle(mergeForce());
+    expect(out.error).toBeUndefined();
+    expect(await exists(loser)).toBe(true);
+    expect(await qtyOf(winner)).toBe(WQ);
   }, 120_000);
 
   it("REG-B1053-LINE: a loser line edited between the read and the lock defers the merge", async () => {

@@ -91,7 +91,7 @@ export async function readMergeGroup(
     },
     orderBy: { updatedAt: "desc" },
   });
-  // force: a loser with MORE THAN ONE DRAFT invoice is skipped (only the oldest mirror is removed with it)
+  // force: a loser with MORE THAN ONE DRAFT invoice, or a batch draft, is skipped (the merge removes only one plain mirror)
   const eligible = kind === "force" ? await withoutMultiDraftOrders(db, found) : found;
   // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
   const group = sameFulfilPathAsWinner(
@@ -106,14 +106,20 @@ export async function readMergeGroup(
 
 async function withoutMultiDraftOrders(db: any, found: MergeOrder[]): Promise<MergeOrder[]> {
   if (found.length === 0) return found;
-  const rows: Array<{ orderId: string | null; _count: { _all: number } }> =
-    await db.invoice.groupBy({
-      by: ["orderId"],
+  const drafts: Array<{ orderId: string | null; deliveryBatchId: string | null }> =
+    await db.invoice.findMany({
       where: { orderId: { in: found.map((o) => o.id) }, status: InvoiceStatus.DRAFT },
-      _count: { _all: true },
+      select: { orderId: true, deliveryBatchId: true },
     });
-  const multi = new Set(rows.filter((r) => r._count._all > 1).map((r) => r.orderId));
-  return found.filter((o) => !multi.has(o.id));
+  const count = new Map<string | null, number>();
+  const skip = new Set<string | null>();
+  for (const d of drafts) {
+    count.set(d.orderId, (count.get(d.orderId) ?? 0) + 1);
+    // a batch draft is never removed by the merge (findOpenOrderDraft skips it): a permanent 409
+    if (d.deliveryBatchId != null) skip.add(d.orderId);
+  }
+  for (const [id, n] of count) if (n > 1) skip.add(id);
+  return found.filter((o) => !skip.has(o.id));
 }
 
 /** Ordered ids + each order's updatedAt + a fingerprint of its (non-cancelled) lines. */

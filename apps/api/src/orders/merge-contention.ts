@@ -66,10 +66,7 @@ export function mergeInProgress(): ConflictException {
 export function isRawLockTimeout(e: unknown): boolean {
   return (
     ["55P03", "40P01", "40001"].some(
-      (c) =>
-        (e as any)?.meta?.code === c ||
-        (e as any)?.code === c ||
-        String((e as any)?.message ?? "").includes(c),
+      (c) => (e as any)?.meta?.code === c || (e as any)?.code === c,
     ) ||
     /lock timeout|could not obtain lock|deadlock detected|could not serialize/i.test(
       String((e as any)?.message ?? ""),

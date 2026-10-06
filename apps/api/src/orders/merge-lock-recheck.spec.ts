@@ -81,20 +81,25 @@ describe("mergeEligibleWhere — one predicate per path", () => {
   it("force skips a loser with two DRAFT invoices at the pre-read (C')", async () => {
     const db = {
       order: { findMany: jest.fn(async () => [order("a"), order("b")]) },
-      invoice: { groupBy: jest.fn(async () => [{ orderId: "b", _count: { _all: 2 } }]) },
+      invoice: {
+        findMany: jest.fn(async () => [
+          { orderId: "b", deliveryBatchId: null },
+          { orderId: "b", deliveryBatchId: null },
+        ]),
+      },
     };
     const { group } = await readMergeGroup(db, "c-1", "force");
     expect(group.map((o: any) => o.id)).toEqual(["a"]);
     const one = {
       ...db,
-      invoice: { groupBy: jest.fn(async () => [{ orderId: "b", _count: { _all: 1 } }]) },
+      invoice: { findMany: jest.fn(async () => [{ orderId: "b", deliveryBatchId: null }]) },
     };
     expect((await readMergeGroup(one, "c-1", "force")).group).toHaveLength(2);
   });
   it("readMergeGroup reads through that predicate, newest first, lines in display order", async () => {
     const db = {
       order: { findMany: jest.fn(async () => [order("a")]) },
-      invoice: { groupBy: jest.fn(async () => []) },
+      invoice: { findMany: jest.fn(async () => []) },
     };
     await readMergeGroup(db, "c-1", "force");
     const args = (db.order.findMany.mock.calls[0] as any[])[0];
@@ -178,6 +183,13 @@ describe("deleteLoserGuarded", () => {
       where: { id: "loser-1", ...mergeEligibleWhere("force"), invoices: { none: {} } },
     });
   });
+  it("force skips a loser whose only DRAFT is a batch draft (a permanent 409 otherwise)", async () => {
+    const db = {
+      order: { findMany: jest.fn(async () => [order("a"), order("b")]) },
+      invoice: { findMany: jest.fn(async () => [{ orderId: "b", deliveryBatchId: "batch-1" }]) },
+    };
+    expect((await readMergeGroup(db, "c-1", "force")).group.map((o: any) => o.id)).toEqual(["a"]);
+  });
   it("force's delete guard fails closed on ANY remaining invoice (C')", async () => {
     const tx = fakeTx([]);
     await deleteLoserGuarded(tx, "loser-1", "force");
@@ -189,6 +201,14 @@ describe("deleteLoserGuarded", () => {
     expect(isMergeContention(await deleteLoserGuarded(tx, "l", "auto").catch((e) => e))).toBe(true);
   });
 });
+
+const safeMap = (e: unknown) => {
+  try {
+    mapLockError(e);
+  } catch (x) {
+    return x;
+  }
+};
 
 describe("contention mapping + caller wiring", () => {
   it.each(["55P03", "40P01", "40001"])(
@@ -203,6 +223,11 @@ describe("contention mapping + caller wiring", () => {
       expect(isMergeContention(err)).toBe(true);
     },
   );
+  it("a message that merely contains a code, with no code field, is NOT contention", () => {
+    for (const c of ["40001", "55P03", "40P01"]) {
+      expect(isMergeContention(safeMap(new Error(`value ${c} out of range`)))).toBe(false);
+    }
+  });
   it("a raw 55P03 from the write phase maps to MERGE_IN_PROGRESS; other errors pass through", () => {
     expect(() =>
       mapLockError(
