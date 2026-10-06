@@ -54,7 +54,10 @@ export function checkoutAddonLineItem(a: {
 export interface CheckoutAddonItem {
   itemId: string;
   sku: string;
+  /** The item's quantity; 0 when Stripe's object does not carry a readable integer (see `quantityReadable`). */
   quantity: number;
+  /** False when the object carries no integer quantity: unreadable (transient), as opposed to a real 0. */
+  quantityReadable: boolean;
   /** The item's actual unit price in cents; null when Stripe's object does not carry a readable one. */
   unitAmountCents: number | null;
 }
@@ -107,6 +110,7 @@ export function checkoutAddonItems(stripeSub: unknown): CheckoutAddonItem[] {
       itemId: i.id,
       sku,
       quantity: Number.isInteger(i.quantity) ? (i.quantity as number) : 0,
+      quantityReadable: Number.isInteger(i.quantity),
       unitAmountCents: unitAmountCentsOf(i),
     });
   }

@@ -2017,7 +2017,7 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
   });
 });
 
-describe("S4: a checkout item whose price or quantity cannot be read is a coded refusal, never a silent skip", () => {
+describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent unusable quantity is cleaned up", () => {
   const unreadable = (over: Record<string, unknown>) => ({
     ...checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
     ...over,
@@ -2027,13 +2027,14 @@ describe("S4: a checkout item whose price or quantity cannot be read is a coded 
     i.price = { ...i.price, unit_amount: null, unit_amount_decimal: null };
     return i;
   };
+  const unusableNotices = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) => a.action === "ADDON_CHECKOUT_ITEM_UNUSABLE");
 
   it.each([
     ["no unit amount", noPrice],
-    ["a zero quantity", () => unreadable({ quantity: 0 })],
-    ["a non-integer quantity", () => unreadable({ quantity: "two" })],
+    ["a non-integer (unreadable) quantity", () => unreadable({ quantity: "two" })],
   ] as const)(
-    "%s: the webhook is refused with ADDON_CHECKOUT_ITEM_UNREADABLE (retried, never `return false` while the item bills)",
+    "TRANSIENT, %s: the webhook is refused with ADDON_CHECKOUT_ITEM_UNREADABLE (retried, never `return false` while the item bills)",
     async (_n, item) => {
       const h = make({
         rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")],
@@ -2050,8 +2051,113 @@ describe("S4: a checkout item whose price or quantity cannot be read is a coded 
       expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
       expect(h.rows[1]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
       expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(unusableNotices(h)).toEqual([]);
     },
   );
+
+  describe("PERMANENT: a quantity below 1 is deleted Stripe-first, announced to the platform, and NEVER thrown", () => {
+    it("a ROW with quantity 0 (and a checkout item for it): the item is deleted with prorations, one admin notice, the webhook resolves", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 }), addonRow("FORECASTING")],
+        items: [
+          baseItem(),
+          checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+          checkoutItem("si_fc", "FORECASTING", 1900, 1),
+        ],
+      });
+
+      await expect(h.completed()).resolves.toBeUndefined();
+
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_pack", {
+        proration_behavior: "create_prorations",
+      });
+      expect(h.stripeItems.map((i) => i.id)).not.toContain("si_pack");
+      expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0, quantity: 0 });
+      expect(h.rows[1]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 }); // no stranding
+      const told = unusableNotices(h);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+      expect(told[0].meta).toMatchObject({
+        platformAdmin: true,
+        sku: "CUSTOMER_PACK_100",
+        rowQuantity: 0,
+        itemIds: ["si_pack"],
+        subscriptionId: "sub_1",
+      });
+      expect(told[0].meta.message).toBe(
+        "Checkout add-on CUSTOMER_PACK_100 for Acme has no usable quantity (row 0, item 2): its Stripe item si_pack was removed and nothing is billed for it — fix the quantity.",
+      );
+      expect(h.ledger().filter((e: any) => e.sku === "CUSTOMER_PACK_100")).toEqual([]);
+    });
+
+    it("an ITEM with quantity 0 (readable, an integer): the same cleanup, no throw", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+        items: [baseItem(), unreadable({ quantity: 0 })],
+      });
+
+      await expect(h.completed()).resolves.toBeUndefined();
+
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_pack", {
+        proration_behavior: "create_prorations",
+      });
+      expect(unusableNotices(h)).toHaveLength(1);
+      expect(unusableNotices(h)[0].meta.message).toContain("(row 2, item 0)");
+      expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+    });
+
+    it("every item of the SKU goes (never a leftover item billing for an unusable row)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })],
+        items: [
+          baseItem(),
+          checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+          checkoutItem("si_pack2", "CUSTOMER_PACK_100", 5000, 1),
+        ],
+      });
+      await expect(h.completed()).resolves.toBeUndefined();
+      expect(h.stripeItems.map((i) => i.id)).toEqual(["si_base"]);
+      expect(unusableNotices(h)).toHaveLength(1);
+      expect(unusableNotices(h)[0].meta.itemIds).toEqual(["si_pack", "si_pack2"]);
+    });
+
+    it("Stripe-first: when the delete FAILS the webhook fails (retried) and NO notice is written yet", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+        delFails: true,
+      });
+      await expect(h.completed()).rejects.toBeDefined();
+      expect(h.stripeItems.map((i) => i.id)).toContain("si_pack");
+      expect(unusableNotices(h)).toEqual([]);
+    });
+
+    it("a notice that cannot be written never fails the webhook (the item is already gone; the log carries the ids)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      h.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(h.completed()).resolves.toBeUndefined();
+      expect(h.stripeItems.map((i) => i.id)).not.toContain("si_pack");
+    });
+
+    it("a REDELIVERY writes no second notice and deletes nothing more", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await h.completed();
+      h.client.subscriptionItems.del.mockClear();
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(unusableNotices(h)).toHaveLength(1);
+    });
+  });
 });
 
 describe("NIT 7/8: the path-(c) snapshot goes through the pricing helpers, and the live-sub guard runs first", () => {
@@ -2269,8 +2375,20 @@ describe("SA-690 pure helpers", () => {
       },
     };
     expect(checkoutAddonItems(sub)).toEqual([
-      { itemId: "si_pack", sku: "CUSTOMER_PACK_100", quantity: 2, unitAmountCents: 5000 },
-      { itemId: "si_dec", sku: "FORECASTING", quantity: 1, unitAmountCents: 1900 },
+      {
+        itemId: "si_pack",
+        sku: "CUSTOMER_PACK_100",
+        quantity: 2,
+        quantityReadable: true,
+        unitAmountCents: 5000,
+      },
+      {
+        itemId: "si_dec",
+        sku: "FORECASTING",
+        quantity: 1,
+        quantityReadable: true,
+        unitAmountCents: 1900,
+      },
     ]);
     expect(checkoutAddonItems(null)).toEqual([]);
   });

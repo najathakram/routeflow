@@ -32,7 +32,11 @@ import {
   billableAddonWhere,
   findAddonRow,
 } from "./addon-row";
-import { ManualInvoiceNotice, writeManualInvoiceNotice } from "./manual-invoice-notice";
+import {
+  ManualInvoiceNotice,
+  writeAdminNotice,
+  writeManualInvoiceNotice,
+} from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -1882,9 +1886,25 @@ export class SubscriptionMutationService {
       return false;
     }
     const [keep, ...extra] = items;
-    if (keep.unitAmountCents == null || keep.quantity < 1 || !(row.quantity >= 1)) {
-      // The item exists and BILLS, so it can never be skipped quietly: refuse with a code (the webhook
-      // is retried and the failure is loud) rather than leave a live item nothing owns.
+    // PERMANENT (S4 refinement): a quantity below 1 — the row's, or a readable item's own — can never be
+    // billed and a retry cannot fix it. The items go (Stripe-first, prorated, strict), the platform is told,
+    // and the webhook RESOLVES: throwing here would only redeliver the same unusable state for days.
+    if (!(row.quantity >= 1) || (keep.quantityReadable && keep.quantity < 1)) {
+      await this.removeUnusableCheckoutItems(
+        tenantId,
+        sku,
+        items,
+        row.quantity,
+        keep.quantity,
+        subId,
+        ctx,
+      );
+      return false;
+    }
+    // TRANSIENT: the item exists and BILLS but its price/quantity cannot be read from what Stripe sent — a
+    // retry may read it. It can never be skipped quietly: refuse with a code (the webhook is retried and the
+    // failure is loud) rather than leave a live item nothing owns.
+    if (keep.unitAmountCents == null || !keep.quantityReadable) {
       this.logger.error(
         `Checkout add-on "${sku}" tenant ${tenantId}: item ${keep.itemId} has no readable price/quantity — refused`,
       );
@@ -1928,6 +1948,52 @@ export class SubscriptionMutationService {
     if (!adopted) throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
     for (const i of extra) await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
     return true;
+  }
+
+  /**
+   * The permanent half of S4: every Stripe item of `sku` on the checkout subscription is deleted (strictly:
+   * a Stripe failure fails the webhook BEFORE anything is written), then ONE platform notice names the
+   * tenant, the SKU, both quantities and the removed item ids. A notice that cannot be written is logged
+   * with the ids and never fails the webhook — the items are already gone, so a retry could not repair it.
+   */
+  private async removeUnusableCheckoutItems(
+    tenantId: string,
+    sku: string,
+    items: CheckoutAddonItem[],
+    rowQuantity: number,
+    itemQuantity: number,
+    subId: string,
+    ctx: { sessionId?: string | null },
+  ): Promise<void> {
+    for (const i of items) await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
+    const itemIds = items.map((i) => i.itemId);
+    const label = await this.tenantLabelOf(tenantId);
+    const message =
+      `Checkout add-on ${sku} for ${label} has no usable quantity (row ${rowQuantity}, item ${itemQuantity}): ` +
+      `its Stripe item${itemIds.length === 1 ? "" : "s"} ${itemIds.join(", ")} ${itemIds.length === 1 ? "was" : "were"} ` +
+      `removed and nothing is billed for it — fix the quantity.`;
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    try {
+      await this.prisma.$transaction((tx) =>
+        writeAdminNotice(tx, {
+          tenantId,
+          action: AdminAuditAction.ADDON_CHECKOUT_ITEM_UNUSABLE,
+          message,
+          meta: {
+            sku,
+            rowQuantity,
+            itemQuantity,
+            itemIds,
+            subscriptionId: subId,
+            checkoutSessionId: ctx.sessionId ?? null,
+          },
+        }),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Tenant ${tenantId}: the notice for the removed checkout add-on items ${itemIds.join(",")} could not be written: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

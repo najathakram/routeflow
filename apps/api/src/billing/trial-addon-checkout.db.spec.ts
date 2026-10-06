@@ -1230,4 +1230,99 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect((await r.rows())[0]).toMatchObject({ stripeItemId: null, quantity: 4 });
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // S4 refinement — a TRANSIENT unreadable item throws; a PERMANENT quantity below 1 is cleaned up.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("S4: transient unreadable throws a coded refusal; a quantity below 1 is deleted + announced, never thrown (real Postgres)", () => {
+    const unusable = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "ADDON_CHECKOUT_ITEM_UNUSABLE" },
+      });
+
+    it("TRANSIENT: an item with no readable unit amount refuses the webhook with ADDON_CHECKOUT_ITEM_UNREADABLE, nothing deleted, no notice", async () => {
+      const noPrice: any = stripeItem("si_pack", {
+        sku: "CUSTOMER_PACK_100",
+        cents: 5000,
+        quantity: 2,
+      });
+      noPrice.price = { ...noPrice.price, unit_amount: null, unit_amount_decimal: null };
+      const r = await rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [base(), noPrice],
+      });
+
+      const err: any = await r.completed().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "ADDON_CHECKOUT_ITEM_UNREADABLE" });
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+      expect(Number((await r.rows())[0].priceSnapshot)).toBe(0);
+      expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(await unusable(r.tenantId)).toHaveLength(0);
+    });
+
+    it("PERMANENT: a row with quantity 0 — its item is deleted Stripe-first (prorated), ONE platform notice, the webhook resolves, the other SKU is adopted", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 0 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          stripeItem("si_fc", { sku: "FORECASTING", cents: 1900, quantity: 1 }),
+        ],
+      });
+
+      await expect(r.completed()).resolves.toBeUndefined();
+
+      expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledWith("si_pack", {
+        proration_behavior: "create_prorations",
+      });
+      expect(r.items.map((i) => i.id)).toEqual(["si_base", "si_fc"]);
+      expect((await r.rows()).map((x) => [x.sku, x.stripeItemId, x.quantity])).toEqual([
+        ["CUSTOMER_PACK_100", null, 0],
+        ["FORECASTING", "si_fc", 1],
+      ]);
+      const told = await unusable(r.tenantId);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ entityType: "tenant", entityId: r.tenantId });
+      expect(told[0].meta).toMatchObject({
+        sku: "CUSTOMER_PACK_100",
+        rowQuantity: 0,
+        itemQuantity: 2,
+        itemIds: ["si_pack"],
+        subscriptionId: "sub_qa",
+        message: expect.stringContaining("has no usable quantity (row 0, item 2)"),
+      });
+      expect((await r.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100")).toEqual([]);
+
+      await r.completed(); // a redelivery: no second notice, nothing more deleted
+      expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(await unusable(r.tenantId)).toHaveLength(1);
+    });
+
+    it("PERMANENT: a Stripe failure on the delete fails the webhook (retried) and writes no notice yet; the retry then cleans up and announces once", async () => {
+      const r = await rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 0 }],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+      r.stripeClient.subscriptionItems.del.mockRejectedValueOnce(
+        new Error("Stripe API error (500)"),
+      );
+
+      await expect(r.completed()).rejects.toThrow(/Stripe API error/);
+      expect(r.items.map((i) => i.id)).toContain("si_pack");
+      expect(await unusable(r.tenantId)).toHaveLength(0);
+
+      await expect(r.completed()).resolves.toBeUndefined();
+      expect(r.items.map((i) => i.id)).toEqual(["si_base"]);
+      expect(await unusable(r.tenantId)).toHaveLength(1);
+    });
+  });
 });
