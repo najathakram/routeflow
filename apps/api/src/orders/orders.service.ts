@@ -3184,9 +3184,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
         // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
-        // SA-696a (decided, fail closed): this non-diff path recreates every line, so new line ids. On an
-        // order with the carrier that holds an unlisted line, settleStockForEdit reads that as a removal and
-        // refuses NO_REDUCE even when nothing changed; nothing is written.
+        // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
+        // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
         if (
           (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
           !isDiffPayload
@@ -3482,11 +3481,9 @@ export class OrdersService implements OnApplicationBootstrap {
           };
 
           if (replaceAll) {
-            // SA-696a (decided, fail closed): replace-all recreates every line (new ids), so on an order with
-            // the carrier that holds an unlisted line it is refused NO_REDUCE even when nothing changed.
-            // Replace-all: client sends the full item list. Delete existing items then
-            // re-create, honoring any per-line price override and any boxes/pieces
-            // split (boxed products use BOX-price proration).
+            // SA-696a (decided, fail closed): recreates every line (new ids), so a carrier order with an unlisted
+            // line is refused NO_REDUCE even when nothing changed. Replace-all: the client sends the full list;
+            // delete then re-create, honoring per-line price overrides and boxes/pieces splits (BOX proration).
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
