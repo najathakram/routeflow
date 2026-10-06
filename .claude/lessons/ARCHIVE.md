@@ -3479,3 +3479,11 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Normalize an identity input once, then feed that single value to the guard, the changed-field comparison, the write and every side effect. Derive a field-restricted DTO and its read filter from one allowlist const (PickType over it), never a second list.**
 - **Guard:** `customers/customers.self-service-allowlist.spec.ts` (body type and filter both from `SELF_SERVICE_FIELDS`) and the users service specs for #3191; the normalization lives in one block in `users.service.ts`.
   (Archived 2026-10-05 whole and verbatim to make room at cap: L-259 is guarded by customers/customers.self-service-allowlist.spec.ts and the users service specs, with no citation outside the code-map bookkeeping.)
+
+### L-261 · 2026-10-05 · deploy · the API never value-imports `@routeflow/types`: its runtime constants are API literals pinned by a parity spec (#3199)
+
+- **Symptom:** #3199 needed the fleet module keys the web already shares; the obvious `import { FLEET_MODULE_KEYS } from "@routeflow/types"` type-checks and passes ts-jest, yet `node dist/main.js` cannot load the raw TypeScript entry and the whole API would fail to boot.
+- **Root cause:** `@routeflow/types` ships `.ts` with no build step and `nest build` does not bundle workspace packages, so a value import emits a runtime `require` that only production boot exercises; the green tsc and ts-jest runs are what make the shortcut look safe.
+- **Lesson:** **In `apps/api` use `import type` from `@routeflow/types` only. A constant the API needs at runtime is its own literal in `apps/api/src`, set-equal-pinned to the shared one by a parity spec (`FLEET_KEYS` against `FLEET_MODULE_KEYS`); a new shared constant ships with its parity spec or not at all.**
+- **Guard:** `apps/api/src/common/no-runtime-workspace-imports.spec.ts` (fails on any value import, require or dynamic import of the package) and `apps/api/src/billing/fleet-keys-parity.spec.ts`.
+  (Archived 2026-10-06 whole and verbatim to make room at cap: L-261 is guarded by apps/api/src/common/no-runtime-workspace-imports.spec.ts and apps/api/src/billing/fleet-keys-parity.spec.ts, with no citation outside the code-map bookkeeping.)

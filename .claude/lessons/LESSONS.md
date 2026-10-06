@@ -402,6 +402,13 @@
 - **Lesson:** **Install a worktree with `npm ci --ignore-scripts` and build `packages/*` by hand; after ANY `npm ci` or `npx husky`, and before every push, run `git config core.hooksPath` and restore the absolute shim (`git config core.hooksPath <main checkout>/.git/husky-shim/_`) if it reads `.husky/_`. A push that printed no verify output did not verify.**
 - **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
 
+### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
+
+- **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
+- **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
+- **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
+- **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
+
 ## testing
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
@@ -748,10 +755,3 @@
   change can rename.**
 - **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
   via `getByTestId`.
-
-### L-261 · 2026-10-05 · deploy · the API never value-imports `@routeflow/types`: its runtime constants are API literals pinned by a parity spec (#3199)
-
-- **Symptom:** #3199 needed the fleet module keys the web already shares; the obvious `import { FLEET_MODULE_KEYS } from "@routeflow/types"` type-checks and passes ts-jest, yet `node dist/main.js` cannot load the raw TypeScript entry and the whole API would fail to boot.
-- **Root cause:** `@routeflow/types` ships `.ts` with no build step and `nest build` does not bundle workspace packages, so a value import emits a runtime `require` that only production boot exercises; the green tsc and ts-jest runs are what make the shortcut look safe.
-- **Lesson:** **In `apps/api` use `import type` from `@routeflow/types` only. A constant the API needs at runtime is its own literal in `apps/api/src`, set-equal-pinned to the shared one by a parity spec (`FLEET_KEYS` against `FLEET_MODULE_KEYS`); a new shared constant ships with its parity spec or not at all.**
-- **Guard:** `apps/api/src/common/no-runtime-workspace-imports.spec.ts` (fails on any value import, require or dynamic import of the package) and `apps/api/src/billing/fleet-keys-parity.spec.ts`.
