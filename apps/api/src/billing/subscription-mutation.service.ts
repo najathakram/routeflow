@@ -1961,9 +1961,15 @@ export class SubscriptionMutationService {
       orderBy: [{ active: "desc" }, { createdAt: "asc" }],
     });
     // A pointer that is not on the current subscription is STALE: the row is as good as unbilled, and every
-    // write below swaps it by compare-and-swap on that very value (`pointer`).
+    // write below swaps it by compare-and-swap on that very value (`pointer`). `currentItemIds` is only the
+    // snapshot this delivery took BEFORE it got the lock — a racing delivery may have created the item and
+    // stored its pointer since — so a pointer the snapshot lacks is confirmed against Stripe's LIVE list,
+    // under this lock, before it is ever treated as stale (never a second item, never a swap on a guess).
     const pointer: string | null = row?.stripeItemId ?? null;
-    const stale = pointer != null && !currentItemIds.has(pointer);
+    const stale =
+      pointer != null &&
+      !currentItemIds.has(pointer) &&
+      !(await this.itemIsOnSubscription(tenantId, sku, pointer, subId));
     if (items.length === 0) {
       return row?.active && (!pointer || stale)
         ? this.billUnbilledRow(tenantId, sku, row, subId, pointer, ctx)
@@ -2047,6 +2053,32 @@ export class SubscriptionMutationService {
     if (!adopted) throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
     for (const i of extra) await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
     return true;
+  }
+
+  /**
+   * Is `itemId` on the subscription RIGHT NOW? A live listing — not an earlier snapshot. When the subscription
+   * has more items than one page shows and the item is not on it, the answer is "yes" (cannot say it is absent:
+   * never replace on a guess); a Stripe failure fails the call (the webhook is retried).
+   */
+  private async itemIsOnSubscription(
+    tenantId: string,
+    sku: string,
+    itemId: string,
+    subId: string,
+  ): Promise<boolean> {
+    try {
+      const list = await this.stripe.client.subscriptionItems.list({
+        subscription: subId,
+        limit: 100,
+      });
+      if ((list.data as Array<{ id?: string }>).some((i) => i.id === itemId)) return true;
+      return list.has_more === true;
+    } catch (err) {
+      this.logger.error(
+        `Checkout add-on "${sku}" tenant ${tenantId}: could not list ${subId}'s items to check ${itemId}: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+    }
   }
 
   /**

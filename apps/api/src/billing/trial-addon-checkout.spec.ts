@@ -2420,6 +2420,56 @@ describe("S2 fold: with no live subscription at checkout, a stripeItemId that is
       expect(h.stripeItems.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
     });
 
+    it("RACE: a pointer written by a CONCURRENT delivery (not in this delivery's earlier snapshot of the subscription) is re-verified live under the lock — never replaced, never a second item", async () => {
+      const h = make({
+        rows: [addonRow("FORECASTING", { qty: 1 })], // no pointer yet; enabled after the session
+        items: [baseItem()],
+      });
+      // this delivery retrieves the subscription (without FORECASTING's item), THEN the other delivery wins the
+      // lock: it creates the item and stores its pointer before this delivery adopts
+      const realGet = h.stripe.getSubscription.getMockImplementation()!;
+      h.stripe.getSubscription.mockImplementationOnce(async (id: string, params?: unknown) => {
+        const snapshot = await realGet(id, params);
+        h.stripeItems.push({
+          id: "si_other_delivery",
+          metadata: { tenantId: "t1", sku: "FORECASTING" },
+          quantity: 1,
+          subscription: "sub_1",
+        });
+        h.rows[0].stripeItemId = "si_other_delivery";
+        h.rows[0].priceSnapshot = 19;
+        return snapshot;
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled(); // never a SECOND item
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.rows[0].stripeItemId).toBe("si_other_delivery"); // never swapped out
+      expect(h.stripeItems.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
+    });
+
+    it("a stale pointer is confirmed against Stripe's LIVE item list of the subscription; a failing list fails the webhook (never a guess)", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_dead", priceSnapshot: 40 }),
+        ],
+        items: [baseItem(), PACK_ITEM()],
+      });
+      h.client.subscriptionItems.list.mockRejectedValueOnce(new Error("stripe down"));
+
+      await expect(h.completed()).rejects.toBeDefined();
+
+      expect(h.rows[0].stripeItemId).toBe("si_dead"); // nothing replaced on a guess
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+
+      await h.completed(); // the retry lists, confirms the pointer is dead, adopts
+      expect(h.rows[0].stripeItemId).toBe("si_new");
+      expect(h.client.subscriptionItems.list).toHaveBeenCalledWith(
+        expect.objectContaining({ subscription: "sub_1" }),
+      );
+    });
+
     it("a pointer that IS on the current subscription and no checkout item (an in-app enable item): untouched — nothing created, nothing booked", async () => {
       const inApp = {
         id: "si_inapp",
