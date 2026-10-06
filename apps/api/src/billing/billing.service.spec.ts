@@ -230,6 +230,28 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
     });
 
+    it("SHOULD-2: the contribution sums only BILLABLE add-ons — a comp (a platform grant) carrying a stale snapshot is never counted", async () => {
+      const rows = [
+        { priceSnapshot: 12, quantity: 2, isComp: false },
+        { priceSnapshot: 19, quantity: 1, isComp: true }, // a row that was billed, then turned into a comp
+      ];
+      const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB, addons: rows });
+      // the query is what excludes the comp: evaluate its `isComp` predicate like Postgres would
+      tx.tenantAddon.findMany.mockImplementation(async ({ where }: any) =>
+        rows.filter((r) => where?.isComp === undefined || r.isComp === where.isComp),
+      );
+
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+
+      expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toMatchObject({
+        tenantId: "t1",
+        active: true,
+        isComp: false,
+      });
+      // −(349 base + 12×2 billable add-ons) = −373; the comp's 19 is not part of it
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
+    });
+
     it("is a NO-OP delta when the tenant was already non-ACTIVE and never force-writes a status", async () => {
       const { svc, prisma, events } = make({ transitionCount: 0, sub: LIVE_SUB });
       await (svc as any).onSubscriptionDeleted(SUB_EVT);

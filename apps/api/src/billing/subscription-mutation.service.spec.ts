@@ -610,6 +610,43 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     });
   });
 
+  describe("SHOULD-2: the crossing books only BILLABLE add-ons — an admin comp is never booked as revenue", () => {
+    it("a trial's plan pick with a comp row that still carries a stale snapshot books the plan and the billable row only", async () => {
+      const { svc, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [
+          {
+            id: "a-pack",
+            addonKey: "CUSTOMER_PACK_100",
+            sku: "CUSTOMER_PACK_100",
+            quantity: 2,
+            active: true,
+            priceSnapshot: 12, // a billed row
+            stripeItemId: "si_1",
+            isComp: false,
+          },
+          {
+            id: "a-fc",
+            addonKey: "FORECASTING",
+            sku: "FORECASTING",
+            quantity: 1,
+            active: true,
+            priceSnapshot: 19, // WAS billed, then support made it a comp: the stored snapshot lingers
+            stripeItemId: null,
+            isComp: true,
+          },
+        ],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      const adds = events.emit.mock.calls
+        .filter((c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED)
+        .map((c: any[]) => [c[2]?.sku, c[3]?.amountDelta]);
+      expect(adds).toEqual([["CUSTOMER_PACK_100", 24]]); // 12 × 2 — never FORECASTING's 19
+    });
+  });
+
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",

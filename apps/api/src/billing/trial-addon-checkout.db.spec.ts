@@ -157,7 +157,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   }
 
   async function rig(opts: {
-    rows: Array<{ sku: string; quantity: number; active?: boolean; isComp?: boolean }>;
+    rows: Array<{
+      sku: string;
+      quantity: number;
+      active?: boolean;
+      isComp?: boolean;
+      priceSnapshot?: number;
+    }>;
     items: any[];
     /** The entitlements.configSnapshot flag (default off). */
     flagOn?: boolean;
@@ -182,7 +188,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           quantity: r.quantity,
           active: r.active ?? true,
           isComp: r.isComp ?? false,
-          priceSnapshot: 0,
+          priceSnapshot: r.priceSnapshot ?? 0,
         },
       });
     }
@@ -1429,6 +1435,50 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect(r.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
       expect((await r.rows()).map((x) => !!x.stripeItemId)).toEqual([true, true]);
       expect(await alerts(r.tenantId)).toHaveLength(0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // SHOULD-2 — the crossing sums count only BILLABLE add-ons.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("SHOULD-2: a comp with a stale snapshot is never booked at a crossing (real Postgres)", () => {
+    it("checkout completion: the activation crossing books the base only; the comp's lingering 19 is not revenue", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 2 },
+          { sku: "FORECASTING", quantity: 1, isComp: true, priceSnapshot: 19 }, // billed once, then comped
+        ],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+
+      await r.completed();
+
+      expect(await r.ledger()).toEqual([
+        { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
+        { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
+      ]);
+      expect(await r.ledgerSum()).toBe(199);
+    });
+
+    it("subscribe(): a trial's plan pick books the billable kept row and not the comp's stale snapshot", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 2, priceSnapshot: 12 },
+          { sku: "FORECASTING", quantity: 1, isComp: true, priceSnapshot: 19 },
+        ],
+        items: [base()],
+      });
+
+      await r.mutations.subscribe(r.tenantId, { planKey: "STARTER", cycle: "MONTHLY" }, "admin-1");
+
+      const adds = (await r.ledger()).filter((e) => e.type === BILLING_EVENTS.ADDON_ENABLED);
+      expect(adds).toEqual([
+        { type: BILLING_EVENTS.ADDON_ENABLED, delta: 24, sku: "CUSTOMER_PACK_100" },
+      ]);
+      expect(await r.ledgerSum()).toBe(99 + 24); // never + 19
     });
   });
 });

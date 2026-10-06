@@ -36,6 +36,7 @@ import {
   checkoutAddonItems,
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
+import { billableAddonWhere } from "./addon-row";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
@@ -192,8 +193,10 @@ export class BillingService {
     tx: Prisma.TransactionClient,
   ): Promise<void> {
     if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey)) return;
+    // SA-693 / SHOULD-2: only BILLABLE add-ons count — a comp is a platform grant (never revenue), and one that
+    // was billed before it became a comp can still carry a stale snapshot.
     const addons = await tx.tenantAddon.findMany({
-      where: { tenantId, active: true },
+      where: billableAddonWhere({ tenantId, active: true }),
       select: { priceSnapshot: true, quantity: true },
     });
     const addonMrr = addons.reduce(

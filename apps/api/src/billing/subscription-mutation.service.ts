@@ -726,9 +726,11 @@ export class SubscriptionMutationService {
       // SAME crossing helper `activateManualSubscription` uses: booked once, in full, only if
       // this subscribe() is what moves the tenant into the paying set (`!wasPaying`); if the
       // tenant was already paying, its contribution is already on the ledger and nothing changes.
+      // SA-693 / SHOULD-2: never a comp — a platform grant is not revenue, and a row that was billed before it
+      // became a comp can still carry a stale snapshot.
       const kept = lockedAddons.filter((row) => {
         const code = addonSkuCode(row);
-        return code != null && !desiredNow.has(code) && !toDisable.includes(code);
+        return code != null && !row.isComp && !desiredNow.has(code) && !toDisable.includes(code);
       });
       if (kept.length > 0) {
         await bookAddonsOnCrossing(
