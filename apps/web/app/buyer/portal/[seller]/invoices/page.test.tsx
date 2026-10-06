@@ -240,7 +240,7 @@ describe("BuyerInvoicesPage — status badge tones (B1122 fold, L-072)", () => {
     return within(table).getByText(label);
   }
 
-  it("gives each REAL InvoiceStatus a deliberate tone: PARTIAL warning, PAID success, OVERDUE danger, VOID / WRITTEN_OFF muted", async () => {
+  it("gives each REAL InvoiceStatus a deliberate tone: PARTIAL / SENT warning, PAID success, OVERDUE / VOID / WRITTEN_OFF danger", async () => {
     respondWith([
       invoiceListItem({ id: "i1", invoiceNumber: "INV-1", status: "PAID", balanceDue: 0 }),
       invoiceListItem({ id: "i2", invoiceNumber: "INV-2", status: "PARTIAL", balanceDue: 20 }),
@@ -255,8 +255,8 @@ describe("BuyerInvoicesPage — status badge tones (B1122 fold, L-072)", () => {
     expect(await pill("Paid")).toHaveClass("bg-success-bg");
     expect(await pill("Partial")).toHaveClass("bg-warning-bg");
     expect(await pill("Overdue")).toHaveClass("bg-danger-bg");
-    expect(await pill("Void")).toHaveClass("bg-sunken");
-    expect(await pill("Written Off")).toHaveClass("bg-sunken");
-    expect(await pill("Sent")).toHaveClass("bg-sunken");
+    expect(await pill("Void")).toHaveClass("bg-danger-bg");
+    expect(await pill("Written Off")).toHaveClass("bg-danger-bg");
+    expect(await pill("Sent")).toHaveClass("bg-warning-bg");
   });
 });

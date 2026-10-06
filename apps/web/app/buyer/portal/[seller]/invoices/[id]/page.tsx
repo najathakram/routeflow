@@ -20,6 +20,7 @@ import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
+import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
 
 function fmt(n: number) {
@@ -96,13 +97,6 @@ function formatDate(d: string | null) {
  * The buyer invoice list also returns PAID/VOID/WRITTEN_OFF, which owe nothing.
  */
 const PAYABLE_STATUSES: string[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
-
-function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
-  if (s === "PAID") return "success";
-  if (s === "SENT" || s === "VIEWED" || s === "PARTIAL") return "warning";
-  if (s === "OVERDUE" || s === "VOID" || s === "WRITTEN_OFF") return "danger";
-  return "neutral";
-}
 
 export default function BuyerInvoiceDetailPage() {
   const params = useParams();
@@ -222,7 +216,7 @@ export default function BuyerInvoiceDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant={getStatusVariant(invoice.status)}>
+          <Badge variant={invoiceStatusVariant(invoice.status)}>
             {invoice.status.replace(/_/g, " ")}
           </Badge>
           {PAYABLE_STATUSES.includes(invoice.status) && balanceDue > 0.001 && (

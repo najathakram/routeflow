@@ -2,7 +2,9 @@ import type { InvoiceStatus } from "@routeflow/types";
 import type { BadgeVariant } from "@routeflow/ui/web";
 
 /**
- * The pill tone for a buyer-visible invoice status (B1122 fold, L-072). Keyed on the shared
+ * The ONE status -> pill tone helper for the buyer invoices LIST and DETAIL pages (B1122 fold,
+ * L-072). Tones follow the design-system `Badge` STATUS_MAP (SENT/PARTIAL warning, VIEWED info,
+ * PAID success, OVERDUE danger, DRAFT neutral); VOID and WRITTEN_OFF are danger on both pages. Keyed on the shared
  * `InvoiceStatus` enum, never on hand-typed strings: the switch is exhaustive, so adding a
  * status to `INVOICE_STATUS_VALUES` fails type-check here until it gets a deliberate tone.
  */
@@ -12,14 +14,15 @@ export function invoiceStatusVariant(status: InvoiceStatus): BadgeVariant {
       return "success";
     case "PARTIAL":
       return "warning";
+    case "SENT":
+      return "warning";
     case "OVERDUE":
+    case "VOID":
+    case "WRITTEN_OFF":
       return "danger";
     case "VIEWED":
       return "info";
     case "DRAFT":
-    case "SENT":
-    case "VOID":
-    case "WRITTEN_OFF":
       return "neutral";
     default: {
       // Compile-time only: an unmapped enum value makes `status` non-`never` here.

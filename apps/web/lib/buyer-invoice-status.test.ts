@@ -12,13 +12,13 @@ import { invoiceStatusVariant } from "./buyer-invoice-status";
  */
 const EXPECTED: Record<InvoiceStatus, BadgeVariant> = {
   DRAFT: "neutral",
-  SENT: "neutral",
+  SENT: "warning",
   VIEWED: "info",
   PARTIAL: "warning",
   PAID: "success",
   OVERDUE: "danger",
-  VOID: "neutral",
-  WRITTEN_OFF: "neutral",
+  VOID: "danger",
+  WRITTEN_OFF: "danger",
 };
 
 describe("invoiceStatusVariant", () => {
