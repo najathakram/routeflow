@@ -4,6 +4,7 @@ import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Truck, ExternalLink, Pencil } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { isShippedOrderStatus } from "@routeflow/types";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
 
 /**
@@ -16,13 +17,6 @@ import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
  *
  * Mirrors the Radix Modal + Card design system used across the dashboard.
  */
-/** Order statuses at/after "marked shipped" (mirrors the server's SHIPPED_STATUSES). */
-const SHIPPED_ORDER_STATUSES: ReadonlySet<string> = new Set([
-  "OUT_FOR_DELIVERY",
-  "PARTIALLY_DELIVERED",
-  "DELIVERED",
-]);
-
 export interface ShipmentCardProps {
   carrier?: string | null;
   trackingNumber?: string | null;
@@ -123,7 +117,7 @@ export function ShipmentCard({
                 ) : (
                   <p className="break-all text-sm text-navy/80">{trackingNumber}</p>
                 )}
-                {shippedAt && (!orderStatus || SHIPPED_ORDER_STATUSES.has(orderStatus)) && (
+                {shippedAt && (!orderStatus || isShippedOrderStatus(orderStatus)) && (
                   <p className="mt-0.5 text-xs text-navy/70">
                     Shipped {new Date(shippedAt).toLocaleDateString()}
                   </p>
