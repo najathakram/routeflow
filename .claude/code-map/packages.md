@@ -482,3 +482,13 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `api/error-codes.ts` — +`ADDON_ANNUAL_NOT_SUPPORTED`, `ADDON_INCLUDED_IN_PLAN`, `ADDON_BILLING_PENDING_CHECKOUT` (#3129); +`ORDER_WITH_CARRIER_NO_REDUCE`, `INVOICE_WITH_CARRIER_NO_LINE_CHANGE` (#3219); both batches mirrored in the mobile types mock.
 - `api/order-cancel.ts` (#3219) — NEW: `OrderCancelBlockedReason` (`"WITH_CARRIER"`), `OrderCancelBlockedField`; re-exported from `index.ts`.
 - `api/error-codes.ts` + `api/invoices.ts` (#3225) — +`PRICE_ADJUSTMENT_OVERPAYS`, `PRICE_ADJUSTMENT_REFUSED` (mirrored in the mobile types mock); `invoices.ts` +`PriceAdjustmentOverpaidInvoice`, `PriceAdjustmentOverpaysBody`, `PriceAdjustmentPartialBody` (`applied`, one of `refused` / `syncFailed`, `skipped`). Used by `invoices/price-adjustment-ledger.ts` and web `lib/price-adjustment-failure.ts`.
+
+## Landed 2026-10-06 (windows 4 to 10)
+
+### `@routeflow/types`
+
+- `api/error-codes.ts` — +`FULFIL_METHOD_NOT_OFFERED` (#3210, :242), +`ORDER_INVOICES_NEED_REVIEW` (#3216, :172, with a doc comment at :19), +`ADDON_COMP_MANAGED_BY_SUPPORT` and `ADDON_UNCOMP_STRIPE_UNAVAILABLE` (#3231, :299-300), +`ORDER_WITH_CARRIER_NO_CHANGE_REQUEST` (#3238, :246); each mirrored in `apps/api/src/common/api-error-codes.ts` (parity spec) and in the mobile types mock.
+- `api/fulfilment.ts` (#3210) — +`UNSET_FULFILMENT_CAPABILITIES` (:57): the ONE copy of "no fulfilment mode set" (ROUTE and SHIP offered, `staffDefault` ROUTE, `fleet` true); the API's `deriveFulfilmentCapability` is pinned to it and the web's unset check reads it.
+- `api/orders.ts` (#3233) — +`OrderInvoicesNeedReview` (:37): `{ flagged, reason?, flaggedAtStop?: { by, at } }`, a STAFF-ONLY field of `GET /orders/:id`; web `lib/api/orders.ts` `Order.invoicesNeedReview`.
+- `api/order-suggestions.ts` (#3218) — NEW: `OrderSuggestionProduct`, `UsuallyBuysItem`, `RecentOrderLine`, `RecentOrderSummary`, `OrderSuggestionsResponse`; re-exported from `index.ts` (:176). No price field by design.
+- `api/billing.ts` (#3224) — +`AddonBillingMode` (`"STRIPE" | "MANUAL" | "UNBILLED"`, a type only) and `EnableAddonResult` (`proratedNow`, `billing`, `subscription`); the API aliases `AddonBilling` with `import type` only (L-261).

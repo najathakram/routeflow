@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { AlertTriangle, SlidersHorizontal } from "lucide-react";
+import { isWholeCents, roundMoney } from "@routeflow/pricing";
 import { Button, Card, useToast } from "@routeflow/ui/web";
 import { useAdjustInvoicePrices, type Invoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
@@ -27,6 +28,17 @@ function PriceAdjustmentFailureNotice({ failure }: { failure: PriceAdjustmentFai
   );
 }
 
+/**
+ * B1120: a typed price with a 3rd decimal (8.355). A unit price is stored in whole cents, so the API refuses
+ * it; the panel flags the field instead, and `isWholeCents` is the same predicate the API's DTO uses. A blank
+ * or unparseable field is not flagged (it falls back to the line's current price, as it always did).
+ */
+function subCentPrice(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && !isWholeCents(n) ? n : null;
+}
+
 /** The invoice page's "Adjust Prices" card (moved verbatim out of page.tsx so it can be tested on its own). */
 export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
   const { toast } = useToast();
@@ -44,8 +56,10 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
   });
 
   const [failure, setFailure] = React.useState<PriceAdjustmentFailure | null>(null);
+  const hasSubCentPrice = items.some((it) => subCentPrice(prices[it.id]) != null);
 
   function handleSave() {
+    if (hasSubCentPrice) return; // B1120: the button is disabled too; never send a sub-cent price
     setFailure(null);
     const dto = {
       id: invoice.id,
@@ -98,28 +112,48 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
 
       {/* Per-item price inputs */}
       <div className="mb-5 divide-y divide-surface-border rounded-lg border border-surface-border">
-        {items.map((item) => (
-          <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-navy">{item.description}</p>
-              <p className="text-xs text-navy/70">
-                Qty: {item.qty} · Current:{" "}
-                <span className="money">{fmt(Number(item.unitPrice))}</span>
-              </p>
+        {items.map((item) => {
+          const subCent = subCentPrice(prices[item.id]);
+          return (
+            <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-navy">{item.description}</p>
+                <p className="text-xs text-navy/70">
+                  Qty: {item.qty} · Current:{" "}
+                  <span className="money">{fmt(Number(item.unitPrice))}</span>
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm text-navy/70">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={prices[item.id] ?? ""}
+                    onChange={(e) => setPrices((p) => ({ ...p, [item.id]: e.target.value }))}
+                    aria-invalid={subCent != null ? true : undefined}
+                    aria-describedby={subCent != null ? `adjust-price-error-${item.id}` : undefined}
+                    className={`w-28 rounded-lg border bg-white px-3 py-1.5 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 ${
+                      subCent != null
+                        ? "border-red-400 focus:ring-red-400"
+                        : "border-surface-border focus:ring-brand-500"
+                    }`}
+                  />
+                </div>
+                {subCent != null && (
+                  <p
+                    id={`adjust-price-error-${item.id}`}
+                    data-testid={`adjust-price-error-${item.id}`}
+                    className="max-w-[11rem] text-right text-xs text-red-600"
+                  >
+                    Whole cents only, e.g. ${roundMoney(subCent).toFixed(2)}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm text-navy/70">$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={prices[item.id] ?? ""}
-                onChange={(e) => setPrices((p) => ({ ...p, [item.id]: e.target.value }))}
-                className="w-28 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Scope */}
@@ -180,6 +214,7 @@ export function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onCl
         <Button
           size="sm"
           onClick={handleSave}
+          disabled={hasSubCentPrice}
           loading={adjust.isPending}
           leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
         >

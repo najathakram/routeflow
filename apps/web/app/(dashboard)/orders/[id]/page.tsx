@@ -83,6 +83,11 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
+import { ShipWithTrackingDialog } from "./ShipWithTrackingDialog";
+import { shipWithTracking } from "@/lib/ship-with-tracking";
+import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
+import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
@@ -1855,9 +1860,8 @@ export default function OrderDetailPage() {
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
-  // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
-  // tracking-entry dialog open — see openSignal prop below.
-  const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
+  const [showShipDialog, setShowShipDialog] = React.useState(false);
+  const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -2197,20 +2201,20 @@ export default function OrderDetailPage() {
     );
   };
 
+  // A SHIP order asks for its tracking in the "Add tracking" dialog BEFORE this runs (F4), so nothing
+  // here opens a second tracking prompt after the order ships.
   const handleLock = () => {
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
       {
-        onSuccess: () => {
-          setLocalStatus("OUT_FOR_DELIVERY");
-          // Nudge the operator straight into tracking entry for a SHIP order —
-          // there's nowhere else on this screen prompting for it.
-          if (order.fulfillPath === "SHIP") setShipmentOpenSignal((n) => n + 1);
-        },
+        onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY"),
         onError: guardError(() => handleLock()),
       },
     );
   };
+  // A SHIP order asks for tracking first (one shipped email that carries it); other orders ship at once.
+  const handleMarkShipped = () =>
+    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : handleLock();
 
   const handleCancel = () => setShowCancelConfirm(true);
 
@@ -2689,7 +2693,7 @@ export default function OrderDetailPage() {
                     size="sm"
                     variant={orderUiV2.enabled ? undefined : "secondary"}
                     leftIcon={<Truck className="h-4 w-4" />}
-                    onClick={handleLock}
+                    onClick={handleMarkShipped}
                     loading={updateStatus.isPending}
                   >
                     {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
@@ -2746,7 +2750,11 @@ export default function OrderDetailPage() {
                   size="sm"
                   variant="secondary"
                   leftIcon={<RefreshCcw className="h-4 w-4" />}
-                  onClick={() => setDemoteTarget("CONFIRMED")}
+                  onClick={() =>
+                    order.fulfillPath === "SHIP" && orderHasFinalInvoice(order)
+                      ? setShowUnmarkConfirm(true)
+                      : setDemoteTarget("CONFIRMED")
+                  }
                 >
                   {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
                 </Button>
@@ -3388,6 +3396,33 @@ export default function OrderDetailPage() {
               via a carrier instead of our own route. Gated so it doesn't render on
               every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
               historical rows that already carry tracking data. */}
+          {order.fulfillPath === "SHIP" && access.staff && (
+            <ShipWithTrackingDialog
+              open={showShipDialog}
+              onClose={() => setShowShipDialog(false)}
+              isPending={updateShipment.isPending || updateStatus.isPending}
+              initialCarrier={order.shippingCarrier}
+              initialTracking={order.shippingTrackingNumber}
+              onSkip={() => handleLock()}
+              onShipWithTracking={(values) =>
+                shipWithTracking(
+                  {
+                    saveShipment: (v) =>
+                      updateShipment.mutateAsync({ id: order.id, ...v }).catch((e: unknown) => {
+                        toast({
+                          title: "Could not save shipment",
+                          description: genericToastCopy(e),
+                          variant: "error",
+                        });
+                        throw e;
+                      }),
+                    ship: () => handleLock(),
+                  },
+                  values,
+                )
+              }
+            />
+          )}
           {(order.fulfillPath === "SHIP" ||
             order.shippingCarrier ||
             order.shippingTrackingNumber) && (
@@ -3395,9 +3430,9 @@ export default function OrderDetailPage() {
               carrier={order.shippingCarrier}
               trackingNumber={order.shippingTrackingNumber}
               shippedAt={order.shippedAt}
+              orderStatus={localStatus}
               isSaving={updateShipment.isPending}
               onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-              openSignal={shipmentOpenSignal}
               readOnly={!access.shipmentEdit}
             />
           )}
@@ -3562,6 +3597,15 @@ export default function OrderDetailPage() {
         confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
         loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
+      />
+
+      <UnmarkShippedConfirm
+        open={showUnmarkConfirm}
+        onClose={() => setShowUnmarkConfirm(false)}
+        onConfirm={() => {
+          setShowUnmarkConfirm(false);
+          setDemoteTarget("CONFIRMED");
+        }}
       />
 
       {/* Demote reason modal */}
