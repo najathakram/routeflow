@@ -19,9 +19,10 @@ jest.mock("../../credit-notes/auto-apply-candidates", () => ({
 // The shared Postgres advisory lock becomes an in-process stand-in with the same contract (fn never
 // runs without the lock); the calls are recorded and a failure can be injected.
 const mockLockCalls: Array<{ family: string; key: string; mode: string }> = [];
-const mockLockFailure: { error: Error | null; notAcquired: boolean } = {
+const mockLockFailure: { error: Error | null; notAcquired: boolean; claimError: Error | null } = {
   error: null,
   notAcquired: false,
+  claimError: null,
 };
 jest.mock("../../common/db-locks", () => ({
   ...jest.requireActual("../../common/db-locks"),
@@ -29,6 +30,7 @@ jest.mock("../../common/db-locks", () => ({
     mockLockCalls.push({ family: opts.family, key: opts.key, mode: opts.mode });
     // The first lock is the hand-over claim section: injected failures target the tender's lock.
     const isClaim = mockLockCalls.length === 1;
+    if (isClaim && mockLockFailure.claimError) throw mockLockFailure.claimError;
     if (!isClaim && mockLockFailure.error) throw mockLockFailure.error;
     if (!isClaim && mockLockFailure.notAcquired) return { acquired: false };
     return { acquired: true, value: await fn() };
@@ -715,11 +717,63 @@ describe("PickupCompleteService.complete", () => {
       expect(e.getResponse().code).toBe("PICKUP_KEY_CONFLICT");
       expect(recordPayment).toHaveBeenCalledTimes(paid);
     });
-    it("a different key is refused before ANY write, even on an order not yet handed over", async () => {
-      claims.push({ meta: { idempotencyKey: "key-1" } });
-      const e = await errorOf(run(cash(), "key-2"));
-      expect(e.getResponse().code).toBe("PICKUP_KEY_CONFLICT");
-      nothingWritten();
+    it("a claim lock outage is a coded 503 LOCK_UNAVAILABLE before any write", async () => {
+      mockLockFailure.claimError = new LockUnavailableError(new Error("conn"));
+      try {
+        const e = await errorOf(run(cash(), "key-1"));
+        expect(e.getStatus()).toBe(503);
+        expect(e.getResponse().code).toBe("LOCK_UNAVAILABLE");
+        nothingWritten();
+      } finally {
+        mockLockFailure.claimError = null;
+      }
+    });
+    it("liveness: a walk-in short found AFTER the hand-over -> a corrected retry under a NEW key records once", async () => {
+      prisma.auditLog.update.mockImplementation(async ({ data }: any) => {
+        claims[0] = { ...claims[0], ...data };
+        return claims[0];
+      });
+      order = orderRow("CONFIRMED", { customer: { isWalkIn: true } });
+      invoices = [inv("inv-1", 20, "SENT", [])];
+      changeStatus.mockImplementation(async () => {
+        calls.push("changeStatus");
+        order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
+        invoices.push(inv("inv-2", 12.5, "DRAFT", [], 2));
+        return order;
+      });
+      const first = await run({ payment: { method: "CASH", amount: 20 } }, "key-1");
+      expect(first).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_TENDER_SHORT",
+      });
+      expect(recordPayment).not.toHaveBeenCalled();
+      const res = await run({ payment: { method: "CASH", amount: 32.5 } }, "key-2");
+      expect(res).toMatchObject({ paymentRecorded: true, balanceDue: 0 });
+      const taken = recordPayment.mock.calls.reduce(
+        (t: number, c: any[]) => t + Number(c[1].amount),
+        0,
+      );
+      expect(taken).toBe(32.5);
+      expect(changeStatus).toHaveBeenCalledTimes(1);
+    });
+    it("liveness: claim -> changeStatus REFUSES -> a retry with a NEW key hands over and tenders once", async () => {
+      prisma.auditLog.update.mockImplementation(async ({ data }: any) => {
+        claims[0] = { ...claims[0], ...data };
+        return claims[0];
+      });
+      const real = changeStatus.getMockImplementation()!;
+      changeStatus.mockRejectedValueOnce(
+        Object.assign(new Error("refused"), { getStatus: () => 409 }),
+      );
+      await expect(run(cash(), "key-1")).rejects.toThrow("refused");
+      expect(claims).toHaveLength(1);
+      changeStatus.mockImplementation(real);
+      const res = await run(cash(), "key-2");
+      expect(order.status).toBe("DELIVERED");
+      expect(res).toMatchObject({ paymentRecorded: true, balanceDue: 0 });
+      expect(invoices[0].payments).toHaveLength(1);
+      expect(claims).toHaveLength(1);
+      expect((claims[0].meta as { idempotencyKey?: string }).idempotencyKey).toBe("key-2");
     });
   });
 

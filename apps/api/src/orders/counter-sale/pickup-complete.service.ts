@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ServiceUnavailableException,
   ConflictException,
   Injectable,
   Logger,
@@ -128,7 +129,15 @@ export class PickupCompleteService {
       }
       await this.assertNoOpenCredit(order.customerId);
     }
-    await this.claimHandOver(id, _idempotencyKey, sent, user);
+    try {
+      await this.claimHandOver(id, _idempotencyKey, sent, user);
+    } catch (e) {
+      // A lock timeout or outage before any write is a coded, retryable 503 (never a 500).
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        throw this.claimUnavailable();
+      }
+      throw e;
+    }
 
     // 2. The hand-over: the existing status change (invoice + no stock). Its own refusals propagate,
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
@@ -256,10 +265,30 @@ export class PickupCompleteService {
         }
         const meta = (row.meta ?? {}) as { idempotencyKey?: string; bodyHash?: string | null };
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
-          throw new ConflictException({
-            code: API_ERROR_CODES.PICKUP_KEY_CONFLICT,
-            message: "This order's hand-over was already started with a different request",
+          // Unified claim rule (SA-710a + lead): a different key or body REPLACES the claim while no tender for
+          // this hand-over is stored (a refused hand-over, or a walk-in short / planner refusal found after
+          // it, must never lock the order out); recordings stay capped by remainingCapacity. Only a STORED
+          // hand-over tender makes a different request a conflict.
+          const now = await db.order.findFirst({
+            where: { id: orderId },
+            select: { status: true, deliveredAt: true },
           });
+          const tendered =
+            now?.status === "DELIVERED" &&
+            (await this.readInvoices(orderId)).some((i) =>
+              (i.payments ?? []).some(isHandOverTender(now.deliveredAt ?? null)),
+            );
+          if (tendered) {
+            throw new ConflictException({
+              code: API_ERROR_CODES.PICKUP_KEY_CONFLICT,
+              message: "Already picked up. Record any payment on the invoice.",
+            });
+          }
+          await db.auditLog.update({
+            where: { id: row.id },
+            data: { meta: { idempotencyKey: key, bodyHash } },
+          });
+          return;
         }
         // A same-key retry that ADDS the payment the first call lacked (PICKUP_PAYMENT_REQUIRED) is adopted
         // on the claim, so a later, different payment under this key is a conflict, not a second tender.
@@ -271,7 +300,15 @@ export class PickupCompleteService {
         }
       },
     );
-    if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
+    if (!locked.acquired) throw this.claimUnavailable();
+  }
+
+  /** The claim section could not take its per-order lock: a coded, retryable 503 (nothing was written). */
+  private claimUnavailable(): ServiceUnavailableException {
+    return new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message: "The hand-over is busy. Try again in a moment.",
+    });
   }
 
   /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
