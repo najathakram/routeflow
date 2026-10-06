@@ -265,23 +265,40 @@ export default function BuyerInvoiceDetailPage() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div
+        data-testid="invoice-summary-tiles"
+        className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4 mb-6"
+      >
         {[
-          { label: "Subtotal", value: fmt(Number(invoice.subtotal)), icon: FileText },
-          { label: "Tax", value: fmt(Number(invoice.taxAmount)), icon: FileText },
-          { label: "Total", value: fmt(Number(invoice.total)), icon: DollarSign },
           {
+            key: "subtotal",
+            label: "Subtotal",
+            value: fmt(Number(invoice.subtotal)),
+            icon: FileText,
+          },
+          { key: "tax", label: "Tax", value: fmt(Number(invoice.taxAmount)), icon: FileText },
+          { key: "total", label: "Total", value: fmt(Number(invoice.total)), icon: DollarSign },
+          {
+            key: "balance",
             label: "Balance Due",
             value: fmt(balanceDue),
             icon: balanceDue > 0 ? Clock : CheckCircle2,
           },
         ].map((card) => (
-          <div key={card.label} className="rounded-xl border border-surface-border bg-white p-4">
+          <div
+            key={card.label}
+            className="min-w-0 rounded-xl border border-surface-border bg-white p-3 sm:p-4"
+          >
             <div className="flex items-center gap-2 text-xs text-navy/70 mb-1">
               <card.icon className="h-3.5 w-3.5" />
               {card.label}
             </div>
-            <p className="text-lg font-bold text-navy">{card.value}</p>
+            <p
+              data-testid={`invoice-tile-${card.key}`}
+              className="whitespace-nowrap text-sm font-bold tabular-nums text-navy sm:text-base lg:text-lg"
+            >
+              {card.value}
+            </p>
           </div>
         ))}
       </div>
@@ -291,8 +308,11 @@ export default function BuyerInvoiceDetailPage() {
         <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
           <h2 className="text-sm font-semibold text-navy">Items ({invoice.items?.length ?? 0})</h2>
         </div>
-        <table className="w-full">
-          <thead>
+        {/* B1150: below `sm` each line is a stacked card (display:block rows, labelled
+            cells via data-label) so no money column is ever pushed off a phone; from `sm`
+            up it is the ordinary table. One DOM, no duplicated markup. */}
+        <table className="block w-full sm:table">
+          <thead className="hidden sm:table-header-group">
             <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
               <th className="px-4 py-2.5 text-left">Description</th>
               <th className="px-4 py-2.5 text-right w-20">Qty</th>
@@ -300,12 +320,16 @@ export default function BuyerInvoiceDetailPage() {
               <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-surface-border">
+          <tbody className="block divide-y divide-surface-border sm:table-row-group">
             {(invoice.items ?? []).map((item) => {
               const msrp = itemMsrp(item);
               return (
-                <tr key={item.id} className="hover:bg-surface-raised/50">
-                  <td className="px-4 py-3 text-sm font-medium text-navy">
+                <tr
+                  key={item.id}
+                  data-testid={`invoice-line-${item.id}`}
+                  className="block space-y-1 px-4 py-3 hover:bg-surface-raised/50 sm:table-row sm:space-y-0 sm:p-0"
+                >
+                  <td className="block text-sm font-medium text-navy sm:table-cell sm:px-4 sm:py-3">
                     {item.description}
                     {item.notes?.trim() && (
                       <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
@@ -313,27 +337,45 @@ export default function BuyerInvoiceDetailPage() {
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right text-sm text-navy">
-                    {Number(item.qty)}
-                    {/* BUY_N_GET_M: name the free units, or the reduced subtotal
+                  <td
+                    data-testid={`invoice-line-qty-${item.id}`}
+                    data-label="Qty"
+                    className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy"
+                  >
+                    <span className="text-right">
+                      {Number(item.qty)}
+                      {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
-                    {Number(item.promoFreeUnits ?? 0) > 0 && (
-                      <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
-                        {Number(item.promoFreeUnits)} free
-                      </p>
-                    )}
+                      {Number(item.promoFreeUnits ?? 0) > 0 && (
+                        <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                          {Number(item.promoFreeUnits)} free
+                        </p>
+                      )}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-right text-sm text-navy/70">
-                    {fmt(Number(item.unitPrice))}
-                    {/* Suggested retail price, snapshotted at line creation. Keyed off
+                  <td
+                    data-testid={`invoice-line-unit-${item.id}`}
+                    data-label="Unit Price"
+                    className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
+                  >
+                    <span className="whitespace-nowrap text-right tabular-nums">
+                      {fmt(Number(item.unitPrice))}
+                      {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
-                    {msrp != null && (
-                      <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
-                    )}
+                      {msrp != null && (
+                        <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                      )}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                    {fmt(Number(item.subtotal))}
+                  <td
+                    data-testid={`invoice-line-subtotal-${item.id}`}
+                    data-label="Subtotal"
+                    className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden font-medium text-navy"
+                  >
+                    <span className="whitespace-nowrap text-right tabular-nums">
+                      {fmt(Number(item.subtotal))}
+                    </span>
                   </td>
                 </tr>
               );

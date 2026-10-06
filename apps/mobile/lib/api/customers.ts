@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import { shouldRetryCustomerPrices } from "../query-retry-policy";
-import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import type { CustomerComment, CustomerDocument, FulfillPath } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface CustomerSummary {
@@ -47,7 +47,7 @@ export interface CustomerDetail {
    * since launch (`Customer.fulfillPath @default(ROUTE)`) but older cached
    * payloads may predate this client reading it.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: FulfillPath;
   addresses: Array<{
     id: string;
     label?: string;
@@ -572,7 +572,12 @@ export function useAddContactPerson(customerId: string) {
 
 export function useUpdateContactPerson(customerId: string) {
   const qc = useQueryClient();
-  return useMutation<ContactPerson, Error, { contactId: string } & Partial<ContactPersonInput>>({
+  // An optional field may be null on edit: that CLEARS it (contact-person-payload.ts).
+  return useMutation<
+    ContactPerson,
+    Error,
+    { contactId: string } & { [K in keyof ContactPersonInput]?: ContactPersonInput[K] | null }
+  >({
     mutationFn: ({ contactId, ...dto }) =>
       apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),

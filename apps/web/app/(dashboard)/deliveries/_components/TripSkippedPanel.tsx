@@ -16,6 +16,7 @@ export interface TripSkippedRow {
 
 const REASON_LABELS: Record<TripSkippedReason, string> = {
   SHIP_FULFILLMENT: "Ships via carrier — not routed",
+  PICKUP_FULFILLMENT: "Picked up at the counter — not routed",
   INELIGIBLE_STATUS: "Not in an open status",
   ON_ACTIVE_RUN: "Already on an active run",
   PREVIOUSLY_DISPATCHED: "Attached to a finished run",

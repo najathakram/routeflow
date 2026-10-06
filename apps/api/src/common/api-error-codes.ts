@@ -94,6 +94,7 @@ export const API_ERROR_CODES = {
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
+  ORDER_WITH_CARRIER_NO_ADD: "ORDER_WITH_CARRIER_NO_ADD",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
   ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
@@ -200,6 +201,63 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_WRONG_SUPPLIER: "SUPPLIER_ALLOCATION_WRONG_SUPPLIER",
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
+  COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
+  WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
+  WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
+  COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+  COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  /**
+   * 409 on a createSale replay whose order was changed (e.g. cancelled) after the first attempt. The sale
+   * EXISTS — the client must treat it as an UNKNOWN outcome: never as "nothing was charged", never drop the
+   * Idempotency-Key and re-ring (that would double-sell). Open the order from the orders list instead.
+   */
+  COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
+  /**
+   * 409 from the counter-sale POST: this Idempotency-Key already belongs to an ordinary (non-counter) order. The
+   * counter POST refuses it before any write; use a fresh key.
+   */
+  COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
+  WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
+  /**
+   * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
+   * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
+   */
+  COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
+   * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
+   * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.
+   */
+  COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",
+  /**
+   * 409: a counter sale was VOIDED after it was rung (its order cancelled, or every invoice VOID / WRITTEN_OFF). A
+   * DEFINITIVE answer from GET .../by-key/:key and from a re-POST of the same key: start a new sale, never retry.
+   * A re-POST never resurrects or re-charges it.
+   */
+  COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
+  /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
+   * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
+   * (A moved order that still has a live invoice reads back as the normal sale.)
+   */
+  COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
+  /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
+  COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
+  /**
+   * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
+   * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_OTHER_ORDER: "IDEMPOTENCY_KEY_OTHER_ORDER",
+  /**
+   * 409 from create(): this Idempotency-Key already created an order with a DIFFERENT cart. The order EXISTS:
+   * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

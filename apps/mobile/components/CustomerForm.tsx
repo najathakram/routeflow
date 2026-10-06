@@ -8,6 +8,8 @@ import { isInternalEmail } from "../lib/internal-email";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
 import { shouldConfirmDiscard } from "../lib/discard-guard";
+import { formFulfillPath, writableFulfillPath } from "../lib/customer-fulfill-path";
+import type { FulfillPath } from "@routeflow/types";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -28,7 +30,7 @@ export interface CustomerFormValues {
    * customer's own orders, which can still be overridden per-order. ROUTE
    * (delivery route) is the default; SHIP = ships via carrier, never routed.
    */
-  fulfillPath: "ROUTE" | "SHIP";
+  fulfillPath: FulfillPath;
   // Create-only: bundled into the create payload as the customer's first
   // address (mirrors web's CustomerFormModal). Editing an existing
   // customer's address(es) happens on the dedicated Addresses screen
@@ -80,7 +82,7 @@ export function customerFormFromValues(c: Record<string, any>): CustomerFormValu
     deliveryWindowEnd: c.deliveryWindowEnd ?? "",
     isTaxExempt: c.isTaxExempt ?? false,
     taxId: c.taxId ?? "",
-    fulfillPath: c.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
+    fulfillPath: formFulfillPath(c.fulfillPath),
     // Edit mode never renders or submits the address section (see comment on
     // CustomerFormValues) — leave blank rather than prefill fields the form
     // can't save.
@@ -203,7 +205,7 @@ function buildPayload(
     deliveryWindowEnd: mode === "edit" ? form.deliveryWindowEnd.trim() || undefined : undefined,
     isTaxExempt: form.isTaxExempt,
     taxId: form.taxId.trim() || undefined,
-    fulfillPath: form.fulfillPath,
+    fulfillPath: writableFulfillPath(form.fulfillPath),
     addresses:
       mode === "create" && hasFullAddress
         ? [{ label: "Main", line1: street, city, state, zip, isDefault: true }]

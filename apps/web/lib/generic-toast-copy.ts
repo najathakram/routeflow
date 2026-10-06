@@ -40,6 +40,8 @@ const CODE_COPY: Record<string, string> = {
     "This order is already with the carrier. Use a return instead of cancelling.",
   ORDER_WITH_CARRIER_NO_REDUCE:
     "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+  ORDER_WITH_CARRIER_NO_ADD:
+    "This order is already with the carrier. Create a new order for the extra items.",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,

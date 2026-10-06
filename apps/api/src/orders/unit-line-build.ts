@@ -9,6 +9,7 @@ import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotalStrict,
+  normalizeBoxesPieces,
   resolveUnitPrice,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
@@ -176,14 +177,31 @@ export function replayLineKey(
   r: {
     productId?: string | null;
     name?: string | null;
-    qty: unknown;
+    qty?: unknown;
     boxes?: unknown;
+    pieces?: unknown;
+    unitsPerBox?: unknown;
     unitLabel?: string | null;
   },
   stored: boolean,
 ): string {
   const unit = (r.unitLabel ?? "").trim().toLowerCase();
-  const count = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  let count: unknown = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  // A boxes/pieces-only request line has no qty: derive the piece count the writer stores (same
+  // normalizeBoxesPieces) instead of keying NaN, which can never match a stored line. Without a pack size
+  // it falls back to the split itself, so the key is still well-formed (never NaN).
+  if (count == null && !unit && (r.boxes != null || r.pieces != null)) {
+    const upb = Number(r.unitsPerBox ?? 0);
+    count =
+      upb > 1
+        ? normalizeBoxesPieces({
+            boxes: Number(r.boxes ?? 0),
+            pieces: Number(r.pieces ?? 0),
+            unitsPerBox: upb,
+          }).qty
+        : `b${Number(r.boxes ?? 0)}p${Number(r.pieces ?? 0)}`;
+    return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${String(count)}`;
+  }
   return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
 }
 
