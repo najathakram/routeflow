@@ -84,14 +84,15 @@ export async function lockCustomerCreditsForSweep(
  * note. Here: the order's invoices (SA-214: Order → Invoice), then the customer's live notes UNION
  * settle's subset in ONE id-ordered statement, so every later settle / sweep lock is a no-op on a
  * row this transaction already holds. (Settle's subset can include a VOID note — a restore may
- * touch one — which is why it rides along rather than being filtered.)
+ * touch one — which is why it rides along rather than being filtered.) `locked` is the row
+ * markSent just locked and re-read (SA-404), never the caller's pre-tx read.
  */
 export async function lockCreditsForSend(
   tx: LockTx,
   tenantId: string | null,
-  orderId: string | null,
-  customerId: string,
+  locked: { orderId: string | null; customerId: string },
 ): Promise<void> {
+  const { orderId, customerId } = locked;
   if (!orderId) {
     await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE "customerId" = ${customerId} AND status <> 'VOID' AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
     return;

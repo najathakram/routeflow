@@ -28,7 +28,11 @@ describe("credit-note-locks — every FOR UPDATE is tenant-scoped", () => {
       (tx, t) => lockCustomerCreditsForSweep(tx, t, "inv-1", "cust-1"),
       3,
     ],
-    ["lockCreditsForSend", (tx, t) => lockCreditsForSend(tx, t, "ord-1", "cust-1"), 2],
+    [
+      "lockCreditsForSend",
+      (tx, t) => lockCreditsForSend(tx, t, { orderId: "ord-1", customerId: "cust-1" }),
+      2,
+    ],
   ];
 
   it.each(cases)("%s binds the session tenant into every lock", async (_name, run, count) => {
@@ -72,7 +76,7 @@ describe("credit-note-locks — every FOR UPDATE is tenant-scoped", () => {
 describe("lockCreditsForSend — one pass, SA-214 order (Order → Invoices → every note, id order)", () => {
   it("locks the order's invoices, then the customer's notes AND the settle subset in ONE id-ordered statement", async () => {
     const { tx, log } = createOpLogTx();
-    await lockCreditsForSend(tx, TENANT, "ord-1", "cust-1");
+    await lockCreditsForSend(tx, TENANT, { orderId: "ord-1", customerId: "cust-1" });
     const locks = lockStatements(log);
     expect(locks[0].sql).toMatch(/FROM "Invoice" WHERE "orderId" = \?/);
     expect(locks[1].sql).toMatch(/FROM "CreditNote"/);
@@ -84,7 +88,7 @@ describe("lockCreditsForSend — one pass, SA-214 order (Order → Invoices → 
 
   it("an invoice with no order locks only the customer's notes", async () => {
     const { tx, log } = createOpLogTx();
-    await lockCreditsForSend(tx, TENANT, null, "cust-1");
+    await lockCreditsForSend(tx, TENANT, { orderId: null, customerId: "cust-1" });
     const locks = lockStatements(log);
     expect(locks).toHaveLength(1);
     expect(locks[0].sql).toMatch(/FROM "CreditNote"/);
