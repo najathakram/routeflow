@@ -196,6 +196,9 @@ model Customer {
   // consulted for security mail (verification/password/invite), which is
   // never opt-out.
   orderStatusEmails     Boolean     @default(true)
+  // SA-655: the tenant's ONE system walk-in customer for counter sales (created lazily by the API). Null =
+  // an ordinary customer, for every row that predates the column.
+  isWalkIn              Boolean?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   // RF-197: soft-delete timestamp; set instead of physically deleting when
@@ -634,6 +637,7 @@ model Order {
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
   skipAutoMerge          Boolean     @default(false)
+  counterSale            Boolean     @default(false) // SA-672e: set only by the counter-sale POST; GET by-key matches on it
   // Phase 4: denormalized flag — true when any line's product is in a tracked
   // (regulated) category. Drives the split preview + signature-POD requirement.
   hasRegulated           Boolean     @default(false)

@@ -170,6 +170,7 @@ export * from "./api/messaging-delivery";
 export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/counter-sale";
 export * from "./api/import";
 export * from "./api/analytics-insights";
 export * from "./api/fulfilment-methods";

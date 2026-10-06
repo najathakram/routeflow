@@ -57,6 +57,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -76,6 +77,8 @@ interface Customer {
   addresses: any[];
   /** REG-B170: set when the customer has been removed (soft-deleted). */
   deletedAt?: string | null;
+  /** SA-655: the tenant's system walk-in customer (counter sales): never deactivated, deleted or merged. */
+  isWalkIn?: boolean | null;
 }
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
@@ -400,7 +403,8 @@ export default function CustomersPage() {
 
   // ── Column definitions ───────────────────────────────────────────────────
   const allVisible = visibleCustomers;
-  const allVisibleIds = allVisible.map((c) => c.id);
+  // The walk-in customer can never be bulk-deleted or merged (the server refuses it): it is not selectable.
+  const allVisibleIds = allVisible.filter((c) => !c.isWalkIn).map((c) => c.id);
   const allChecked = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
   const someChecked = allVisibleIds.some((id) => selected.has(id));
 
@@ -428,6 +432,8 @@ export default function CustomersPage() {
                 <input
                   type="checkbox"
                   checked={selected.has(row.original.id)}
+                  disabled={row.original.isWalkIn === true}
+                  title={row.original.isWalkIn ? WALK_IN_PROTECTED_COPY : undefined}
                   onChange={() => toggleSelect(row.original.id)}
                   onClick={(e) => e.stopPropagation()}
                   className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
@@ -609,23 +615,25 @@ export default function CustomersPage() {
               >
                 <Pencil className="h-4 w-4" />
               </button>
-              <button
-                title={status === "ACTIVE" ? "Deactivate" : "Activate"}
-                aria-label={status === "ACTIVE" ? "Deactivate customer" : "Activate customer"}
-                onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
-                className={cn(
-                  "rounded p-1.5 transition-colors",
-                  status === "ACTIVE"
-                    ? "text-success hover:bg-success-bg"
-                    : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                )}
-              >
-                {status === "ACTIVE" ? (
-                  <ToggleRight className="h-4 w-4" />
-                ) : (
-                  <ToggleLeft className="h-4 w-4" />
-                )}
-              </button>
+              {row.original.isWalkIn ? null : (
+                <button
+                  title={status === "ACTIVE" ? "Deactivate" : "Activate"}
+                  aria-label={status === "ACTIVE" ? "Deactivate customer" : "Activate customer"}
+                  onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
+                  className={cn(
+                    "rounded p-1.5 transition-colors",
+                    status === "ACTIVE"
+                      ? "text-success hover:bg-success-bg"
+                      : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                  )}
+                >
+                  {status === "ACTIVE" ? (
+                    <ToggleRight className="h-4 w-4" />
+                  ) : (
+                    <ToggleLeft className="h-4 w-4" />
+                  )}
+                </button>
+              )}
               <button
                 title="View customer"
                 aria-label="View customer"

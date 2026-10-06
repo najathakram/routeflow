@@ -492,3 +492,9 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `api/orders.ts` (#3233) — +`OrderInvoicesNeedReview` (:37): `{ flagged, reason?, flaggedAtStop?: { by, at } }`, a STAFF-ONLY field of `GET /orders/:id`; web `lib/api/orders.ts` `Order.invoicesNeedReview`.
 - `api/order-suggestions.ts` (#3218) — NEW: `OrderSuggestionProduct`, `UsuallyBuysItem`, `RecentOrderLine`, `RecentOrderSummary`, `OrderSuggestionsResponse`; re-exported from `index.ts` (:176). No price field by design.
 - `api/billing.ts` (#3224) — +`AddonBillingMode` (`"STRIPE" | "MANUAL" | "UNBILLED"`, a type only) and `EnableAddonResult` (`proratedNow`, `billing`, `subscription`); the API aliases `AddonBilling` with `import type` only (L-261).
+
+## Landed 2026-10-06 (window 12 and pending)
+
+- `api/ship-state.ts` (#3223) — NEW: `SHIPPED_ORDER_STATUSES`, `ShippedOrderStatus`, `isShippedOrderStatus(status)`; re-exported from `index.ts`; pinned to the api's shipped statuses by `orders/shipped-statuses-parity.spec.ts`.
+- `api/buyer.ts` (#3235, B1122) — NEW `BuyerInvoiceListItem` (`total`, `balanceDue`, `paidAmount`, `creditApplied`, `advanceApplied`, `isOverdue`, `customer`); contract spec `buyer/buyer-shared-types.contract.spec.ts`.
+- `api/error-codes.ts` (#3226) — +`ADDON_CHECKOUT_ITEM_UNREADABLE`, `ADDON_CHECKOUT_ITEM_MISSING`; `api/billing.ts` addon rows gain optional `trial` (the add-on runs free on the trial, billed when the card is added).
