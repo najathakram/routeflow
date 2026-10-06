@@ -1545,11 +1545,57 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
   });
 
-  it("MUST2: unavailable or corrupt sessionStorage never crashes the screen", () => {
-    window.sessionStorage.setItem(STORE_KEY, "{not json");
+  it.each([
+    ["corrupt JSON", () => "{not json"],
+    [
+      "a non-numeric quantity",
+      () =>
+        JSON.stringify({
+          key: "k",
+          dto: { payment: { method: "CASH" } },
+          lines: [{ tempId: "t", productId: "p", name: "C", unitPrice: 1, qty: "x" }],
+          method: "CASH",
+        }),
+    ],
+    [
+      "a missing key",
+      () =>
+        JSON.stringify({
+          dto: { payment: { method: "CASH" } },
+          lines: [],
+          method: "CASH",
+        }),
+    ],
+  ])("MUST2: %s stays locked on check-recent-sales, no crash, entry removed", (_n, payload) => {
+    window.sessionStorage.setItem(STORE_KEY, payload());
     renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
     expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
     expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+  });
+
+  it("restores the locked sale with a slimmed customer (name still shown)", async () => {
+    window.sessionStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({
+        key: "k",
+        dto: { payment: { method: "CASH" } },
+        next: false,
+        estimate: { total: 2.5, change: 0 },
+        lines: [{ tempId: "t", productId: "p", name: "Cola", unitPrice: 2.5, qty: 1 }],
+        customer: { id: "c1", businessName: "Acme Foods", pricingTier: 1, fulfillPath: null },
+        method: "CASH",
+        tendered: "",
+        reference: "",
+      }),
+    );
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    expect(screen.getByText("Acme Foods")).toBeInTheDocument();
   });
 
   it("a held attempt never restores for another user or tenant, and restores again for the owner", async () => {

@@ -309,23 +309,56 @@ export interface HeldAttemptSnapshot {
 export function heldAttemptKey(tenant?: string | null, userId?: string | null): string | null {
   return tenant && userId ? `${HELD_ATTEMPT_KEY}:${tenant}:${userId}` : null;
 }
-export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | null {
+const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
+const optNum = (n: unknown): boolean => n === undefined || isNum(n);
+function validLine(l: unknown): boolean {
+  if (!l || typeof l !== "object") return false;
+  const o = l as Record<string, unknown>;
+  return (
+    typeof o.productId === "string" &&
+    !!o.productId &&
+    isNum(o.qty) &&
+    isNum(o.unitPrice) &&
+    optNum(o.boxes) &&
+    optNum(o.pieces) &&
+    optNum(o.unitsPerBox)
+  );
+}
+function validCustomer(c: unknown): boolean {
+  if (c === null || c === undefined) return true;
+  if (typeof c !== "object") return false;
+  const o = c as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.businessName === "string";
+}
+/**
+ * The held attempt, null when none is stored, or "corrupt" when something IS stored but is not a valid attempt: the payload is
+ * dropped and the caller must keep the sale LOCKED as "outcome unknown" (never silently unlock: a sale may have been written).
+ */
+export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | "corrupt" | null {
   if (!storeKey) return null;
   try {
     const raw = window.sessionStorage.getItem(storeKey);
     if (!raw) return null;
-    const v = JSON.parse(raw) as Partial<HeldAttemptSnapshot> | null;
-    if (
-      !v ||
-      typeof v.key !== "string" ||
-      !v.key ||
-      !v.dto ||
-      typeof v.dto !== "object" ||
-      !Array.isArray(v.lines) ||
-      typeof v.method !== "string"
-    )
-      return null;
-    return v as HeldAttemptSnapshot;
+    let ok = false;
+    let v: Partial<HeldAttemptSnapshot> | null = null;
+    try {
+      v = JSON.parse(raw) as Partial<HeldAttemptSnapshot> | null;
+      ok =
+        !!v &&
+        typeof v.key === "string" &&
+        !!v.key &&
+        !!v.dto &&
+        typeof v.dto === "object" &&
+        Array.isArray(v.lines) &&
+        v.lines.every(validLine) &&
+        typeof v.method === "string" &&
+        validCustomer(v.customer);
+    } catch {
+      ok = false;
+    }
+    if (ok) return v as HeldAttemptSnapshot;
+    window.sessionStorage.removeItem(storeKey);
+    return "corrupt";
   } catch {
     return null;
   }
@@ -333,7 +366,16 @@ export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | 
 export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnapshot): void {
   if (!storeKey) return;
   try {
-    window.sessionStorage.setItem(storeKey, JSON.stringify(snap));
+    // Only what the till re-renders: never the customer's email, phone, address or any other field.
+    const c = snap.customer as Record<string, unknown> | null | undefined;
+    const customer = c
+      ? Object.fromEntries(
+          (["id", "businessName", "pricingTier", "fulfillPath"] as const)
+            .filter((k) => c[k] !== undefined)
+            .map((k) => [k, c[k]]),
+        )
+      : null;
+    window.sessionStorage.setItem(storeKey, JSON.stringify({ ...snap, customer }));
   } catch {
     /* storage unavailable: the attempt is still held in memory */
   }
