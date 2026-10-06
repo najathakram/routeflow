@@ -5383,7 +5383,7 @@ describe("InvoicesService", () => {
       expect(updOf("d-only").data.subtotal).toBe(50);
     });
 
-    it("bails to legacy when a finalized invoice already bills part of the order", async () => {
+    it('SA-681: with a finalized invoice already billing part of the order, nothing is rebuilt ("partials")', async () => {
       prisma.invoice.findMany.mockResolvedValue([
         ...splitDrafts(),
         {
@@ -5403,14 +5403,16 @@ describe("InvoicesService", () => {
       prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
       prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
 
-      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+      const res = await service.reconcileOrderDraftInvoice("ord-1", {
+        basis: "order",
+        tx: prisma as any,
+      });
 
-      // Legacy single-draft path took over → exactly ONE invoice.update (the base), not
-      // the two-sibling rebuild.
-      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-      expect(updOf("d-base")).toBeDefined();
-      // The legacy group-unaware path must NOT touch the ledger (folding the regulated
-      // line onto the base + writing a SALE would double-count vs the live -R1 SALE).
+      // Pre-SA-681 the legacy single-draft path took over and folded EVERY line onto the base while
+      // the SENT invoice and the -R1 sibling still billed theirs (a double bill). Now: no rebuild.
+      expect(res).toBe("partials");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
       expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });

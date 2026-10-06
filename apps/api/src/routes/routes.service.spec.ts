@@ -2006,6 +2006,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1"],
         [],
+        expect.any(String), // the completing user (SA-687c: stamped on the review audit row)
       );
       // Additive field: the driver app attaches a best-effort payment photo to
       // paymentIds[0] after the stop completes — must be surfaced on the response.
@@ -2085,6 +2086,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1", "ord-2"],
         ["ord-1"],
+        expect.any(String),
       );
     });
 
@@ -2260,6 +2262,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1"],
         ["ord-1"],
+        expect.any(String),
       );
       expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
     });
