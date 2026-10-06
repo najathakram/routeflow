@@ -66,7 +66,12 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       transaction: { is: null },
       invoices: { none: { status: { not: InvoiceStatus.DRAFT } } },
       returns: { none: {} },
+      deliveryMutations: { none: {} },
     });
+  });
+  it("both kinds exclude an order with delivery evidence (a DeliveryMutation, FK RESTRICT)", () => {
+    expect((mergeEligibleWhere("force") as any).deliveryMutations).toEqual({ none: {} });
+    expect((mergeEligibleWhere("auto") as any).deliveryMutations).toEqual({ none: {} });
   });
   it("auto keeps every historic condition", () => {
     expect(mergeEligibleWhere("auto")).toEqual({
@@ -76,6 +81,7 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       transaction: { is: null },
       invoices: { none: {} },
       returns: { none: {} },
+      deliveryMutations: { none: {} },
       skipAutoMerge: false,
     });
   });
@@ -227,17 +233,15 @@ describe("contention mapping + caller wiring", () => {
   it("a message that merely contains P2034 / P2025, with no code, is NOT contention", () => {
     expect(isMergeContention(safeMap(new Error("P2034 something")))).toBe(false);
   });
-  it("P2025 / P2003 from the loser delete defer; the same code from elsewhere does not", async () => {
-    for (const code of ["P2025", "P2003"]) {
+  it("an unexpected FK error (P2003 / P2025) from the loser delete propagates and is NOT contention", async () => {
+    for (const code of ["P2003", "P2025"]) {
       const tx = fakeTx([]);
-      tx.order.deleteMany.mockRejectedValueOnce(Object.assign(new Error("gone"), { code }));
-      expect(isMergeContention(await deleteLoserGuarded(tx, "l", "auto").catch((e) => e))).toBe(
-        true,
-      );
+      tx.order.deleteMany.mockRejectedValueOnce(Object.assign(new Error("fk"), { code }));
+      const err = await deleteLoserGuarded(tx, "l", "force").catch((e) => e);
+      expect(err.code).toBe(code);
+      expect(isMergeContention(err)).toBe(false);
+      expect(isMergeContention(safeMap(err))).toBe(false);
     }
-    expect(isMergeContention(safeMap(Object.assign(new Error("gone"), { code: "P2025" })))).toBe(
-      false,
-    );
   });
   it("a message that merely contains a code, with no code field, is NOT contention", () => {
     for (const c of ["40001", "55P03", "40P01"]) {

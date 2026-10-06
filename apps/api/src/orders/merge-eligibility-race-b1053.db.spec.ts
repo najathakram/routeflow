@@ -130,10 +130,12 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
   const mergeForce = () => inTenant(() => orders.forceConsolidateCustomer(customerId));
   /** Errors thrown by a race callback (it runs inside the merge's getTaxRate, so a throw would abort the merge). */
   let raceErrors: unknown[] = [];
+  let raceRan = 0;
   /** Run `race` after the merge's eligibility read, before its transaction; a throw is RECORDED, never swallowed. */
   const raceBeforeTx = (race: () => Promise<void>) => {
     const orig = (OrdersService.prototype as any).getTaxRate;
     return jest.spyOn(orders, "getTaxRate").mockImplementationOnce(async () => {
+      raceRan += 1;
       try {
         await race();
       } catch (e) {
@@ -142,7 +144,10 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       return orig.call(orders);
     });
   };
-  const expectRaceClean = () => expect(raceErrors).toEqual([]);
+  const expectRaceClean = () => {
+    expect(raceRan).toBeGreaterThanOrEqual(1); // the interleave actually ran
+    expect(raceErrors).toEqual([]);
+  };
 
   const qtyOf = async (orderId: string) =>
     (await raw.orderItem.findMany({ where: { orderId, status: { not: "CANCELLED" } } })).reduce(
@@ -183,6 +188,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     const ids = (await raw.order.findMany({ where: { tenantId }, select: { id: true } })).map(
       (o) => o.id,
     );
+    await raw.deliveryMutation.deleteMany({ where: { tenantId } });
     await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
     await raw.invoice.deleteMany({ where: { tenantId } });
     await raw.$executeRawUnsafe(`DELETE FROM "DeliveryBatch" WHERE "tenantId" = $1`, tenantId);
@@ -288,6 +294,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
   beforeEach(async () => {
     jest.restoreAllMocks();
     raceErrors = [];
+    raceRan = 0;
     await wipe();
     await raw.product.update({ where: { id: productId }, data: { currentStock: INITIAL_STOCK } });
   });
@@ -350,12 +357,13 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     raceBeforeTx(async () => {
       await inTenant(() => orders.changeStatus(loser, { status: "CANCELLED" }, operator()));
     });
-    await settle(mergeAuto());
+    const out = await settle(mergeAuto());
     expectRaceClean();
     // the winner holds only its own qty, and stock equals what live lines hold (the cancel restored its part)
     expect(await qtyOf(winner)).toBe(WQ);
     expect(await stockNow()).toBe(INITIAL_STOCK - WQ);
     expect((await raw.order.findUniqueOrThrow({ where: { id: loser } })).status).toBe("CANCELLED");
+    expect(isMergeContention(out.error)).toBe(true);
   }, 120_000);
 
   it("REG-B1053-ROUTE: a loser assigned to a route run mid-merge survives the merge", async () => {
@@ -376,10 +384,11 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
         data: { routeRunId: runRow.id, routeRunStopId: runStop.id },
       });
     });
-    await settle(mergeAuto());
+    const out = await settle(mergeAuto());
     expectRaceClean();
     expect(await exists(loser)).toBe(true);
     expect((await raw.order.findUniqueOrThrow({ where: { id: loser } })).routeRunId).not.toBeNull();
+    expect(isMergeContention(out.error)).toBe(true);
   }, 120_000);
 
   it("REG-B1053-FORCE: forceConsolidateCustomer — a SENT invoice inserted mid-merge keeps its order", async () => {
@@ -458,17 +467,6 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
         await holder.query("ROLLBACK").catch(() => undefined);
       }
       const out = await merged;
-      // diagnostic for the PR: the merge's own error shape and the holder's
-      // eslint-disable-next-line no-console
-      console.log("B1053 DELETE-ORDER observed", {
-        merge: out.error && {
-          name: out.error.constructor?.name,
-          code: out.error.code,
-          metaCode: out.error.meta?.code,
-          message: String(out.error.message).slice(0, 200),
-        },
-        holder: holderError?.code,
-      });
       const orphanItems = await raw.orderItem.count({ where: { orderId: loser } });
       const loserGone = !(await exists(loser));
       // Branch A: the merge deferred, nothing was folded, and the holder's delete committed.
@@ -486,8 +484,6 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
         loserGone &&
         (await qtyOf(winner)) === WQ + LQ &&
         orphanItems === 0;
-      // eslint-disable-next-line no-console
-      console.log("B1053 DELETE-ORDER branch", { branchA, branchB });
       expect([branchA, branchB].filter(Boolean)).toHaveLength(1);
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
@@ -495,6 +491,39 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       await watcher.end();
     }
   }, 120_000);
+
+  it.each(["force", "auto"] as const)(
+    "REG-B1053-DELIVERY-MUTATION (%s, no race): a loser carrying a DeliveryMutation is skipped, not a permanent 409/FK error",
+    async (kind) => {
+      const { loser, winner } = await pair();
+      // The shape of the real writer (orders.service.ts change-request approval, ~:5141): an approved
+      // change request on a PENDING order writes an ADD_ON mutation keyed to the order's own line.
+      const line = await raw.orderItem.findFirstOrThrow({ where: { orderId: loser } });
+      const mutationId = (
+        await raw.deliveryMutation.create({
+          data: {
+            orderId: loser,
+            orderItemId: line.id,
+            productId: line.productId,
+            routeRunStopId: null,
+            type: "ADD_ON",
+            qty: 1,
+            note: "approved change request",
+            driverId: null,
+            tenantId,
+          },
+        })
+      ).id;
+      const out = await settle(kind === "force" ? mergeForce() : mergeAuto());
+      expect(out.error).toBeUndefined();
+      expect(await exists(loser)).toBe(true);
+      expect(await qtyOf(winner)).toBe(WQ);
+      expect(await raw.deliveryMutation.count({ where: { id: mutationId, orderId: loser } })).toBe(
+        1,
+      );
+    },
+    120_000,
+  );
 
   it("REG-B1053-FORCE-BATCH-DRAFT (no race): a loser whose only DRAFT is a batch draft is skipped, not a permanent 409", async () => {
     const { loser, winner } = await pair();

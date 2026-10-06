@@ -22,7 +22,7 @@
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus, ItemStatus, OrderStatus, Prisma } from "@prisma/client";
 import { lockRowsNoWait } from "../common/db-locks";
-import { isTargetGone, mergeInProgress } from "./merge-contention";
+import { mergeInProgress } from "./merge-contention";
 import { sameFulfilPathAsWinner, unshipped } from "./merge-candidates";
 import * as unitAware from "./unit-aware-guard";
 
@@ -52,6 +52,7 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
         transaction: { is: null },
         invoices: { none: {} },
         returns: { none: {} },
+        deliveryMutations: { none: {} },
         skipAutoMerge: false,
       }
     : {
@@ -59,6 +60,8 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
         transaction: { is: null },
         invoices: { none: BILLED_INVOICE },
         returns: { none: {} },
+        // delivery evidence (FK RESTRICT on the order): never deleted by a merge, so never a candidate
+        deliveryMutations: { none: {} },
       };
 }
 
@@ -176,17 +179,13 @@ export async function lockAndRecheckMergeInputs(
 
 /**
  * Delete one loser (its lines, then the order) by id AND its eligibility predicate; anything but exactly
- * one row aborts the fold. Narrow wrap: P2025 / P2003 raised by THESE statements mean a lock-free writer
- * (deleteOrder) removed the target under us, which is contention. The winner needs no such wrap: its row
- * is held FOR UPDATE for the whole tx. Nothing else in the tx is reclassified.
+ * one row aborts the fold. The loser row is held FOR UPDATE by this tx, so a racing deleteOrder cannot
+ * remove it under us (it waits, or deadlocks and is classified by code). Any FK error here (e.g. a P2003)
+ * is therefore unexpected and is NOT contention: it propagates loudly rather than answering "busy"
+ * forever.
  */
 export async function deleteLoserGuarded(tx: any, loserId: string, kind: MergeKind) {
-  try {
-    await tx.orderItem.deleteMany({ where: { orderId: loserId } });
-    const r = await tx.order.deleteMany({ where: { id: loserId, ...loserDeleteWhere(kind) } });
-    if (r.count !== 1) throw mergeInProgress();
-  } catch (e) {
-    if (isTargetGone(e)) throw mergeInProgress();
-    throw e;
-  }
+  await tx.orderItem.deleteMany({ where: { orderId: loserId } });
+  const r = await tx.order.deleteMany({ where: { id: loserId, ...loserDeleteWhere(kind) } });
+  if (r.count !== 1) throw mergeInProgress();
 }

@@ -58,11 +58,6 @@ export function mergeInProgress(): ConflictException {
   return new ConflictException({ code: MERGE_IN_PROGRESS, message: MERGE_IN_PROGRESS_MESSAGE });
 }
 
-/** A Prisma "record not found" / FK failure raised while removing a merge loser: the target is gone. */
-export function isTargetGone(e: unknown): boolean {
-  return ["P2025", "P2003"].includes((e as any)?.code);
-}
-
 /**
  * A raw 55P03 (the write-phase `lock_timeout` backstop), 40P01 (deadlock against a lock-free writer such
  * as deleteOrder) 40001 (serialization failure) or Prisma's P2034 (write conflict / deadlock on a model query) raised inside the merge tx is contention too: nothing
