@@ -253,7 +253,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const inv = read("invoices/invoices.service.ts");
     for (const label of ["invoice mark-sent", "invoice send pre-check", "invoice void"]) {
-      expect(inv).toMatch(new RegExp(`retryOnTxConflict\\(\\s*\\\`${label}`));
+      expect(inv).toMatch(new RegExp(`retry(?:OnTxConflict|CreditTx)\\(\\s*\\\`${label}`));
     }
     // send() and sendEmail() share the one retried mark-sent transaction.
     expect(inv.match(/this\.markSent\(/g)).toHaveLength(2);

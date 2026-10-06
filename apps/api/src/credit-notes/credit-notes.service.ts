@@ -16,7 +16,7 @@ import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing"
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
@@ -1015,7 +1015,7 @@ export class CreditNotesService {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded); the
     // body is DB-only and idempotent, and the in-tx commission sync now rethrows a conflict.
-    return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           // B1052: the invoice (with its Order), then the note, BEFORE reading the balance.
@@ -1987,7 +1987,7 @@ export class CreditNotesService {
   async unapplyFromInvoice(creditNoteId: string, invoiceId: string, actorId: string | null = null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx: any) => {
           // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see

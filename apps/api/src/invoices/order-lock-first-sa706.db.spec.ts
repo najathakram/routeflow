@@ -3,14 +3,14 @@
  * its invoice INSERT, so two creations for one order serialize instead of deadlocking.
  *
  * The invoice's `orderId` FK takes KEY SHARE on the Order; the settle step's first statement then
- * upgrades it to FOR UPDATE. T2 (a raw pg connection) holds the OrderItem row FOR UPDATE, so both
- * creations get past their invoice INSERT (pre-fix) and block at the invoicedQty bump — the same
- * barrier partial-invoice-cas-2070.db.spec.ts uses. When T2 commits:
- *   - pre-fix: each holds KEY SHARE on the Order and waits on the other's FOR UPDATE upgrade ->
- *     Postgres kills one with 40P01 (an uncoded 500);
- *   - fixed: the SECOND creation never got past the Order lock (T2's barrier observes exactly ONE
- *     waiter on the OrderItem), so there is no cycle: the first finishes and the second gets the
- *     existing coded CAS refusal (409) because the line is spent.
+ * upgrades it to FOR UPDATE. T2 (a raw pg connection) holds the OrderItem row FOR UPDATE, so the first creation blocks at the
+ * invoicedQty bump with its invoice inserted. Pre-fix the second creation ALSO inserts its invoice (both
+ * hold KEY SHARE on the Order) and blocks on T2; when T2 commits each settle waits on the other's KEY
+ * SHARE: 40P01. Fixed, the second is blocked BY THE FIRST on the Order row before it inserts anything.
+ * The spec waits for exactly that chain (pg_blocking_pids: "A blocked by T2, B blocked by A") and asserts
+ * it; it never relies on a silent poll timeout (a bounded wait longer than the 5 s transaction timeout
+ * would fail both creations for the wrong reason).
+ *
  * Case 2 races createPartialFromOrder against createInvoiceFromOrder (createSplitInvoices — the
  * invoice leg of Mark Delivered's flow).
  *
@@ -227,12 +227,14 @@ describeDb("invoice creation locks the Order row before its INSERT (SA-706)", ()
     return { tenantId: tenant.id, orderId: order.id, orderItemId: item.id };
   }
 
-  /** T2 holds the OrderItem row; `starts` run and must block (`waiters` of them); `during(t2)`; T2 commits. */
-  async function holdLine(
-    orderItemId: string,
-    starts: Array<() => Promise<unknown>>,
-    during: (t2: Client) => Promise<void> = async () => undefined,
-  ) {
+  /**
+   * SA-706 Order-first serialization: like `holdLine`, but the two creations do NOT both reach the bump. The
+   * first takes the Order row, creates its invoice and blocks on T2 (the OrderItem bump); the second is
+   * blocked BY THE FIRST on the Order row. Waits for exactly that chain (bounded 3 s, inside the 5 s tx
+   * timeout, never a silent poll timeout) and reports it: `chain` = pairs (A blocked by T2, B blocked by A),
+   * `waiting` = backends blocked by T2 (1 when the lock-first order holds; 2 and chain 0 without it).
+   */
+  async function holdLineChain(orderItemId: string, starts: Array<() => Promise<unknown>>) {
     const t2 = new Client({ connectionString: process.env.DATABASE_URL });
     await t2.connect();
     try {
@@ -245,21 +247,25 @@ describeDb("invoice creation locks the Order row before its INSERT (SA-706)", ()
           (e) => ({ ok: false as const, e }),
         ),
       );
-      // Bounded (~4s): pre-fix BOTH creations reach the bump (2 waiters, exits at once); fixed, the
-      // second waits on the Order lock instead, so only one ever does.
-      let waiting = 0;
-      for (let i = 0; i < 160 && waiting < starts.length; i++) {
+      let chain = 0;
+      for (let i = 0; i < 120 && chain < 1; i++) {
         const q = await t2.query(
-          `SELECT pg_stat_clear_snapshot(), (SELECT count(*)::int FROM pg_stat_activity
-             WHERE $1 = ANY(pg_blocking_pids(pid))) AS n`,
+          `SELECT pg_stat_clear_snapshot(), (SELECT count(*)::int FROM pg_stat_activity b
+             JOIN pg_stat_activity a ON a.pid = ANY(pg_blocking_pids(b.pid))
+             WHERE $1 = ANY(pg_blocking_pids(a.pid))) AS n`,
           [pid],
         );
-        waiting = q.rows[0].n;
-        if (waiting < starts.length) await new Promise((x) => setTimeout(x, 25));
+        chain = q.rows[0].n;
+        if (chain < 1) await new Promise((x) => setTimeout(x, 25));
       }
-      await during(t2);
+      const waiting = (
+        await t2.query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
+        )
+      ).rows[0].n;
       await t2.query("COMMIT");
-      return { waiting, results: await Promise.all(results) };
+      return { waiting, chain, results: await Promise.all(results) };
     } finally {
       await t2.end().catch(() => undefined);
     }
@@ -280,8 +286,12 @@ describeDb("invoice creation locks the Order row before its INSERT (SA-706)", ()
 
   it("two partials for one line: no 40P01 — one 201, the loser gets the coded 409", async () => {
     const s = await seedLine();
-    const { waiting, results } = await holdLine(s.orderItemId, [partial(s), partial(s)]);
-    expect(waiting).toBeGreaterThanOrEqual(1);
+    const { waiting, chain, results } = await holdLineChain(s.orderItemId, [
+      partial(s),
+      partial(s),
+    ]);
+    expect(chain).toBe(1); // A on T2, B behind A on the Order row (pre-fix: 0)
+    expect(waiting).toBe(1);
 
     const failed = results.filter((r) => !r.ok) as Array<{ ok: false; e: unknown }>;
     expect(failed.filter((r) => isDeadlock(r.e))).toEqual([]); // pre-fix: one deadlock victim
@@ -293,8 +303,9 @@ describeDb("invoice creation locks the Order row before its INSERT (SA-706)", ()
 
   it("a partial racing the order's full create (Mark Delivered's invoice leg): no 40P01, the loser is coded", async () => {
     const s = await seedLine();
-    const { waiting, results } = await holdLine(s.orderItemId, [partial(s), split(s)]);
-    expect(waiting).toBeGreaterThanOrEqual(1);
+    const { waiting, chain, results } = await holdLineChain(s.orderItemId, [partial(s), split(s)]);
+    expect(chain).toBe(1);
+    expect(waiting).toBe(1);
 
     const failed = results.filter((r) => !r.ok) as Array<{ ok: false; e: unknown }>;
     expect(failed.filter((r) => isDeadlock(r.e))).toEqual([]);

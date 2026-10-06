@@ -260,14 +260,17 @@ describe("reconcileOrderAfterEdit — a write conflict retries the credit tx (SA
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it("REG-SA269-3: a conflict on every attempt gives up after 3 and propagates the last one", async () => {
+  it("REG-SA269-3: a conflict on every attempt gives up after 3 with a CODED 503 (SA-706c), never the raw P2034", async () => {
     const { prisma, reconcile } = build("tenant-1");
     const conflicts = [1, 2, 3].map((n) => conflict("P2034", `write conflict ${n}`));
     prisma.tenantTransaction.mockImplementation(async () => {
       throw conflicts[prisma.tenantTransaction.mock.calls.length - 1];
     });
 
-    await expect(reconcile(undefined)).rejects.toBe(conflicts[2]);
+    await expect(reconcile(undefined)).rejects.toMatchObject({
+      status: 503,
+      response: { code: "LOCK_UNAVAILABLE" },
+    });
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
   });
 });

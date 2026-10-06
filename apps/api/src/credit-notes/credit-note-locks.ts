@@ -66,6 +66,17 @@ export async function lockOrderRow(
   await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
 }
 
+/** Every given Order, in id order: the house order for a transaction that writes several orders. */
+export async function lockOrderRows(
+  tx: LockTx,
+  tenantId: string | null,
+  orderIds: readonly string[],
+): Promise<void> {
+  const sorted = [...new Set(orderIds)].sort();
+  if (sorted.length === 0) return;
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(sorted)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+}
+
 /**
  * `settleOrderCreditsInTx`'s FIRST statements: this Order, every invoice of the order, then every
  * note the settle can touch — the notes its intents name and the notes already paying its invoices

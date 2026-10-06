@@ -48,7 +48,7 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
@@ -4420,7 +4420,7 @@ export class OrdersService implements OnApplicationBootstrap {
     appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
   ): Promise<void> {
     const tenantId = this.prisma.getTenantId();
-    await retryOnTxConflict(`credit sync order=${orderId}`, () =>
+    await retryCreditTx(`credit sync order=${orderId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           await lockOrderRow(tx, tenantId, orderId);

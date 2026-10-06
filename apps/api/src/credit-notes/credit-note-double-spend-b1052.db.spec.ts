@@ -271,8 +271,18 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     return { tenantId: tenant.id as string, customerId: customer.id as string };
   }
 
-  /** An order with one DRAFT invoice of `total` (what the office invoice paths settle against). */
-  async function seedOrderWithInvoice(tenantId: string, customerId: string, total: number) {
+  /**
+   * An order with one invoice of `total` (what the office invoice paths settle against). DRAFT by
+   * default; pass "SENT" where the case asserts the invoice goes PAID: `recomputeInvoiceStatus` never
+   * moves a DRAFT (the seller's unissued working copy), so a DRAFT fully covered by credit stays DRAFT
+   * even though its payments sum to the total (the ledger is right, the status is by design).
+   */
+  async function seedOrderWithInvoice(
+    tenantId: string,
+    customerId: string,
+    total: number,
+    status: "DRAFT" | "SENT" = "DRAFT",
+  ) {
     seq += 1;
     const order = await prisma.order.create({
       data: { tenantId, customerId, status: "CONFIRMED", total },
@@ -283,7 +293,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
         customerId,
         orderId: order.id,
         invoiceNumber: `INV-B1052-${RUN}-${seq}`,
-        status: "DRAFT",
+        status,
         subtotal: total,
         total,
       },
@@ -376,42 +386,53 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     };
   }
 
-  it("two concurrent settles of one $100 note across two $100 invoices spend it ONCE", async () => {
-    const { tenantId, customerId } = await seedTenant("race");
-    const note = await tenantCtx.run(tenantId, () =>
-      creditNotes.create({ customerId, amount: 100 } as any),
-    );
-    const a = await seedOrderWithInvoice(tenantId, customerId, 100);
-    const b = await seedOrderWithInvoice(tenantId, customerId, 100);
-    await intend(tenantId, a.orderId, customerId, note.id);
-    await intend(tenantId, b.orderId, customerId, note.id);
+  it.each(["SENT", "DRAFT"] as const)(
+    "two concurrent settles of one $100 note across two $100 %s invoices spend it ONCE",
+    async (invoiceStatus) => {
+      const { tenantId, customerId } = await seedTenant("race");
+      const note = await tenantCtx.run(tenantId, () =>
+        creditNotes.create({ customerId, amount: 100 } as any),
+      );
+      const a = await seedOrderWithInvoice(tenantId, customerId, 100, invoiceStatus);
+      const b = await seedOrderWithInvoice(tenantId, customerId, 100, invoiceStatus);
+      await intend(tenantId, a.orderId, customerId, note.id);
+      await intend(tenantId, b.orderId, customerId, note.id);
 
-    const barrier = makeBarrier();
-    const results = await Promise.allSettled([
-      settle(tenantId, a.orderId, barrier),
-      settle(tenantId, b.orderId, barrier),
-    ]);
+      const barrier = makeBarrier();
+      const results = await Promise.allSettled([
+        settle(tenantId, a.orderId, barrier),
+        settle(tenantId, b.orderId, barrier),
+      ]);
 
-    const ledger = await ledgerOf(note.id);
-    // Observed numbers, printed for the PR's before/after record.
-    console.log(
-      `B1052 race: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
-        `appliedOnInvoices=${ledger.paid} perInvoice=${JSON.stringify([...ledger.byInvoice.values()])} ` +
-        `settles=${results.map((r) => r.status).join(",")}`,
-    );
-    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
-    expect(ledger.paid).toBe(100); // never 200
-    expect(ledger.amountUsed).toBe(100);
-    expect(ledger.amountUsed).toBe(ledger.paid);
-    expect([...ledger.byInvoice.values()].sort()).toEqual([100]); // one invoice, not both
-    // The invoice that LOST the race is still unpaid: not PAID, no credit on it, balance unchanged.
-    const [winnerId] = [...ledger.byInvoice.keys()];
-    const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
-    expect(await invoiceStateOf(winnerId)).toMatchObject({ status: "PAID", paid: 100, balance: 0 });
-    const loser = await invoiceStateOf(loserId);
-    expect(loser.status).not.toBe("PAID");
-    expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
-  }, 60_000);
+      const ledger = await ledgerOf(note.id);
+      // Observed numbers, printed for the PR's before/after record.
+      console.log(
+        `B1052 race: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
+          `appliedOnInvoices=${ledger.paid} perInvoice=${JSON.stringify([...ledger.byInvoice.values()])} ` +
+          `settles=${results.map((r) => r.status).join(",")}`,
+      );
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(ledger.paid).toBe(100); // never 200
+      expect(ledger.amountUsed).toBe(100);
+      expect(ledger.amountUsed).toBe(ledger.paid);
+      expect([...ledger.byInvoice.values()].sort()).toEqual([100]); // one invoice, not both
+      // The invoice that LOST the race is still unpaid: not PAID, no credit on it, balance unchanged.
+      const [winnerId] = [...ledger.byInvoice.keys()];
+      const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
+      // An issued (SENT) invoice fully covered by the credit goes PAID. A DRAFT is the seller's unissued
+      // working copy: recomputeInvoiceStatus never moves it, so it stays DRAFT with the same money (SA-713).
+      expect(await invoiceStateOf(winnerId)).toMatchObject({
+        status: invoiceStatus === "SENT" ? "PAID" : "DRAFT",
+        paid: 100,
+        balance: 0,
+      });
+      const loser = await invoiceStateOf(loserId);
+      expect(loser.status).not.toBe("PAID");
+      if (invoiceStatus === "DRAFT") expect(loser.status).toBe("DRAFT");
+      expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
+    },
+    60_000,
+  );
 
   it("a shrink-restore racing an apply of the same note loses neither write", async () => {
     const { tenantId, customerId } = await seedTenant("restore");
@@ -445,50 +466,62 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     );
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
     expect(ledger.byInvoice.get(a.invoiceId)).toBe(40); // A shrank to $40 of credit
-    expect(ledger.paid).toBeLessThanOrEqual(100);
+    // B went before A's restore (note had $40 left: 40 + 40 = 80) or after it ($60 left: 40 + 60).
+    expect([80, 100]).toContain(ledger.paid);
     expect(ledger.amountUsed).toBe(ledger.paid); // the wallet agrees with the invoices
     // B takes whatever the note had left when it ran ($40 if it went before A's restore, $60
     // after) but never the whole $100 invoice, and it is never reported PAID.
     const stateB = await invoiceStateOf(b.invoiceId);
     expect(stateB.status).not.toBe("PAID");
-    expect(stateB.paid).toBeLessThanOrEqual(60);
+    expect([40, 60]).toContain(stateB.paid);
     expect(stateB.balance).toBe(100 - stateB.paid);
     expect(stateB.balance).toBeGreaterThan(0);
   }, 60_000);
 
-  it("a send-time sweep racing a settle of the same note spends it once; the loser stays unpaid", async () => {
-    const { tenantId, customerId } = await seedTenant("sweep");
-    await prisma.tenantConfig.create({ data: { tenantId, creditAutoApplyOnSend: true } });
-    const note = await tenantCtx.run(tenantId, () =>
-      creditNotes.create({ customerId, amount: 100 } as any),
-    );
-    // Order A carries an intent for the note (settle path); invoice B has none (sweep path).
-    const a = await seedOrderWithInvoice(tenantId, customerId, 100);
-    const b = await seedOrderWithInvoice(tenantId, customerId, 100);
-    await intend(tenantId, a.orderId, customerId, note.id);
+  it.each(["SENT", "DRAFT"] as const)(
+    "a send-time sweep racing a settle of the same note spends it once; the loser stays unpaid (%s invoices)",
+    async (invoiceStatus) => {
+      const { tenantId, customerId } = await seedTenant("sweep");
+      await prisma.tenantConfig.create({ data: { tenantId, creditAutoApplyOnSend: true } });
+      const note = await tenantCtx.run(tenantId, () =>
+        creditNotes.create({ customerId, amount: 100 } as any),
+      );
+      // Order A carries an intent for the note (settle path); invoice B has none (sweep path).
+      const a = await seedOrderWithInvoice(tenantId, customerId, 100, invoiceStatus);
+      const b = await seedOrderWithInvoice(tenantId, customerId, 100, invoiceStatus);
+      await intend(tenantId, a.orderId, customerId, note.id);
 
-    const barrier = makeBarrier();
-    const results = await Promise.allSettled([
-      settle(tenantId, a.orderId, barrier),
-      sweep(tenantId, b.invoiceId, customerId, barrier),
-    ]);
+      const barrier = makeBarrier();
+      const results = await Promise.allSettled([
+        settle(tenantId, a.orderId, barrier),
+        sweep(tenantId, b.invoiceId, customerId, barrier),
+      ]);
 
-    const ledger = await ledgerOf(note.id);
-    console.log(
-      `B1052 sweep-vs-settle: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
-        `appliedOnInvoices=${ledger.paid} settles=${results.map((r) => r.status).join(",")}`,
-    );
-    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
-    expect(ledger.paid).toBe(100); // never 200
-    expect(ledger.amountUsed).toBe(ledger.paid);
-    expect([...ledger.byInvoice.values()]).toEqual([100]); // exactly one invoice got the note
-    const [winnerId] = [...ledger.byInvoice.keys()];
-    const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
-    expect(await invoiceStateOf(winnerId)).toMatchObject({ status: "PAID", paid: 100, balance: 0 });
-    const loser = await invoiceStateOf(loserId);
-    expect(loser.status).not.toBe("PAID");
-    expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
-  }, 60_000);
+      const ledger = await ledgerOf(note.id);
+      console.log(
+        `B1052 sweep-vs-settle: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
+          `appliedOnInvoices=${ledger.paid} settles=${results.map((r) => r.status).join(",")}`,
+      );
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+      expect(ledger.paid).toBe(100); // never 200
+      expect(ledger.amountUsed).toBe(ledger.paid);
+      expect([...ledger.byInvoice.values()]).toEqual([100]); // exactly one invoice got the note
+      const [winnerId] = [...ledger.byInvoice.keys()];
+      const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
+      // An issued (SENT) invoice fully covered by the credit goes PAID. A DRAFT is the seller's unissued
+      // working copy: recomputeInvoiceStatus never moves it, so it stays DRAFT with the same money (SA-713).
+      expect(await invoiceStateOf(winnerId)).toMatchObject({
+        status: invoiceStatus === "SENT" ? "PAID" : "DRAFT",
+        paid: 100,
+        balance: 0,
+      });
+      const loser = await invoiceStateOf(loserId);
+      expect(loser.status).not.toBe("PAID");
+      if (invoiceStatus === "DRAFT") expect(loser.status).toBe("DRAFT");
+      expect(loser).toMatchObject({ paid: 0, balance: 100, total: 100 });
+    },
+    60_000,
+  );
 
   it("two concurrent markSent calls for ONE customer neither deadlock (40P01) nor spend a note twice", async () => {
     const { tenantId, customerId } = await seedTenant("send");
@@ -597,7 +630,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
         `appliedOnInvoices=${ledger.paid} creates=${results.map((r) => r.status).join(",")}`,
     );
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]); // pre-fix: 40P01 -> 500
-    expect(ledger.paid).toBeLessThanOrEqual(100);
-    expect(ledger.amountUsed).toBe(ledger.paid);
+    expect(ledger.paid).toBe(100); // one $100 note, two $100 invoices: spent exactly once
+    expect(ledger.amountUsed).toBe(100);
   }, 60_000);
 });

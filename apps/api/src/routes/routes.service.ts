@@ -85,6 +85,7 @@ import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dis
 import { observeRunCredit } from "./run-credit-observation";
 import { RouteRealtime } from "./route-realtime";
 import {
+  lockStopOrdersAndFit,
   reconcileDeliveredStopOrders,
   resolvePostReconcileOrderTotals,
 } from "./complete-payment-reconcile";
@@ -2442,7 +2443,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     await withAfterCommit(this.prisma, async (tx, after) => {
-      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
+      await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
       const sets = await loadAgeIdCategorySets(db);
