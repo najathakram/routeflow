@@ -1132,7 +1132,12 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
         const h = make({ rows: [addonRow("FORECASTING", { qty: 1 })], items: [baseItem()] });
         h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
           h.rows[0].quantity = 5; // a concurrent writer raised it after we read the row
-          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          const item = {
+            id: "si_made",
+            metadata: args.metadata,
+            quantity: args.quantity,
+            subscription: args.subscription,
+          };
           h.stripeItems.push(item);
           return item;
         });
@@ -1156,7 +1161,12 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
         });
         h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
           h.rows[0].active = false; // switched off after we read it
-          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          const item = {
+            id: "si_made",
+            metadata: args.metadata,
+            quantity: args.quantity,
+            subscription: args.subscription,
+          };
           h.stripeItems.push(item);
           return item;
         });
@@ -1195,7 +1205,12 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
         const h = make({ rows: [addonRow("FORECASTING", { qty: 1 })], items: [baseItem()] });
         h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
           h.rows[0].quantity = 2;
-          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          const item = {
+            id: "si_made",
+            metadata: args.metadata,
+            quantity: args.quantity,
+            subscription: args.subscription,
+          };
           h.stripeItems.push(item);
           return item;
         });
