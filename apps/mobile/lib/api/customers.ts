@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
 import { shouldRetryCustomerPrices } from "../query-retry-policy";
-import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import type { CustomerComment, CustomerDocument, FulfillPath } from "@routeflow/types";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface CustomerSummary {
@@ -47,7 +47,7 @@ export interface CustomerDetail {
    * since launch (`Customer.fulfillPath @default(ROUTE)`) but older cached
    * payloads may predate this client reading it.
    */
-  fulfillPath?: "ROUTE" | "SHIP";
+  fulfillPath?: FulfillPath;
   addresses: Array<{
     id: string;
     label?: string;
