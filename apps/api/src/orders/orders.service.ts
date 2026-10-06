@@ -196,6 +196,8 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import { shippedPushCopy } from "./shipped-push-copy";
+import { attachInvoiceStages } from "./order-invoice-stage";
 import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
 import * as carrierGuard from "./order-carrier-guard";
 import {
@@ -493,6 +495,7 @@ export class OrdersService implements OnApplicationBootstrap {
             invoiceNumber: true,
             status: true,
             total: true,
+            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
             // Classification pending: whether this credit-note-application read
@@ -566,6 +569,7 @@ export class OrdersService implements OnApplicationBootstrap {
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
+    await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -2727,7 +2731,14 @@ export class OrdersService implements OnApplicationBootstrap {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status];
+    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
+    const notif =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
+          isFirstShipment(order)
+          ? shippedPushCopy(order)
+          : undefined
+        : notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
