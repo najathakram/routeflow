@@ -12,7 +12,6 @@ import {
   isCounterSaleIncomplete,
   isCounterSaleVoided,
   isCounterSaleNotFound,
-  judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
   paymentMethodOptions,
@@ -360,61 +359,3 @@ describe("auto-print preference: per device, local, never throws", () => {
  * storage cannot say whether "no tender" means On account or a failed tender, nor whether a partial was intended:
  * expected = ON_ACCOUNT 0 / CASH min(tendered, total) / CARD, CHECK total.
  */
-describe("judgeRecoveredSale", () => {
-  const judge = (
-    attempt: { method: "CASH" | "CARD" | "CHECK" | "ON_ACCOUNT"; tendered?: number },
-    total: number,
-    paid: number,
-  ) => judgeRecoveredSale(attempt, { total, paid });
-
-  it("attempt ON_ACCOUNT: On account, recorded, whatever is stored", () => {
-    expect(judge({ method: "ON_ACCOUNT" }, 37.25, 0)).toEqual({ recorded: true, onAccount: true });
-  });
-
-  it.each([
-    ["CASH", { method: "CASH" as const, tendered: 50 }],
-    ["CARD", { method: "CARD" as const }],
-    ["CHECK", { method: "CHECK" as const }],
-  ])("attempt %s with NO stored tender: not recorded, never On account", (_l, attempt) => {
-    expect(judge(attempt, 37.25, 0)).toEqual({ recorded: false, onAccount: false });
-  });
-
-  it("CASH paid in full: recorded", () => {
-    expect(judge({ method: "CASH", tendered: 50 }, 37.25, 37.25)).toEqual({
-      recorded: true,
-      onAccount: false,
-    });
-  });
-
-  it("an INTENDED partial (CASH 20 on 37.25, stored 20) is recorded; the balance stays due", () => {
-    expect(judge({ method: "CASH", tendered: 20 }, 37.25, 20)).toEqual({
-      recorded: true,
-      onAccount: false,
-    });
-  });
-
-  it("stored paid BELOW what was expected is not recorded (CASH 20 on 37.25, stored 10)", () => {
-    expect(judge({ method: "CASH", tendered: 20 }, 37.25, 10)).toEqual({
-      recorded: false,
-      onAccount: false,
-    });
-  });
-
-  it("CARD / CHECK expect the whole total: a partial is not recorded, the full total is", () => {
-    expect(judge({ method: "CARD" }, 37.25, 20).recorded).toBe(false);
-    expect(judge({ method: "CARD" }, 37.25, 37.25).recorded).toBe(true);
-    expect(judge({ method: "CHECK" }, 37.25, 37.25).recorded).toBe(true);
-  });
-
-  it("cash over the total expects the total (the rest was change)", () => {
-    expect(judge({ method: "CASH", tendered: 50 }, 37.25, 37.25).recorded).toBe(true);
-  });
-
-  it("compares in cents (roundMoney): 0.1 + 0.2 vs 0.3 is equal", () => {
-    expect(judge({ method: "CASH", tendered: 0.3 }, 0.3, 0.1 + 0.2).recorded).toBe(true);
-  });
-
-  it("nothing owing (a zero total) is recorded", () => {
-    expect(judge({ method: "CARD" }, 0, 0).recorded).toBe(true);
-  });
-});

@@ -33,7 +33,6 @@ import {
   finalCounterSaleCopy,
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
-  judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
   parseScanField,
@@ -385,24 +384,16 @@ export function CounterSaleScreen() {
       }
       return false;
     }
+    // The SERVER's answer is the verdict (it applied POST's own rule for the method this attempt rang): never re-derived here.
+    // A partly stored tender (not recorded, balance owing) is finished by re-POSTing the SAME key and body; the attempt stays held.
+    if (res.paymentRecorded === false && res.balanceDue > 0) return true;
     attemptRef.current = null;
     setOutcomeUnknown(false);
-    // The server's body cannot say whether "no tender" was On account or a failed tender, nor whether a partial was
-    // intended, so the recovered sale is judged against what THIS screen submitted for the key.
     const { method: sentMethod, amount } = attempt.dto.payment;
-    const verdict = judgeRecoveredSale({ method: sentMethod, tendered: amount }, res);
-    const judged: CounterSaleResponse = {
-      ...res,
-      method: sentMethod,
-      paymentRecorded: verdict.recorded,
-      ...(verdict.recorded
-        ? { paymentErrorCode: undefined }
-        : {
-            paymentErrorCode: res.paymentErrorCode ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
-          }),
-    };
-    setEnteredTender(sentMethod === "CASH" && amount != null && verdict.recorded ? amount : null);
-    finishSale(judged, attempt.next);
+    setEnteredTender(
+      sentMethod === "CASH" && amount != null && res.paymentRecorded !== false ? amount : null,
+    );
+    finishSale({ ...res, method: res.method ?? sentMethod }, attempt.next);
     return false;
   };
 

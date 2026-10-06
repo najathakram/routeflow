@@ -740,26 +740,14 @@ describe("CounterSaleScreen: API contract wiring", () => {
           return screen.findByTestId("counter-sale-receipt");
         };
 
-        it("a FAILED CASH tender (stored: no tender, method ON_ACCOUNT) says payment not recorded, with Record payment, never On account", async () => {
-          await recover({
-            paid: 0,
-            balanceDue: 2.5,
-            change: undefined,
-            method: "ON_ACCOUNT",
-            paymentRecorded: true,
-          });
-          expect(screen.getByTestId("counter-payment-not-recorded")).toHaveTextContent(
-            "Sale recorded — payment not recorded",
-          );
-          expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
-            "href",
-            "/invoices/i1",
-          );
-          expect(screen.queryByTestId("counter-on-account")).toBeNull();
-        });
-
-        it("a recovered CASH sale whose tender failed (by-key ?method=CASH answers paymentRecorded false) shows the not-recorded panel with Record payment", async () => {
-          await recover({
+        it("MUST2: a recovered CASH sale the server says is NOT recorded with a balance due re-POSTs the SAME key and body to finish it", async () => {
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          renderWithProviders(<CounterSaleScreen />);
+          await fillCola();
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await screen.findByTestId("counter-outcome-unknown");
+          lookupAsync.mockResolvedValueOnce({
+            ...sale,
             paid: 0,
             balanceDue: 2.5,
             change: undefined,
@@ -767,19 +755,45 @@ describe("CounterSaleScreen: API contract wiring", () => {
             paymentRecorded: false,
             paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
           });
-          // the by-key request carried the method THIS attempt rang
+          check();
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
           expect(lookupAsync).toHaveBeenCalledWith({ idempotencyKey: "key-1", method: "CASH" });
-          expect(screen.getByTestId("counter-payment-not-recorded")).toHaveTextContent(
+          expect(keyOfCall(1)).toBe(keyOfCall(0)); // never a new key
+          expect(mutateAsync.mock.calls[1][0].dto).toEqual(mutateAsync.mock.calls[0][0].dto);
+          await screen.findByTestId("counter-sale-receipt");
+          expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
+          expect(lookupAsync).toHaveBeenCalledTimes(1); // once, not a loop
+        });
+
+        it("MUST2: when the finishing re-POST still reports payment not recorded, the panel shows (no third send)", async () => {
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          renderWithProviders(<CounterSaleScreen />);
+          await fillCola();
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await screen.findByTestId("counter-outcome-unknown");
+          const stored = {
+            ...sale,
+            paid: 0,
+            balanceDue: 2.5,
+            change: undefined,
+            method: "CASH",
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+          };
+          lookupAsync.mockResolvedValueOnce(stored);
+          mutateAsync.mockResolvedValueOnce({ ...stored, replayed: true });
+          check();
+          expect(await screen.findByTestId("counter-payment-not-recorded")).toHaveTextContent(
             "Sale recorded — payment not recorded",
           );
           expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
             "href",
             "/invoices/i1",
           );
-          expect(screen.queryByTestId("counter-on-account")).toBeNull();
+          expect(mutateAsync).toHaveBeenCalledTimes(2);
         });
 
-        it("an INTENDED partial (CASH 3.00 tendered, the server's total is 5.00, stored 3.00) is recorded, with the balance due and no second collection", async () => {
+        it("MUST1: the SERVER's paymentRecorded wins: an intended partial the server calls recorded is not re-derived as unrecorded, and nothing re-POSTs", async () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           await scan("012345678905");
@@ -789,7 +803,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
           fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
           await screen.findByTestId("counter-outcome-unknown");
-          // the server priced it higher than the screen's estimate (a re-priced line): 3.00 is a partial of 5.00
+          // the server priced it higher than the screen's estimate: stored 3.00 of 5.00, server says recorded
           lookupAsync.mockResolvedValueOnce({
             ...sale,
             total: 5,
@@ -797,20 +811,19 @@ describe("CounterSaleScreen: API contract wiring", () => {
             balanceDue: 2,
             change: undefined,
             method: "CASH",
-            paymentRecorded: false,
-            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+            paymentRecorded: true,
           });
           check();
           await screen.findByTestId("counter-sale-receipt");
           expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
-          expect(screen.queryByRole("link", { name: "Record payment" })).toBeNull();
           expect(screen.getByText("Paid").nextSibling).toHaveTextContent("$3.00");
           expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.00");
+          expect(mutateAsync).toHaveBeenCalledTimes(1);
         });
 
-        it("stored paid BELOW what was tendered is not recorded (CASH 20, stored 1.00)", async () => {
+        it("MUST1: stored paid below the tender but the server says recorded: the receipt follows the server", async () => {
           await recover({ paid: 1, balanceDue: 1.5, method: "CASH", paymentRecorded: true });
-          expect(screen.getByTestId("counter-payment-not-recorded")).toBeInTheDocument();
+          expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
         });
 
         it("a recovered On account sale (the attempt WAS On account) reads as On account with the balance due", async () => {
@@ -905,16 +918,16 @@ describe("CounterSaleScreen: API contract wiring", () => {
           });
         });
 
-        it("a partial stored tender (paymentRecorded false) still says payment not recorded", async () => {
+        it("MUST1: an unrecorded recovered sale with NO balance due (nothing to finish) follows the server's flag", async () => {
           await recover({
-            paid: 1,
-            balanceDue: 1.5,
+            paid: 2.5,
+            balanceDue: 0,
             method: "CASH",
             paymentRecorded: false,
             paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
           });
           expect(screen.getByTestId("counter-payment-not-recorded")).toBeInTheDocument();
-          expect(screen.queryByTestId("counter-on-account")).toBeNull();
+          expect(mutateAsync).toHaveBeenCalledTimes(1);
         });
       });
 
