@@ -136,6 +136,29 @@ describe("BuyerOrdersPage — responsive list", () => {
     expect(within(cards[1]).queryByText(/item/)).toBeNull();
   });
 
+  it("shows the em dash, never $NaN or $0.00, when an order's total is missing, null or not a number", () => {
+    // A missing total is "unknown", not zero: Number(undefined) is NaN and Number(null) is 0,
+    // and both used to print as money.
+    mockOrders = [
+      { ...orderListItem({ id: "55555555-eeee", orderNumber: "ORD-00005" }), total: undefined },
+      { ...orderListItem({ id: "66666666-ffff", orderNumber: "ORD-00006" }), total: null },
+      { ...orderListItem({ id: "77777777-gggg", orderNumber: "ORD-00007" }), total: "oops" },
+      orderListItem({ id: "88888888-hhhh", orderNumber: "ORD-00008", total: 0 }),
+    ] as unknown as BuyerOrderListItem[];
+    renderWithProviders(<BuyerOrdersPage />);
+    const rows = within(screen.getByTestId("buyer-orders-table")).getAllByRole("row");
+    const total = (row: HTMLElement) => within(row).getAllByRole("cell").at(-1)?.textContent;
+    expect(total(rows[1])).toBe("—");
+    expect(total(rows[2])).toBe("—");
+    expect(total(rows[3])).toBe("—");
+    // a real zero total is still money
+    expect(total(rows[4])).toBe("$0.00");
+    const cards = within(screen.getByTestId("buyer-orders-cards")).getAllByRole("link");
+    expect(within(cards[0]).queryByText(/NaN|N\/A/)).toBeNull();
+    expect(within(cards[0]).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
   it("shows the empty state, not an empty card list, when there are no orders", () => {
     mockOrders = [];
     renderWithProviders(<BuyerOrdersPage />);

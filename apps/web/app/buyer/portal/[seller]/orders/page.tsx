@@ -53,6 +53,16 @@ function formatCurrency(amount?: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
+/** The order total as money, or an em dash when the response carried none. A missing total is
+ *  "unknown", not zero: `Number(undefined)` is NaN ("$NaN") and `Number(null)` is 0 ("$0.00"),
+ *  so both are screened out before the local `formatCurrency` runs. */
+function totalLabel(order: { total?: number | string | null }): string {
+  const total = order.total;
+  if (total === undefined || total === null || total === "") return "—";
+  const value = Number(total);
+  return Number.isFinite(value) ? formatCurrency(value) : "—";
+}
+
 /** "N item(s)" from the order's real `lineItems` (GET /buyer/orders returns them; there is no
  *  `itemCount`). Null when the order has no lines or the response carried none, so the caller
  *  prints nothing / an em dash rather than a wrong number (B1130). */
@@ -191,9 +201,7 @@ export default function BuyerOrdersPage() {
                       {formatDate(order.createdAt)}
                       {itemsLabel(order) != null && ` · ${itemsLabel(order)}`}
                     </p>
-                    <span className="text-sm font-semibold text-navy">
-                      {formatCurrency(Number(order.total))}
-                    </span>
+                    <span className="text-sm font-semibold text-navy">{totalLabel(order)}</span>
                   </div>
                 </Link>
               </li>
@@ -248,7 +256,7 @@ export default function BuyerOrdersPage() {
                         />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
-                        {formatCurrency(Number(order.total))}
+                        {totalLabel(order)}
                       </td>
                     </tr>
                   ))}

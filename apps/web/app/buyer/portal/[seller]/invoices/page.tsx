@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
 import type { BuyerInvoiceListItem } from "@routeflow/types";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { buyerApiClient } from "@/lib/buyer-api-client";
+import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,23 +27,6 @@ interface PaginatedResponse {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getStatusVariant(status: string): "success" | "warning" | "danger" | "neutral" {
-  switch (status) {
-    case "PAID":
-      return "success";
-    case "PENDING":
-    case "SENT":
-    case "PARTIALLY_PAID":
-      return "warning";
-    case "OVERDUE":
-    case "CANCELLED":
-    case "VOID":
-      return "danger";
-    default:
-      return "neutral";
-  }
-}
 
 function formatStatus(status: string): string {
   return status
@@ -136,7 +121,12 @@ export default function BuyerInvoicesPage() {
 
       {/* Loading */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-16">
+        <div
+          data-testid="buyer-invoices-loading"
+          role="status"
+          aria-label="Loading invoices"
+          className="flex items-center justify-center py-16"
+        >
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-buyer-500 border-t-transparent" />
         </div>
       ) : invoices.length === 0 ? (
@@ -147,8 +137,51 @@ export default function BuyerInvoicesPage() {
         </div>
       ) : (
         <>
-          {/* Table */}
-          <div className="overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm">
+          {/* Card list — under 640px the 6-column table scrolled sideways inside the viewport, so
+              Status, Amount and Balance sat off-screen; phones get one tappable card per invoice
+              instead (the orders list does the same). */}
+          <ul data-testid="buyer-invoices-cards" className="space-y-3 sm:hidden">
+            {invoices.map((invoice) => (
+              <li key={invoice.id}>
+                <Link
+                  href={`/buyer/portal/${sellerSlug}/invoices/${invoice.id}`}
+                  className="block rounded-xl border border-surface-border bg-white p-4 shadow-sm transition-colors hover:bg-surface-raised"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0 truncate text-sm font-semibold text-navy">
+                      {invoice.invoiceNumber ?? invoice.id.slice(0, 8).toUpperCase()}
+                    </span>
+                    <Badge variant={invoiceStatusVariant(invoice.status)}>
+                      {formatStatus(invoice.status)}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-navy/70">
+                    {fmtDate(invoice.createdAt)} · Due {fmtCalendarDate(invoice.dueDate)}
+                  </p>
+                  <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-surface-border pt-3">
+                    <div>
+                      <dt className="text-xs text-navy/70">Amount</dt>
+                      <dd className="mt-0.5 text-sm font-semibold text-navy">
+                        {formatCurrency(invoice.total)}
+                      </dd>
+                    </div>
+                    <div className="text-right">
+                      <dt className="text-xs text-navy/70">Balance</dt>
+                      <dd className="mt-0.5 text-sm font-semibold text-navy">
+                        {formatCurrency(invoice.balanceDue)}
+                      </dd>
+                    </div>
+                  </dl>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          {/* Table — from 640px up. */}
+          <div
+            data-testid="buyer-invoices-table"
+            className="hidden overflow-hidden rounded-xl border border-surface-border bg-white shadow-sm sm:block"
+          >
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px]">
                 <thead>
@@ -192,7 +225,7 @@ export default function BuyerInvoicesPage() {
                         {fmtCalendarDate(invoice.dueDate)}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={getStatusVariant(invoice.status)}>
+                        <Badge variant={invoiceStatusVariant(invoice.status)}>
                           {formatStatus(invoice.status)}
                         </Badge>
                       </td>
