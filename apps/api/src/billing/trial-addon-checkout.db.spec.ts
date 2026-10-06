@@ -1155,4 +1155,79 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       ]);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // MUST-2 — a lost compare-and-swap in path (c) fails the webhook; nothing is left unowned.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("MUST-2: a lost compare-and-swap in path (c) fails the webhook and leaves no unowned item (real Postgres)", () => {
+    it.each([false, true])(
+      "(flag on=%s) the row changes after the item is created: the created item is deleted, the webhook fails, nothing is booked; the retry adopts exactly one item",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [{ sku: "FORECASTING", quantity: 1 }], // enabled after the session: no line, no item
+          items: [base()],
+        });
+        r.stripeClient.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
+          // a concurrent writer raises the quantity while the item is being created
+          await prisma.tenantAddon.updateMany({
+            where: { tenantId: r.tenantId },
+            data: { quantity: 3 },
+          });
+          const item = {
+            ...stripeItem("si_made", { cents: 0, quantity: args.quantity }),
+            metadata: args.metadata,
+          };
+          r.items.push(item);
+          return item;
+        });
+
+        await expect(r.completed()).rejects.toBeInstanceOf(ConflictException);
+
+        expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledWith("si_made", {
+          proration_behavior: "create_prorations",
+        });
+        expect(r.items.map((i) => i.id)).toEqual(["si_base"]); // nothing unowned left billing
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: null, quantity: 3 });
+        expect(Number((await r.rows())[0].priceSnapshot)).toBe(0);
+        expect((await r.ledger()).filter((e) => e.sku === "FORECASTING")).toEqual([]);
+
+        await r.completed(); // Stripe redelivers: the row is read afresh and billed once
+
+        const row = (await r.rows())[0];
+        expect(row.stripeItemId).toBeTruthy();
+        expect(Number(row.priceSnapshot)).toBe(price.FORECASTING);
+        expect(row.quantity).toBe(3);
+        expect(r.items.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
+        expect((await r.ledger()).filter((e) => e.sku === "FORECASTING")).toEqual([
+          { type: BILLING_EVENTS.ADDON_ENABLED, delta: price.FORECASTING * 3, sku: "FORECASTING" },
+        ]);
+      },
+    );
+
+    it("an ADOPTED unreferenced item on a lost compare-and-swap fails the webhook and is not deleted by it", async () => {
+      const lost = {
+        ...stripeItem("si_lost", { cents: 5000, quantity: 2 }),
+        metadata: { sku: "CUSTOMER_PACK_100" },
+      };
+      const r = await rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [base(), lost],
+      });
+      lost.metadata = { tenantId: r.tenantId, sku: "CUSTOMER_PACK_100" } as any; // an in-app enable item of this tenant
+      r.stripeClient.subscriptionItems.list.mockImplementationOnce(async () => {
+        await prisma.tenantAddon.updateMany({
+          where: { tenantId: r.tenantId },
+          data: { quantity: 4 },
+        });
+        return { data: r.items.map((i: any) => ({ ...i })) };
+      });
+
+      await expect(r.completed()).rejects.toBeInstanceOf(ConflictException);
+
+      expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null, quantity: 4 });
+    });
+  });
 });

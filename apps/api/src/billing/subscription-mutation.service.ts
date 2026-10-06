@@ -2002,7 +2002,9 @@ export class SubscriptionMutationService {
    * created): bill it through the enable path — adopt an unreferenced matching item, else create one
    * (catalog price, the row's quantity) — then adopt it onto the row. Skipped, with a log, when the
    * subscription is annual (online add-ons are monthly items), the plan already bundles the SKU, or
-   * the catalog no longer prices it: the row stays as it is, never retro-billed.
+   * the catalog no longer prices it: the row stays as it is, never retro-billed. A lost compare-and-swap
+   * (the row changed after the item exists) FAILS the call (MUST-2) so the webhook is retried — never a
+   * quiet 200 with an item nothing owns.
    */
   private async billUnbilledRow(
     tenantId: string,
@@ -2026,8 +2028,9 @@ export class SubscriptionMutationService {
     if (!(row.quantity >= 1)) return false; // a row always carries at least one unit
     const quantity = row.quantity;
     const billed = await this.adoptOrCreateAddonItem(tenantId, sku, skuDef, subId, quantity);
+    let adopted: boolean;
     try {
-      const adopted = await this.claimAddonItem(
+      adopted = await this.claimAddonItem(
         tenantId,
         sku,
         row.id,
@@ -2038,15 +2041,25 @@ export class SubscriptionMutationService {
         row.quantity,
         ctx,
       );
-      // The row went away under us: remove the item THIS call created so nothing bills unowned.
-      if (!adopted && billed.createdItemId) {
-        await this.deleteOrphanItem(billed.createdItemId, tenantId, sku);
-      }
-      return adopted;
     } catch (err) {
-      if (billed.createdItemId) await this.deleteOrphanItem(billed.createdItemId, tenantId, sku);
+      // MUST-2: the item THIS call created is removed STRICTLY — a failed removal fails the webhook,
+      // never a customer billed for an item nothing tracks.
+      if (billed.createdItemId) {
+        await this.deleteOrphanItem(billed.createdItemId, tenantId, sku, STRICT_PRORATED);
+      }
       throw err;
     }
+    if (!adopted) {
+      // MUST-2: the row changed under us (switched off / another quantity / given another item). An item is
+      // live in Stripe — created just now, or an unreferenced one adopted above — and no row owns it, so
+      // this can never answer 200: remove what THIS call created (strictly), then fail the webhook so the
+      // retry re-reads the row and lands on a clean case. An adopted orphan is left for that retry.
+      if (billed.createdItemId) {
+        await this.deleteOrphanItem(billed.createdItemId, tenantId, sku, STRICT_PRORATED);
+      }
+      throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
+    }
+    return true;
   }
 
   /**

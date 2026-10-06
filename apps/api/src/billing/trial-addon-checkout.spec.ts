@@ -1119,6 +1119,88 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
       expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
     });
 
+    describe("MUST-2: a lost compare-and-swap in path (c) FAILS the webhook, never a quiet 200", () => {
+      it("the row changed after the item was CREATED: the created item is removed (strictly, with prorations), the webhook fails retryably, nothing is booked", async () => {
+        const h = make({ rows: [addonRow("FORECASTING", { qty: 1 })], items: [baseItem()] });
+        h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
+          h.rows[0].quantity = 5; // a concurrent writer raised it after we read the row
+          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          h.stripeItems.push(item);
+          return item;
+        });
+
+        const err: any = await h.completed().catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_made", {
+          proration_behavior: "create_prorations",
+        });
+        expect(h.stripeItems.map((i) => i.id)).not.toContain("si_made");
+        expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0, quantity: 5 });
+        expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+      });
+
+      it("the cleanup of the created item is STRICT: when the delete fails too, the webhook still fails (and the item is still there to find)", async () => {
+        const h = make({
+          rows: [addonRow("FORECASTING", { qty: 1 })],
+          items: [baseItem()],
+          delFails: true,
+        });
+        h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
+          h.rows[0].active = false; // switched off after we read it
+          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          h.stripeItems.push(item);
+          return item;
+        });
+
+        await expect(h.completed()).rejects.toBeDefined();
+
+        expect(h.stripeItems.map((i) => i.id)).toContain("si_made");
+        expect(h.rows[0]).toMatchObject({ stripeItemId: null });
+      });
+
+      it("an ADOPTED unreferenced item (nothing created by this call) on a lost compare-and-swap fails the webhook too, and is not deleted by it", async () => {
+        const lost = {
+          id: "si_lost",
+          metadata: { tenantId: "t1", sku: "CUSTOMER_PACK_100" },
+          quantity: 2,
+          subscription: "sub_1",
+        };
+        const h = make({
+          rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+          items: [baseItem(), lost],
+        });
+        h.client.subscriptionItems.list.mockImplementationOnce(async () => {
+          h.rows[0].quantity = 3; // the row changes while the orphan is being looked up
+          return { data: [...h.stripeItems] };
+        });
+
+        await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
+
+        expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+        expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+        expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+      });
+
+      it("the retry then adopts normally (the webhook is idempotent)", async () => {
+        const h = make({ rows: [addonRow("FORECASTING", { qty: 1 })], items: [baseItem()] });
+        h.client.subscriptionItems.create.mockImplementationOnce(async (args: any) => {
+          h.rows[0].quantity = 2;
+          const item = { id: "si_made", metadata: args.metadata, quantity: args.quantity };
+          h.stripeItems.push(item);
+          return item;
+        });
+        await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
+
+        await h.completed();
+
+        expect(h.rows[0]).toMatchObject({ priceSnapshot: 19, quantity: 2 });
+        expect(h.rows[0].stripeItemId).toBeTruthy();
+        expect(h.stripeItems.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
+      });
+    });
+
     it("a Stripe failure while deleting an orphan FAILS the webhook (Stripe redelivers) and books nothing; the retry completes", async () => {
       const failing = make({
         rows: [addonRow("CUSTOMER_PACK_100", { active: false })],
