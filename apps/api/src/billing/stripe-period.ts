@@ -43,6 +43,12 @@ export function stripeBaseItem(sub: any, addonItemIds: ReadonlySet<string> = new
  * ONE definition of a "live" Stripe subscription, shared by every guard that must not create or accept a
  * second one: it still bills (or will keep trying to). `incomplete` (never paid), `incomplete_expired`,
  * `canceled` and anything unknown are NOT live.
+ *
+ * `paused` is NOT live ON PURPOSE (SA ruling): a paused subscription collects nothing until someone resumes
+ * it, so a fresh checkout for the tenant is a legitimate way forward rather than a second bill. The cost of
+ * that call is a paused subscription left behind when the new one is applied — tracked separately (B1155),
+ * not solved by widening this predicate: every guard that shares it would then refuse a tenant whose old
+ * subscription is paused.
  */
 const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
   "active",

@@ -1,6 +1,10 @@
 import * as fs from "fs";
 import * as path from "path";
-import { STRIPE_API_VERSION, stripeSubscriptionPeriod } from "./stripe-period";
+import {
+  STRIPE_API_VERSION,
+  isLiveStripeSubscriptionStatus,
+  stripeSubscriptionPeriod,
+} from "./stripe-period";
 
 // #2436 (P0): the Stripe API version is pinned, and the period is read the way dahlia shapes it.
 describe("stripe-period", () => {
@@ -83,5 +87,32 @@ describe("stripe-period", () => {
       items: { data: [{ id: "si_addon", current_period_start: 1, current_period_end: 2 }] },
     };
     expect(stripeSubscriptionPeriod(sub, new Set(["si_addon"]))?.periodEnd).toEqual(new Date(2000));
+  });
+
+  // The ONE liveness predicate shared by the checkout guard, the completion's X1 guard and the duplicate verdict.
+  describe("isLiveStripeSubscriptionStatus", () => {
+    it.each(["active", "trialing", "past_due", "unpaid"])(
+      "%s is live (it still bills or keeps trying to)",
+      (s) => {
+        expect(isLiveStripeSubscriptionStatus(s)).toBe(true);
+      },
+    );
+
+    it.each([
+      "incomplete",
+      "incomplete_expired",
+      "canceled",
+      "paused",
+      "unknown_status",
+      "",
+      undefined,
+      null,
+      7,
+    ])(
+      "%p is NOT live — `paused` deliberately so (SA ruling: it collects nothing until resumed, so a new checkout is a way forward, not a second bill)",
+      (s) => {
+        expect(isLiveStripeSubscriptionStatus(s)).toBe(false);
+      },
+    );
   });
 });
