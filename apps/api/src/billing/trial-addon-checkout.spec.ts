@@ -48,6 +48,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   CHECKOUT_ADDON_EXPAND,
   checkoutAddonItems,
+  listedCheckoutAddonSkus,
   checkoutAddonLineItem,
   toCents,
 } from "./stripe-addon-items";
@@ -192,6 +193,8 @@ interface Opts {
   subStatus?: string;
   /** A DOWNGRADE snapshot taken after the session was created (the stale-checkout branch). */
   newerDowngrade?: boolean;
+  /** The retrieved subscription's own metadata (the SKUs also ride it); default none. */
+  subMetadata?: Record<string, string>;
 }
 
 function make(opts: Opts = {}) {
@@ -304,6 +307,7 @@ function make(opts: Opts = {}) {
     status: canceledSubs.has(id) ? "canceled" : (opts.subStatus ?? "active"),
     customer: opts.subCustomer ?? "cus_1",
     latest_invoice: `in_${id}`,
+    metadata: { ...(opts.subMetadata ?? {}) },
     items: { object: "list", data: stripeItems.map((i) => ({ ...i })) },
   });
   const stripe = {
@@ -379,7 +383,8 @@ function make(opts: Opts = {}) {
           (a) =>
             (where?.entityType == null || a.entityType === where.entityType) &&
             (where?.entityId == null || a.entityId === where.entityId) &&
-            (where?.action == null || a.action === where.action),
+            (where?.action == null || a.action === where.action) &&
+            (where?.meta?.path == null || a.meta?.[where.meta.path[0]] === where.meta.equals),
         );
         return hit ? { id: "audit-found" } : null;
       }),
@@ -2157,6 +2162,202 @@ describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent u
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
       expect(unusableNotices(h)).toHaveLength(1);
     });
+  });
+});
+
+describe("SHOULD-1: a SKU the checkout LISTED but whose item is not recognised throws and alerts — never a second item", () => {
+  const LISTED = "CUSTOMER_PACK_100,FORECASTING";
+  const withListed = (h: ReturnType<typeof make>, listed = LISTED) =>
+    h.session({
+      metadata: {
+        tenantId: "t1",
+        slug: "acme",
+        planKey: "STARTER",
+        interval: "month",
+        addonSkus: listed,
+      },
+    });
+  /** An item whose product came back as a bare id (not expanded): the add-on tag is not readable. */
+  const unexpanded = (id: string, sku: string, cents: number, qty: number) => {
+    const i: any = checkoutItem(id, sku, cents, qty);
+    i.price = { ...i.price, product: "prod_unexpanded" };
+    return i;
+  };
+  const missingNotices = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) => a.action === "ADDON_CHECKOUT_ITEMS_UNRECOGNISED");
+
+  it("every listed item unrecognised: the webhook fails with ADDON_CHECKOUT_ITEM_MISSING, NO item is created (no path (c)), one notice", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")],
+      items: [
+        baseItem(),
+        unexpanded("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+        unexpanded("si_fc", "FORECASTING", 1900, 1),
+      ],
+    });
+
+    const err: any = await h.completed(withListed(h)).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_CHECKOUT_ITEM_MISSING });
+    for (const fn of ["create", "update", "del", "list"] as const) {
+      expect(h.client.subscriptionItems[fn]).not.toHaveBeenCalled(); // never a second item, never a delete
+    }
+    expect(h.rows.map((r) => [r.stripeItemId, Number(r.priceSnapshot)])).toEqual([
+      [null, 0],
+      [null, 0],
+    ]);
+    expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+    const told = missingNotices(h);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+    expect(told[0].meta).toMatchObject({
+      platformAdmin: true,
+      skus: ["CUSTOMER_PACK_100", "FORECASTING"],
+      subscriptionId: "sub_1",
+      checkoutSessionId: "cs_1",
+    });
+    expect(told[0].meta.message).toBe(
+      "Checkout cs_1 for Acme listed add-ons CUSTOMER_PACK_100, FORECASTING but no Stripe item for them was recognised on sub_1 — they were NOT billed here and no second item was created; check the subscription in Stripe.",
+    );
+  });
+
+  it("the alert is written ONCE per session however often the webhook is redelivered (and it keeps failing until fixed)", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+      items: [baseItem(), unexpanded("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+    });
+    const session = withListed(h, "CUSTOMER_PACK_100");
+
+    await expect(h.completed(session)).rejects.toBeInstanceOf(ConflictException);
+    await expect(h.completed(session)).rejects.toBeInstanceOf(ConflictException);
+    await expect(h.completed(session)).rejects.toBeInstanceOf(ConflictException);
+
+    expect(missingNotices(h)).toHaveLength(1);
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+  });
+
+  it("a recognised SKU is still adopted (no stranding); only the unrecognised one fails the webhook", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING")],
+      items: [
+        baseItem(),
+        checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+        unexpanded("si_fc", "FORECASTING", 1900, 1),
+      ],
+    });
+
+    await expect(h.completed(withListed(h))).rejects.toBeInstanceOf(ConflictException);
+
+    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack", priceSnapshot: 50 });
+    expect(h.rows[1]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(missingNotices(h)[0].meta.skus).toEqual(["FORECASTING"]);
+  });
+
+  it("the SKUs on the SUBSCRIPTION's metadata count even when the session carries none", async () => {
+    const h = make({
+      rows: [addonRow("FORECASTING")],
+      items: [baseItem(), unexpanded("si_fc", "FORECASTING", 1900, 1)],
+      subMetadata: { addonSkus: "FORECASTING" },
+    });
+
+    await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
+
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(missingNotices(h)).toHaveLength(1);
+  });
+
+  it("flag ON, session already applied: the redelivery path checks the listed SKUs too", async () => {
+    const h = make({
+      flagOn: true,
+      alreadyApplied: true,
+      status: "ACTIVE",
+      rows: [addonRow("FORECASTING")],
+      items: [baseItem(), unexpanded("si_fc", "FORECASTING", 1900, 1)],
+    });
+
+    await expect(h.completed(withListed(h, "FORECASTING"))).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+  });
+
+  it("control: every listed SKU recognised -> adopted, no alert; an add-on enabled AFTER the session (not listed) still goes through path (c)", async () => {
+    const h = make({
+      rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING", { qty: 1 })],
+      items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+    });
+
+    await h.completed(withListed(h, "CUSTOMER_PACK_100")); // FORECASTING was not listed: enabled later
+
+    expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack" });
+    expect(h.client.subscriptionItems.create).toHaveBeenCalledTimes(1); // FORECASTING's ONE item (path c)
+    expect(h.rows[1].stripeItemId).toBeTruthy();
+    expect(missingNotices(h)).toEqual([]);
+  });
+
+  it("control: a plan-only checkout (nothing listed) is unchanged", async () => {
+    const h = make({ rows: [], items: [baseItem()] });
+    await expect(h.completed()).resolves.toBeUndefined();
+    expect(missingNotices(h)).toEqual([]);
+  });
+
+  it("SHAPE (confirmed against Stripe TEST mode, API 2026-08-26.dahlia, 2026-10-06): the tag is on the EXPANDED product's metadata; item/price metadata are empty; an unexpanded product is a bare id", () => {
+    // retrieved with expand[]=items.data.price.product (a real test-mode subscription made from a Checkout-shaped line)
+    const expanded = {
+      id: "sub_test",
+      metadata: { addonSkus: "CUSTOMER_PACK_100", tenantId: "t1" },
+      items: {
+        data: [
+          {
+            id: "si_base",
+            quantity: 1,
+            metadata: {},
+            price: { metadata: {}, unit_amount: 9900, product: { id: "prod_base", metadata: {} } },
+          },
+          {
+            id: "si_pack",
+            quantity: 4,
+            metadata: {},
+            price: {
+              metadata: {},
+              unit_amount: 5000,
+              product: { id: "prod_pack", metadata: { addonSku: "CUSTOMER_PACK_100" } },
+            },
+          },
+        ],
+      },
+    };
+    expect(checkoutAddonItems(expanded)).toEqual([
+      {
+        itemId: "si_pack",
+        sku: "CUSTOMER_PACK_100",
+        quantity: 4,
+        quantityReadable: true,
+        unitAmountCents: 5000,
+      },
+    ]);
+    // the same subscription retrieved WITHOUT the expand: `price.product` is a string id — nothing recognised,
+    // which is exactly why a SKU the checkout listed (on the metadata) with no recognised item must fail loudly
+    const unexpanded = JSON.parse(JSON.stringify(expanded));
+    for (const i of unexpanded.items.data) i.price.product = `prod_${i.id}`;
+    expect(checkoutAddonItems(unexpanded)).toEqual([]);
+    expect(listedCheckoutAddonSkus(unexpanded.metadata)).toEqual(["CUSTOMER_PACK_100"]);
+  });
+
+  it("listedCheckoutAddonSkus: comma-joined, trimmed, de-duplicated and sorted across the session and subscription metadata", () => {
+    expect(
+      listedCheckoutAddonSkus(
+        { addonSkus: "FORECASTING, CUSTOMER_PACK_100" },
+        { addonSkus: "CUSTOMER_PACK_100,,MSRP" },
+        null,
+        undefined,
+        { addonSkus: 5 },
+      ),
+    ).toEqual(["CUSTOMER_PACK_100", "FORECASTING", "MSRP"]);
+    expect(listedCheckoutAddonSkus({}, null)).toEqual([]);
   });
 });
 

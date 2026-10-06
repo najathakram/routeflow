@@ -58,7 +58,7 @@ import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
 
 export interface SubscribeInput {
@@ -1786,7 +1786,7 @@ export class SubscriptionMutationService {
   async adoptCheckoutAddons(
     tenantId: string,
     stripeSub: any,
-    ctx: { sessionId?: string | null } = {},
+    ctx: { sessionId?: string | null; listedSkus?: readonly string[] } = {},
   ): Promise<void> {
     const subId: string | null = typeof stripeSub?.id === "string" ? stripeSub.id : null;
     if (!subId) return;
@@ -1794,15 +1794,21 @@ export class SubscriptionMutationService {
     for (const item of checkoutAddonItems(stripeSub)) {
       bySku.set(item.sku, [...(bySku.get(item.sku) ?? []), item]);
     }
+    // SHOULD-1: a SKU the checkout LISTED (session/subscription metadata) must have a recognised item. One that
+    // has none (the product not expanded, an unrecognised shape) is an anomaly: its item may well exist and bill,
+    // so it must NEVER fall into (c) below — that would create a SECOND item. It fails the webhook, loudly.
+    const missing = (ctx.listedSkus ?? []).filter((sku) => !bySku.has(sku));
     // (c): active self-serve rows nothing bills and this checkout had no line for.
     const unbilled = await this.prisma.tenantAddon.findMany({
       where: billableAddonWhere({ tenantId, active: true, stripeItemId: null }),
     });
     for (const row of unbilled) {
       const code = addonSkuCode(row);
-      if (code && isSelfServiceAddon(code) && !bySku.has(code)) bySku.set(code, []);
+      if (code && isSelfServiceAddon(code) && !bySku.has(code) && !missing.includes(code)) {
+        bySku.set(code, []);
+      }
     }
-    if (bySku.size === 0) return;
+    if (bySku.size === 0 && missing.length === 0) return;
 
     let changed = false;
     let firstError: Error | null = null;
@@ -1820,7 +1826,74 @@ export class SubscriptionMutationService {
       }
     }
     if (changed) this.entitlements.invalidate(tenantId);
+    if (missing.length > 0) {
+      await this.alertListedAddonItemsMissing(tenantId, subId, missing, ctx.sessionId ?? null);
+      firstError ??= new ConflictException({
+        code: API_ERROR_CODES.ADDON_CHECKOUT_ITEM_MISSING,
+        message:
+          "The checkout listed add-ons that no recognised subscription item carries, so they were not attached. The checkout is retried.",
+      });
+    }
     if (firstError) throw firstError;
+  }
+
+  /**
+   * SHOULD-1: ONE platform notice per checkout session (a redelivery of the same session writes none) naming
+   * the SKUs that were listed but had no recognised item. Never fails the webhook by itself — the caller is
+   * already throwing the coded refusal.
+   */
+  private async alertListedAddonItemsMissing(
+    tenantId: string,
+    subId: string,
+    skus: readonly string[],
+    sessionId: string | null,
+  ): Promise<void> {
+    const label = await this.tenantLabelOf(tenantId);
+    const message =
+      `Checkout ${sessionId ?? "(unknown session)"} for ${label} listed add-ons ${skus.join(", ")} but no Stripe item for ` +
+      `them was recognised on ${subId} — they were NOT billed here and no second item was created; check the ` +
+      `subscription in Stripe.`;
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    await this.raiseAdminAlertOnce(
+      tenantId,
+      AdminAuditAction.ADDON_CHECKOUT_ITEMS_UNRECOGNISED,
+      `${AdminAuditAction.ADDON_CHECKOUT_ITEMS_UNRECOGNISED}:${sessionId ?? subId}`,
+      message,
+      { skus: [...skus], subscriptionId: subId, checkoutSessionId: sessionId },
+    );
+  }
+
+  /**
+   * A platform notice written at most once per `dedupeKey` (the advisory lock serialises two deliveries, the
+   * second sees the first's committed row). Best-effort: a failure is logged and never thrown.
+   */
+  private async raiseAdminAlertOnce(
+    tenantId: string,
+    action: string,
+    dedupeKey: string,
+    message: string,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"admin-alert"}), hashtext(${dedupeKey}))`;
+        const seen = await tx.auditLog.findFirst({
+          where: {
+            tenantId,
+            entityType: ADMIN_AUDIT_ENTITY,
+            action,
+            meta: { path: ["dedupeKey"], equals: dedupeKey },
+          },
+          select: { id: true },
+        });
+        if (seen) return;
+        await writeAdminNotice(tx, { tenantId, action, message, meta: { ...meta, dedupeKey } });
+      });
+    } catch (err) {
+      this.logger.error(
+        `Tenant ${tenantId}: the platform notice "${action}" could not be written: ${(err as Error).message}`,
+      );
+    }
   }
 
   /** The `addon:<tenant>:<sku>` billing lock enable/disable and the admin path hold, as a 503 on timeout. */

@@ -34,6 +34,8 @@ export const AdminAuditAction = {
   STRIPE_DUPLICATE_CHECKOUT: "STRIPE_DUPLICATE_CHECKOUT",
   /** A checkout add-on item (or its row) had no usable quantity: the item was removed and nothing is billed for it. */
   ADDON_CHECKOUT_ITEM_UNUSABLE: "ADDON_CHECKOUT_ITEM_UNUSABLE",
+  /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -75,6 +77,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_UNCOMPED: "Add-on comp removed (now billable)",
   STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
   ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on removed (no usable quantity)",
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",

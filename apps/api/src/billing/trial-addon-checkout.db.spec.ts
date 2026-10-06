@@ -1325,4 +1325,110 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect(await unusable(r.tenantId)).toHaveLength(1);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // SHOULD-1 — a SKU the checkout LISTED whose item is not recognised throws + alerts, never a 2nd item.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("SHOULD-1: a listed SKU with no recognised item fails the webhook, alerts once, and never creates a second item (real Postgres)", () => {
+    const listed = (r: Rig, skus: string) => ({
+      metadata: { tenantId: r.tenantId, planKey: "STARTER", interval: "month", addonSkus: skus },
+    });
+    /** An item whose product came back as a bare id (not expanded): its add-on tag is unreadable. */
+    const unexpanded = (id: string, sku: string, cents: number, quantity: number) => {
+      const i: any = stripeItem(id, { sku, cents, quantity });
+      i.price = { ...i.price, product: `prod_${id}` };
+      return i;
+    };
+    const alerts = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED" },
+      });
+
+    it.each([false, true])(
+      "(flag on=%s) unrecognised listed items: coded 409, NO create/delete, rows untouched, ONE alert however often it is redelivered",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [
+            { sku: "CUSTOMER_PACK_100", quantity: 2 },
+            { sku: "FORECASTING", quantity: 1 },
+          ],
+          items: [
+            base(),
+            unexpanded("si_pack", "CUSTOMER_PACK_100", 5000, 2),
+            unexpanded("si_fc", "FORECASTING", 1900, 1),
+          ],
+        });
+        const session = listed(r, "CUSTOMER_PACK_100,FORECASTING");
+
+        for (let n = 0; n < 3; n += 1) {
+          const err: any = await r.deliver(session).catch((e: unknown) => e);
+          expect(err).toBeInstanceOf(ConflictException);
+          expect(err.getResponse()).toMatchObject({ code: "ADDON_CHECKOUT_ITEM_MISSING" });
+        }
+
+        for (const fn of ["create", "update", "del"] as const) {
+          expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect(r.items.map((i: any) => i.id)).toEqual(["si_base", "si_pack", "si_fc"]); // all still there
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+          [null, 0],
+          [null, 0],
+        ]);
+        const told = await alerts(r.tenantId);
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatchObject({ entityType: "tenant", entityId: r.tenantId });
+        expect(told[0].meta).toMatchObject({
+          skus: ["CUSTOMER_PACK_100", "FORECASTING"],
+          subscriptionId: "sub_qa",
+          checkoutSessionId: r.sessionId,
+          message: expect.stringContaining("no second item was created"),
+        });
+      },
+    );
+
+    it("a recognised listed SKU is still adopted (no stranding); only the unrecognised one fails the webhook", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 2 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          unexpanded("si_fc", "FORECASTING", 1900, 1),
+        ],
+      });
+
+      await expect(r.deliver(listed(r, "CUSTOMER_PACK_100,FORECASTING"))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+
+      expect((await r.rows()).map((x) => [x.sku, x.stripeItemId])).toEqual([
+        ["CUSTOMER_PACK_100", "si_pack"],
+        ["FORECASTING", null],
+      ]);
+      expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+      expect((await alerts(r.tenantId))[0].meta).toMatchObject({ skus: ["FORECASTING"] });
+    });
+
+    it("control: an add-on enabled AFTER the session (not listed) still goes through path (c), no alert", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 2 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+
+      await r.deliver(listed(r, "CUSTOMER_PACK_100"));
+
+      expect(r.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect((await r.rows()).map((x) => !!x.stripeItemId)).toEqual([true, true]);
+      expect(await alerts(r.tenantId)).toHaveLength(0);
+    });
+  });
 });

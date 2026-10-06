@@ -116,3 +116,18 @@ export function checkoutAddonItems(stripeSub: unknown): CheckoutAddonItem[] {
   }
   return out;
 }
+
+/**
+ * The add-on SKUs a checkout LISTED (`addonSkus`, comma-joined, on the session and on the subscription it made),
+ * across any number of metadata objects: trimmed, de-duplicated, sorted. A completion uses it to know which SKUs
+ * MUST have a recognised item — a listed SKU with none is an anomaly, not a row to bill again.
+ */
+export function listedCheckoutAddonSkus(...metadata: unknown[]): string[] {
+  const out = new Set<string>();
+  for (const m of metadata) {
+    const raw = (m as Record<string, unknown> | null | undefined)?.[CHECKOUT_ADDON_SKUS_KEY];
+    if (typeof raw !== "string") continue;
+    for (const sku of raw.split(",")) if (sku.trim()) out.add(sku.trim());
+  }
+  return [...out].sort();
+}

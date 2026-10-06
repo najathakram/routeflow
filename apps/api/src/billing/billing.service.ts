@@ -32,6 +32,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import {
   CHECKOUT_ADDON_EXPAND,
   CHECKOUT_ADDON_SKUS_KEY,
+  listedCheckoutAddonSkus,
   checkoutAddonItems,
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
@@ -1115,6 +1116,12 @@ export class BillingService {
     // X1 — a STALE checkout never completes over a newer billing state. Judged BEFORE anything below
     // can write (the stale-downgrade branch still writes the Stripe ids), and STICKY: once a session was
     // decided to be a duplicate, a redelivery only retries the cancel and never re-judges it.
+    // SA-690: the add-on SKUs this checkout LISTED (on the session and on the subscription it made): each must
+    // have a recognised item at adoption, and a listed SKU that has none is never billed a second time.
+    const adoptCtx = {
+      sessionId: session.id,
+      listedSkus: listedCheckoutAddonSkus(session.metadata, stripeSub?.metadata),
+    };
     const duplicateKey: string = session.id ?? subscriptionId;
     if (await this.hasDuplicateDecision(duplicateKey)) {
       await this.finishDuplicate(session, stripeSub);
@@ -1213,7 +1220,7 @@ export class BillingService {
           // nothing) and runs on a redelivery too — an earlier attempt may have applied the plan
           // and then failed on Stripe before adopting, and a retry that skipped it would leave the
           // customer billed for an item no row owns.
-          await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
+          await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
           return;
         }
       }
@@ -1440,7 +1447,7 @@ export class BillingService {
 
     if (upserted === ALREADY_APPLIED) {
       this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
-      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
+      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
       return;
     }
 
@@ -1476,7 +1483,7 @@ export class BillingService {
     // plan and every active add-on at its STORED snapshot (0 for a trial's unbilled add-on), then the
     // adoption books each add-on's one stored → actual delta. Reversed, the crossing would price
     // the adopted snapshot a second time.
-    await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, { sessionId: session.id });
+    await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }

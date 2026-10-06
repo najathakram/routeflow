@@ -138,6 +138,9 @@
 //                    configured (it would leave an active unbilled add-on); the comp is untouched. Body {code, message}.
 //   SA-690 (checkout add-ons) — ADDON_CHECKOUT_ITEM_UNREADABLE: the 409 a checkout-completion webhook answers with (so Stripe retries) when
 //                    a subscription item the checkout made for an add-on has no readable price or quantity and so cannot be attached to its row.
+//                    ADDON_CHECKOUT_ITEM_MISSING: the 409 of a completion whose session/subscription metadata LISTS an add-on SKU that no
+//                    recognised subscription item carries (e.g. the product was not expanded) — nothing is created for it (a second item would
+//                    double-bill) and the platform is alerted. Body {code, message}.
 //   B987-D — regulated / common refusals, now named here (value == key, byte-identical to what was sent): MONEY_INVARIANT (the 400 of
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
@@ -299,6 +302,7 @@ export const API_ERROR_CODES = {
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
   ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
+  ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
