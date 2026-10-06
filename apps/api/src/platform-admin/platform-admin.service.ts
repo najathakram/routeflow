@@ -38,6 +38,7 @@ import {
   addonSkuCode,
 } from "../billing/plan-catalog.constants";
 import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
+import { billableAddonWhere } from "../billing/addon-row";
 import {
   priceUnbilledAddonsOnActivation,
   unbilledSelfServeSkus,
@@ -1118,8 +1119,10 @@ export class PlatformAdminService {
         ]);
 
         if (wasPaying !== isPaying) {
+          // SA-693 / S4: only BILLABLE add-ons cross into the ledger — a comp is a platform grant (never
+          // revenue), and one billed before it became a comp can still carry its stored snapshot.
           const addons = await tx.tenantAddon.findMany({
-            where: { tenantId: id, active: true },
+            where: billableAddonWhere({ tenantId: id, active: true }),
             select: { priceSnapshot: true, quantity: true, sku: true, addonKey: true },
           });
           // #2460 / SA-464: entering, the contribution is priced off the snapshot this call just

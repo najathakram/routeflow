@@ -3013,6 +3013,15 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(select).toMatchObject({ status: true, readOnlyReason: true });
     });
 
+    it("S4: the activation crossing reads only BILLABLE add-ons (a comp with a stale snapshot is never booked)", async () => {
+      tenantBefore(); // a TRIAL: the crossing runs
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const crossingRead = (prisma as any).tenantAddon.findMany.mock.calls.find(
+        (c: any[]) => c[0]?.select?.sku === true && c[0]?.select?.priceSnapshot === true,
+      );
+      expect(crossingRead?.[0].where).toEqual({ tenantId: TENANT_ID, active: true, isComp: false });
+    });
+
     it("S3: the activation writes its billing MARKER row INSIDE the transaction (not only the best-effort post-commit trail)", async () => {
       tenantBefore();
       const order: string[] = [];

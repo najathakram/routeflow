@@ -460,6 +460,22 @@ describeDb(
       expect(await notices(tenantId)).toHaveLength(0);
     });
 
+    it("S4: a COMP that still carries a stale snapshot (billed before it became a comp) is not booked by the activation crossing — only the base books", async () => {
+      const tenantId = await makeTrialTenant("sa668c-s4", "GROWTH");
+      await prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: { basePriceSnapshot: starterPrice },
+      });
+      await addAddon(tenantId, "CUSTOMER_PACK_100", 2, { isComp: true, priceSnapshot: 25 });
+      await addAddon(tenantId, "FORECASTING", 1, { isComp: true, priceSnapshot: 19 });
+
+      await activate(tenantId, "ref-s4");
+
+      expect(await ledgerSum(tenantId)).toBe(starterPrice); // never + 25 x 2 + 19
+      expect(await events(tenantId, "addon.enabled")).toHaveLength(0);
+      expect(await notices(tenantId)).toHaveLength(0);
+    });
+
     it("SA-668c: a Stripe-billed row and an already-priced row are left alone; only the unbilled, unpriced one is priced", async () => {
       const tenantId = await makeTrialTenant("sa668c-b", "GROWTH");
       await prisma.tenantSubscription.update({
