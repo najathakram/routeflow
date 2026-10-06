@@ -464,6 +464,7 @@ export class OrdersService implements OnApplicationBootstrap {
             phone: true,
             mobile: true,
             email: true,
+            isWalkIn: true,
           },
         },
         // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs
