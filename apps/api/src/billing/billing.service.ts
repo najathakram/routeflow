@@ -48,6 +48,10 @@ import {
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
+  PARKED_CHECKOUT_ESCALATE_AFTER_DAYS,
+  STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+  STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
+  STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
 } from "./config-snapshot-audit.constants";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
@@ -86,6 +90,19 @@ type DuplicateVerdict = {
 class DuplicateCheckoutSignal extends Error {
   constructor(readonly verdict: DuplicateVerdict) {
     super(`duplicate checkout: ${verdict.reason}`);
+  }
+}
+
+/**
+ * B1158: a paid checkout was PARKED (the superseded subscription's bank payment is still processing): nothing was
+ * applied or cancelled; the webhook fails so Stripe redelivers, and the hourly sweep re-judges it. A ConflictException
+ * subtype so the sweep can tell "still parked" from any other retryable conflict.
+ */
+class SupersededPaymentProcessingError extends ConflictException {
+  constructor() {
+    super(
+      "The superseded subscription's payment is still processing — the checkout is parked and retried.",
+    );
   }
 }
 
@@ -822,12 +839,12 @@ export class BillingService {
    * trail row and the platform notice (once per session, written together). Raised only when it would be news:
    *  - the session was not paid: nothing was charged;
    *  - it was applied already (its APPLIED row, or the stored subscription IS this one): a late retry of a
-   *    session that was handled — the cancellation arrives through customer.subscription.deleted;
-   *  - the tenant is on a different LIVE subscription (the A applied, sub_A cancelled, B applied, A retried
-   *    sequence): it is billed fine, and an alert would send an operator to refund a legitimate charge.
-   * The flag-off apply writes no APPLIED row, so "stored is live" is the signal that works for both flags. A
-   * Stripe error reading the stored subscription rethrows (only resource_missing means not live): the webhook is
-   * retried. Best-effort otherwise: a failing write never changes the 200.
+   *    session that was handled — the cancellation arrives through customer.subscription.deleted.
+   * B1157: a LIVE stored subscription no longer silences it. Every apply path now writes the APPLIED marker in its
+   * apply transaction (flag on or off, plan or not), so the A applied, sub_A cancelled, B applied, A retried
+   * sequence is silent through A's marker — while a paid session that was NEVER applied alerts even when the
+   * tenant is billed fine by another subscription (an operator must refund the orphan charge). Best-effort: a
+   * failing write never changes the 200.
    */
   private async noticePaidSessionAlreadyCancelled(
     session: any,
@@ -840,7 +857,6 @@ export class BillingService {
     const storedSubId = stored?.stripeSubId ?? null;
     if (storedSubId === subscriptionId) return;
     if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) return;
-    if (storedSubId && (await this.storedSubscriptionIsLive(storedSubId))) return;
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { name: true, slug: true },
@@ -899,9 +915,31 @@ export class BillingService {
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
   }
 
+  /** The APPLIED marker row of a checkout session: written by EVERY apply path, inside its apply transaction. */
+  private async writeAppliedMarker(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sessionId: string,
+    meta: Prisma.InputJsonObject,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId,
+        action: STRIPE_CHECKOUT_APPLIED_ACTION,
+        entityType: STRIPE_CHECKOUT_ENTITY,
+        entityId: sessionId,
+        meta,
+      },
+    });
+  }
+
   /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
-  private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
-    const row = await this.prisma.auditLog.findFirst({
+  private async hasAppliedMarker(
+    tenantId: string,
+    sessionId: string,
+    db: { auditLog: Pick<Prisma.TransactionClient["auditLog"], "findFirst"> } = this.prisma,
+  ): Promise<boolean> {
+    const row = await db.auditLog.findFirst({
       where: {
         tenantId,
         entityType: STRIPE_CHECKOUT_ENTITY,
@@ -951,10 +989,6 @@ export class BillingService {
     }
   }
 
-  private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
-    return (await this.readStoredSubscription(storedSubId)).live;
-  }
-
   /**
    * B1155: a checkout is about to be applied over a stored subscription that is NOT live but NOT cancelled
    * either (paused / incomplete): it would be left behind, alive in Stripe, with nothing in RouteFlow pointing
@@ -982,6 +1016,205 @@ export class BillingService {
       });
       if (!isTerminalStripeSubscriptionStatus(again?.status)) throw err;
     }
+  }
+
+  /**
+   * B1158: the superseded-subscription cancel, guarded by a fresh re-read of that subscription RIGHT BEFORE it
+   * (the status read at the top of the handler is stale by now, and a bank payment may be in flight on it):
+   *  - now LIVE: do NOT cancel — a retryable throw, so the redelivery re-judges the checkout as a duplicate;
+   *  - terminal / gone: nothing to cancel, the checkout applies;
+   *  - its latest invoice's PaymentIntent is `processing` (ACH / SEPA): PARK the checkout — nothing cancelled, nothing
+   *    applied, ONE trail row + ONE platform notice per session — and fail the webhook so Stripe redelivers (the
+   *    hourly sweep resolves it);
+   *  - otherwise: cancel, as before.
+   */
+  private async cancelSupersededUnlessProcessing(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const fresh = await this.stripe.getSubscriptionPaymentState(storedSubId);
+    if (isLiveStripeSubscriptionStatus(fresh.status)) {
+      throw new ConflictException(
+        "The superseded subscription became live while this checkout was being applied — the checkout is retried.",
+      );
+    }
+    if (fresh.status === null || isTerminalStripeSubscriptionStatus(fresh.status)) return;
+    if (fresh.paymentProcessing) {
+      await this.parkCheckoutForProcessingPayment(
+        session,
+        tenantId,
+        stripeSub,
+        existing,
+        storedSubId,
+      );
+      throw new SupersededPaymentProcessingError();
+    }
+    await this.cancelSupersededSubscription(storedSubId, fresh.status);
+  }
+
+  /** The durable half of a park: the trail row and its platform notice, written together (once per session). */
+  private async parkCheckoutForProcessingPayment(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const newSubId: string = stripeSub.id;
+    const trail = this.checkoutCustomerTrail(session, existing, stripeSub);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    const message =
+      `Paid checkout for ${label} is parked: the tenant's previous subscription ${storedSubId} has a bank payment ` +
+      `still processing; the new paid checkout ${session.id ?? "?"} / subscription ${newSubId} is parked, NOT applied; ` +
+      `nothing was cancelled. RouteFlow re-checks hourly and resolves it automatically (payment succeeds: the new ` +
+      `subscription is treated as a duplicate and cancelled, with a refund notice; payment fails: the new checkout ` +
+      `is applied); do not cancel either subscription by hand.`;
+    this.logger.warn(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing", storedSubId, newSubId, ...trail },
+      {
+        action: STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
+        rethrow: true,
+        alsoWrite: tenant
+          ? (tx) =>
+              writeAdminNotice(tx, {
+                tenantId,
+                action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+                message,
+                meta: {
+                  reason: "superseded_payment_processing",
+                  checkoutSessionId: session.id ?? null,
+                  storedSubId,
+                  newSubId,
+                },
+              })
+          : undefined,
+      },
+    );
+  }
+
+  /**
+   * B1158: hourly, re-run the SAME checkout handling (`onCheckoutCompleted`, the webhook's own path) for every
+   * parked checkout that has no resolution row yet. Handled (applied, or judged a duplicate and cancelled) writes
+   * the PARK_RESOLVED row; parked again (payment still processing) stays open — and once it has been open longer
+   * than PARKED_CHECKOUT_ESCALATE_AFTER_DAYS, ONE escalation notice asks for a manual reconcile in Stripe. One row
+   * failing never stops the others. Idempotent across runs and replicas (LeaderCron; every write dedupes on the
+   * session under the same advisory lock the webhook takes).
+   */
+  @LeaderCron("0 * * * *", "billing.reconcileParkedCheckouts")
+  async reconcileParkedCheckouts(): Promise<void> {
+    if (!this.stripe.isConfigured) return;
+    const parked = await this.prisma.auditLog.findMany({
+      where: {
+        entityType: STRIPE_CHECKOUT_ENTITY,
+        action: STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
+      },
+      orderBy: { createdAt: "asc" },
+      select: { entityId: true, tenantId: true, createdAt: true },
+    });
+    const ids = parked.map((r) => r.entityId).filter((id): id is string => !!id);
+    if (ids.length === 0) return;
+    const done = new Set(
+      (
+        await this.prisma.auditLog.findMany({
+          where: {
+            entityType: STRIPE_CHECKOUT_ENTITY,
+            action: STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
+            entityId: { in: ids },
+          },
+          select: { entityId: true },
+        })
+      ).map((r) => r.entityId),
+    );
+    for (const row of parked) {
+      if (!row.entityId || done.has(row.entityId)) continue;
+      try {
+        await this.reconcileParkedCheckout(row.entityId, row.createdAt);
+      } catch (err) {
+        this.logger.error(
+          `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
+        );
+        // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
+        if (
+          row.tenantId &&
+          Date.now() - row.createdAt.getTime() >
+            PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000
+        ) {
+          await this.escalateParkedCheckout({ id: row.entityId }, row.tenantId, true).catch((e) =>
+            this.logger.error(
+              `billing.reconcileParkedCheckouts: escalation for ${row.entityId} failed (${(e as Error)?.message})`,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  private async reconcileParkedCheckout(sessionId: string, parkedAt: Date): Promise<void> {
+    const session = await this.stripe.getCheckoutSession(sessionId);
+    const tenantId: string | null = session?.metadata?.tenantId ?? null;
+    try {
+      await this.onCheckoutCompleted(session);
+    } catch (err) {
+      if (!(err instanceof SupersededPaymentProcessingError)) throw err;
+      const ageMs = Date.now() - parkedAt.getTime();
+      if (tenantId && ageMs > PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000) {
+        await this.escalateParkedCheckout(session, tenantId);
+      }
+      return; // still parked: stays open
+    }
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "park_resolved" },
+      { action: STRIPE_CHECKOUT_PARK_RESOLVED_ACTION, rethrow: true },
+    );
+  }
+
+  private async escalateParkedCheckout(
+    session: any,
+    tenantId: string,
+    rerunFailing = false,
+  ): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    if (!tenant) return;
+    const label = tenant.name ?? tenant.slug ?? tenantId;
+    const message =
+      `Paid checkout ${session.id} for ${label} has been parked for more than ` +
+      `${PARKED_CHECKOUT_ESCALATE_AFTER_DAYS} days: the previous subscription's bank payment is still processing. ` +
+      `Nothing was applied or cancelled${rerunFailing ? "; the hourly re-run itself is failing for this session" : ""} — manual reconcile in Stripe now.`;
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing_escalated" },
+      {
+        action: STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+        rethrow: true,
+        alsoWrite: (tx) =>
+          writeAdminNotice(tx, {
+            tenantId,
+            action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+            message,
+            meta: {
+              reason: "superseded_payment_processing_escalated",
+              checkoutSessionId: session.id ?? null,
+            },
+          }),
+      },
+    );
   }
 
   /**
@@ -1429,7 +1662,13 @@ export class BillingService {
       stored.status &&
       !isTerminalStripeSubscriptionStatus(stored.status)
     ) {
-      await this.cancelSupersededSubscription(storedSubId, stored.status);
+      await this.cancelSupersededUnlessProcessing(
+        session,
+        tenantId,
+        stripeSub,
+        existingOverride,
+        storedSubId,
+      );
     }
     /** Re-judged under the tenant row lock, from the row as it is NOW (a racing completion or a manual
      *  activation may have committed since the read above). A moved stored id is a retryable conflict. */
@@ -1643,17 +1882,9 @@ export class BillingService {
                 }
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
                 if (session.id) {
-                  await tx.auditLog.create({
-                    data: {
-                      tenantId,
-                      action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                      entityType: STRIPE_CHECKOUT_ENTITY,
-                      entityId: session.id,
-                      meta: {
-                        fromPlanKey: transition.fromPlanKey,
-                        toPlanKey: transition.toPlanKey,
-                      },
-                    },
+                  await this.writeAppliedMarker(tx, tenantId, session.id, {
+                    fromPlanKey: transition.fromPlanKey,
+                    toPlanKey: transition.toPlanKey,
                   });
                 }
                 return row;
@@ -1700,13 +1931,26 @@ export class BillingService {
         }
       } else {
         // Flag OFF (or a checkout that names no plan / a stale one): no plan-transition hook, but the same
-        // tenant row lock (house order: first statement) and the same under-the-lock duplicate re-check as
+        // per-session lock first, then the tenant row lock (the hook path's order) and the same under-the-lock duplicate re-check as
         // the hook path, so a racing completion or manual activation can never be overwritten.
         upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
           this.prisma.$transaction(async (tx) => {
+            // B1157: this path writes the APPLIED marker too (so the paid-but-cancelled notice can tell an
+            // applied session from a never-applied one), under the same one-processor-per-session lock.
+            if (session.id) {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+              if (await this.hasAppliedMarker(tenantId, session.id, tx)) return ALREADY_APPLIED;
+            }
             await lockTenantForLedger(tx, tenantId);
             await recheckUnderLock(tx);
-            return tx.tenantSubscription.upsert(upsertArgs);
+            const row = await tx.tenantSubscription.upsert(upsertArgs);
+            if (session.id) {
+              await this.writeAppliedMarker(tx, tenantId, session.id, {
+                toPlanKey: planKeyForCheckout,
+                subscriptionId,
+              });
+            }
+            return row;
           }, CHECKOUT_TX_OPTIONS),
         );
       }

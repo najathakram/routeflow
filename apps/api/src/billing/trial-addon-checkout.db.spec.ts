@@ -159,6 +159,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     customer: string;
     latestInvoice: string | null;
     items: any[];
+    /** B1158: the latest invoice's PaymentIntent is `processing` (a bank debit in flight). */
+    paymentProcessing?: boolean;
   }
 
   async function rig(opts: {
@@ -259,6 +261,11 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           latest_invoice: sub.latestInvoice,
           items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
         };
+      }),
+      getSubscriptionPaymentState: jest.fn(async (id: string) => {
+        const sub = subs[id];
+        if (!sub) return { status: null, paymentProcessing: false };
+        return { status: sub.status, paymentProcessing: sub.paymentProcessing ?? false };
       }),
       cancelSubscription: jest.fn(async (id: string) => {
         if (cancelFailures > 0) {
@@ -1205,6 +1212,31 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         expect((await r.rows())[0]).toMatchObject({ stripeItemId: "si_pack" });
       },
     );
+
+    it("B1158: an incomplete stored subscription whose bank payment is PROCESSING is never cancelled — the checkout is parked (one trail row, one notice), nothing applied; delivered twice keeps one of each", async () => {
+      const r = await twoSessions();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeSubId: "sub_old" },
+      });
+      r.addSub("sub_old", { items: [], status: "incomplete", paymentProcessing: true });
+
+      await expect(r.completed()).rejects.toThrow();
+      await expect(r.completed()).rejects.toThrow();
+
+      expect((await sub(r)).stripeSubId).toBe("sub_old");
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      const parked = await prisma.auditLog.findMany({
+        where: { entityId: r.sessionId, action: "STRIPE_CHECKOUT_PAYMENT_PROCESSING" },
+      });
+      expect(parked).toHaveLength(1);
+      const told = await prisma.auditLog.findMany({
+        where: { tenantId: r.tenantId, action: "STRIPE_PAID_CHECKOUT_NOT_APPLIED" },
+      });
+      expect(told).toHaveLength(1);
+      expect((told[0].meta as any).reason).toBe("superseded_payment_processing");
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+    });
 
     it("4: a stored subscription Stripe no longer knows is not live either", async () => {
       const r = await twoSessions();
