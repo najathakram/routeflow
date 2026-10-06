@@ -208,11 +208,11 @@ describe("orderFor / ordersFor / invoiceDetailFor: the CUSTOMER gate", () => {
   const staff = { role: "OPERATOR" };
 
   it("a CUSTOMER gets the projection of an order, a page of orders and an invoice detail", () => {
-    expectNoStaffLeaks(orderFor(customer, leakyOrder()) as never, ORDER_LEAK_KEYS);
+    expectNoStaffLeaks(orderFor(customer, leakyOrder()));
     const page = ordersFor(customer, [leakyOrder(), leakyOrder()]);
     expect(page).toHaveLength(2);
-    for (const row of page) expectNoStaffLeaks(row as never, ORDER_LEAK_KEYS);
-    expectNoStaffLeaks(invoiceDetailFor(customer, leakyInvoice()) as never, INVOICE_LEAK_KEYS);
+    for (const row of page) expectNoStaffLeaks(row);
+    expectNoStaffLeaks(invoiceDetailFor(customer, leakyInvoice()));
   });
 
   it("anyone else (staff, no user) gets the SAME object back, untouched", () => {
