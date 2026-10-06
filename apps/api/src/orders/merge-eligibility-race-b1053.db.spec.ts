@@ -403,6 +403,40 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     expect(await qtyOf(winner)).toBe(WQ);
   }, 120_000);
 
+  it("REG-B1053-FORCE-TWO-DRAFTS (no race): a loser with two DRAFT invoices -> nothing deleted, nothing folded", async () => {
+    const { loser, winner } = await pair();
+    await insertInvoice(loser, "DRAFT");
+    await insertInvoice(loser, "DRAFT");
+    await settle(mergeForce());
+    expect(await raw.invoice.count({ where: { orderId: loser } })).toBe(2);
+    expect(await exists(loser)).toBe(true);
+    expect(await qtyOf(winner)).toBe(WQ);
+  }, 120_000);
+
+  it("REG-B1053-DELETE-ORDER: deleteOrder interleaved on a second client -> the merge defers (no raw 40P01)", async () => {
+    const { loser, winner } = await pair();
+    const holder = await pgClient();
+    const watcher = await pgClient();
+    try {
+      // deleteOrder's lock-free shape: items first, no Order row lock, order row after.
+      await holder.query("BEGIN");
+      await holder.query(`DELETE FROM "OrderItem" WHERE "orderId" = $1`, [loser]);
+      let done = false;
+      const merged = settle(mergeAuto()).then((r) => ((done = true), r));
+      await pollUntil(watcher, () => done);
+      await holder.query(`DELETE FROM "Order" WHERE id = $1`, [loser]).catch(() => undefined);
+      await holder.query("COMMIT").catch(() => undefined);
+      const out = await merged;
+      expect((out.error as any)?.meta?.code).not.toBe("40P01");
+      if (out.error) expect(isMergeContention(out.error)).toBe(true);
+      expect(await qtyOf(winner)).toBe(WQ);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      await holder.end();
+      await watcher.end();
+    }
+  }, 120_000);
+
   it("REG-B1053-LINE: a loser line edited between the read and the lock defers the merge", async () => {
     const { loser, winner } = await pair();
     raceBeforeTx(async () => {

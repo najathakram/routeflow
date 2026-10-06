@@ -78,8 +78,24 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       skipAutoMerge: false,
     });
   });
+  it("force skips a loser with two DRAFT invoices at the pre-read (C')", async () => {
+    const db = {
+      order: { findMany: jest.fn(async () => [order("a"), order("b")]) },
+      invoice: { groupBy: jest.fn(async () => [{ orderId: "b", _count: { _all: 2 } }]) },
+    };
+    const { group } = await readMergeGroup(db, "c-1", "force");
+    expect(group.map((o: any) => o.id)).toEqual(["a"]);
+    const one = {
+      ...db,
+      invoice: { groupBy: jest.fn(async () => [{ orderId: "b", _count: { _all: 1 } }]) },
+    };
+    expect((await readMergeGroup(one, "c-1", "force")).group).toHaveLength(2);
+  });
   it("readMergeGroup reads through that predicate, newest first, lines in display order", async () => {
-    const db = { order: { findMany: jest.fn(async () => [order("a")]) } };
+    const db = {
+      order: { findMany: jest.fn(async () => [order("a")]) },
+      invoice: { groupBy: jest.fn(async () => []) },
+    };
     await readMergeGroup(db, "c-1", "force");
     const args = (db.order.findMany.mock.calls[0] as any[])[0];
     expect(args.where).toEqual({ customerId: "c-1", ...mergeEligibleWhere("force") });
@@ -159,8 +175,13 @@ describe("deleteLoserGuarded", () => {
     const tx = fakeTx([]);
     await deleteLoserGuarded(tx, "loser-1", "force");
     expect(tx.order.deleteMany).toHaveBeenCalledWith({
-      where: { id: "loser-1", ...mergeEligibleWhere("force") },
+      where: { id: "loser-1", ...mergeEligibleWhere("force"), invoices: { none: {} } },
     });
+  });
+  it("force's delete guard fails closed on ANY remaining invoice (C')", async () => {
+    const tx = fakeTx([]);
+    await deleteLoserGuarded(tx, "loser-1", "force");
+    expect((tx.order.deleteMany.mock.calls[0] as any[])[0].where.invoices).toEqual({ none: {} });
   });
   it("count !== 1 aborts the fold as contention (never a silent delete-by-id)", async () => {
     const tx = fakeTx([]);
@@ -170,6 +191,18 @@ describe("deleteLoserGuarded", () => {
 });
 
 describe("contention mapping + caller wiring", () => {
+  it.each(["55P03", "40P01", "40001"])(
+    "a raw %s inside the merge tx maps to MERGE_IN_PROGRESS (D)",
+    (code) => {
+      let err: any;
+      try {
+        mapLockError(Object.assign(new Error("x"), { meta: { code } }));
+      } catch (e) {
+        err = e;
+      }
+      expect(isMergeContention(err)).toBe(true);
+    },
+  );
   it("a raw 55P03 from the write phase maps to MERGE_IN_PROGRESS; other errors pass through", () => {
     expect(() =>
       mapLockError(

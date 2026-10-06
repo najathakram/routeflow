@@ -62,9 +62,15 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
       };
 }
 
-/** The loser delete's own predicate: `force` has already removed the open DRAFT mirror by then. */
+/**
+ * The loser delete's own predicate. `force` has removed the (single) open DRAFT mirror by then, so it
+ * additionally requires NO invoice at all: a second DRAFT partial (pre-delivery partials stay DRAFT) would
+ * be orphaned by the FK SET NULL and its lines billed twice, so the delete fails closed.
+ */
 function loserDeleteWhere(kind: MergeKind): Prisma.OrderWhereInput {
-  return mergeEligibleWhere(kind);
+  return kind === "force"
+    ? { ...mergeEligibleWhere(kind), invoices: { none: {} } }
+    : mergeEligibleWhere(kind);
 }
 
 /** The fold group exactly as the merge methods compute it, from any client (`forTenant()` or a tx). */
@@ -85,15 +91,29 @@ export async function readMergeGroup(
     },
     orderBy: { updatedAt: "desc" },
   });
+  // force: a loser with MORE THAN ONE DRAFT invoice is skipped (only the oldest mirror is removed with it)
+  const eligible = kind === "force" ? await withoutMultiDraftOrders(db, found) : found;
   // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
   const group = sameFulfilPathAsWinner(
-    unshipped(found),
+    unshipped(eligible),
     kind === "auto" ? focusOrderId : undefined,
   );
   return {
     group,
     unitAware: group.length > 1 && group.some((o) => o.lineItems.some(unitAware.isUnitAwareLine)),
   };
+}
+
+async function withoutMultiDraftOrders(db: any, found: MergeOrder[]): Promise<MergeOrder[]> {
+  if (found.length === 0) return found;
+  const rows: Array<{ orderId: string | null; _count: { _all: number } }> =
+    await db.invoice.groupBy({
+      by: ["orderId"],
+      where: { orderId: { in: found.map((o) => o.id) }, status: InvoiceStatus.DRAFT },
+      _count: { _all: true },
+    });
+  const multi = new Set(rows.filter((r) => r._count._all > 1).map((r) => r.orderId));
+  return found.filter((o) => !multi.has(o.id));
 }
 
 /** Ordered ids + each order's updatedAt + a fingerprint of its (non-cancelled) lines. */
