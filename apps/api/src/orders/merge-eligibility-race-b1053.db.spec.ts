@@ -469,15 +469,26 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
         },
         holder: holderError?.code,
       });
-      if (holderError) {
-        // the holder was the deadlock victim: the merge folded the loser normally
-        expect(holderError.code).toBe("40P01");
-        expect(out.error).toBeUndefined();
-      } else {
-        // the merge lost: a coded contention, and nothing was folded into the winner
-        expect(isMergeContention(out.error)).toBe(true);
-        expect(await qtyOf(winner)).toBe(WQ);
-      }
+      const orphanItems = await raw.orderItem.count({ where: { orderId: loser } });
+      const loserGone = !(await exists(loser));
+      // Branch A: the merge deferred, nothing was folded, and the holder's delete committed.
+      const branchA =
+        isMergeContention(out.error) &&
+        holderError === undefined &&
+        (await qtyOf(winner)) === WQ &&
+        loserGone &&
+        orphanItems === 0;
+      // Branch B: the holder was the deadlock victim; the merge completed, the loser is gone exactly
+      // once, the winner holds both quantities and no OrderItem is orphaned.
+      const branchB =
+        holderError?.code === "40P01" &&
+        out.error === undefined &&
+        loserGone &&
+        (await qtyOf(winner)) === WQ + LQ &&
+        orphanItems === 0;
+      // eslint-disable-next-line no-console
+      console.log("B1053 DELETE-ORDER branch", { branchA, branchB });
+      expect([branchA, branchB].filter(Boolean)).toHaveLength(1);
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       await holder.end();
