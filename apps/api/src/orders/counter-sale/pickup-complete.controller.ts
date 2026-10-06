@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Headers,
@@ -16,7 +15,7 @@ import { RolesGuard } from "../../auth/guards/roles.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
-import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { requireIdempotencyKey } from "./required-idempotency-key";
 import { PickupCompleteDto } from "./pickup-complete.dto";
 import { PickupCompleteService } from "./pickup-complete.service";
 
@@ -33,26 +32,6 @@ import { PickupCompleteService } from "./pickup-complete.service";
 export class PickupCompleteController {
   constructor(private readonly pickup: PickupCompleteService) {}
 
-  /**
-   * Same rules as CounterSaleController.normalizeKey (1-128 printable ASCII, no spaces, REQUIRED). A copy, not
-   * an import: that method is private to a file this lane does not edit; dedupe once both are on one branch.
-   */
-  private normalizeKey(raw: string | undefined): string {
-    const key = raw?.trim();
-    if (!key) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED,
-        message: "Idempotency-Key header is required to complete a pickup",
-      });
-    }
-    if (!/^[\x21-\x7e]{1,128}$/.test(key)) {
-      throw new BadRequestException(
-        "Idempotency-Key must be at most 128 printable characters with no spaces",
-      );
-    }
-    return key;
-  }
-
   @Post(":id/pickup-complete")
   @HttpCode(HttpStatus.OK)
   @UseGuards(RolesGuard)
@@ -64,6 +43,6 @@ export class PickupCompleteController {
     @CurrentUser() user: JwtPayload,
     @Headers("Idempotency-Key") rawKey?: string,
   ) {
-    return this.pickup.complete(id, dto, user, this.normalizeKey(rawKey));
+    return this.pickup.complete(id, dto, user, requireIdempotencyKey(rawKey, "complete a pickup"));
   }
 }

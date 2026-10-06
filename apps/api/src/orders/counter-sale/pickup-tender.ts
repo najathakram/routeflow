@@ -1,5 +1,6 @@
 import { roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { isTender } from "./counter-sale-readback";
 
 /**
  * The response figures of POST /orders/:id/pickup-complete, read back from what is STORED. Payment rules
@@ -27,14 +28,6 @@ export type InvoiceRow = {
   status?: string;
   payments?: PayRow[];
 };
-
-/**
- * A payment taken at the till (cash / card / check): not a credit-note or advance application.
- * scan-ok: draft-payment-not-void — "was a tender already recorded?" is asked of a VOIDED one as "no",
- * and the till never writes a DRAFT payment (recordPayment's default status is PAID).
- */
-export const isTender = (p: { method?: string; status?: string }) =>
-  p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE";
 
 /**
  * Is this stored payment THIS hand-over's tender? A tender created at or after `handedOverAt`. With no
