@@ -126,6 +126,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   interface Rig {
     tenantId: string;
     billing: BillingService;
+    mutations: SubscriptionMutationService;
     items: any[];
     stripeClient: any;
     completed: () => Promise<void>;
@@ -321,6 +322,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     return {
       tenantId: tenant.id,
       billing,
+      mutations,
       items,
       stripeClient,
       completed,
@@ -1102,5 +1104,55 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         noItemWrites(r);
       },
     );
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // MUST-1 — a LAPSED trial (READ_ONLY + trial_expired / trial_cancelled) keeps its add-ons.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("MUST-1: a lapsed trial keeps its add-ons across the plan pick and the checkout bills them (real Postgres)", () => {
+    const lapse = (tenantId: string, readOnlyReason: string | null) =>
+      prisma.tenant.update({
+        where: { id: tenantId },
+        data: { status: TenantStatus.READ_ONLY, readOnlyReason },
+      });
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "READ_ONLY + %s: subscribe({planKey, cycle}) keeps the rows active and unbilled, and checkoutAddonLines bills them",
+      async (reason) => {
+        const r = await rig({
+          rows: [
+            { sku: "CUSTOMER_PACK_100", quantity: 2 },
+            { sku: "FORECASTING", quantity: 1 },
+          ],
+          items: [base()],
+        });
+        await lapse(r.tenantId, reason);
+
+        await r.mutations.subscribe(
+          r.tenantId,
+          { planKey: "STARTER", cycle: "MONTHLY" },
+          "admin-1",
+        );
+
+        expect((await r.rows()).map((x) => [x.sku, x.active, x.stripeItemId, x.quantity])).toEqual([
+          ["CUSTOMER_PACK_100", true, null, 2],
+          ["FORECASTING", true, null, 1],
+        ]);
+        const lines = await r.mutations.checkoutAddonLines(r.tenantId, "month");
+        expect(lines.skus).toEqual(["CUSTOMER_PACK_100", "FORECASTING"]);
+        expect(lines.lineItems.map((l: any) => l.quantity)).toEqual([2, 1]);
+      },
+    );
+
+    it("READ_ONLY with another reason (a cancelled paid subscription) is not a trial: the omitted add-ons are dropped", async () => {
+      const r = await rig({ rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }], items: [base()] });
+      await lapse(r.tenantId, "subscription_cancelled");
+
+      await r.mutations.subscribe(r.tenantId, { planKey: "STARTER", cycle: "MONTHLY" }, "admin-1");
+
+      expect((await r.rows()).map((x) => [x.sku, x.active])).toEqual([
+        ["CUSTOMER_PACK_100", false],
+      ]);
+    });
   });
 });

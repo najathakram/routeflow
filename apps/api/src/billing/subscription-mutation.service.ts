@@ -223,6 +223,21 @@ export type AddonBilling = AddonBillingMode;
  * Payment rails (Stripe card capture) are orthogonal (BillingService/StripeService);
  * this service owns the internal entitlement state.
  */
+/**
+ * SA-690 (MUST-1): a trial keeps its self-serve add-ons across the plan pick — and so does a LAPSED one,
+ * a tenant that is READ_ONLY because its trial expired or was cancelled (its rows are still the unbilled
+ * trial rows the card checkout is meant to bill). Any other READ_ONLY reason (a cancelled paid
+ * subscription) is not a trial. Used ONLY to decide what subscribe() drops; `wasTrial` keeps its other
+ * meanings (the TRIAL_CONVERTED event, `trialConvertedAt`).
+ */
+export function keepsTrialAddons(t: { status: string; readOnlyReason?: string | null }): boolean {
+  return (
+    t.status === "TRIAL" ||
+    (t.status === "READ_ONLY" &&
+      (t.readOnlyReason === "trial_expired" || t.readOnlyReason === "trial_cancelled"))
+  );
+}
+
 @Injectable()
 export class SubscriptionMutationService {
   constructor(
@@ -328,7 +343,7 @@ export class SubscriptionMutationService {
     const [tenant, priorSub] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true, plan: true, class: true, deletedAt: true },
+        select: { status: true, plan: true, class: true, deletedAt: true, readOnlyReason: true },
       }),
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },
@@ -383,10 +398,10 @@ export class SubscriptionMutationService {
     // SECOND one. Remove the billed items FIRST (Stripe-first, exactly like disableAddon); a Stripe
     // failure refuses the whole subscribe before anything is written. Read pre-tx (no tx held open
     // across a network call); the locked re-read below refuses, retryably, if a billed row appeared.
-    // SA-690: a TRIAL keeps its add-ons across the plan pick (see `toDisable` below), so nothing is
-    // dropped and no item is removed for it.
+    // SA-690: a TRIAL keeps its add-ons across the plan pick (see `toDisable` below) — and so does a lapsed
+    // one (MUST-1, `keepsTrialAddons`) — so nothing is dropped and no item is removed for it.
     const droppedBilled = (
-      tenant.status === "TRIAL"
+      keepsTrialAddons(tenant)
         ? []
         : await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } })
     )
@@ -423,6 +438,7 @@ export class SubscriptionMutationService {
             deletedAt: true,
             name: true,
             slug: true,
+            readOnlyReason: true,
           },
         }),
         tx.tenantSubscription.findUnique({
@@ -510,13 +526,13 @@ export class SubscriptionMutationService {
       }
       // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
       // is not even allowed to name must not be revoked by omitting it.
-      // SA-690: and a TRIAL's add-ons are never dropped here. The plan pick sends no add-ons (the
+      // SA-690: and a TRIAL's add-ons (a lapsed trial's too, MUST-1 `keepsTrialAddons`) are never dropped here. The plan pick sends no add-ons (the
       // choose-plan call is `{planKey, cycle}`), so reading "none named" as "drop them" switched off
       // every add-on the trial had enabled — and the card checkout that bills them never saw one. They
       // stay on, price 0 and unbilled, until that checkout puts them on Stripe items; the crossing
       // below books them through `bookAddonsOnCrossing` like any other kept add-on.
       // SA-693: an ACTIVE comp is never the tenant's to drop either (`compCodes`).
-      const toDisable = wasTrial
+      const toDisable = keepsTrialAddons(lockedTenant)
         ? []
         : [...priorByCode.keys()].filter(
             (c) => !desiredNow.has(c) && !compCodes.has(c) && isSelfServiceAddon(c),
