@@ -4727,6 +4727,7 @@ export class OrdersService implements OnApplicationBootstrap {
         : {};
     // WP3: hoisted for the same reason — the credit guard below runs inside the tx.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
+    const carrier = await carrierGuard.carrierEditGuard(this, order); // SA-696, read off the tx's connection
 
     const { subtotal, tax, total, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
@@ -5130,7 +5131,10 @@ export class OrdersService implements OnApplicationBootstrap {
         // is always PENDING/CONFIRMED/OUT_FOR_DELIVERY here — see the
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
-        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
+        const blockCredits = await carrierGuard.blockCreditsUnderLock(tx, order.id, carrier); // SA-696
+        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver, undefined, {
+          blockCredits,
+        });
         await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING

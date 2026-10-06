@@ -185,6 +185,24 @@ export async function decrementStockForSale(
   }
 }
 
+/** SA-696: the coded 409 for ANY non-zero delta of an order with the carrier (a reduction wins a mix). */
+function carrierLineSetRefusal(deltas: number[]): void {
+  const reduces = deltas.some((d) => d < 0);
+  throw new ConflictException(
+    reduces
+      ? {
+          code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_REDUCE,
+          message:
+            "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+        }
+      : {
+          code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_ADD,
+          message:
+            "This order is already with the carrier. Create a new order for the extra items.",
+        },
+  );
+}
+
 /**
  * P5-08b + WP1 stock settle — validates the delta between the order's
  * pre-edit line set and the edited (post-edit) active line set, THEN
@@ -358,15 +376,10 @@ export async function settleStockForEdit(
     if (delta !== 0) deltas.set(id, delta);
   }
   if (deltas.size === 0) return;
-  // B1082 (B2): a carrier order WITH the carrier is not reduced: a removal / qty decrease would put its stock
-  // back on the shelf while the parcel is still out (returns go through the return flow).
-  if (opts?.blockCredits && [...deltas.values()].some((d) => d < 0)) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_REDUCE,
-      message:
-        "This order is already with the carrier. Record a return instead of reducing or removing lines.",
-    });
-  }
+  // B1082 (B2) + SA-696: a carrier order WITH the carrier has a fixed line set. A removal / decrease would
+  // put its stock back on the shelf while the parcel is still out (returns go through the return flow);
+  // an add / increase would grow a shipment that already left (extra items are a new order).
+  if (opts?.blockCredits) carrierLineSetRefusal([...deltas.values()]);
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
