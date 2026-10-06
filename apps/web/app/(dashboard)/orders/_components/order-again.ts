@@ -18,6 +18,7 @@ export const ORDER_AGAIN_COPY = {
   confirmAdd: "Add lines",
   confirmCancel: "Cancel",
   unavailable: "Suggestions unavailable",
+  addFailed: "Couldn't add those items. Try again.",
 } as const;
 
 /** "3 items are no longer available" — inactive / retired (or deleted) products are skipped. */

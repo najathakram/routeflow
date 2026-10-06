@@ -430,6 +430,37 @@ describe("Order again", () => {
     expect(mockFetchUnits).toHaveBeenCalledTimes(1);
   });
 
+  it("an error while adding is caught with a fixed toast and the in-flight guard resets", async () => {
+    // The first toast (the "Added N lines" one) throws: the add itself landed, then the handler failed.
+    mockToast.mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    await openWithCustomer();
+    await pickOrder(/ORD-o2/);
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Couldn't add those items. Try again.",
+          variant: "error",
+        }),
+      ),
+    );
+    await waitFor(() => expect(lineFor("Sample Soda")).toBeTruthy());
+
+    // The guard was released: a second Order again (confirmed, the order has a line now) goes through.
+    await pickOrder(/ORD-o2/);
+    fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Add lines" }));
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Added 1 line from ORD-o2" }),
+      ),
+    );
+    expect(
+      (lineFor("Sample Soda").querySelector('input[aria-label="Quantity"]') as HTMLInputElement)
+        .value,
+    ).toBe("10");
+  });
+
   it("Escape closes the menu (not the order) and gives focus back to the button", async () => {
     await openWithCustomer();
     const trigger = screen.getByRole("button", { name: "Order again" });

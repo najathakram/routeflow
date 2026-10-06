@@ -9,6 +9,7 @@ import type {
 import { fetchProductUnits, productUnitsKey } from "@/lib/api/product-units";
 import { buildUnitOptions, type UnitOption } from "@/lib/unit-options";
 import {
+  ORDER_AGAIN_COPY,
   planOrderAgain,
   repackMessage,
   unavailableMessage,
@@ -85,6 +86,9 @@ export function useOrderSuggestionActions({ suggestions, addLine, tierFor, toast
     orderAgainBusy.current = true;
     try {
       await addOrderLines(order);
+    } catch {
+      // Never an unhandled rejection: say so, and let the operator try again (the guard resets below).
+      toast({ title: ORDER_AGAIN_COPY.addFailed, variant: "error" });
     } finally {
       orderAgainBusy.current = false;
     }
