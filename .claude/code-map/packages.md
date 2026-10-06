@@ -471,3 +471,14 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 
 - `api/fulfilment.ts` (#3188) — NEW: `FULFILMENT_MODE_VALUES`/`FulfilmentMode`, `COUNTER_SALES_MODE_VALUES`/`CounterSalesMode`, `FulfilmentMethod`, `FulfilmentCapability`, `TenantCapabilities`; `api/features.ts` imports `TenantCapabilities` for the `capabilities` field of the effective-features response; `api/error-codes.ts` +`FULFILMENT_MODE_NEEDS_FLEET`.
 - `api/price-history.ts` (#3192) — NEW: `PriceHistorySource`, `PriceHistoryRow`, `PriceHistorySummary`, `PriceHistoryResponse`. Both files are re-exported from `index.ts`.
+
+## Landed 2026-10-05 (window 6)
+
+### `@routeflow/types`
+
+- `api/profiles.ts` (#3199) — NEW: `BUSINESS_PROFILE_KEYS`/`BusinessProfileKey`, `BusinessProfileSummary`, `BusinessProfileListResponse`, `BusinessProfilePlan`, `ApplyBusinessProfileRequest`, `ConfirmBusinessProfileRequest` (adds `planFingerprint`), `BusinessProfilePreviewResponse` (extends `FeaturePreviewResponse`), `BusinessProfileApplyResponse`; re-exported from `index.ts`.
+- `api/fulfilment.ts` (#3199) — +`FLEET_MODULE_KEYS` (for the web's setup copy; the api keeps its own `FLEET_KEYS` literal, pinned by `fleet-keys-parity.spec.ts`).
+- `api/error-codes.ts` — +`PRICE_ADJUSTMENT_PARTIAL` (#3161) and +`BUSINESS_PROFILE_UNKNOWN`, `BUSINESS_PROFILE_UNAVAILABLE`, `BUSINESS_PROFILE_BILLING_FAILED`, `PROFILE_PLAN_CHANGED` (#3199); mirrored in `apps/mobile/__tests__/__mocks__/@routeflow/types.js`.
+- `api/error-codes.ts` — +`ADDON_ANNUAL_NOT_SUPPORTED`, `ADDON_INCLUDED_IN_PLAN`, `ADDON_BILLING_PENDING_CHECKOUT` (#3129); +`ORDER_WITH_CARRIER_NO_REDUCE`, `INVOICE_WITH_CARRIER_NO_LINE_CHANGE` (#3219); both batches mirrored in the mobile types mock.
+- `api/order-cancel.ts` (#3219) — NEW: `OrderCancelBlockedReason` (`"WITH_CARRIER"`), `OrderCancelBlockedField`; re-exported from `index.ts`.
+- `api/error-codes.ts` + `api/invoices.ts` (#3225) — +`PRICE_ADJUSTMENT_OVERPAYS`, `PRICE_ADJUSTMENT_REFUSED` (mirrored in the mobile types mock); `invoices.ts` +`PriceAdjustmentOverpaidInvoice`, `PriceAdjustmentOverpaysBody`, `PriceAdjustmentPartialBody` (`applied`, one of `refused` / `syncFailed`, `skipped`). Used by `invoices/price-adjustment-ledger.ts` and web `lib/price-adjustment-failure.ts`.

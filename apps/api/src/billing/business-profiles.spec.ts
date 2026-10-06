@@ -21,6 +21,7 @@ import {
   unavailableModes,
   type BusinessProfileState,
 } from "./business-profiles";
+import * as featureRegistry from "./feature-registry";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { FLAG_KEYS } from "./plan-catalog.constants";
 import { deriveFulfilmentCapability } from "./fulfilment-capability";
@@ -182,11 +183,6 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
   it.each([
     ["delivery_distributor", { methods: ["ROUTE"], counter: "off", staffOpensAs: "order" }],
     ["shipping_wholesaler", { methods: ["SHIP"], counter: "off", staffOpensAs: "order" }],
-    ["in_store_retailer", { methods: ["PICKUP"], counter: "always", staffOpensAs: "counter" }],
-    [
-      "in_store_shipping_retailer",
-      { methods: ["PICKUP", "SHIP"], counter: "always", staffOpensAs: "counter" },
-    ],
   ])("%s lands on a consistent capability", (key, expected) => {
     const p = profile(key);
     const fleet = toBusinessProfileSummary(p).grants.length > 0;
@@ -196,6 +192,88 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
       fleet,
     });
     expect(cap).toMatchObject({ ...expected, consistent: true, fleet });
+  });
+
+  // SA-666a/b: the in-store modes are UNAVAILABLE in the registry today (no counter flow), so a
+  // stored pickup / pickup_ship derives as unset (ROUTE + SHIP, staff opens an order) while
+  // counter_sales "on" still offers the optional counter. The registry is as shipped here.
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "%s (%s, registry unavailable today) derives as unset with an optional counter",
+    (key, mode) => {
+      const p = profile(key);
+      expect(p.modes.fulfilment_model).toBe(mode);
+      expect(p.modes.counter_sales).toBe("on");
+      expect(
+        FEATURE_REGISTRY.find((r) => r.key === "fulfilment_model")!.config!.modes[mode],
+      ).toMatchObject({ available: false });
+      expect(
+        deriveFulfilmentCapability({
+          mode: p.modes.fulfilment_model,
+          counterSales: p.modes.counter_sales!,
+          fleet: false,
+        }),
+      ).toEqual({
+        methods: ["ROUTE", "SHIP"],
+        staffDefault: "ROUTE",
+        staffOpensAs: "order",
+        portalMethods: [],
+        portalDefault: null,
+        counter: "optional",
+        fleet: false,
+        consistent: true,
+      });
+    },
+  );
+});
+
+// The twin of the cases above with the registry mode stubbed AVAILABLE: what the same profiles
+// derive once the counter-sale work flips the pickup modes on (no production-code change).
+describe("no second resolver — the in-store profiles once the registry offers pickup", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function stubPickupAvailable() {
+    const real = featureRegistry.featureDefByKey;
+    return jest.spyOn(featureRegistry, "featureDefByKey").mockImplementation((key: string) => {
+      const def = real(key);
+      if (key !== "fulfilment_model" || !def?.config) return def;
+      const modes = Object.fromEntries(
+        Object.entries(def.config.modes).map(([m, v]) => [
+          m,
+          m === "pickup" || m === "pickup_ship" ? { ...v, available: true } : v,
+        ]),
+      );
+      return { ...def, config: { ...def.config, modes } };
+    });
+  }
+
+  it.each([
+    ["in_store_retailer", ["PICKUP"]],
+    ["in_store_shipping_retailer", ["PICKUP", "SHIP"]],
+  ])("%s derives the in-store capability when pickup is available", (key, methods) => {
+    stubPickupAvailable();
+    const p = profile(key);
+    expect(
+      deriveFulfilmentCapability({
+        mode: p.modes.fulfilment_model,
+        counterSales: p.modes.counter_sales!,
+        fleet: false,
+      }),
+    ).toEqual({
+      methods,
+      // methods[0]: the resolver's staffDefault is the first method in the mode's list
+      staffDefault: "PICKUP",
+      staffOpensAs: "counter",
+      portalMethods: methods,
+      portalDefault: "PICKUP",
+      counter: "always",
+      fleet: false,
+      consistent: true,
+    });
   });
 });
 
