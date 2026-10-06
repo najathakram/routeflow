@@ -1,9 +1,7 @@
 // Records the lock's lifecycle so a test can prove WHEN the deferred push runs relative to the unlock.
 const mockEvents: string[] = [];
-// B1053: fold-math spec — the row guard is passed through (see testing/merge-recheck-passthrough.ts).
-jest.mock("./merge-lock-recheck", () =>
-  require("./testing/merge-recheck-passthrough").passthrough(),
-);
+// B1053: fold-math spec — row guard passed through (testing/merge-recheck.ts)
+jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck").pass());
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => {

@@ -5,7 +5,7 @@
  * pinned on its own in `merge-lock-recheck.spec.ts` and `merge-eligibility-race-b1053.db.spec.ts`.
  * Use as: `jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck-passthrough").passthrough());`
  */
-export function passthrough() {
+export function pass() {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const actual = jest.requireActual("../merge-lock-recheck");
   return {
