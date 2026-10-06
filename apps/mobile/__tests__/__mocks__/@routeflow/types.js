@@ -22,6 +22,11 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/ship-state.ts; pinned equal by
+  // apps/api/src/orders/shipped-statuses-parity.spec.ts (which `require`s THIS file).
+  SHIPPED_ORDER_STATUSES: ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"],
+  isShippedOrderStatus: (s) =>
+    !!s && ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].includes(s),
   UserRole: {},
   FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
@@ -133,6 +138,7 @@ module.exports = {
     ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
     ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
     INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
+    ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
     CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
     MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
     LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",

@@ -633,6 +633,57 @@ describe("OrdersService — F06 guards (TP2)", () => {
       },
     );
 
+    // Typed in full (tenantId / tenantSlug), unlike the older `customerPayload`, so these cases add no spec type errors.
+    const buyer = { ...customerPayload, tenantId: "t1", tenantSlug: "test" };
+
+    // B1135: for an order with the carrier the change-request flow is closed too (a request on it
+    // is refused), so this 403 must not send the buyer there. A route-run order keeps the sentence.
+    it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+      "B1135: a CUSTOMER items-edit on a %s order WITH THE CARRIER is refused without promising a change request",
+      async (status) => {
+        primePostDispatchFixture(status);
+        prisma.order.findUnique.mockResolvedValue({
+          ...MOCK_ORDER,
+          status,
+          tenantId: "t1",
+          fulfillPath: "SHIP",
+          shippedAt: new Date("2026-10-01T00:00:00Z"),
+          lineItems: [],
+        });
+        (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+
+        const attempt = service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-x", qty: 1 }] },
+          buyer,
+        );
+
+        await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(attempt).rejects.toThrow(
+          "This order has already shipped. Contact the seller for changes.",
+        );
+        await expect(attempt).rejects.not.toThrow(/change request/i);
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("B1135 control: a SHIP order of a business that does not bill at shipment keeps the change-request sentence", async () => {
+      primePostDispatchFixture("OUT_FOR_DELIVERY");
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+        tenantId: "t1",
+        fulfillPath: "SHIP",
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        lineItems: [],
+      });
+      (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("pickup") };
+
+      await expect(
+        service.updateOrderItems("ord-1", { items: [{ productId: "prod-x", qty: 1 }] }, buyer),
+      ).rejects.toThrow(/change request/i);
+    });
+
     describe("T7 control (pin — green pre-fix)", () => {
       it("the same CUSTOMER edit on a PENDING order is NOT refused — the 403 is status-driven, not fixture-driven", async () => {
         primePostDispatchFixture("PENDING");

@@ -127,6 +127,11 @@ describe("genericToastCopy: codes users rely on", () => {
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
     ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
+    // B1135: the change-request refusal for an order that has shipped, pinned word for word.
+    [
+      "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
+      /^This order has already shipped\. Contact the seller for changes\.$/,
+    ],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
