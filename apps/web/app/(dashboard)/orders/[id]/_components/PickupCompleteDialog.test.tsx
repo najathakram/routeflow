@@ -2,6 +2,7 @@ import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PickupCompleteDialog } from "./PickupCompleteDialog";
+import { PickupHandOverDialog } from "./PickupHandOver";
 
 /**
  * Order ahead: "Picked up" hands a PICKUP order over (POST /orders/:id/pickup-complete). One
@@ -346,5 +347,79 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
       "This walk-in has open credit. Resolve it on the customer before handing over.",
     );
     expect(screen.queryByText(/raw text/)).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog — tender rounding", () => {
+  it("sends roundMoney(tendered) as the cash amount, like the till", async () => {
+    balance(5);
+    mount({ total: 5 });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 10.01 } });
+  });
+});
+
+describe("PickupHandOverDialog — the held key survives close and reopen", () => {
+  const order = { id: "o1", orderNumber: "ORD-1", total: 25, invoices: [], customer: {} } as never;
+  const tree = (open: boolean) => (
+    <QueryClientProvider client={qc}>
+      <PickupHandOverDialog order={order} open={open} onClose={() => undefined} />
+    </QueryClientProvider>
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const send = async () => {
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+  };
+  const keyOf = (i: number) => post.mock.calls[i][2].headers["Idempotency-Key"];
+
+  it("an UNKNOWN outcome, Cancel, reopen: the retry carries the SAME key", async () => {
+    post.mockRejectedValueOnce(new Error("Network Error"));
+    const { rerender } = render(tree(true));
+    await send();
+    await screen.findByRole("alert");
+    rerender(tree(false));
+    rerender(tree(true));
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("a 5xx is unknown too", async () => {
+    post.mockRejectedValueOnce({ response: { status: 503, data: {} } });
+    const { rerender } = render(tree(true));
+    await send();
+    await screen.findByRole("alert");
+    rerender(tree(false));
+    rerender(tree(true));
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("a known success, then a fresh open: a NEW key", async () => {
+    const { rerender } = render(tree(true));
+    await send();
+    await screen.findByRole("button", { name: "Done" });
+    rerender(tree(false));
+    rerender(tree(true));
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("a known 4xx failure clears the held key", async () => {
+    post.mockRejectedValueOnce({ response: { status: 409, data: { code: "PICKUP_NOT_READY" } } });
+    const { rerender } = render(tree(true));
+    await send();
+    await screen.findByRole("alert");
+    rerender(tree(false));
+    rerender(tree(true));
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
   });
 });

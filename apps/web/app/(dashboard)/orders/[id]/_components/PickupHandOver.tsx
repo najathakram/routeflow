@@ -1,9 +1,10 @@
 "use client";
 
+import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
-import { PickupCompleteDialog } from "./PickupCompleteDialog";
+import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
 
 /**
  * The "Picked up" action of a PICKUP order (CONFIRMED or Ready for pickup). The button lives in the status-gated
@@ -28,8 +29,11 @@ export function PickupHandOverDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  // An UNKNOWN outcome's key outlives the dialog's close/reopen (cleared only on a known outcome).
+  const heldKey = React.useRef<HeldPickupKey>(null);
   return (
     <PickupCompleteDialog
+      heldKey={heldKey}
       open={open}
       onClose={onClose}
       orderId={order.id}

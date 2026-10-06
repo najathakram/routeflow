@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
+import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
@@ -22,12 +23,16 @@ import {
 const money = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
+/** The key of an attempt whose outcome is UNKNOWN, held by the parent across close/reopen, per order. */
+export type HeldPickupKey = { orderId: string; key: string } | null;
+
 type Body = { payment?: { method: CounterSalePaymentMethod; amount?: number; reference?: string } };
 
 /**
  * "Picked up" on a PICKUP order (order ahead): payment is taken AT pickup. Opening the dialog mints ONE
  * Idempotency-Key that every attempt in it reuses (a retry of a failed or not-recorded payment must be the
- * same hand-over, never a second); closing and reopening mints a new one. The tender is the till's: same
+ * same hand-over, never a second); closing and reopening mints a new one, EXCEPT after an UNKNOWN outcome
+ * (network error / 5xx): the key is then held in `heldKey` (per order) and reused until a known outcome. The tender is the till's: same
  * methods, same rules (`validatePayment`), cash amount + change only for CASH. What is left to collect
  * comes from the order's invoices' server `balanceDue` (no invoice yet = the order total); nothing left =
  * no tender step. The server still judges the real balance.
@@ -40,6 +45,7 @@ export function PickupCompleteDialog({
   total,
   invoices,
   isWalkIn,
+  heldKey,
 }: {
   open: boolean;
   onClose: () => void;
@@ -48,7 +54,10 @@ export function PickupCompleteDialog({
   total: number;
   invoices: ReadonlyArray<{ id: string; status: string }>;
   isWalkIn: boolean;
+  heldKey?: React.MutableRefObject<HeldPickupKey>;
 }) {
+  const ownHeld = React.useRef<HeldPickupKey>(null);
+  const held = heldKey ?? ownHeld;
   const complete = usePickupComplete(orderId);
   const liveIds = invoices.filter((i) => !PICKUP_DEAD_INVOICE.has(i.status)).map((i) => i.id);
   const balances = usePickupInvoiceBalances(liveIds, open);
@@ -77,7 +86,7 @@ export function PickupCompleteDialog({
 
   React.useEffect(() => {
     if (open) {
-      keyRef.current = newIdempotencyKey();
+      keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
       setMethod("CASH");
       setTendered("");
       setReference("");
@@ -86,6 +95,7 @@ export function PickupCompleteDialog({
       setOwed(null);
       setOutcome(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const tenderedNum = Number(tendered) || 0;
@@ -107,8 +117,12 @@ export function PickupCompleteDialog({
         setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
         return;
       }
+      held.current = null;
       setOutcome(res);
     } catch (err) {
+      const status = (err as { response?: { status?: number } } | null)?.response?.status;
+      held.current =
+        status === undefined || status >= 500 ? { orderId, key: keyRef.current } : null;
       setErrorCode(pickupErrorCode(err));
       setError(pickupCompleteErrorCopy(err));
     }
@@ -133,7 +147,7 @@ export function PickupCompleteDialog({
     void send({
       payment: {
         method,
-        ...(method === "CASH" ? { amount: tenderedNum } : {}),
+        ...(method === "CASH" ? { amount: roundMoney(tenderedNum) } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       },
     });
