@@ -23,7 +23,10 @@ import {
   planKeyToEnum,
   normalizePlanKey,
   planKeyFromEnum,
+  addonSkuCode,
+  isSelfServiceAddon,
 } from "./plan-catalog.constants";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { lockTenantForLedger } from "./addon-ledger";
@@ -51,6 +54,12 @@ const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
+
+/** "A", "A and B", "A, B and C" — the add-on names in a tenant-facing sentence. */
+const joinNames = (names: string[]): string =>
+  names.length < 2
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
 /** A deadlock/serialization failure is a retryable race, not a "hook failed a paid checkout". */
 const isDeadlockOrSerialization = (err: unknown): boolean => {
@@ -341,6 +350,17 @@ export class BillingService {
       }
     }
 
+    // SA-690 (interim): a checkout turns the tenant into a paying subscriber, and an ACTIVE self-serve
+    // add-on that no Stripe item bills would stay free for good. Refuse until it is off or set up by
+    // support. Before ensureStripeCustomer so a refusal creates nothing in Stripe.
+    const unbilled = await this.unbilledSelfServeAddonNames(tenantId);
+    if (unbilled.length > 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.ADDON_BILLING_PENDING_CHECKOUT,
+        message: `Turn off ${joinNames(unbilled)} before adding your card, or contact support to set them up.`,
+      });
+    }
+
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price
@@ -367,6 +387,33 @@ export class BillingService {
       `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval})`,
     );
     return { checkoutUrl: session.url, sessionId: session.id };
+  }
+
+  /**
+   * SA-690: the catalog names of the tenant's ACTIVE self-serve add-ons that no Stripe subscription
+   * item bills (`stripeItemId` null), oldest first, once per SKU. Admin-granted SKUs are always
+   * unbilled by design and never count. A SKU the published catalog no longer names falls back to its code.
+   */
+  private async unbilledSelfServeAddonNames(tenantId: string): Promise<string[]> {
+    const rows = await this.prisma.tenantAddon.findMany({
+      where: { tenantId, active: true, stripeItemId: null },
+      orderBy: { createdAt: "asc" },
+      select: { addonKey: true, sku: true },
+    });
+    const codes = [
+      ...new Set(
+        rows
+          .map((r) => addonSkuCode(r))
+          .filter((c): c is string => c != null && isSelfServiceAddon(c)),
+      ),
+    ];
+    if (codes.length === 0) return [];
+    const skus = await this.prisma.addonSku.findMany({
+      where: { sku: { in: codes }, planVersion: { status: "PUBLISHED" } },
+      orderBy: { planVersion: { version: "desc" } },
+      select: { sku: true, name: true },
+    });
+    return codes.map((c) => skus.find((s) => s.sku === c)?.name ?? c);
   }
 
   // ─── Price sync (admin-driven price changes → live Stripe subscriptions) ──────
