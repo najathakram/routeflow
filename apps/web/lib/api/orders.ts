@@ -7,7 +7,9 @@ import type {
   CustomerPriceHistory,
   InlineReturnLinesRequest,
   LineComponentView,
+  OrderInvoicesNeedReview,
   PriceType,
+  OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
@@ -99,12 +101,16 @@ export interface Order {
   shippedAt?: string | null;
   /** P5-08: append-only edit history (one row per pre-dispatch edit). */
   revisions?: OrderRevision[];
+  /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;
     editableUntil: string | null;
     closedReason: "DISPATCHED" | "STATUS" | null;
   };
+  /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
+  invoicesNeedReview?: OrderInvoicesNeedReview;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
   changeRequests?: ChangeRequest[];
   /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`
@@ -397,10 +403,15 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the create-order modal to ask the operator whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on: the merge preview must look for the same target create would. */
+  fulfillPath?: "ROUTE" | "SHIP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient.get("/orders/active", { params: { customerId, fulfillPath } }).then((r) => r.data),
     enabled: !!customerId,
   });
 }
@@ -419,6 +430,10 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
   });
 }
 
+/**
+ * `localErrorToast`: the caller renders its own error UI (the orders list's bulk cancel shows ONE summary
+ * toast), so the app-wide generic error toast must not also fire once per request.
+ */
 export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({

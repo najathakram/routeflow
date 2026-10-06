@@ -185,9 +185,10 @@ export class UsersService {
     return { user, tempPassword };
   }
 
-  async changeStatus(userId: string, dto: ChangeUserStatusDto) {
+  async changeStatus(userId: string, dto: ChangeUserStatusDto, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { status: dto.status },
@@ -195,9 +196,25 @@ export class UsersService {
     });
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto, changedByUsername?: string) {
+  async updateUser(
+    userId: string,
+    dto: UpdateUserDto,
+    changedByUsername: string | undefined,
+    callerRole: UserRole,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
+    // edit form always sends both, so an unchanged value must pass.
+    // ONE normalized comparison drives the guard, the write and every email side effect below.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+    const emailEdit =
+      !!normalizedEmail && normalizedEmail !== (user.email ?? "").trim().toLowerCase();
+    // Login matches usernames EXACTLY (findByUsername), so only padding is normalized: trim, never lowercase.
+    const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
+    const usernameEdit =
+      normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
+    if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
@@ -214,21 +231,23 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
-    // N2 review fix: normalize BEFORE compare and write — a case-only edit
-    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
-    // fires both notices for nothing) and must not persist inconsistently with
-    // every other email lookup in this codebase, which is case-sensitive as
-    // stored.
-    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
-
+    // N2 review fix: a case-only or padding-only edit ("Acme@Example.com" -> "acme@example.com")
+    // is not a change: it fires no notices and does not rewrite the stored email.
     const previousEmail = user.email;
     const previousRole = user.role;
-    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
+    const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
+    // Email and username keys are omitted unless they actually changed; a change writes the normalized value.
+    const { email: _ignoredEmail, username: _ignoredUsername, ...dtoRest } = dto;
+    const data = {
+      ...dtoRest,
+      ...(emailChanged ? { email: normalizedEmail } : {}),
+      ...(usernameEdit ? { username: normalizedUsername } : {}),
+    };
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: { ...dto, email: normalizedEmail },
+      data,
       select: {
         id: true,
         username: true,
@@ -340,9 +359,20 @@ export class UsersService {
     }
   }
 
-  async unlockUser(userId: string) {
+  /**
+   * Admin account protection: an account with the TENANT_ADMIN role can only be changed by a TENANT_ADMIN
+   * caller (decided by ROLE; `isAdmin` is not on the request user). Fail-closed: the caller's role is required.
+   */
+  private assertMayChangeAccount(target: { role: UserRole }, callerRole: UserRole | undefined) {
+    if (target.role === UserRole.TENANT_ADMIN && callerRole !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Only an account owner can change an admin account.");
+    }
+  }
+
+  async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { failedLoginAttempts: 0, lockedUntil: null },
@@ -350,9 +380,10 @@ export class UsersService {
     return { id: userId, unlocked: true };
   }
 
-  async resetPassword(userId: string) {
+  async resetPassword(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     await this.prisma.forTenant().user.update({
@@ -394,9 +425,10 @@ export class UsersService {
     });
   }
 
-  async toggleDriverPermit(userId: string) {
+  async toggleDriverPermit(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new BadRequestException("Driver permit can only be assigned to operators.");
     }

@@ -52,6 +52,7 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
@@ -200,7 +201,7 @@ function isAnnualStripeBilled(
  *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`) or Stripe not configured — on, priced 0,
  *              books no revenue.
  */
-export type AddonBilling = "STRIPE" | "MANUAL" | "UNBILLED";
+export type AddonBilling = AddonBillingMode;
 
 /**
  * Subscription state MUTATIONS (Plans & Billing Phase 4). Owns the tenant's
@@ -1662,6 +1663,10 @@ export class SubscriptionMutationService {
     if (!skuDef) return null;
     const included = await this.planIncludedRefusal(tenantId, skuDef);
     if (included) return included;
+    // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
+    // call throws (and therefore no charge line), never a price for something that would not be billed.
+    const row = await findAddonRow(this.prisma, tenantId, sku);
+    if (row?.active && row.isComp) return ADDON_COMP_REFUSAL;
     const { sub, mode } = await this.addonBillingContext(tenantId);
     return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
   }

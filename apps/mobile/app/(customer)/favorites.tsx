@@ -55,6 +55,27 @@ export default function BuyerFavoritesScreen() {
             // #2703: a favorite row's `id` is the FAVORITE's id — the product is `productId`, and
             // `buyerPrice` is the server's effective price (typed BuyerFavoriteProduct).
             const id = p.productId;
+            if (p.unavailable) {
+              // SA-606 M3: hidden by the tenant: name + reason + remove, no price, no add.
+              return (
+                <View key={id} style={styles.row} testID="favorite-unavailable">
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.name} numberOfLines={2}>
+                      {p.name}
+                    </Text>
+                    <Text style={styles.emptySub}>{p.unavailableText}</Text>
+                  </View>
+                  <Pressable
+                    hitSlop={8}
+                    style={styles.iconBtn}
+                    onPress={() => toggleFavorite.mutate({ productId: id, isFavorite: true })}
+                    accessibilityLabel="Remove from favorites"
+                  >
+                    <Ionicons name="heart" size={18} color="#ef4444" />
+                  </Pressable>
+                </View>
+              );
+            }
             const price = p.buyerPrice;
             return (
               <View key={id} style={styles.row}>

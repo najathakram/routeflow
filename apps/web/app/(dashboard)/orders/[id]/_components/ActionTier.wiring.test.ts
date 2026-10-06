@@ -67,6 +67,10 @@ function collect(): Found[] {
         if (ts.isJsxElement(c) && c.openingElement.tagName.getText() === "Button") {
           buttons.push(...labelsOf(c));
         }
+        // <CancelOrderButton> IS the "Cancel Order" button (or, when the server blocks the cancel, its note)
+        if (ts.isJsxSelfClosingElement(c) && c.tagName.getText() === "CancelOrderButton") {
+          buttons.push("Cancel Order");
+        }
         if (ts.isCallExpression(c) && c.expression.getText() === "renderDeleteOrderAction") {
           deleteCalls += 1;
         }

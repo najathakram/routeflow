@@ -38,6 +38,11 @@ import {
 } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { LIVE_CUSTOMER_STOP_WHERE, SCHEDULED_ROUTE_KIND_WHERE } from "./route-stop-filters.util";
+import {
+  assertAddressBelongsToCustomer,
+  assertDriverInTenant,
+  assertStopRefsInTenant,
+} from "./route-refs.util";
 // F03/F05: the settlement cash basis stays pinned to the shared CONFIRMED
 // predicate rather than a literal `status: "PAID"`, so it can never silently
 // desync from every other confirmed-money read in the codebase.
@@ -223,6 +228,7 @@ export class RoutesService {
    * always accepted them; only DRIVER/ADDRESS need a server round-trip.
    */
   async createRoute(dto: CreateRouteDto) {
+    await assertDriverInTenant(this.prisma, dto.driverId);
     let depotLat = dto.depotLat;
     let depotLng = dto.depotLng;
     let depotAddress = dto.depotAddress;
@@ -414,6 +420,7 @@ export class RoutesService {
 
   async updateRoute(id: string, dto: UpdateRouteDto) {
     await this.findRouteOrThrow(id);
+    await assertDriverInTenant(this.prisma, dto.driverId);
     return this.prisma.forTenant().route.update({ where: { id }, data: dto });
   }
 
@@ -437,7 +444,7 @@ export class RoutesService {
     // REG-B157: addStop had no customer lookup at all — a removed customer could be added
     // to a route exactly like a live one, with only createRun's dispatch-time filter ever
     // dropping the stop silently. Refuse it here instead.
-    const customer = await this.prisma.forTenant().customer.findUnique({
+    const customer = await this.prisma.forTenant().customer.findFirst({
       where: { id: dto.customerId },
       select: { deletedAt: true },
     });
@@ -460,7 +467,9 @@ export class RoutesService {
     // stop has geocoded coords available for the map/optimizer. If the customer
     // has no addresses at all, store null (nothing we can do).
     let customerAddressId = dto.customerAddressId;
-    if (!customerAddressId) {
+    if (customerAddressId) {
+      await assertAddressBelongsToCustomer(this.prisma, dto.customerId, customerAddressId);
+    } else {
       const defaultAddr = await this.prisma.forTenant().customerAddress.findFirst({
         where: { customerId: dto.customerId },
         orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
@@ -877,7 +886,10 @@ export class RoutesService {
         .forTenant()
         .driver.findFirst({ where: { userId: user.sub } });
       resolvedDriverId = driver?.id ?? undefined;
+    } else {
+      await assertDriverInTenant(this.prisma, resolvedDriverId);
     }
+    await assertStopRefsInTenant(this.prisma, route.stops);
 
     const run = await this.prisma.tenantTransaction(async (tx) => {
       // Lock the Route row so concurrent dispatch requests serialize here
@@ -1334,6 +1346,7 @@ export class RoutesService {
       }
     }
 
+    await assertDriverInTenant(this.prisma, dto.driverId);
     const data: any = {};
     if (dto.driverId !== undefined) data.driverId = dto.driverId;
     if (dto.scheduledDate) data.scheduledDate = new Date(dto.scheduledDate);
@@ -2520,6 +2533,7 @@ export class RoutesService {
         tx,
         stop.orders,
         deliveredOrderIdSet,
+        user.sub,
       );
 
       // 5. Record payment (atomic with stop completion — RF-005). The invoice is

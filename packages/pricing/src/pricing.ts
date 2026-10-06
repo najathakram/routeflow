@@ -380,6 +380,9 @@ export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
  * PAID quantity instead (`orderQty - freeUnits * freeUnitSize`). That keeps the
  * stored subtotal equal to `computeLineSubtotal(..., freeUnits)` and makes a
  * full delivery (`deliveredQty === orderQty`) copy it back verbatim.
+ *
+ * `priorBilledQty` (default 0) is the qty earlier partial invoices of this line already billed — pass
+ * the order line's `invoicedQty` to preview the NEXT partial exactly as the server bills it.
  */
 export function prorateLineSubtotal(
   storedSubtotal: number | null | undefined,
@@ -387,6 +390,7 @@ export function prorateLineSubtotal(
   orderQty: number,
   freeUnits = 0,
   freeUnitSize = 1,
+  priorBilledQty = 0,
 ): number {
   const stored = Number(storedSubtotal) || 0;
   const order = Number(orderQty) || 0;
@@ -419,7 +423,14 @@ export function prorateLineSubtotal(
   // price). Unreachable at size 1, opened by the freeUnitSize axis; the cap
   // makes every partial bill at most the stored subtotal, and a full delivery
   // still copies it back verbatim.
-  return roundMoney((stored * Math.min(billedThrough(delivered), basisQty)) / basisQty);
+  // `priorBilledQty` (default 0): the qty earlier partial bills already took. The bill is then the
+  // TELESCOPE `cum(prior + delivered) - cum(prior)` with `cum(c) = roundMoney(S x paid(c) / basis)`,
+  // exactly the server's `buildInvoiceItemData` — successive partials sum to S to the cent (one bill
+  // can be a cent off a from-scratch proration). At prior 0, `cum(0)` is 0 and this is the line above.
+  const cumulative = (cumQty: number) =>
+    roundMoney((stored * Math.min(billedThrough(cumQty), basisQty)) / basisQty);
+  const prior = Math.max(0, Number(priorBilledQty) || 0);
+  return roundMoney(cumulative(prior + delivered) - (prior > 0 ? cumulative(prior) : 0));
 }
 
 /**

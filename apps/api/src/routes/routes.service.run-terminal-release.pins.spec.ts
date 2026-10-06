@@ -29,6 +29,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
@@ -73,6 +74,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2" });
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest

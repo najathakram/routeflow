@@ -56,7 +56,7 @@ export function findAddonRow(db: AddonReader, tenantId: string, sku: string) {
  * SA-693: the ONE predicate for "a row the platform bills (or is owed a bill for)". A comp row
  * (`isComp`) is a platform grant: never billed, never booked as revenue, never blocking a checkout.
  * Every reader that asks "is this add-on billable / unbilled / revenue?" spreads this into its
- * `where` (the checkout gate, MRR) — Option A's line items and adoption reuse it too — instead of
+ * `where` (the checkout gate, MRR) â€” Option A's line items and adoption reuse it too â€” instead of
  * re-spelling `isComp: false`.
  */
 export function billableAddonWhere(

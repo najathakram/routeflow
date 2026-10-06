@@ -1,6 +1,7 @@
 import axios from "axios";
 import { BUYER_KEYS } from "./auth-keys";
 import { setBuyerPresenceCookie, clearBuyerPresenceCookie } from "./presence-cookies";
+import { clearBuyerSubmitKey } from "./api/buyer-submit-key";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
   /\/$/,
@@ -112,10 +113,12 @@ export function getStoredActiveSeller(): BuyerSeller | null {
 
 export function storeActiveSeller(seller: BuyerSeller): void {
   localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(seller));
+  clearBuyerSubmitKey(); // B1094: the submit key is customer-scoped; never carried across sellers
 }
 
 export function clearActiveSeller(): void {
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey();
 }
 
 export { BUYER_PRESENCE_COOKIE, clearBuyerPresenceCookie } from "./presence-cookies";
@@ -169,6 +172,7 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey(); // B1094: the next buyer on this browser must not inherit this one's key
   Object.keys(localStorage)
     .filter(
       (k) =>

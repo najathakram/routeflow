@@ -85,10 +85,13 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
  * invoices.service.ts:2438). Edit the ORDER instead; the invoice follows.
  */
 export function isPendingOrderMirror(inv: {
+  /** The server's own answer (it knows the tenant's fulfilment mode; clients cannot). Wins when present. */
+  pendingMirror?: boolean | null;
   orderId?: string | null;
   deliveryBatchId?: string | null;
   orderStatus?: string | null;
 }): boolean {
+  if (typeof inv.pendingMirror === "boolean") return inv.pendingMirror;
   if (!inv.orderId) return false;
   if (inv.deliveryBatchId != null) return false;
   return inv.orderStatus !== "DELIVERED" && inv.orderStatus !== "PARTIALLY_DELIVERED";

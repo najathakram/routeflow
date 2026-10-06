@@ -25,7 +25,13 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { isSpecialTier, computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  getTierPrice,
+  type InvoiceTotalsLine,
+} from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -101,6 +107,17 @@ interface EstimateLineItem {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+}
+
+/** The pricing-helper view of a line: a boxed line prorates by its box split (BOX price). */
+function toTotalsLine(li: EstimateLineItem): InvoiceTotalsLine {
+  return {
+    unitPrice: li.unitPrice,
+    qty: li.qty,
+    boxes: li.boxes ?? null,
+    pieces: li.pieces ?? null,
+    unitsPerBox: li.unitsPerBox ?? null,
+  };
 }
 
 interface SelectedEstimateCustomer {
@@ -330,18 +347,8 @@ function CreateEstimateModal({
     );
   };
 
-  const subtotal = lineItems.reduce(
-    (sum, li) =>
-      sum +
-      computeLineSubtotal({
-        unitPrice: li.unitPrice,
-        qty: li.qty,
-        boxes: li.boxes ?? null,
-        pieces: li.pieces ?? null,
-        unitsPerBox: li.unitsPerBox ?? null,
-      }),
-    0,
-  );
+  // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
+  const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -634,15 +641,7 @@ function CreateEstimateModal({
 
                   {/* Subtotal */}
                   <span className="w-20 text-right text-sm font-semibold text-navy">
-                    {fmt(
-                      computeLineSubtotal({
-                        unitPrice: li.unitPrice,
-                        qty: li.qty,
-                        boxes: li.boxes ?? null,
-                        pieces: li.pieces ?? null,
-                        unitsPerBox: li.unitsPerBox ?? null,
-                      }),
-                    )}
+                    {fmt(computeInvoiceLineTotal(toTotalsLine(li)))}
                   </span>
 
                   {/* Remove */}

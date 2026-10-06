@@ -1475,6 +1475,16 @@ describe("SA-693 — self-serve add-on vs comp rows", () => {
     expect(API_ERROR_CODES.ADDON_COMP_MANAGED_BY_SUPPORT).toBe("ADDON_COMP_MANAGED_BY_SUPPORT");
   });
 
+  it("the preview agrees with the enable call: an ACTIVE comp is REFUSED (no charge line), a disabled one is not", async () => {
+    const active = make({ addonRow: comp });
+    expect(await active.svc.addonEnableRefusal("t1", "CUSTOMER_PACK_100")).toEqual({
+      code: "ADDON_COMP_MANAGED_BY_SUPPORT",
+      message: expect.any(String),
+    });
+    const disabled = make({ addonRow: { ...comp, active: false } });
+    expect(await disabled.svc.addonEnableRefusal("t1", "CUSTOMER_PACK_100")).toBeNull();
+  });
+
   it("a quantity change on an ACTIVE comp is a coded 409: no Stripe, no write, no ledger event", async () => {
     const { svc, stripeClient, tenantAddon, events, getRow } = make({ addonRow: comp });
 

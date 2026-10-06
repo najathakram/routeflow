@@ -1104,6 +1104,94 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       },
     },
   },
+  {
+    key: "fulfilment_model",
+    kind: "boolean",
+    area: "routes",
+    label: "How orders reach customers",
+    description:
+      "Whether a tenant's orders go out on its own delivery runs, ship by carrier, or both. Unset keeps today's behavior exactly.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row (never gates a paid feature). `unset` is
+    // today, for every existing tenant. `delivery` and `both` need a fleet key (FeatureConfigService.set refuses them
+    // otherwise; the registry's mode schema stays allOf-only); the ship and in-store modes need none.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        delivery: {
+          label: "Own delivery",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        ship: { label: "Ship by carrier", available: true, lifecycle: "ga", settings: [] },
+        both: {
+          label: "Both",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        // SA-671 M1: not available until the counter-sale work lands — no PICKUP order can be
+        // written yet (the enum value is not on master), so no tenant may be SET to a mode whose
+        // methods are PICKUP. A tenant already storing one keeps it (resolveEffective ignores
+        // `available`); only new writes are refused. The counter-sale work flips these to true.
+        pickup: { label: "In store only", available: false, lifecycle: "proposed", settings: [] },
+        pickup_ship: {
+          label: "In store + shipping",
+          available: false,
+          lifecycle: "proposed",
+          settings: [],
+        },
+      },
+    },
+  },
+  {
+    key: "counter_sales",
+    kind: "boolean",
+    area: "routes",
+    label: "Counter sales",
+    description:
+      "Lets a business that is not in-store sell over the counter too. In-store modes always have the counter; unset keeps today's behavior.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row; clients read `capabilities.fulfilment.counter`
+    // only, never this value.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        on: { label: "On", available: true, lifecycle: "ga", settings: [] },
+      },
+    },
+  },
 ];
 
 // ── Derived: byte-identical projection of today's ADDON_GATE_REGISTRY. ─────────────────────────

@@ -14,7 +14,7 @@ function stub() {
 function make() {
   const addonService = {
     enableAddon: jest.fn().mockResolvedValue({ id: "a1" }),
-    uncompAddon: jest.fn().mockResolvedValue({ id: "a1" }),
+    uncompAddon: jest.fn().mockResolvedValue({ addon: { id: "a1" }, billing: "STRIPE" }),
   };
   const svc = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
   const controller = new PlatformAdminController(
@@ -22,6 +22,8 @@ function make() {
     stub() as any,
     stub() as any,
     addonService as any,
+    stub() as any,
+    stub() as any,
     stub() as any,
     stub() as any,
     stub() as any,
@@ -107,6 +109,23 @@ describe("SA-693 PlatformAdminController#uncompAddon", () => {
       AdminAuditAction.ADDON_UNCOMPED,
       expect.objectContaining({ addonKey: "tobacco_dealer", reason: "now paying" }),
     );
+  });
+
+  it("the audit row records the billing mode the SERVICE took, never one inferred from the DTO", async () => {
+    const { controller, addonService, svc } = make();
+    // a price id rides along, but the service only flipped the flag
+    addonService.uncompAddon.mockResolvedValue({ addon: { id: "a1" }, billing: "UNBILLED" });
+
+    await controller.uncompAddon("t1", { addonKey: "x", stripePriceId: "price_1" } as any, admin);
+
+    expect(svc.recordAdminAction).toHaveBeenCalledWith(
+      "t1",
+      "admin-1",
+      AdminAuditAction.ADDON_UNCOMPED,
+      expect.objectContaining({ billing: "UNBILLED" }),
+    );
+    const meta = svc.recordAdminAction.mock.calls[0][3];
+    expect(meta).not.toHaveProperty("billed");
   });
 
   it("a refused uncomp (service throws) writes no audit row", async () => {

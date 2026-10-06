@@ -102,6 +102,16 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("ORDER_INVOICES_NEED_REVIEW (SA-687) shows the fixed review copy, never the server message", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW, message: "raw server text" }),
+      ),
+    ).toBe(
+      "This order's invoices don't match its lines. Add the remaining items to the draft, or void and re-split, before billing more.",
+    );
+  });
+
   it("the duplicate-email sentence maps to the fixed copy", () => {
     expect(genericToastCopy(err(409, { message: "Email or username already taken" }))).toBe(
       "That email is already in use. Use a different email.",
@@ -116,6 +126,7 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],

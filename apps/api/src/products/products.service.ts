@@ -343,7 +343,7 @@ export class ProductsService {
     // relations) so this is cheap. variants{} is still gated behind
     // includeVariants since it materially expands the payload.
     const includeRelations = {
-      parent: { select: { id: true, name: true } },
+      parent: { select: { id: true, name: true, portalVisible: true } },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants

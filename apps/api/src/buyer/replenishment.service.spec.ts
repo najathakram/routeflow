@@ -18,6 +18,10 @@ describe("ReplenishmentService", () => {
     unitsPerBox: null,
     imageKeys: [] as string[],
     isActive: true,
+    // the buyer gate judges these (SA-612): a fixture that omits them is correctly hidden
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
     ...over,
   });
 
