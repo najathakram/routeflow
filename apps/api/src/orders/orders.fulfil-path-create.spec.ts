@@ -108,6 +108,77 @@ describe("OrdersService.create: fulfil path", () => {
     },
   );
 
+  describe("pickup modes (pickup mode API)", () => {
+    it("pickup tenant, staff, stored-ROUTE customer, nothing explicit: PICKUP", async () => {
+      mode("pickup");
+      await create({});
+      expect(created()).toBe("PICKUP");
+    });
+
+    it("pickup tenant, staff sends the hard-coded ROUTE: no preference, PICKUP; explicit SHIP stays SHIP", async () => {
+      mode("pickup");
+      await create({ fulfillPath: "ROUTE" });
+      expect(created()).toBe("PICKUP");
+      await create({ fulfillPath: "SHIP" });
+      expect(created()).toBe("SHIP");
+      await create({ fulfillPath: "PICKUP" });
+      expect(created()).toBe("PICKUP");
+    });
+
+    it("pickup_ship tenant, a stored-SHIP customer ships; a stored-ROUTE one picks up", async () => {
+      mode("pickup_ship");
+      stored = "SHIP";
+      await create({});
+      expect(created()).toBe("SHIP");
+      stored = "ROUTE";
+      await create({});
+      expect(created()).toBe("PICKUP");
+    });
+
+    it("pickup tenant, buyer: PICKUP by default and when asked; SHIP or ROUTE is a coded 400, nothing written", async () => {
+      mode("pickup");
+      await create({}, customerPayload);
+      expect(created()).toBe("PICKUP");
+      await create({ fulfillPath: "PICKUP" }, customerPayload);
+      expect(created()).toBe("PICKUP");
+      h.prisma.order.create.mockClear();
+      for (const fulfillPath of ["SHIP", "ROUTE"]) {
+        await expect(create({ fulfillPath }, customerPayload)).rejects.toMatchObject({
+          status: 400,
+          response: expect.objectContaining({ code: "FULFIL_METHOD_NOT_OFFERED" }),
+        });
+      }
+      expect(h.prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("pickup_ship tenant, buyer: SHIP is honoured, ROUTE is refused", async () => {
+      mode("pickup_ship");
+      await create({ fulfillPath: "SHIP" }, customerPayload);
+      expect(created()).toBe("SHIP");
+      await expect(create({ fulfillPath: "ROUTE" }, customerPayload)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "FULFIL_METHOD_NOT_OFFERED" }),
+      });
+    });
+
+    it.each(["unset", "delivery", "both", "ship"])(
+      "%s tenant: a staff order asking for PICKUP is a coded 400 (the DTO accepts it, the resolver refuses), nothing written",
+      async (m) => {
+        mode(m);
+        await expect(create({ fulfillPath: "PICKUP" })).rejects.toMatchObject({
+          status: 400,
+          response: expect.objectContaining({ code: "FULFIL_METHOD_NOT_OFFERED" }),
+        });
+        expect(h.prisma.order.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("unset tenant, buyer: a requested SHIP is ignored (today: the customer's own default, ROUTE)", async () => {
+      mode("unset");
+      await create({ fulfillPath: "SHIP" }, customerPayload);
+      expect(created()).toBe("ROUTE");
+    });
+  });
+
   it("(g) SA-678: an unreadable capability fails open to today's rule and the order is created", async () => {
     mode(new Error("db down"));
     await create({});
