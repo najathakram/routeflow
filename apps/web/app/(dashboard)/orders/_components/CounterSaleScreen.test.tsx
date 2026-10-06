@@ -581,10 +581,11 @@ describe("CounterSaleScreen: API contract wiring", () => {
       });
 
       describe("a recovered sale reads by the tender method the server derived (M)", () => {
-        const recover = async (body: Record<string, unknown>) => {
+        const recover = async (body: Record<string, unknown>, method?: "Card") => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
           await fillCola();
+          if (method) fireEvent.click(screen.getByRole("button", { name: method }));
           fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
           await screen.findByTestId("counter-outcome-unknown");
           lookupAsync.mockResolvedValueOnce({ ...sale, ...body });
@@ -592,28 +593,96 @@ describe("CounterSaleScreen: API contract wiring", () => {
           return screen.findByTestId("counter-sale-receipt");
         };
 
-        it("ON_ACCOUNT: reads as On account with the balance due, never 'payment not recorded', never Paid", async () => {
-          const receipt = await recover({
+        it("a FAILED CASH tender (stored: no tender, method ON_ACCOUNT) says payment not recorded, with Record payment, never On account", async () => {
+          await recover({
             paid: 0,
             balanceDue: 2.5,
             change: undefined,
             method: "ON_ACCOUNT",
             paymentRecorded: true,
           });
+          expect(screen.getByTestId("counter-payment-not-recorded")).toHaveTextContent(
+            "Sale recorded — payment not recorded",
+          );
+          expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
+            "href",
+            "/invoices/i1",
+          );
+          expect(screen.queryByTestId("counter-on-account")).toBeNull();
+        });
+
+        it("an INTENDED partial (CASH 3.00 tendered, the server's total is 5.00, stored 3.00) is recorded, with the balance due and no second collection", async () => {
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          renderWithProviders(<CounterSaleScreen />);
+          await scan("012345678905");
+          await waitFor(() =>
+            expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
+          );
+          fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await screen.findByTestId("counter-outcome-unknown");
+          // the server priced it higher than the screen's estimate (a re-priced line): 3.00 is a partial of 5.00
+          lookupAsync.mockResolvedValueOnce({
+            ...sale,
+            total: 5,
+            paid: 3,
+            balanceDue: 2,
+            change: undefined,
+            method: "CASH",
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+          });
+          check();
+          await screen.findByTestId("counter-sale-receipt");
+          expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
+          expect(screen.queryByRole("link", { name: "Record payment" })).toBeNull();
+          expect(screen.getByText("Paid").nextSibling).toHaveTextContent("$3.00");
+          expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.00");
+        });
+
+        it("stored paid BELOW what was tendered is not recorded (CASH 20, stored 1.00)", async () => {
+          await recover({ paid: 1, balanceDue: 1.5, method: "CASH", paymentRecorded: true });
+          expect(screen.getByTestId("counter-payment-not-recorded")).toBeInTheDocument();
+        });
+
+        it("a recovered On account sale (the attempt WAS On account) reads as On account with the balance due", async () => {
+          customersFor = [{ id: "c1", businessName: "Acme Co", fulfillPath: "ROUTE" }];
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          renderWithProviders(<CounterSaleScreen />);
+          fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+          fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+          await scan("012345678905");
+          await waitFor(() =>
+            expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
+          );
+          fireEvent.click(screen.getByRole("button", { name: "On account" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await screen.findByTestId("counter-outcome-unknown");
+          lookupAsync.mockResolvedValueOnce({
+            ...sale,
+            paid: 0,
+            balanceDue: 2.5,
+            change: undefined,
+            method: "ON_ACCOUNT",
+            paymentRecorded: true,
+          });
+          check();
+          const receipt = await screen.findByTestId("counter-sale-receipt");
           const note = screen.getByTestId("counter-on-account");
           expect(note).toHaveTextContent("On account");
           expect(note).toHaveTextContent("$2.50");
           expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
-          expect(screen.queryByRole("link", { name: "Record payment" })).toBeNull();
           expect(receipt.textContent).not.toMatch(/Paid/);
-          expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.50");
         });
 
         it.each([
           ["CASH", "CASH"],
           ["CARD", "CARD"],
         ])("%s: reads as paid, with no On account note", async (_l, method) => {
-          await recover({ paid: 2.5, balanceDue: 0, change: undefined, method });
+          await recover(
+            { paid: 2.5, balanceDue: 0, change: undefined, method },
+            method === "CARD" ? "Card" : undefined,
+          );
           expect(screen.getByText("Paid").nextSibling).toHaveTextContent("$2.50");
           expect(screen.queryByTestId("counter-on-account")).toBeNull();
           expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
@@ -653,7 +722,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           });
 
           it("a CARD receipt shows no tendered and no change", async () => {
-            await recover({ paid: 2.5, balanceDue: 0, change: undefined, method: "CARD" });
+            await recover({ paid: 2.5, balanceDue: 0, change: undefined, method: "CARD" }, "Card");
             expect(screen.queryByText("Tendered")).toBeNull();
             expect(screen.queryByText("Change")).toBeNull();
           });

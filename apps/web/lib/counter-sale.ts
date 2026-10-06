@@ -244,3 +244,23 @@ export function writeAutoPrint(on: boolean): void {
     /* storage unavailable: the toggle simply does not persist */
   }
 }
+
+/**
+ * Judges a sale recovered through "Check sale status" against what the screen SUBMITTED for that key. Storage alone
+ * cannot say whether "no tender" means On account or a failed tender, nor whether a partial was intended (the server
+ * stores no cash tendered), but the screen knows both, so it decides:
+ *   expected = ON_ACCOUNT 0 / CASH min(tendered, total) / CARD and CHECK total.
+ * - attempt ON_ACCOUNT: On account, recorded.
+ * - stored paid >= expected (cents): recorded (covers an intended partial; the balance simply stays due).
+ * - stored paid < expected (including no tender at all): NOT recorded, and never On account.
+ */
+export function judgeRecoveredSale(
+  attempt: { method: CounterSalePaymentMethod; tendered?: number },
+  sale: { total: number; paid: number },
+): { recorded: boolean; onAccount: boolean } {
+  if (attempt.method === "ON_ACCOUNT") return { recorded: true, onAccount: true };
+  const total = roundMoney(sale.total);
+  const expected =
+    attempt.method === "CASH" ? Math.min(roundMoney(attempt.tendered ?? total), total) : total;
+  return { recorded: roundMoney(sale.paid) >= expected, onAccount: false };
+}

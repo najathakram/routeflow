@@ -30,6 +30,7 @@ import {
   changeDue,
   counterSaleErrorCopy,
   isCounterSaleNotFound,
+  judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
   parseScanField,
@@ -352,9 +353,20 @@ export function CounterSaleScreen() {
       }
       attemptRef.current = null;
       setOutcomeUnknown(false);
-      const amount = attempt.dto.payment.method === "CASH" ? attempt.dto.payment.amount : undefined;
-      setEnteredTender(res.method === "CASH" && amount != null ? amount : null);
-      finishSale(res, attempt.next);
+      // The server's body cannot say whether "no tender" was On account or a failed tender, nor whether a partial was
+      // intended, so the recovered sale is judged against what THIS screen submitted for the key.
+      const { method: sentMethod, amount } = attempt.dto.payment;
+      const verdict = judgeRecoveredSale({ method: sentMethod, tendered: amount }, res);
+      const judged: CounterSaleResponse = {
+        ...res,
+        method: sentMethod,
+        paymentRecorded: verdict.recorded,
+        ...(verdict.recorded
+          ? { paymentErrorCode: undefined }
+          : { paymentErrorCode: res.paymentErrorCode ?? "COUNTER_PAYMENT_NOT_RECORDED" }),
+      };
+      setEnteredTender(sentMethod === "CASH" && amount != null && verdict.recorded ? amount : null);
+      finishSale(judged, attempt.next);
     } finally {
       submittingRef.current = false;
     }
