@@ -1285,7 +1285,7 @@ export class CreditNotesService {
     for (const invoiceId of invoiceIds) {
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
-    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
+    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR NO KEY UPDATE`;
 
     const cn = await tx.creditNote.findFirst({
       where: { id },

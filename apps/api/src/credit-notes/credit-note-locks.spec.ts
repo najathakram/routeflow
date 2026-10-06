@@ -43,7 +43,12 @@ describe("credit-note-locks — every FOR UPDATE is tenant-scoped", () => {
     const locks = lockStatements(log);
     expect(locks).toHaveLength(count);
     for (const lock of locks) {
-      expect(lock.sql).toContain("FOR UPDATE");
+      // SA-706a: a CreditNote lock is FOR NO KEY UPDATE (its FK holders take KEY SHARE); Order and
+      // Invoice locks stay FOR UPDATE.
+      const table = /FROM "(\w+)"/.exec(lock.sql ?? "")?.[1];
+      expect(lock.sql).toMatch(
+        table === "CreditNote" ? / FOR NO KEY UPDATE$/ : /(?<!NO KEY) FOR UPDATE$/,
+      );
       expect(lock.sql).toContain('"tenantId"');
       expect(lock.values).toContain(TENANT);
     }
@@ -84,7 +89,7 @@ describe("lockCreditsForSend — one pass, SA-214 order (Order → Invoices → 
     expect(locks[1].sql).toMatch(/FROM "CreditNote"/);
     expect(locks[1].sql).toMatch(/"customerId" = \?/);
     expect(locks[1].sql).toMatch(/FROM "OrderCreditNote"/); // the settle subset rides along
-    expect(locks[1].sql).toMatch(/ORDER BY id FOR UPDATE$/);
+    expect(locks[1].sql).toMatch(/ORDER BY id FOR NO KEY UPDATE$/);
     expect(locks[1].values).toEqual(expect.arrayContaining(["cust-1", "ord-1"]));
   });
 

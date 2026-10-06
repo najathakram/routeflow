@@ -16,6 +16,13 @@ type LockTx = Pick<Prisma.TransactionClient, "$executeRaw">;
  * locks without reading a model row of its own. Re-locking a row the caller already holds is a
  * no-op.
  *
+ * CreditNote rows are locked FOR NO KEY UPDATE (SA-706a), never FOR UPDATE: the only writers that
+ * hold a foreign key to a note — `InvoicePayment.creditNoteId` (applyCreditInTx, the one insert
+ * site, which every caller reaches with the note already locked) and `OrderCreditNote` — take KEY
+ * SHARE on it, and FOR UPDATE would turn a second spender's insert into a wait or an upgrade
+ * deadlock. NO KEY UPDATE still excludes every other writer of the note's own columns
+ * (`amountUsed`, `status`), which is all the lock exists for. Order and Invoice rows stay FOR UPDATE.
+ *
  * Every statement is tenant-scoped (`"tenantId" = …`, as credit-notes.service `create` and
  * line-credit-headroom are): an id that belongs to another tenant can't lock, and so stall, that
  * tenant's rows. A null tenant (the documented unwrapped-tx case — settleOrderCreditsInTx's own
@@ -30,7 +37,7 @@ export async function lockCreditNotes(
 ): Promise<void> {
   const sorted = [...new Set(ids.filter((id): id is string => !!id))].sort();
   if (sorted.length === 0) return;
-  await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id IN (${Prisma.join(sorted)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+  await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id IN (${Prisma.join(sorted)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
 }
 
 /** An invoice's Order (when it has one), then the invoice: the SA-214 prefix of a credit write. */
@@ -76,7 +83,7 @@ export async function lockOrderCreditSettle(
       UNION
       SELECT p."creditNoteId" FROM "InvoicePayment" p JOIN "Invoice" i ON i.id = p."invoiceId"
         WHERE i."orderId" = ${orderId} AND p."creditNoteId" IS NOT NULL
-    ) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+    ) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
 }
 
 /**
@@ -90,7 +97,7 @@ export async function lockCustomerCreditsForSweep(
   customerId: string,
 ): Promise<void> {
   await lockInvoiceForCredit(tx, tenantId, invoiceId);
-  await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE "customerId" = ${customerId} AND status <> 'VOID' AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+  await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE "customerId" = ${customerId} AND status <> 'VOID' AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
 }
 
 /**
@@ -110,7 +117,7 @@ export async function lockCreditsForSend(
 ): Promise<void> {
   const { orderId, customerId } = locked;
   if (!orderId) {
-    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE "customerId" = ${customerId} AND status <> 'VOID' AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE "customerId" = ${customerId} AND status <> 'VOID' AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
     return;
   }
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
@@ -119,5 +126,5 @@ export async function lockCreditsForSend(
       UNION
       SELECT p."creditNoteId" FROM "InvoicePayment" p JOIN "Invoice" i ON i.id = p."invoiceId"
         WHERE i."orderId" = ${orderId} AND p."creditNoteId" IS NOT NULL
-    )) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
+    )) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR NO KEY UPDATE`;
 }

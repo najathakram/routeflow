@@ -187,9 +187,16 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
       const locks = exec.mock.calls
         .map((c: any[]) => ({ sql: c[0].join("?"), values: c.slice(1) }))
-        .filter((l) => /FOR UPDATE/.test(l.sql));
+        .filter((l) => /FOR (NO KEY )?UPDATE/.test(l.sql));
       // 2 orders + 2 invoices + the note itself (the restores' own note locks come after).
       expect(locks.length).toBeGreaterThanOrEqual(5);
+      // SA-706a: the note's own lock is NO KEY UPDATE (its FK holders take KEY SHARE); Order and
+      // Invoice locks stay FOR UPDATE.
+      for (const l of locks) {
+        expect(l.sql).toMatch(
+          /FROM "CreditNote"/.test(l.sql) ? / FOR NO KEY UPDATE$/ : /(?<!NO KEY) FOR UPDATE$/,
+        );
+      }
       for (const l of locks) {
         expect(l.sql).toMatch(/"tenantId"/);
         expect(l.values).toContain("test-tenant");

@@ -38,6 +38,7 @@ jest.mock("../storage/compress.util", () => ({
 import { Test } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { CreditNotesService } from "./credit-notes.service";
+import { OrdersService } from "../orders/orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { EmailService } from "../email/email.service";
@@ -108,6 +109,39 @@ function readThenWait(
   return new Proxy(tx, {
     get(target, prop) {
       if (prop === "creditNote") return creditNote;
+      const value = target[prop];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
+ * `tx`, except right AFTER its first `orderCreditNote.create` (the sync's intent insert, whose FK
+ * takes KEY SHARE on the note) it waits at `barrier` — both creates hold that KEY SHARE before
+ * either one's settle locks the note.
+ */
+function waitAfterIntentInsert(tx: any, barrier: ReturnType<typeof makeBarrier>) {
+  let waited = false;
+  const delegate = tx.orderCreditNote;
+  const orderCreditNote = new Proxy(delegate, {
+    get(target, prop) {
+      const value = target[prop];
+      if (prop === "create") {
+        return async (args: unknown) => {
+          const row = await value.call(target, args);
+          if (!waited) {
+            waited = true;
+            await barrier.arrive();
+          }
+          return row;
+        };
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return new Proxy(tx, {
+    get(target, prop) {
+      if (prop === "orderCreditNote") return orderCreditNote;
       const value = target[prop];
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -526,5 +560,44 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
     const ledger = await ledgerOf(note.id);
     expect(ledger.paid).toBe(100);
     expect(ledger.amountUsed).toBe(100);
+  }, 60_000);
+  it("SA-706a: two creates applying the SAME note both commit (no 40P01), and the note is spent once", async () => {
+    const { tenantId, customerId } = await seedTenant("create-race");
+    const note = await tenantCtx.run(tenantId, () =>
+      creditNotes.create({ customerId, amount: 100 } as any),
+    );
+    const a = await seedOrderWithInvoice(tenantId, customerId, 100);
+    const b = await seedOrderWithInvoice(tenantId, customerId, 100);
+
+    // create()'s credit tx is OrdersService.syncAndSettleOrderCredits; run the real method on the
+    // real services, with the barrier between each tx's intent insert and its settle.
+    const barrier = makeBarrier();
+    const orders: any = Object.create(OrdersService.prototype);
+    orders.creditNotes = creditNotes;
+    orders.prisma = new Proxy(prisma, {
+      get(target: any, prop) {
+        if (prop === "tenantTransaction") {
+          return (fn: (tx: any) => unknown, opts?: unknown) =>
+            target.tenantTransaction((tx: any) => fn(waitAfterIntentInsert(tx, barrier)), opts);
+        }
+        const value = target[prop];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const create = (orderId: string) =>
+      tenantCtx.run(tenantId, () =>
+        orders.syncAndSettleOrderCredits(orderId, customerId, [{ creditNoteId: note.id }]),
+      );
+
+    const results = await Promise.allSettled([create(a.orderId), create(b.orderId)]);
+
+    const ledger = await ledgerOf(note.id);
+    console.log(
+      `SA-706a create race: amount=${ledger.amount} amountUsed=${ledger.amountUsed} ` +
+        `appliedOnInvoices=${ledger.paid} creates=${results.map((r) => r.status).join(",")}`,
+    );
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]); // pre-fix: 40P01 -> 500
+    expect(ledger.paid).toBeLessThanOrEqual(100);
+    expect(ledger.amountUsed).toBe(ledger.paid);
   }, 60_000);
 });
