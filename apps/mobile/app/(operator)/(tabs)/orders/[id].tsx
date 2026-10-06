@@ -66,6 +66,7 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
@@ -888,7 +889,10 @@ export default function OrderDetailScreen() {
           {/* Carrier shipment — only for carrier-shipped orders, or rows that
               already carry tracking data recorded before this gate existed. */}
           {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(order, order.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Status transitions */}

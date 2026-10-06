@@ -67,6 +67,7 @@ import {
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
 // though the API already returns them (findOne's `payments` include has no
@@ -953,7 +954,10 @@ export default function InvoiceDetailScreen() {
               the section (mirrors web's invoice detail gate). */}
           {!isVoid &&
           (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) ? (
-            <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(invoice, invoice.order?.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Payments */}

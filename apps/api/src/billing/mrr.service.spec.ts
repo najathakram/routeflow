@@ -91,6 +91,22 @@ describe("MrrService.computeOverview", () => {
     expect(where.tenant.subscription).toEqual({ planKey: { not: null } });
   });
 
+  // SA-693: a comp books 0 by construction (priceSnapshot 0), and both MRR reads also filter it out
+  // through the shared billableAddonWhere, so a comp row that ever carried a stale price still adds 0.
+  it("SA-693: neither MRR read counts a comp add-on (isComp: false in both where clauses)", async () => {
+    const { svc, prisma } = make();
+    await svc.computeOverview();
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where.isComp).toBe(false);
+
+    prisma.tenantAddon.findMany.mockClear();
+    await svc.priceTenant("t-starter");
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "t-starter",
+      active: true,
+      isComp: false,
+    });
+  });
+
   it("uses a fixed trailing 30-day window for momDelta (no month-overflow)", async () => {
     const { svc, prisma } = make();
     await svc.computeOverview();

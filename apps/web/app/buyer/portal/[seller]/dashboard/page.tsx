@@ -396,7 +396,8 @@ export default function BuyerDashboardPage() {
                   <div>
                     <p className="text-sm font-medium text-navy">{order.orderNumber}</p>
                     <p className="text-xs text-navy/70">
-                      {formatDate(order.createdAt)} · {order.itemCount} items
+                      {formatDate(order.createdAt)} · {order.itemCount}{" "}
+                      {order.itemCount === 1 ? "item" : "items"}
                     </p>
                   </div>
                 </div>

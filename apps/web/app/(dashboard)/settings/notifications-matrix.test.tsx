@@ -448,7 +448,7 @@ describe("Notifications page — grouped list (#1965)", () => {
 
   it("T21 every live event carries a one-line description (who gets it, and when)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
-    expect(screen.getByText("Sent when an order is confirmed for delivery.")).toBeInTheDocument();
+    expect(screen.getByText("Sent when an order is confirmed.")).toBeInTheDocument();
   });
 
   it("T23 a not-set-up channel is stated ONCE, above the list, not as a column", () => {
