@@ -106,11 +106,15 @@ export async function enableTenantAddon(
   addonKey: string,
   stripePriceId?: string,
   acknowledgeUnmetRequires?: boolean,
+  comp?: boolean,
 ): Promise<unknown> {
   const res = await superAdminClient.post(`/platform-admin/tenants/${tenantId}/addons/enable`, {
     addonKey,
     ...(stripePriceId ? { stripePriceId } : {}),
     ...(acknowledgeUnmetRequires ? { acknowledgeUnmetRequires } : {}),
+    // SA-693: an explicit free grant is a COMP (isComp true: never billed). Sent only when true, so a
+    // billed or unflagged call stays a normal enable; the server never infers it from a missing price.
+    ...(comp ? { comp: true } : {}),
   });
   return res.data;
 }
