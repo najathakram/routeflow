@@ -51,3 +51,29 @@ export async function writeManualInvoiceNotice(tx: any, n: ManualInvoiceNotice):
     },
   });
 }
+
+/**
+ * A free-form platform notice in the same admin audit feed (same row shape as the manual-invoice notices),
+ * written in the caller's transaction: an operator-facing message plus whatever ids they need to act on it.
+ */
+export async function writeAdminNotice(
+  tx: any,
+  n: {
+    tenantId: string;
+    actorId?: string | null;
+    action: string;
+    message: string;
+    meta?: Record<string, unknown>;
+  },
+): Promise<void> {
+  await tx.auditLog.create({
+    data: {
+      tenantId: n.tenantId,
+      userId: n.actorId ?? null,
+      action: n.action,
+      entityType: ADMIN_AUDIT_ENTITY,
+      entityId: n.tenantId,
+      meta: { platformAdmin: true, message: n.message, ...(n.meta ?? {}) },
+    },
+  });
+}

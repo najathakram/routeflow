@@ -30,6 +30,8 @@ export const AdminAuditAction = {
   ADDON_DISABLED: "ADDON_DISABLED",
   ADDON_COMPED: "ADDON_COMPED",
   ADDON_UNCOMPED: "ADDON_UNCOMPED",
+  /** A duplicate checkout was cancelled; its first invoice was charged and has to be refunded in Stripe. */
+  STRIPE_DUPLICATE_CHECKOUT: "STRIPE_DUPLICATE_CHECKOUT",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -69,6 +71,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_DISABLED: "Add-on disabled",
   ADDON_COMPED: "Add-on granted as a comp (free, not billed)",
   ADDON_UNCOMPED: "Add-on comp removed (now billable)",
+  STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",

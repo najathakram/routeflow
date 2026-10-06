@@ -39,6 +39,20 @@ export function stripeBaseItem(sub: any, addonItemIds: ReadonlySet<string> = new
   return items.find((i) => !addonItemIds.has(i?.id)) ?? items[0];
 }
 
+/**
+ * ONE definition of a "live" Stripe subscription, shared by every guard that must not create or accept a
+ * second one: it still bills (or will keep trying to). `incomplete` (never paid), `incomplete_expired`,
+ * `canceled` and anything unknown are NOT live.
+ */
+const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+  "active",
+  "trialing",
+  "past_due",
+  "unpaid",
+]);
+export const isLiveStripeSubscriptionStatus = (status: unknown): boolean =>
+  typeof status === "string" && LIVE_SUBSCRIPTION_STATUSES.has(status);
+
 /** A Stripe expandable reference (`"id"` or an expanded `{ id }`) as its id, else null. */
 export function stripeRefId(v: unknown): string | null {
   if (typeof v === "string") return v || null;

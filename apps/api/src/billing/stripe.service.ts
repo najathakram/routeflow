@@ -101,8 +101,28 @@ export class StripeService implements OnModuleInit {
     return this.client.subscriptions.update(subId, params);
   }
 
-  async cancelSubscription(subId: string): Promise<any> {
-    return this.client.subscriptions.cancel(subId);
+  /**
+   * `params` (`prorate`, `invoice_now`) and `options` (`idempotencyKey`) are for a caller that must cancel
+   * exactly once without a proration invoice (the duplicate-checkout guard); omit both for the plain cancel.
+   */
+  async cancelSubscription(
+    subId: string,
+    params?: { prorate?: boolean; invoice_now?: boolean },
+    options?: { idempotencyKey?: string },
+  ): Promise<any> {
+    if (!params && !options) return this.client.subscriptions.cancel(subId);
+    return this.client.subscriptions.cancel(subId, params ?? {}, options);
+  }
+
+  // ─── Invoices ─────────────────────────────────────────────────────────────
+
+  async getInvoice(invoiceId: string): Promise<any> {
+    return this.client.invoices.retrieve(invoiceId);
+  }
+
+  /** Voids an OPEN invoice (a paid one cannot be voided — refund it instead). */
+  async voidInvoice(invoiceId: string): Promise<any> {
+    return this.client.invoices.voidInvoice(invoiceId);
   }
 
   // ─── Billing Portal ───────────────────────────────────────────────────────

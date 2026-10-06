@@ -84,6 +84,8 @@ function make(
     tenantSubscription: {
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
+      // X1: the under-the-lock re-check re-reads the stored row — the same mock as the pre-tx read.
+      findUnique: jest.fn((args: unknown) => prisma.tenantSubscription.findUnique(args)),
     },
     auditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -774,7 +776,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // bounded: a slow restore times out and Stripe retries
     });
 
-    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
+    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert runs in the tenant-locked transaction (X1)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.isEnabled.mockResolvedValue(false);
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
@@ -784,12 +786,20 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
       expect(planTransition.prepare).not.toHaveBeenCalled();
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
-      // the write is exactly what it always was: called on the client itself, never through a tx
+      // X1: the SAME write, now inside a transaction whose first statement is the tenant row lock, so the
+      // duplicate-checkout re-check reads the stored subscription under it; still no hook, no CAS on the plan.
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.findUnique.mock.invocationCallOrder[0],
+      );
+      expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.upsert.mock.invocationCallOrder[0],
+      );
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
     });
 
-    it("the flag flipped OFF between the two reads: still the plain upsert (prepared.enabled is false)", async () => {
+    it("the flag flipped OFF between the two reads: still no hook, the upsert in the locked transaction (prepared.enabled is false)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
 
@@ -797,7 +807,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
     });
 
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
@@ -824,6 +834,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
           tenantId: "t1",
           planKey: "BUSINESS", // the stored key the transition was judged from
+          stripeSubId: null, // X1: and the subscription id the duplicate question was judged from
         });
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
@@ -851,14 +862,17 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       it("MAJOR 2: a redelivery of an already-applied session does NOTHING (no hook, no write)", async () => {
         const { svc, prisma, tx, planTransition, events } = make({ transitionCount: 1 });
-        prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        // only the APPLIED marker exists (the sticky DUPLICATE lookup finds nothing)
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
 
         await (svc as any).onCheckoutCompleted(withId("cs_done"));
 
-        expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
-          tenantId: "t1",
-          entityId: "cs_done",
-        });
+        const applied = prisma.auditLog.findFirst.mock.calls.find(
+          (c: any[]) => c[0].where.action === "STRIPE_CHECKOUT_APPLIED",
+        );
+        expect(applied?.[0].where).toMatchObject({ tenantId: "t1", entityId: "cs_done" });
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).toEqual([]);
@@ -884,7 +898,9 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         );
 
         const dup = make({ transitionCount: 1 });
-        dup.prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        dup.prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
         await (dup.svc as any).onCheckoutCompleted(withId("cs_done"));
         expect(dup.planTransition.invalidateCaches).not.toHaveBeenCalled();
 
@@ -1232,13 +1248,18 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
-      it("flag OFF: none of the guards read anything — no audit lookup, no snapshot lookup, no tenant read, plain upsert", async () => {
+      it("flag OFF: none of the flag-ON guards read anything — no APPLIED lookup, no snapshot lookup, no tenant read; the one audit read is the sticky duplicate decision", async () => {
         const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
         planTransition.isEnabled.mockResolvedValue(false);
 
         await (svc as any).onCheckoutCompleted(withId("cs_off", { created: 1 }));
 
-        expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+        // X1: the only audit lookup is the session's sticky DUPLICATE decision (read for every flag state)
+        expect(
+          prisma.auditLog.findFirst.mock.calls.every(
+            (c: any[]) => c[0].where.action === "STRIPE_CHECKOUT_DUPLICATE",
+          ),
+        ).toBe(true);
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
         expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled(); // no CAS, no tx write

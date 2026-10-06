@@ -10,6 +10,7 @@
  * and notifications are stubbed. Tenants are throwaway `qa-*` slugs.
  */
 import { randomUUID } from "crypto";
+import { ConflictException } from "@nestjs/common";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -18,6 +19,8 @@ import { BillingService } from "./billing.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
+import { PlatformAdminService } from "../platform-admin/platform-admin.service";
+import { MrrService } from "./mrr.service";
 import { BillingEventService } from "./billing-event.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
@@ -89,7 +92,10 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   });
 
   /** An item of the in-memory Stripe subscription, as dahlia returns it with the product expanded. */
-  const stripeItem = (id: string, o: { sku?: string; cents: number; quantity: number }) => ({
+  const stripeItem = (
+    id: string,
+    o: { sku?: string; cents: number; quantity: number; sub?: string },
+  ) => ({
     id,
     object: "subscription_item",
     created: 1791172886,
@@ -98,7 +104,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     discounts: [],
     metadata: {},
     quantity: o.quantity,
-    subscription: "sub_qa",
+    subscription: o.sub ?? "sub_qa",
     price: {
       id: `price_${id}`,
       object: "price",
@@ -127,6 +133,26 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     ledger: () => Promise<Array<{ type: string; delta: number; sku?: string }>>;
     ledgerSum: () => Promise<number>;
     rows: () => Promise<any[]>;
+    /** The mocked Stripe service (module boundary): subscriptions + invoices live in `subs` / `invoices`. */
+    stripe: any;
+    subs: Record<string, SubState>;
+    invoices: Record<string, any>;
+    tenantSlug: string;
+    /** Deliver ANOTHER checkout.session.completed for this tenant (default: the rig's own session, paid). */
+    deliver: (over?: Record<string, unknown>) => Promise<void>;
+    /** Register a further Stripe subscription (e.g. the second session's). */
+    addSub: (id: string, o: Partial<SubState> & { items: any[] }) => void;
+    /** The next `n` Stripe cancelSubscription calls fail with a 500. */
+    failNextCancel: (n: number) => void;
+    /** A customer.subscription.deleted event for `subId` (Stripe fires it for the duplicate it cancelled). */
+    deleted: (subId: string) => Promise<void>;
+  }
+
+  interface SubState {
+    status: string;
+    customer: string;
+    latestInvoice: string | null;
+    items: any[];
   }
 
   async function rig(opts: {
@@ -162,26 +188,44 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
 
     const items = [...opts.items];
     let itemSeq = 0;
+    const customer = opts.sessionCustomer ?? "cus_qa";
+    // The in-memory Stripe: subscriptions (sub_qa is the rig's own session's) and their invoices.
+    const subs: Record<string, SubState> = {
+      sub_qa: { status: "active", customer, latestInvoice: "in_qa", items },
+    };
+    const invoices: Record<string, any> = {
+      in_qa: { id: "in_qa", status: "paid", amount_due: 9900, total: 9900 },
+    };
+    const itemsOf = (subId?: string) => (subId && subs[subId] ? subs[subId].items : items);
+    const missing = (what: string) =>
+      Object.assign(new Error(`No such ${what}`), { code: "resource_missing" });
+    let cancelFailures = 0;
     const stripeClient = {
       products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
       subscriptionItems: {
-        list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),
+        list: jest.fn(async (args: any) => ({
+          data: itemsOf(args?.subscription).map((i) => ({ ...i })),
+        })),
         create: jest.fn(async (args: any) => {
           const item = {
             ...stripeItem(`si_new${++itemSeq}`, { cents: 0, quantity: args.quantity }),
             metadata: args.metadata,
           };
-          items.push(item);
+          itemsOf(args?.subscription).push(item);
           return item;
         }),
         update: jest.fn(async (id: string, args: any) => {
-          const i = items.find((x) => x.id === id);
+          const i = Object.values(subs)
+            .flatMap((x) => x.items)
+            .find((x) => x.id === id);
           if (i && args?.quantity != null) i.quantity = args.quantity;
           return { id };
         }),
         del: jest.fn(async (id: string) => {
-          const i = items.findIndex((x) => x.id === id);
-          if (i >= 0) items.splice(i, 1);
+          for (const sub of Object.values(subs)) {
+            const i = sub.items.findIndex((x) => x.id === id);
+            if (i >= 0) sub.items.splice(i, 1);
+          }
           return {};
         }),
       },
@@ -190,13 +234,34 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     const stripe = {
       isConfigured: true,
       client: stripeClient,
-      getSubscription: jest.fn(async () => ({
-        id: "sub_qa",
-        object: "subscription",
-        status: "active",
-        customer: opts.sessionCustomer ?? "cus_qa",
-        items: { object: "list", data: items.map((i) => ({ ...i })) },
-      })),
+      getSubscription: jest.fn(async (id: string) => {
+        const sub = subs[id];
+        if (!sub) throw missing(`subscription: ${id}`);
+        return {
+          id,
+          object: "subscription",
+          status: sub.status,
+          customer: sub.customer,
+          latest_invoice: sub.latestInvoice,
+          items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
+        };
+      }),
+      cancelSubscription: jest.fn(async (id: string) => {
+        if (cancelFailures > 0) {
+          cancelFailures -= 1;
+          throw Object.assign(new Error("Stripe API error (500)"), { type: "StripeAPIError" });
+        }
+        if (subs[id]) subs[id].status = "canceled";
+        return { id, object: "subscription", status: "canceled" };
+      }),
+      getInvoice: jest.fn(async (id: string) => {
+        if (!invoices[id]) throw missing(`invoice: ${id}`);
+        return { ...invoices[id] };
+      }),
+      voidInvoice: jest.fn(async (id: string) => {
+        invoices[id].status = "void";
+        return { ...invoices[id] };
+      }),
     } as any;
 
     const events = new BillingEventService(prisma as any);
@@ -227,17 +292,21 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     const session = {
       id: `cs_qa_${run}_${seq}`,
       object: "checkout.session",
-      customer: opts.sessionCustomer ?? "cus_qa",
+      customer,
       subscription: "sub_qa",
       created: 1791172800,
+      payment_status: "paid",
       metadata: { tenantId: tenant.id, planKey: "STARTER", interval: "month" },
     };
-    const completed = () =>
-      billing.handleWebhookEvent({
-        id: `evt_qa_${run}_${seq}`,
+    const deliver = (over: Record<string, unknown> = {}) => {
+      const s = { ...session, ...over };
+      return billing.handleWebhookEvent({
+        id: `evt_${s.id}`,
         type: "checkout.session.completed",
-        data: { object: session },
+        data: { object: s },
       });
+    };
+    const completed = () => deliver();
     const evs = async () =>
       (
         await prisma.billingEvent.findMany({
@@ -260,6 +329,23 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       ledgerSum: async () => (await evs()).reduce((s, e) => s + e.delta, 0),
       rows: () =>
         prisma.tenantAddon.findMany({ where: { tenantId: tenant.id }, orderBy: { sku: "asc" } }),
+      stripe,
+      subs,
+      invoices,
+      tenantSlug: slug,
+      deliver,
+      addSub: (id, o) => {
+        subs[id] = { status: "active", customer, latestInvoice: null, ...o };
+      },
+      failNextCancel: (n) => {
+        cancelFailures = n;
+      },
+      deleted: (subId) =>
+        billing.handleWebhookEvent({
+          id: `evt_deleted_${subId}_${run}`,
+          type: "customer.subscription.deleted",
+          data: { object: { id: subId, object: "subscription", customer, status: "canceled" } },
+        }),
     };
   }
 
@@ -587,5 +673,434 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     expect((await r.ledger()).filter((e) => e.sku === "FORECASTING")).toEqual([
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: price.FORECASTING, sku: "FORECASTING" },
     ]);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // X1 — a STALE checkout never completes over a newer billing state.
+  // Real Postgres; only Stripe is mocked (module boundary: subscriptions, invoices, cancel/void).
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("X1: a stale checkout never completes over a newer billing state (real Postgres)", () => {
+    const pack = () =>
+      stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 });
+    const dupItems = () => [
+      stripeItem("si_dup_base", { cents: 9900, quantity: 1, sub: "sub_dup" }),
+      stripeItem("si_dup_pack", {
+        sku: "CUSTOMER_PACK_100",
+        cents: 5000,
+        quantity: 2,
+        sub: "sub_dup",
+      }),
+    ];
+    /** A tenant whose own session (sub_qa) and a second, already-paid session (sub_dup) both exist in Stripe. */
+    async function twoSessions(flagOn = false, paid = true) {
+      const r = await rig({
+        flagOn,
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [base(), pack()],
+      });
+      r.addSub("sub_dup", { items: dupItems(), latestInvoice: "in_dup" });
+      r.invoices.in_dup = {
+        id: "in_dup",
+        status: paid ? "paid" : "open",
+        amount_due: 19900,
+        total: 19900,
+      };
+      return r;
+    }
+    const dupSession = (r: Rig, over: Record<string, unknown> = {}) => ({
+      id: `${r.sessionId}_dup`,
+      subscription: "sub_dup",
+      ...over,
+    });
+    const decisions = (r: Rig) =>
+      prisma.auditLog.findMany({
+        where: { tenantId: r.tenantId, action: "STRIPE_CHECKOUT_DUPLICATE" },
+      });
+    const notices = (r: Rig) =>
+      prisma.auditLog.findMany({
+        where: { tenantId: r.tenantId, action: "STRIPE_DUPLICATE_CHECKOUT" },
+      });
+    const sub = (r: Rig) =>
+      prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } });
+    const tenantStatus = async (r: Rig) =>
+      (await prisma.tenant.findUniqueOrThrow({ where: { id: r.tenantId } })).status;
+    const cancelArgs = (r: Rig) => [
+      "sub_dup",
+      { prorate: false, invoice_now: false },
+      { idempotencyKey: `cancel-dup:${r.sessionId}_dup` },
+    ];
+    const noItemWrites = (r: Rig) => {
+      for (const fn of ["create", "update", "del"] as const) {
+        expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+      }
+    };
+    const NOTICE = (r: Rig, paid = true) =>
+      paid
+        ? `Duplicate checkout for ${r.tenantSlug} — first invoice in_dup on sub_dup was charged; refund it in Stripe.`
+        : `Duplicate checkout for ${r.tenantSlug} — first invoice in_dup on sub_dup was not paid and is voided; nothing to refund.`;
+    const platformAdmin = (flagOn: boolean) =>
+      new PlatformAdminService(
+        prisma as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        { syncStripeSubscriptionPrice: jest.fn().mockResolvedValue(undefined) } as any,
+        { resolveTenantPricing: jest.fn().mockResolvedValue({}) } as any,
+        catalog,
+        {} as any,
+        {} as any,
+        new BillingEventService(prisma as any),
+        {} as any,
+        { invalidate: jest.fn() } as any,
+        { log: jest.fn().mockResolvedValue(undefined) } as any,
+        new MrrService(prisma as any),
+        {} as any,
+        {} as any,
+        planTransitionStub(flagOn),
+      );
+    const activateManually = (flagOn: boolean, tenantId: string) =>
+      platformAdmin(flagOn).activateManualSubscription(
+        tenantId,
+        {
+          plan: "STARTER",
+          paymentMethod: "ZELLE",
+          paymentRef: `ref-x1-${run}`,
+          billingPeriodDays: 30,
+        } as any,
+        "admin-1",
+      );
+    const hourAgo = () => Math.floor(Date.now() / 1000) - 3600;
+
+    it.each([false, true])(
+      "1 (flag on=%s): two sessions both complete — the stored sub is unchanged, sub 2 is cancelled ONCE (prorate false), exactly 1 notice + 1 decision row, no add-on adopted from it, no MRR",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        await r.completed(); // session 1: applied
+        const rowsAfterFirst = (await r.rows()).map((x) => [
+          x.stripeItemId,
+          Number(x.priceSnapshot),
+        ]);
+        const ledgerAfterFirst = await r.ledger();
+        expect(rowsAfterFirst).toEqual([["si_pack", 50]]);
+
+        await r.deliver(dupSession(r)); // session 2: paid, a duplicate
+
+        expect((await sub(r)).stripeSubId).toBe("sub_qa"); // never re-pointed
+        expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledWith(...cancelArgs(r));
+        expect(r.subs.sub_dup.status).toBe("canceled");
+        expect(r.stripe.voidInvoice).not.toHaveBeenCalled(); // a paid session voids nothing
+        const decided = await decisions(r);
+        expect(decided).toHaveLength(1);
+        expect(decided[0]).toMatchObject({ entityId: `${r.sessionId}_dup`, tenantId: r.tenantId });
+        expect(decided[0].meta).toMatchObject({
+          reason: "duplicate_checkout",
+          subscriptionId: "sub_dup",
+          storedSubscriptionId: "sub_qa",
+          latestInvoice: "in_dup",
+          invoiceAmountCents: 19900,
+          invoicePaid: true,
+        });
+        const told = await notices(r);
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatchObject({ entityType: "tenant", entityId: r.tenantId });
+        expect((told[0].meta as any).message).toBe(NOTICE(r));
+        // the duplicate's add-on item was never adopted, touched or deleted; nothing booked
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual(
+          rowsAfterFirst,
+        );
+        noItemWrites(r);
+        expect(await r.ledger()).toEqual(ledgerAfterFirst);
+      },
+    );
+
+    it.each([false, true])(
+      "2 (flag on=%s): session created -> MANUAL activation -> session paid: the session is not applied; sub cancelled once, 1 notice, 1 decision, no add-on adopted, no MRR from it",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+          items: [base(), pack()],
+        });
+        r.invoices.in_qa = { id: "in_qa", status: "paid", amount_due: 19900, total: 19900 };
+        const created = hourAgo(); // the session exists BEFORE the owner moves the tenant to manual invoicing
+        await activateManually(flagOn, r.tenantId);
+        const afterActivation = await r.ledger();
+        const manualRows = (await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)]);
+        expect(manualRows).toEqual([[null, price.CUSTOMER_PACK_100]]); // priced for the owner's invoice
+
+        await r.deliver({ created }); // ...and now the customer's card checkout is paid
+
+        const row = await sub(r);
+        expect(row.stripeSubId).toBeNull(); // not re-pointed at the checkout's subscription
+        expect(row.externalPayment).toBe(true);
+        expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledWith(
+          "sub_qa",
+          {
+            prorate: false,
+            invoice_now: false,
+          },
+          { idempotencyKey: `cancel-dup:${r.sessionId}` },
+        );
+        const decided = await decisions(r);
+        expect(decided).toHaveLength(1);
+        expect(decided[0].meta).toMatchObject({ reason: "stale_checkout_manual" });
+        const told = await notices(r);
+        expect(told).toHaveLength(1);
+        expect((told[0].meta as any).message).toBe(
+          `Duplicate checkout for ${r.tenantSlug} — first invoice in_qa on sub_qa was charged; refund it in Stripe.`,
+        );
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual(
+          manualRows,
+        );
+        noItemWrites(r);
+        expect(await r.ledger()).toEqual(afterActivation); // the session booked nothing
+        // Stripe then reports the cancelled subscription deleted: the manual tenant stays ACTIVE
+        await r.deleted("sub_qa");
+        expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+        expect(await r.ledger()).toEqual(afterActivation);
+      },
+    );
+
+    it("3: a REDELIVERY of the duplicate session — no second cancel, no second notice, no second decision row", async () => {
+      const r = await twoSessions();
+      await r.completed();
+      await r.deliver(dupSession(r));
+      await r.deliver(dupSession(r));
+      await r.deliver(dupSession(r));
+
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(await decisions(r)).toHaveLength(1);
+      expect(await notices(r)).toHaveLength(1);
+      expect((await sub(r)).stripeSubId).toBe("sub_qa");
+    });
+
+    it("3b: the cancel failed — the decision + notice STAND, the redelivery ONLY retries the cancel and never re-judges (even though the stored sub has since died)", async () => {
+      const r = await twoSessions();
+      await r.completed();
+      r.failNextCancel(1);
+
+      await expect(r.deliver(dupSession(r))).rejects.toThrow(/Stripe API error/);
+      expect(await decisions(r)).toHaveLength(1);
+      expect(await notices(r)).toHaveLength(1);
+      expect(r.subs.sub_dup.status).toBe("active"); // still billing: the retry must cancel it
+
+      // the stored subscription dies in the meantime: a RE-JUDGEMENT would now apply the duplicate
+      r.subs.sub_qa.status = "canceled";
+      await expect(r.deliver(dupSession(r))).resolves.toBeUndefined();
+
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(2); // the failed one + the retry
+      for (const call of r.stripe.cancelSubscription.mock.calls) {
+        expect(call).toEqual(cancelArgs(r)); // the SAME idempotency key both times
+      }
+      expect(r.subs.sub_dup.status).toBe("canceled");
+      expect(await decisions(r)).toHaveLength(1);
+      expect(await notices(r)).toHaveLength(1);
+      expect((await sub(r)).stripeSubId).toBe("sub_qa"); // never adopted
+      noItemWrites(r);
+    });
+
+    it("5: an UNPAID session also voids the duplicate's open first invoice, and the notice says nothing is owed", async () => {
+      const r = await twoSessions(false, false);
+      await r.completed();
+
+      await r.deliver(dupSession(r, { payment_status: "unpaid" }));
+
+      expect(r.stripe.voidInvoice).toHaveBeenCalledTimes(1);
+      expect(r.stripe.voidInvoice).toHaveBeenCalledWith("in_dup");
+      expect(r.invoices.in_dup.status).toBe("void");
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      const told = await notices(r);
+      expect(told).toHaveLength(1);
+      expect((told[0].meta as any).message).toBe(NOTICE(r, false));
+      expect((told[0].meta as any).invoicePaid).toBe(false);
+      // a redelivery voids nothing more (the invoice is no longer open)
+      await r.deliver(dupSession(r, { payment_status: "unpaid" }));
+      expect(r.stripe.voidInvoice).toHaveBeenCalledTimes(1);
+      expect(await notices(r)).toHaveLength(1);
+    });
+
+    it("6: the duplicate's own customer.subscription.deleted leaves the tenant ACTIVE on its first subscription, books no churn", async () => {
+      const r = await twoSessions();
+      await r.completed();
+      await r.deliver(dupSession(r));
+      const ledger = await r.ledger();
+
+      await r.deleted("sub_dup");
+
+      expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+      expect((await sub(r)).stripeSubId).toBe("sub_qa");
+      expect(await r.ledger()).toEqual(ledger);
+    });
+
+    it.each(["active", "trialing", "past_due", "unpaid"])(
+      "4: a stored subscription that is %s at Stripe is LIVE — the new session is a duplicate",
+      async (status) => {
+        const r = await twoSessions();
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: { stripeSubId: "sub_old" },
+        });
+        r.addSub("sub_old", { items: [], status });
+
+        await r.completed();
+
+        expect((await sub(r)).stripeSubId).toBe("sub_old");
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledWith("sub_qa", expect.anything(), {
+          idempotencyKey: `cancel-dup:${r.sessionId}`,
+        });
+        expect(await decisions(r)).toHaveLength(1);
+        expect(await notices(r)).toHaveLength(1);
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+      },
+    );
+
+    it.each(["canceled", "incomplete", "incomplete_expired"])(
+      "4: a stored subscription that is %s at Stripe is NOT live — a fresh checkout completes normally",
+      async (status) => {
+        const r = await twoSessions();
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: { stripeSubId: "sub_old" },
+        });
+        r.addSub("sub_old", { items: [], status });
+
+        await r.completed();
+
+        expect((await sub(r)).stripeSubId).toBe("sub_qa");
+        expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(await decisions(r)).toHaveLength(0);
+        expect(await notices(r)).toHaveLength(0);
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: "si_pack" });
+      },
+    );
+
+    it("4: a stored subscription Stripe no longer knows is not live either", async () => {
+      const r = await twoSessions();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeSubId: "sub_gone" },
+      });
+
+      await r.completed();
+
+      expect((await sub(r)).stripeSubId).toBe("sub_qa");
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+    });
+
+    it("4 (happy path unchanged): one session, no stored subscription — applied, adopted, booked; no cancel, no decision, no notice", async () => {
+      const r = await twoSessions();
+
+      await r.completed();
+      await r.completed(); // and its redelivery
+
+      expect((await sub(r)).stripeSubId).toBe("sub_qa");
+      expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+      expect(await r.ledgerSum()).toBe(99 + 100);
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(r.stripe.voidInvoice).not.toHaveBeenCalled();
+      expect(await decisions(r)).toHaveLength(0);
+      expect(await notices(r)).toHaveLength(0);
+    });
+
+    it("a manual activation from BEFORE the session (the owner then asked the customer to pay by card) completes normally", async () => {
+      const r = await twoSessions();
+      const created = hourAgo();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { externalPayment: true, periodStart: new Date((created - 7200) * 1000) },
+      });
+
+      await r.deliver({ created });
+
+      expect((await sub(r)).stripeSubId).toBe("sub_qa");
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(await decisions(r)).toHaveLength(0);
+    });
+
+    it.each([false, true])(
+      "RACE (flag on=%s): the stored id moved between the early read and the tenant lock — a retryable conflict with nothing written; the redelivery is then judged a duplicate",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        let release!: () => void;
+        const gate = new Promise<void>((res) => (release = res));
+        let parked!: () => void;
+        const atGate = new Promise<void>((res) => (parked = res));
+        const real = (r.billing as any).hasDuplicateDecision.bind(r.billing);
+        let hold = true;
+        jest
+          .spyOn(r.billing as any, "hasDuplicateDecision")
+          .mockImplementation(async (key: string) => {
+            if (hold && key === `${r.sessionId}_dup`) {
+              parked();
+              await gate; // session 2 has READ the tenant (no stored sub) and now waits
+            }
+            return real(key);
+          });
+
+        const second = r.deliver(dupSession(r));
+        await atGate;
+        await r.completed(); // session 1 applies in full while session 2 is parked
+        release();
+        await expect(second).rejects.toBeInstanceOf(ConflictException);
+
+        // the loser wrote nothing and cancelled nothing
+        expect((await sub(r)).stripeSubId).toBe("sub_qa");
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(await decisions(r)).toHaveLength(0);
+        const ledger = await r.ledger();
+        expect(ledger.filter((e) => e.type === BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toHaveLength(
+          1,
+        );
+
+        hold = false;
+        await r.deliver(dupSession(r)); // Stripe redelivers: now a plain duplicate
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledWith(...cancelArgs(r));
+        expect(await decisions(r)).toHaveLength(1);
+        expect(await notices(r)).toHaveLength(1);
+        expect(await r.ledger()).toEqual(ledger);
+        noItemWrites(r);
+      },
+    );
+
+    it.each([false, true])(
+      "RACE (flag on=%s): a MANUAL activation commits between the early read and the tenant lock — re-judged under the lock, nothing written, the session is cancelled + noticed",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        const created = hourAgo();
+        let release!: () => void;
+        const gate = new Promise<void>((res) => (release = res));
+        let parked!: () => void;
+        const atGate = new Promise<void>((res) => (parked = res));
+        const real = (r.billing as any).hasDuplicateDecision.bind(r.billing);
+        jest
+          .spyOn(r.billing as any, "hasDuplicateDecision")
+          .mockImplementation(async (k: string) => {
+            parked();
+            await gate; // the session has read the tenant (not manual) and waits
+            return real(k);
+          });
+
+        const completion = r.deliver({ created });
+        await atGate;
+        await activateManually(flagOn, r.tenantId); // commits while the completion is parked
+        const afterActivation = await r.ledger();
+        release();
+        await expect(completion).resolves.toBeUndefined();
+
+        expect((await sub(r)).stripeSubId).toBeNull();
+        expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect((await decisions(r))[0].meta).toMatchObject({ reason: "stale_checkout_manual" });
+        expect(await notices(r)).toHaveLength(1);
+        expect(await r.ledger()).toEqual(afterActivation);
+        noItemWrites(r);
+      },
+    );
   });
 });
