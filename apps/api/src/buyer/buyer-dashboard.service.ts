@@ -66,6 +66,9 @@ export class BuyerDashboardService {
           total: true,
           createdAt: true,
           requestedDeliveryDate: true,
+          // Business profiles 1B: the buyer badge is the order detail's label, which reads these.
+          fulfillPath: true,
+          shippedAt: true,
           lineItems: {
             select: { id: true },
           },
@@ -350,6 +353,8 @@ export class BuyerDashboardService {
         total: Number(o.total),
         createdAt: o.createdAt,
         requestedDeliveryDate: o.requestedDeliveryDate,
+        fulfillPath: o.fulfillPath,
+        shippedAt: o.shippedAt,
         itemCount: o.lineItems.length,
       })),
       stats: {

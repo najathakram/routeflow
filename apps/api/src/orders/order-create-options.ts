@@ -9,7 +9,9 @@ import type { SourceLines } from "./source-line";
  *    by-key matches on it.
  *  - `onReplay` (SA-655): called with the ORIGINAL order from both Idempotency-Key replay exits (the
  *    pre-check and the concurrent-race P2002), so a caller that chains more writes after create() knows
- *    it is resuming, not creating. Existing callers pass neither.
+ *    it is resuming, not creating. The key lookup itself does NOT filter on Order.counterSale (keys are
+ *    client UUIDs per tenant, a pre-existing property), so the counter POST's onReplay guard is what
+ *    refuses a key that belongs to an ordinary staff/buyer order. Existing callers pass neither.
  */
 export interface CreateOrderOptions {
   skipAutoMerge?: boolean;
@@ -17,5 +19,5 @@ export interface CreateOrderOptions {
   sourceLines?: SourceLines;
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
-  onReplay?: (order: { id: string; status?: string }) => void;
+  onReplay?: (order: { id: string; status?: string; counterSale?: boolean }) => void;
 }

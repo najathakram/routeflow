@@ -3,6 +3,8 @@
  * Runs the real loadReplayCandidateByKey against a fake that models BOTH stores it consults (the
  * OrderIdempotencyKey table first, then the Order.idempotencyKey column) and filters every read by tenant;
  * nothing about the lookup is mocked. Pins each step and "another tenant's key is not found" (=> 404).
+ * Scope: this spec pins ONLY the tenant-scoped key lookup. byKey additionally requires
+ * Order.counterSale === true (asserted in counter-sale.service.spec).
  */
 import { loadReplayCandidateByKey } from "../merge-idempotency";
 

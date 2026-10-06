@@ -76,6 +76,9 @@ export interface DashboardData {
     createdAt: string;
     requestedDeliveryDate: string | null;
     itemCount: number;
+    /** Business profiles 1B: the badge reads the order detail's label (buyerOrderStatusLabel). */
+    fulfillPath: string;
+    shippedAt: string | null;
   }>;
   stats: {
     activeOrders: number;

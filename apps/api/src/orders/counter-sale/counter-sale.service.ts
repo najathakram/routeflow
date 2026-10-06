@@ -141,7 +141,16 @@ export class CounterSaleService {
         counterSale: true,
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
-        onReplay: () => {
+        onReplay: (existing) => {
+          // The replay lookup does not filter on counterSale (keys are client UUIDs per tenant), so a
+          // key that belongs to an ordinary staff/buyer order lands here. Refuse BEFORE any write.
+          if (existing.counterSale !== true) {
+            throw new ConflictException({
+              code: API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT,
+              message:
+                "This Idempotency-Key already belongs to another order, not a counter sale. Start a new sale.",
+            });
+          }
           replayed = true;
         },
       },

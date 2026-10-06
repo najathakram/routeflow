@@ -83,6 +83,7 @@ describe("CounterSaleService.ring", () => {
   let reader: { get: jest.Mock };
   let invoices: Inv[];
   let replay: boolean;
+  let replayOrder: { id: string; counterSale?: boolean };
 
   const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
     id,
@@ -108,8 +109,9 @@ describe("CounterSaleService.ring", () => {
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
+    replayOrder = { id: "ord-1", counterSale: true };
     createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
-      if (replay) sale?.onReplay?.();
+      if (replay) sale?.onReplay?.(replayOrder);
       return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
     });
     findReplayCandidateByKey = jest.fn(async () => null);
@@ -197,6 +199,36 @@ describe("CounterSaleService.ring", () => {
         staff,
         expect.objectContaining({ counterSale: true }),
       );
+    });
+
+    it("a walk-in counter POST also marks the order as a counter sale", async () => {
+      await service.ring(
+        { walkIn: true, items: [item], payment: { method: "CASH" } } as never,
+        staff,
+      );
+      expect(createSale).toHaveBeenCalledWith(
+        expect.anything(),
+        staff,
+        expect.objectContaining({ counterSale: true }),
+      );
+    });
+
+    it("a key that belongs to a NON-counter order is 409 COUNTER_SALE_KEY_CONFLICT before any write", async () => {
+      replay = true;
+      replayOrder = { id: "ord-staff", counterSale: false };
+      const e = await errorOf(service.ring(named({ method: "CASH" }) as never, staff, "k-staff"));
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse().code).toBe("COUNTER_SALE_KEY_CONFLICT");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("control: a replay of a real counter sale still resumes", async () => {
+      replay = true;
+      await expect(
+        service.ring(named({ method: "CASH" }) as never, staff, "k-ok"),
+      ).resolves.toBeDefined();
     });
 
     it("a carrier tenant (no fleet, counter optional) still rings PICKUP counter sales", async () => {

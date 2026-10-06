@@ -6,7 +6,8 @@ import { settleStockForEdit, type OrderStockDeps } from "./order-stock";
  * put the removed pieces back on the shelf? OBSERVED first: yes (R1 lets staff edit an OUT_FOR_DELIVERY
  * order and `settleStockForEdit` credits the undelivered remainder of a removed / reduced line, even
  * though the parcel is out). `blockCredits` (set by updateOrderItems for a with-carrier order) refuses any
- * edit that would credit stock, with a coded 409; increases still pass.
+ * edit that moves stock, with a coded 409: a reduction is ORDER_WITH_CARRIER_NO_REDUCE, an add / increase
+ * is ORDER_WITH_CARRIER_NO_ADD (SA-696: the line set is fixed once the parcel is out).
  */
 
 const D = (n: number | string) => new Prisma.Decimal(n);
@@ -98,16 +99,47 @@ describe("settleStockForEdit on an order with the carrier", () => {
     }
   });
 
-  it("blockCredits does not touch an increase or a no-op edit", async () => {
-    const products = [pack12()];
+  it("SA-696: blockCredits refuses an increase or an added line (ORDER_WITH_CARRIER_NO_ADD), nothing written", async () => {
+    for (const [held, final] of [
+      [[line(2)], [line(3)]], // qty +1
+      [[], [line(1)]], // an added line
+    ]) {
+      const products = [pack12()];
+      const { tx, rows } = fakeTx(products);
+      await expect(
+        settleStockForEdit(deps, tx, shipped, held, final, undefined, undefined, {
+          blockCredits: true,
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_ADD" }),
+      });
+      expect(products[0].currentStock).toBe(100);
+      expect(rows()).toEqual([]);
+    }
+  });
+
+  it("SA-696: a swap (one product up, another down) is a reduction; a no-op edit passes", async () => {
+    const other = { id: "p6", name: "Soda", currentStock: 50, unitsPerBox: null };
+    const products = [pack12(), other];
     const { tx, rows } = fakeTx(products);
-    await settleStockForEdit(deps, tx, shipped, [line(2)], [line(3)], undefined, undefined, {
-      blockCredits: true,
+    await expect(
+      settleStockForEdit(
+        deps,
+        tx,
+        shipped,
+        [line(2)],
+        [{ ...line(1), productId: "p6" }],
+        undefined,
+        undefined,
+        { blockCredits: true },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_REDUCE" }),
     });
-    expect(rows()).toEqual([{ productId: "p12", quantity: -12, stockAfter: 88 }]);
     await settleStockForEdit(deps, tx, shipped, [line(3)], [line(3)], undefined, undefined, {
       blockCredits: true,
     });
-    expect(rows()).toHaveLength(1);
+    expect(rows()).toEqual([]);
   });
 });

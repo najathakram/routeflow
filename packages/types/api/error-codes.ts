@@ -263,6 +263,7 @@ export const API_ERROR_CODES = {
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
+  ORDER_WITH_CARRIER_NO_ADD: "ORDER_WITH_CARRIER_NO_ADD",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
   ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
@@ -383,6 +384,11 @@ export const API_ERROR_CODES = {
    * Idempotency-Key and re-ring (that would double-sell). Open the order from the orders list instead.
    */
   COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
+  /**
+   * 409 from the counter-sale POST: this Idempotency-Key already belongs to an ordinary (non-counter) order. The
+   * counter POST refuses it before any write; use a fresh key.
+   */
+  COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
