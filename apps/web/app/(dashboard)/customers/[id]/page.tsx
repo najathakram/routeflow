@@ -7,6 +7,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { contactPersonPayload } from "@/lib/contact-person-payload";
 import {
   ArrowLeft,
   Star,
@@ -816,23 +817,21 @@ function ContactPersonModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.firstName.trim()) return;
-    const payload = {
-      customerId,
-      salutation: form.salutation || undefined,
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim() || undefined,
-      email: form.email.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-      mobile: form.mobile.trim() || undefined,
-      isPrimary: form.isPrimary,
-    };
+    // #3206 follow-up: on edit an emptied optional field that was stored is an explicit null.
     if (editingContact) {
       updateContact.mutate(
-        { ...payload, contactId: editingContact.id },
+        {
+          customerId,
+          ...contactPersonPayload(form, editingContact),
+          contactId: editingContact.id,
+        },
         { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
+      addContact.mutate(
+        { customerId, ...contactPersonPayload(form, null) },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
+      );
     }
   };
 
