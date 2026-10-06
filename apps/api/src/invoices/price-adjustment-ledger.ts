@@ -97,12 +97,18 @@ export async function syncLedgerAfterPriceChange(
  * The pack comes from the line's own snapshot, else from its OWN boxes/pieces/qty (`packFromOwnSplit`), never
  * from the live product (which may have been repacked since). A line that HAS a box split but whose pack
  * neither source yields (a legacy `boxes: 0, pieces: N` line with no snapshot) cannot be priced from its
- * fields: reading the split as loose pieces would bill the BOX price per piece, so that one shape keeps the
- * proportional recovery, and it is never a 12x overcharge. That recovery divides an ALREADY-ROUNDED stored
- * subtotal, so it re-bases the total a little on each re-price: re-applying the SAME price is exactly the
- * identity, but a round trip A -> B -> A can land up to (1/2 cent) x A / B + 1/2 cent away from where it began,
- * which is at most 1 cent whenever B is at least half of A (pinned by an executed sweep and a real-rows case in
- * the B1120 specs). Only a legacy row can carry this shape; every other line prices from its own fields.
+ * fields, and reading the split as loose pieces would bill the BOX price per piece. That one shape keeps the
+ * proportional recovery `newPrice x (gross / oldPrice) - discount`, where gross = stored subtotal + discount.
+ * It is only sound while that ratio exists: a stored price of 0, or a stored gross that rounded to 0, carries
+ * NO memory of the quantity, and falling back to `qty` bills the pieces at the case price (a 12x overcharge)
+ * while a ratio of 0 prices the line at $0.00 for good. So a re-price to a price above 0 from such a row is
+ * REFUSED (400 MONEY_INVARIANT, naming the line); a new price of 0 is always allowed. SA-698a.
+ *
+ * The recovery divides an ALREADY-ROUNDED stored subtotal, so it re-bases the total a little on each re-price:
+ * re-applying the SAME price is exactly the identity, but a round trip A -> B -> A can land up to
+ * (1/2 cent) x A / B + 1/2 cent away from where it began, which is at most 1 cent whenever B is at least half
+ * of A (pinned by an executed sweep and a real-rows case in the B1120 specs). Only a legacy row can carry this
+ * shape; every other line prices from its own fields (a derivable-pack line restores exactly from $0).
  */
 function repricedLineTotal(line: any, newPrice: number, discount: number): number {
   const qty = Number(line.qty);
@@ -112,8 +118,17 @@ function repricedLineTotal(line: any, newPrice: number, discount: number): numbe
     snapshot > 1 ? snapshot : packFromOwnSplit({ qty, boxes: line.boxes, pieces: line.pieces });
   if (hasSplit && pack == null) {
     const oldUnitPrice = Number(line.unitPrice);
-    const multiplier = oldUnitPrice > 0 ? (Number(line.subtotal) + discount) / oldUnitPrice : qty;
-    return roundMoney(newPrice * multiplier - discount);
+    const gross = Number(line.subtotal) + discount;
+    if (!(newPrice > 0)) return roundMoney(-discount); // a price of 0 zeroes the gross whatever the quantity was
+    if (!(oldUnitPrice > 0) || !(gross > 0)) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.MONEY_INVARIANT,
+        message:
+          `Line item "${line.description ?? "item"}" can't be re-priced: its stored price or total is $0, ` +
+          `so its quantity can't be recovered from them. Re-enter this line's quantity and price.`,
+      });
+    }
+    return roundMoney(newPrice * (gross / oldUnitPrice) - discount);
   }
   const beforeDiscount = computeLineSubtotal({
     unitPrice: newPrice,

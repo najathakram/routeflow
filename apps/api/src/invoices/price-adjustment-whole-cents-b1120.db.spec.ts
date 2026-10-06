@@ -23,6 +23,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 import { Test } from "@nestjs/testing";
 import { randomUUID } from "crypto";
+import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
@@ -505,5 +506,116 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
     expect(back).toMatchObject({ unitPrice: "5.01", subtotal: "2.10" });
     expect(Math.abs(roundMoney(Number(back.subtotal) - 2.09))).toBeLessThanOrEqual(0.01);
     expect((await stored(invoiceId)).invoice.total).toBe("2.10");
+  });
+
+  /** Runs the adjustment and reports how it ended; the persisted rows are read afterwards, before anything else. */
+  const attempt = (p: Promise<unknown>) =>
+    p.then(
+      () => "applied" as const,
+      (e: unknown) => e,
+    );
+  const codeOf = (e: unknown): unknown =>
+    ((e as BadRequestException).getResponse?.() as { code?: string } | undefined)?.code;
+
+  /** qty 5 stored as boxes 0 + pieces 5 with no pack snapshot and none derivable: 5/12 of a case at $10 = $4.17. */
+  const packless = (price: number, subtotal: number): Line => ({
+    qty: 5,
+    boxes: 0,
+    pieces: 5,
+    unitsPerBox: null,
+    unitPrice: price,
+    subtotal,
+  });
+  /** A second, plain line so the invoice total never reaches $0 (a $0 invoice settles to PAID and refuses re-prices). */
+  const plain: Line = { qty: 1, unitPrice: 5, subtotal: 5 };
+
+  it("a pack-less legacy row: 10 -> 0 -> 10 refuses the step up from $0 (400 MONEY_INVARIANT) and leaves the rows as they were", async () => {
+    const s = await seed("packless0", [[packless(10, 4.17), plain]]);
+    const { invoiceId, lineIds } = s.rows[0];
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "10.00",
+      subtotal: "4.17",
+    });
+
+    await single(s, [0, 5]);
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "0.00",
+      subtotal: "0.00",
+    });
+    const out = await attempt(single(s, [10, 5]));
+
+    // persisted state first, so a red run names the wrong value: today the row lands at 10.00 / 50.00
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "0.00",
+      subtotal: "0.00",
+    });
+    expect((await stored(invoiceId)).invoice.total).toBe("5.00");
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect((out as Error).message).toContain("Re-enter this line's quantity and price");
+  });
+
+  it("a pack-less legacy row: 10 -> 0.01 -> 10 refuses the step up from a $0.00 total, never a $0.00 line at $10 forever", async () => {
+    const s = await seed("packlesscent", [[packless(10, 4.17), plain]]);
+    const { invoiceId, lineIds } = s.rows[0];
+
+    await single(s, [0.01, 5]);
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "0.01",
+      subtotal: "0.00",
+    }); // 0.0417 -> 0.00
+    const out = await attempt(single(s, [10, 5]));
+
+    // today: unitPrice 10.00 with subtotal 0.00, a line that bills nothing at a price of $10
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "0.01",
+      subtotal: "0.00",
+    });
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+  });
+
+  it("a boxed line with a DERIVABLE pack: 10 -> 0 -> 10 restores $14.17 (master bills $170.00, 17 x $10)", async () => {
+    const s = await seed("boxed0", [
+      [{ qty: 17, boxes: 1, pieces: 5, unitsPerBox: 12, unitPrice: 10, subtotal: 14.17 }, plain],
+    ]);
+    const { invoiceId, lineIds } = s.rows[0];
+
+    await single(s, [0, 5]);
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "0.00",
+      subtotal: "0.00",
+    });
+    await single(s, [10, 5]);
+
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "10.00",
+      subtotal: "14.17",
+    });
+    expect((await stored(invoiceId)).invoice.total).toBe("19.17");
+  });
+
+  it("BULK: a pack-less row at $0 on a LATER invoice refuses the whole batch (named, coded) and re-prices none of it", async () => {
+    const s = await seed("packlessbulk", [
+      [{ qty: 6, unitPrice: 10, subtotal: 60 }],
+      [packless(0, 0), plain],
+    ]);
+    const [first, second] = s.rows;
+
+    const out = await attempt(bulk(s, 9));
+
+    // today both invoices are re-priced and the pack-less row lands at 9.00 / 45.00
+    expect(await line(first.invoiceId, first.lineIds[0])).toMatchObject({
+      unitPrice: "10.00",
+      subtotal: "60.00",
+    });
+    expect(await line(second.invoiceId, second.lineIds[0])).toMatchObject({
+      unitPrice: "0.00",
+      subtotal: "0.00",
+    });
+    expect((await stored(first.invoiceId)).invoice.total).toBe("60.00");
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect((out as Error).message).toContain(`Invoice INV-B1120-${RUN}-`);
   });
 });

@@ -11,7 +11,8 @@
  *   2. `buildPriceAdjustmentUpdates` rounds the price with `roundMoney` BEFORE it is written, and prices
  *      the line from THAT price via `computeLineSubtotal` (the line's own boxes/pieces/pack), never from a
  *      multiplier recovered out of the stored, already-rounded subtotal;
- *   3. a line whose split no pack can price keeps the old proportional recovery (never a 12x overcharge).
+ *   3. a line whose split no pack can price keeps the old proportional recovery while its stored price and
+ *      total are above $0; from a stored $0 it REFUSES (400 MONEY_INVARIANT), never `price x qty` (SA-698a).
  * The real-Postgres twin is price-adjustment-whole-cents-b1120.db.spec.ts.
  */
 jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: class InvoicePdfService {} }));
@@ -19,11 +20,11 @@ jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 jest.mock("../common/msrp", () => ({ loadMsrpMap: jest.fn().mockResolvedValue(new Map()) }));
 
 import { Test } from "@nestjs/testing";
-import { ValidationPipe } from "@nestjs/common";
+import { BadRequestException, ConflictException, ValidationPipe } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
-import { buildPriceAdjustmentUpdates } from "./price-adjustment-ledger";
+import { applyBulkPriceAdjustment, buildPriceAdjustmentUpdates } from "./price-adjustment-ledger";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -173,7 +174,7 @@ describe("buildPriceAdjustmentUpdates: a boxed line goes through computeLineSubt
     expect(build([bogo], { g1: 36 })[0].data.subtotal).toBe(360);
   });
 
-  it("a split with its pack missing (boxes 0, pieces 5, no snapshot) keeps the proportional recovery, never 12x", () => {
+  it("a split with its pack missing (boxes 0, pieces 5, no snapshot) keeps the proportional recovery (5 pieces of an $11.00 case re-priced to $12.00 are $5.00)", () => {
     // 5 pieces of an $11.00 case = $4.58 stored; the pack is underivable from boxes 0, so pricing the
     // split as loose pieces would bill 5 x 12 = $60.00.
     const legacy = line("l1", {
@@ -219,18 +220,26 @@ describe("buildPriceAdjustmentUpdates: the no-derivable-pack fallback round trip
     expect(build([legacy(3.01, 1.26)], { l1: 5.01 })[0].data.subtotal).toBe(2.1);
   });
 
-  it("re-applying the SAME price on the fallback line is exactly the identity, executed over every cent price from 0.01 to 30.00", () => {
+  it("re-applying the SAME price on the fallback line is exactly the identity while its stored gross is above $0 (every cent price 0.01 to 30.00); a stored $0.00 gross refuses instead", () => {
     const moved: number[] = [];
+    let refused = 0;
     for (let cents = 1; cents <= 3000; cents++) {
       const price = cents / 100;
       const start = roundMoney((price * 5) / 12);
       for (const discount of [0, 0.5]) {
         const row = { ...legacy(price, start), discount };
-        const [u] = build([row], { l1: price });
-        if (u.data.subtotal !== start || u.data.unitPrice !== price) moved.push(price);
+        const out = attempt(() => build([row], { l1: price }));
+        if (out instanceof BadRequestException) {
+          expect(start + discount).toBe(0); // only a $0 gross has no quantity left to recover
+          refused++;
+        } else {
+          const [u] = out as ReturnType<typeof build>;
+          if (u.data.subtotal !== start || u.data.unitPrice !== price) moved.push(price);
+        }
       }
     }
     expect(moved).toEqual([]);
+    expect(refused).toBeGreaterThan(0); // the sub-12-cent prices, whose 5/12 share rounds to $0.00
   });
 
   it("one round trip moves the total by at most 1/2 cent x A/B + 1/2 cent, and by at most 1 cent when B is at least half of A (executed sweep)", () => {
@@ -250,6 +259,92 @@ describe("buildPriceAdjustmentUpdates: the no-derivable-pack fallback round trip
     }
     expect(checked).toBeGreaterThan(5000);
     expect(worstWithinRatio).toBeLessThanOrEqual(1);
+  });
+});
+
+/** Runs `fn` and returns what it returned, or what it threw: the persisted/returned value shows in a red run. */
+const attempt = <T>(fn: () => T): T | unknown => {
+  try {
+    return fn();
+  } catch (e) {
+    return e;
+  }
+};
+const codeOf = (e: unknown): unknown =>
+  ((e as BadRequestException).getResponse?.() as { code?: string } | undefined)?.code;
+/** What a re-price LANDED as, or "refused": a red run prints the line it wrongly wrote. */
+const landed = (out: unknown): unknown => (Array.isArray(out) ? out[0].data : "refused");
+
+describe("buildPriceAdjustmentUpdates: a pack-less legacy split is never re-priced from a stored price or total of 0 (B1120, SA-698a)", () => {
+  /** qty 5 as boxes 0 + pieces 5, no pack snapshot, none derivable: 5/12 of a case at $10 = $4.17 stored. */
+  const legacy = (price: number, subtotal: number, over: Row = {}) =>
+    line("l1", {
+      description: "Legacy Case",
+      qty: 5,
+      boxes: 0,
+      pieces: 5,
+      unitsPerBox: null,
+      unitPrice: price,
+      subtotal,
+      ...over,
+    });
+  const REMEDY = "Re-enter this line's quantity and price";
+
+  it("10 -> 0 -> 10: the step up from $0 is refused (MONEY_INVARIANT, names the line and the remedy), never $50.00", () => {
+    const atZero = build([legacy(10, 4.17)], { l1: 0 })[0].data;
+    expect(atZero).toMatchObject({ unitPrice: 0, subtotal: 0 }); // going to $0 is a real price and is allowed
+
+    // today this returns subtotal 50 (price x qty: the `: qty` arm, 5 pieces billed at the case price)
+    const out = attempt(() => build([legacy(0, 0)], { l1: 10 }));
+    expect(landed(out)).toBe("refused");
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect((out as Error).message).toContain('"Legacy Case"');
+    expect((out as Error).message).toContain(REMEDY);
+  });
+
+  it("10 -> 0.01 -> 10: the step up from a $0.00 total is refused, never a $0.00 line at $10 forever", () => {
+    const atCent = build([legacy(10, 4.17)], { l1: 0.01 })[0].data;
+    expect(atCent).toMatchObject({ unitPrice: 0.01, subtotal: 0 }); // 0.0417 rounds to 0.00
+
+    // today this returns {unitPrice 10, subtotal 0}: the ratio 0 / 0.01 is 0 and the line is priced at 0 for good
+    const out = attempt(() => build([legacy(0.01, 0)], { l1: 10 }));
+    expect(landed(out)).toBe("refused");
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect((out as Error).message).toContain(REMEDY);
+  });
+
+  it("a gross of 0 with a positive stored price (stored $0.00 total, no discount) is refused the same way", () => {
+    const out = attempt(() => build([legacy(0.05, 0)], { l1: 7 }));
+    expect(landed(out)).toBe("refused");
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+  });
+
+  it("controls: a new price of 0 is always allowed, and a recoverable row (price > 0, gross > 0) still re-prices", () => {
+    expect(build([legacy(0, 0)], { l1: 0 })[0].data).toMatchObject({ unitPrice: 0, subtotal: 0 });
+    expect(build([legacy(10, 4.17)], { l1: 12 })[0].data).toMatchObject({
+      unitPrice: 12,
+      subtotal: 5,
+    });
+    // the discount is part of the gross: a $0.00 net line that was $4.17 gross before a $4.17 discount recovers
+    expect(build([legacy(10, 0, { discount: 4.17 })], { l1: 12 })[0].data.subtotal).toBe(0.83);
+  });
+
+  it("a boxed line whose pack IS derivable round trips 10 -> 0 -> 10 back to $14.17 (master bills $170.00: 17 x $10)", () => {
+    const boxed = (price: number, subtotal: number) =>
+      line("b1", { qty: 17, boxes: 1, pieces: 5, unitsPerBox: 12, unitPrice: price, subtotal });
+    const atZero = build([boxed(10, 14.17)], { b1: 0 })[0].data;
+    expect(atZero).toMatchObject({ unitPrice: 0, subtotal: 0 });
+    expect(build([boxed(0, 0)], { b1: 10 })[0].data).toMatchObject({
+      unitPrice: 10,
+      subtotal: 14.17,
+    });
+    // the same with the pack read from the line's own split, no snapshot (boxes 2 + pieces 3 of qty 27)
+    const own = (price: number, subtotal: number) =>
+      line("b2", { qty: 27, boxes: 2, pieces: 3, unitsPerBox: null, unitPrice: price, subtotal });
+    expect(build([own(0, 0)], { b2: 12 })[0].data.subtotal).toBe(27);
   });
 });
 
@@ -457,5 +552,86 @@ describe("InvoicesService.applyPriceAdjustment: stored rows and totals after rea
     await single("inv-1", { b1: 10 });
     expect(stored("inv-1", "b1")).toMatchObject({ unitPrice: 10, subtotal: 14.17 });
     expect(invoices["inv-1"].total).toBe(14.17);
+  });
+
+  /** Two lines so the invoice total never reaches $0 (a $0 invoice settles to PAID, which refuses every re-price). */
+  const legacyLine = (id: string, price: number, subtotal: number) =>
+    line(id, {
+      description: "Legacy Case",
+      qty: 5,
+      boxes: 0,
+      pieces: 5,
+      unitsPerBox: null,
+      unitPrice: price,
+      subtotal,
+    });
+
+  it("SINGLE: a pack-less row stored at $0 refuses a re-price to $10 (400 MONEY_INVARIANT) and writes nothing", async () => {
+    arrange([
+      invoice("inv-1", [legacyLine("a", 0, 0), line("p", { qty: 1, unitPrice: 5, subtotal: 5 })]),
+    ]);
+
+    const out = await single("inv-1", { a: 10, p: 5 }).then(
+      () => "applied" as const,
+      (e: unknown) => e,
+    );
+
+    // persisted first, so a red run names the wrong value: today the row lands at 10.00 / 50.00
+    expect(stored("inv-1", "a")).toMatchObject({ unitPrice: 0, subtotal: 0 });
+    expect(invoices["inv-1"].total).toBe(5);
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("BULK: the refusal names the invoice with the code, and NOTHING is written to the batch (the all-or-nothing pre-flight)", async () => {
+    arrange([
+      invoice("inv-1", [line("a1", { qty: 6, unitPrice: 10, subtotal: 60 })]),
+      invoice("inv-2", [legacyLine("a2", 0, 0)]),
+    ]);
+
+    const out = await bulk("inv-1", { a1: 9 }).then(
+      () => "applied" as const,
+      (e: unknown) => e,
+    );
+
+    expect(stored("inv-1", "a1")).toMatchObject({ unitPrice: 10, subtotal: 60 }); // the sound invoice was NOT re-priced
+    expect(stored("inv-2", "a2")).toMatchObject({ unitPrice: 0, subtotal: 0 }); // today: 9.00 / 45.00
+    expect(out).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect((out as Error).message).toContain("Invoice INV-inv-2:");
+    expect((out as Error).message).toContain("Re-enter this line's quantity and price");
+    expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+  });
+
+  it("BULK race: if the refusal surfaces inside a later invoice's tx, the report carries refused.code MONEY_INVARIANT (a KNOWN code), not a crash", async () => {
+    const good = invoice("inv-1", [line("a1", { qty: 6, unitPrice: 10, subtotal: 60 })]);
+    const bad = invoice("inv-2", [legacyLine("a2", 0, 0)]);
+    const plans = [
+      { inv: good, localMap: new Map([["a1", 9]]) },
+      { inv: bad, localMap: new Map([["a2", 10]]) },
+    ];
+    const out: any = await applyBulkPriceAdjustment(
+      plans as any,
+      async (inv, localMap, onCommitted) => {
+        buildPriceAdjustmentUpdates({
+          items: (inv as Row).items,
+          localPriceMap: localMap,
+          categoriesById: new Map(),
+          unitsPerBoxByProduct: new Map(),
+          isTaxExempt: false,
+        });
+        onCommitted();
+      },
+    ).catch((e: unknown) => e);
+
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out.getResponse()).toMatchObject({
+      code: "PRICE_ADJUSTMENT_PARTIAL",
+      applied: ["inv-1"],
+      skipped: [],
+      refused: { invoiceId: "inv-2", invoiceNumber: "INV-inv-2", code: "MONEY_INVARIANT" },
+    });
   });
 });
