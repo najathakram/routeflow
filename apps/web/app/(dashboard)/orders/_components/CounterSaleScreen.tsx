@@ -14,6 +14,7 @@ import type {
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
+import { useOptionalAuth } from "@/lib/auth-context";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import {
@@ -29,8 +30,10 @@ import {
   PAYMENT_PROBLEM_COPY,
   cartTotals,
   changeDue,
+  clearHeldAttempt,
   counterSaleErrorCopy,
   finalCounterSaleCopy,
+  heldAttemptKey,
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
@@ -40,8 +43,10 @@ import {
   preselectFulfilment,
   quickTenderOptions,
   readAutoPrint,
+  readHeldAttempt,
   validatePayment,
   writeAutoPrint,
+  writeHeldAttempt,
 } from "@/lib/counter-sale";
 import { mergeQtyIntoLine, newLineQty } from "./add-line-merge";
 
@@ -96,6 +101,9 @@ export function CounterSaleScreen() {
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
   const lookupSale = useCounterSaleByKey();
+  const authUser = useOptionalAuth()?.user;
+  // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
+  const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
   const scanRef = React.useRef<HTMLInputElement>(null);
   // One Idempotency-Key per SALE. It lives until a DEFINITIVE answer (any 2xx, or a 4xx that proves nothing was written) or a
   // reset; after a 5xx / network error / timeout the outcome is UNKNOWN, the sale is locked and "Try again" re-sends this same
@@ -129,6 +137,24 @@ export function CounterSaleScreen() {
   const [autoPrint, setAutoPrint] = React.useState(false);
 
   React.useEffect(() => setAutoPrint(readAutoPrint()), []);
+  // A held UNKNOWN attempt survives leaving the screen: restore the locked sale with the SAME key and body.
+  React.useEffect(() => {
+    const held = readHeldAttempt(heldKey);
+    if (!held || attemptRef.current) return;
+    attemptRef.current = {
+      key: held.key,
+      dto: held.dto as CounterSaleRequest,
+      next: held.next,
+      unknown: true,
+    };
+    estimateRef.current = held.estimate ?? { total: 0, change: 0 };
+    setLines(held.lines as SaleLine[]);
+    setCustomer((held.customer as PickedCustomer | null) ?? null);
+    setMethod(held.method as CounterSalePaymentMethod);
+    setTendered(held.tendered ?? "");
+    setReference(held.reference ?? "");
+    setOutcomeUnknown(true);
+  }, [heldKey]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   const refocus = React.useCallback(() => window.setTimeout(() => scanRef.current?.focus(), 0), []);
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
@@ -235,6 +261,7 @@ export function CounterSaleScreen() {
     setReceipt(null);
     setEnteredTender(null);
     attemptRef.current = null;
+    clearHeldAttempt(heldKey);
     setOutcomeUnknown(false);
     setLookupFailed(false);
     refocus();
@@ -246,12 +273,14 @@ export function CounterSaleScreen() {
   const send = async (attempt: {
     key: string;
     dto: CounterSaleRequest;
+    next: boolean;
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
+      clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
       return res;
     } catch (err) {
@@ -259,14 +288,27 @@ export function CounterSaleScreen() {
       if (finalCopy) {
         // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
         attemptRef.current = null;
+        clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
+        clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
       } else {
         attempt.unknown = true;
+        writeHeldAttempt(heldKey, {
+          key: attempt.key,
+          dto: attempt.dto,
+          next: attempt.next,
+          estimate: estimateRef.current,
+          lines,
+          customer,
+          method,
+          tendered,
+          reference,
+        });
         setError("");
         setOutcomeUnknown(true);
       }
@@ -292,19 +334,20 @@ export function CounterSaleScreen() {
       setError(PAYMENT_PROBLEM_COPY[problem]);
       return null;
     }
+    const tenderAmount = roundMoney(tenderedNum);
     const dto: CounterSaleRequest = {
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
         method,
-        ...(method === "CASH" ? { amount: tenderedNum } : {}),
+        ...(method === "CASH" ? { amount: tenderAmount } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       },
     };
     attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
     estimateRef.current = {
       total: totals.total,
-      change: method === "CASH" ? changeDue(totals.total, tenderedNum) : 0,
+      change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
     };
     return send(attemptRef.current);
   };
@@ -369,11 +412,13 @@ export function CounterSaleScreen() {
       if (finalCopy) {
         // FINAL: voided or changed after it was rung. Unlock, drop the key, show the one copy, and NEVER re-POST.
         attemptRef.current = null;
+        clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
         refocus();
       } else if (isCounterSaleNotFound(err)) {
         attemptRef.current = null;
+        clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         refocus();
       } else if (isCounterSaleIncomplete(err)) {
@@ -388,6 +433,7 @@ export function CounterSaleScreen() {
     // A partly stored tender (not recorded, balance owing) is finished by re-POSTing the SAME key and body; the attempt stays held.
     if (res.paymentRecorded === false && res.balanceDue > 0) return true;
     attemptRef.current = null;
+    clearHeldAttempt(heldKey);
     setOutcomeUnknown(false);
     const { method: sentMethod, amount } = attempt.dto.payment;
     setEnteredTender(
@@ -526,6 +572,7 @@ export function CounterSaleScreen() {
         {gate.offerShipInstead ? (
           <Button
             variant="secondary"
+            disabled={locked}
             onClick={() =>
               router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`)
             }

@@ -324,7 +324,7 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
       expect(finalCounterSaleCopy(err)).toBeNull();
   });
   it("any OTHER 409 stays a definitive refusal", () => {
-    for (const data of [undefined, {}, { code: "WALK_IN_OPEN_CREDIT" }]) {
+    for (const data of [undefined, {}, { code: "SOME_OTHER_CODE" }]) {
       const err = { response: { status: 409, data } };
       expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
       expect(counterSaleErrorCopy(err)).toMatch(/nothing was charged/i);
@@ -447,5 +447,18 @@ describe("pickupCompleteErrorCopy", () => {
     expect(
       pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),
     ).toBe("Couldn't complete the pickup. Check the order and try again.");
+  });
+});
+
+describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
+  it("WALK_IN_OPEN_CREDIT and COUNTER_SALE_KEY_CONFLICT have their own copy", () => {
+    expect(
+      counterSaleErrorCopy({ response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } } }),
+    ).toBe("This walk-in has open credit. Resolve it on the customer, then ring the sale again.");
+    expect(
+      counterSaleErrorCopy({
+        response: { status: 409, data: { code: "COUNTER_SALE_KEY_CONFLICT" } },
+      }),
+    ).toBe("That sale reference was already used. Ring the sale again.");
   });
 });
