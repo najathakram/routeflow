@@ -2533,6 +2533,7 @@ export class RoutesService {
         tx,
         stop.orders,
         deliveredOrderIdSet,
+        user.sub,
       );
 
       // 5. Record payment (atomic with stop completion — RF-005). The invoice is
