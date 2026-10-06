@@ -13,11 +13,11 @@
 -- on either table makes the migration fail fast instead of queueing behind it and blocking every read.
 --
 -- Recovery: if the lock wait exceeds 5s the migration rolls back and is recorded FAILED:
---   prisma migrate resolve --rolled-back 20261004160000_customer_is_walk_in
+--   prisma migrate resolve --rolled-back 20261006170000_customer_is_walk_in
 -- from apps/api, then re-run. NEVER `--applied`.
 --
--- Ordering: sorts after the PICKUP migration 20261004150000_fulfil_path_pickup (which sorts after the
--- shipped-emails migrations 20261003120000 / 20261003120100).
+-- Ordering: renamed from 20261004160000 (never applied anywhere but local) so it sorts after the applied
+-- 20261005120000_addon_is_comp and the migration history stays linear.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
