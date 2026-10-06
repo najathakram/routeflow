@@ -89,6 +89,15 @@ describe("PICKUP order actions", () => {
     expect(has(/^Picked up$/)).toBe(false);
   });
 
+  it("the Fulfillment select shows 'Pick up at store' for a PICKUP order (never blank)", async () => {
+    await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
+    const select = screen
+      .getAllByRole("combobox")
+      .find((el) => (el as HTMLSelectElement).value === "PICKUP") as HTMLSelectElement | undefined;
+    expect(select).toBeDefined();
+    expect(select!.selectedOptions[0]?.textContent).toBe("Pick up at store");
+  });
+
   it("a customer session never sees Picked up", async () => {
     await open("CUSTOMER", "OUT_FOR_DELIVERY", { fulfillPath: "PICKUP" });
     expect(has(/^Picked up$/)).toBe(false);

@@ -138,6 +138,7 @@ import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
+import { fulfilPathOptions } from "@/lib/fulfil-path-options";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -3292,10 +3293,7 @@ export default function OrderDetailPage() {
                   <dd className="flex flex-col items-end gap-0.5">
                     <div className="w-40">
                       <Select
-                        options={[
-                          { value: "ROUTE", label: "Delivery route" },
-                          { value: "SHIP", label: "Ship via carrier" },
-                        ]}
+                        options={fulfilPathOptions(order.fulfillPath)}
                         value={order.fulfillPath}
                         disabled={fulfillPathLocked || patchFulfillPath.isPending}
                         title={
