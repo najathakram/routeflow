@@ -36,6 +36,7 @@ import {
   checkoutAddonItems,
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
+import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
@@ -391,7 +392,17 @@ export class BillingService {
       let liveStatus: string | undefined;
       try {
         liveStatus = (await this.stripe.getSubscription(existingSub.stripeSubId))?.status;
-      } catch {
+      } catch (err) {
+        if (!isStripeResourceMissing(err)) {
+          // Not "Stripe does not know it": nothing is known about the subscription, and a second checkout
+          // would bill the tenant twice if it is live. Fail closed with fixed copy — never Stripe's text.
+          this.logger.error(
+            `createCheckoutSession tenant ${tenantId}: could not read subscription ${existingSub.stripeSubId} at Stripe: ${(err as Error)?.message}`,
+          );
+          throw new ServiceUnavailableException(
+            "We couldn't check your current subscription with our payment provider. Nothing was created. Please try again.",
+          );
+        }
         // Stripe no longer knows this subscription (deleted / wrong account) — the
         // stored id is stale, so a fresh checkout is the correct recovery.
         liveStatus = undefined;
@@ -809,14 +820,23 @@ export class BillingService {
     return row != null;
   }
 
-  /** Is the tenant's stored subscription still live at Stripe? An unknown/missing one is stale: not live. */
+  /**
+   * Is the tenant's stored subscription still live at Stripe? ONLY `resource_missing` (Stripe no longer knows
+   * it) means "not live". Any other error — a timeout, a 5xx, a rate limit, a bad key — says nothing about the
+   * subscription, and reading it as "not live" would let a paid duplicate overwrite the stored one: it
+   * RETHROWS, before anything is written, so the webhook fails and Stripe redelivers.
+   */
   private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
     try {
       return isLiveStripeSubscriptionStatus(
         (await this.stripe.getSubscription(storedSubId))?.status,
       );
-    } catch {
-      return false;
+    } catch (err) {
+      if (isStripeResourceMissing(err)) return false;
+      this.logger.error(
+        `checkout.session.completed: could not read the stored subscription ${storedSubId} at Stripe (${(err as Error)?.message}) — the webhook is retried, nothing was applied`,
+      );
+      throw err;
     }
   }
 

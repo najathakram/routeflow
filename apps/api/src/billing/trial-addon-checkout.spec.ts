@@ -37,7 +37,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
-import { ConflictException, Logger } from "@nestjs/common";
+import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { BillingController } from "./billing.controller";
 import { SettingsBillingController } from "./settings-billing.controller";
@@ -315,6 +315,14 @@ function make(opts: Opts = {}) {
     client,
     getSubscription: jest.fn(async (id: string) => {
       if (opts.storedSubId && id === opts.storedSubId) {
+        if (opts.storedSubStatus === "missing") {
+          throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
+        }
+        if (opts.storedSubStatus === "transient") {
+          throw Object.assign(new Error("An error occurred with our connection to Stripe."), {
+            type: "StripeConnectionError",
+          });
+        }
         return {
           id,
           object: "subscription",
@@ -2275,6 +2283,166 @@ describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent u
       expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
       expect(unusableNotices(h)).toHaveLength(1);
+    });
+  });
+});
+
+describe("MUST-A2: only resource_missing means the stored subscription is not live — any other Stripe error fails CLOSED", () => {
+  const rows = () => [addonRow("CUSTOMER_PACK_100", { qty: 2 })];
+  const items = () => [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)];
+  const decisions = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) =>
+      ["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_DUPLICATE_CHECKOUT"].includes(a.action),
+    );
+  const transient = () =>
+    Object.assign(new Error("An error occurred with our connection to Stripe."), {
+      type: "StripeConnectionError",
+    });
+
+  describe("completion (the X1 guard)", () => {
+    it.each([false, true])(
+      "(flag on=%s) a transient error reading the stored subscription THROWS (Stripe redelivers) with NOTHING written: stored sub unchanged, no adoption, no MRR, no notice, no cancel",
+      async (flagOn) => {
+        const h = make({
+          flagOn,
+          storedSubId: "sub_old",
+          storedSubStatus: "transient",
+          rows: rows(),
+          items: items(),
+        });
+
+        await expect(h.completed()).rejects.toMatchObject({ type: "StripeConnectionError" });
+
+        expect(h.sub.stripeSubId).toBe("sub_old"); // never overwritten
+        expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(h.tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+        expect(h.rows.map((r) => [r.stripeItemId, Number(r.priceSnapshot)])).toEqual([[null, 0]]);
+        for (const fn of ["create", "update", "del", "list"] as const) {
+          expect(h.client.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect(h.ledger()).toEqual([]);
+        expect(h.tenant.status).toBe("TRIAL");
+        expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(decisions(h)).toEqual([]);
+        expect(h.audits).toEqual([]);
+      },
+    );
+
+    it("the redelivery, once Stripe answers, is judged normally: a LIVE stored subscription makes the session a duplicate", async () => {
+      const h = make({
+        storedSubId: "sub_old",
+        storedSubStatus: "transient",
+        rows: rows(),
+        items: items(),
+      });
+      await expect(h.completed()).rejects.toBeDefined();
+
+      // Stripe is back: the stored subscription is live
+      (h as any).stripe.getSubscription.mockImplementation(async (id: string) =>
+        id === "sub_old"
+          ? { id, object: "subscription", customer: "cus_1", status: "active", items: { data: [] } }
+          : {
+              id,
+              object: "subscription",
+              status: "active",
+              customer: "cus_1",
+              latest_invoice: `in_${id}`,
+              items: { object: "list", data: [...h.stripeItems] },
+            },
+      );
+      await h.completed();
+
+      expect(h.sub.stripeSubId).toBe("sub_old");
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(decisions(h)).toHaveLength(2); // the decision row and the platform notice
+    });
+
+    it.each([
+      ["resource_missing code", { code: "resource_missing" }],
+      ["a bare 404", { statusCode: 404 }],
+    ])(
+      "%s: Stripe no longer knows the stored subscription — it is stale and the session completes",
+      async (_n, extra) => {
+        const h = make({ storedSubId: "sub_gone", rows: rows(), items: items() });
+        const real = h.stripe.getSubscription.getMockImplementation()!;
+        h.stripe.getSubscription.mockImplementation(async (id: string, p?: unknown) => {
+          if (id === "sub_gone") throw Object.assign(new Error("No such subscription"), extra);
+          return real(id, p);
+        });
+
+        await expect(h.completed()).resolves.toBeUndefined();
+
+        expect(h.sub.stripeSubId).toBe("sub_1");
+        expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(decisions(h)).toEqual([]);
+      },
+    );
+
+    it.each([
+      ["a 5xx", { statusCode: 500 }],
+      ["a rate limit", { statusCode: 429, type: "StripeRateLimitError" }],
+      ["an auth error", { statusCode: 401, type: "StripeAuthenticationError" }],
+      ["a plain Error", {}],
+    ])("%s is NOT 'missing': it throws", async (_n, extra) => {
+      const h = make({ storedSubId: "sub_old", rows: rows(), items: items() });
+      const real = h.stripe.getSubscription.getMockImplementation()!;
+      h.stripe.getSubscription.mockImplementation(async (id: string, p?: unknown) => {
+        if (id === "sub_old") throw Object.assign(new Error("boom"), extra);
+        return real(id, p);
+      });
+
+      await expect(h.completed()).rejects.toThrow("boom");
+      expect(h.sub.stripeSubId).toBe("sub_old");
+      expect(h.ledger()).toEqual([]);
+    });
+  });
+
+  describe("createCheckoutSession's live-subscription guard", () => {
+    it("a transient error reading the stored subscription refuses with a 503 and creates NOTHING (no add-on read, no customer, no session)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100")],
+        baseSub: { stripeSubId: "sub_live" },
+      });
+      h.stripe.getSubscription.mockRejectedValueOnce(transient());
+      const spy = jest.spyOn(h.mutations, "checkoutAddonLines");
+
+      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(String(err.message)).not.toMatch(/connection to Stripe/); // fixed copy, never Stripe's text
+      expect(spy).not.toHaveBeenCalled();
+      expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+      expect(h.client.checkout.sessions.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["resource_missing code", { code: "resource_missing" }],
+      ["a bare 404", { statusCode: 404 }],
+    ])(
+      "%s: the stored id is stale — a fresh checkout is the correct recovery",
+      async (_n, extra) => {
+        const h = make({
+          rows: [addonRow("CUSTOMER_PACK_100")],
+          baseSub: { stripeSubId: "sub_dead" },
+        });
+        h.stripe.getSubscription.mockRejectedValueOnce(
+          Object.assign(new Error("No such subscription"), extra),
+        );
+
+        await h.billing.createCheckoutSession("t1", "month");
+
+        expect(h.client.checkout.sessions.create).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("a stored subscription that IS live is still refused (400) — unchanged", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100")],
+        baseSub: { stripeSubId: "sub_live" },
+      });
+      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      expect(err.status).toBe(400);
+      expect(h.client.checkout.sessions.create).not.toHaveBeenCalled();
     });
   });
 });

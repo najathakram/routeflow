@@ -1689,4 +1689,107 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect((await r.rows())[0].stripeItemId).toBe("si_inapp");
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // MUST-A2 — only resource_missing means "stored subscription not live"; any other Stripe error fails CLOSED.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("MUST-A2: a transient Stripe error while judging a duplicate throws with nothing written (real Postgres)", () => {
+    const decisionRows = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: {
+          tenantId,
+          action: { in: ["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_DUPLICATE_CHECKOUT"] },
+        },
+      });
+    const failStoredLookup = (r: Rig, error: any) => {
+      const real = r.stripe.getSubscription.getMockImplementation()!;
+      r.stripe.getSubscription.mockImplementation(async (id: string, p?: unknown) => {
+        if (id === "sub_old") throw error;
+        return real(id, p);
+      });
+      return () => r.stripe.getSubscription.mockImplementation(real);
+    };
+
+    it.each([false, true])(
+      "(flag on=%s) a transient error reading the stored subscription: the webhook throws; the stored sub is unchanged, no adoption, no MRR, no notice, no cancel; the redelivery is then judged a duplicate",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+          items: [
+            base(),
+            stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          ],
+        });
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: { stripeSubId: "sub_old" },
+        });
+        r.addSub("sub_old", { items: [], latestInvoice: null });
+        const heal = failStoredLookup(
+          r,
+          Object.assign(new Error("An error occurred with our connection to Stripe."), {
+            type: "StripeConnectionError",
+          }),
+        );
+
+        await expect(r.completed()).rejects.toMatchObject({ type: "StripeConnectionError" });
+
+        const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+          where: { tenantId: r.tenantId },
+        });
+        expect(sub.stripeSubId).toBe("sub_old"); // never overwritten
+        expect((await prisma.tenant.findUniqueOrThrow({ where: { id: r.tenantId } })).status).toBe(
+          TenantStatus.TRIAL,
+        );
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+          [null, 0],
+        ]);
+        expect(await r.ledger()).toEqual([]);
+        expect(await decisionRows(r.tenantId)).toHaveLength(0);
+        for (const fn of ["create", "update", "del"] as const) {
+          expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+
+        heal(); // Stripe answers again: sub_old is active, so this session is the duplicate
+        await r.completed();
+
+        expect(
+          (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } }))
+            .stripeSubId,
+        ).toBe("sub_old");
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect(await decisionRows(r.tenantId)).toHaveLength(2); // the decision row + the one notice
+        expect(await r.ledger()).toEqual([]);
+      },
+    );
+
+    it("resource_missing from Stripe still means 'stale': the stored id is replaced and the checkout completes", async () => {
+      const r = await rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeSubId: "sub_old" },
+      });
+      failStoredLookup(
+        r,
+        Object.assign(new Error("No such subscription"), { code: "resource_missing" }),
+      );
+
+      await r.completed();
+
+      expect(
+        (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } }))
+          .stripeSubId,
+      ).toBe("sub_qa");
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(await decisionRows(r.tenantId)).toHaveLength(0);
+    });
+  });
 });
