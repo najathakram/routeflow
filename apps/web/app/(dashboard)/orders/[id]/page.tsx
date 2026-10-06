@@ -86,6 +86,7 @@ import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditScanBar } from "./_components/EditScanBar";
 import {
@@ -2441,6 +2442,7 @@ export default function OrderDetailPage() {
               </span>
             )}
             <Badge status={localStatus as BadgeStatus} />
+            <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
             <span>

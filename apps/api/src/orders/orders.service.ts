@@ -22,6 +22,7 @@ import {
   attachPaymentCreditNotes,
   ORDER_CREDIT_PAYMENT_SELECT,
 } from "./order-payment-credit-notes";
+import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -574,6 +575,7 @@ export class OrdersService implements OnApplicationBootstrap {
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
+    await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
     return order;
   }
