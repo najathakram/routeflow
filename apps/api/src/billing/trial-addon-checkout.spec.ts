@@ -395,7 +395,10 @@ function make(opts: Opts = {}) {
               (where?.tenantId == null || a.tenantId === where.tenantId) &&
               (where?.entityType == null || a.entityType === where.entityType) &&
               (where?.entityId == null || a.entityId === where.entityId) &&
-              (where?.action == null || a.action === where.action) &&
+              (where?.action == null ||
+                (where.action.in
+                  ? where.action.in.includes(a.action)
+                  : a.action === where.action)) &&
               (where?.meta?.path == null || a.meta?.[where.meta.path[0]] === where.meta.equals),
           );
         return hit ? { id: "audit-found", createdAt: hit.createdAt } : null;
@@ -424,10 +427,10 @@ function make(opts: Opts = {}) {
     auditLog: {
       // the APPLIED marker (flag-on redelivery) and the sticky DUPLICATE decision (the audit store)
       findFirst: jest.fn(async ({ where }: any = {}) => {
-        if (where?.action === "TENANT_MANUAL_ACTIVATION_MARKER") {
-          // the latest marker row, newest first (S3)
+        if (where?.action?.in?.includes("TENANT_MANUAL_ACTIVATION_MARKER")) {
+          // the latest manual-activation record (marker or legacy trail row), newest first (S3 carry)
           const hit = audits
-            .filter((a) => a.action === where.action && a.tenantId === where.tenantId)
+            .filter((a) => where.action.in.includes(a.action) && a.tenantId === where.tenantId)
             .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0];
           return hit ? { id: "marker", createdAt: hit.createdAt } : null;
         }
@@ -2123,7 +2126,16 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       await expectApplied(h);
     });
 
-    it("no marker at all (externalPayment true from another writer): not stale — periodStart is never consulted", async () => {
+    const trailAt = (h: ReturnType<typeof make>, atS: number) =>
+      h.audits.push({
+        tenantId: "t1",
+        action: "TENANT_SUBSCRIPTION_ACTIVATED",
+        entityType: "tenant",
+        entityId: "t1",
+        createdAt: new Date(atS * 1000),
+      });
+
+    it("NO marker and NO trail row (externalPayment true from another writer): not stale — periodStart is never consulted", async () => {
       const h = make({
         rows: rows(),
         items: items(),
@@ -2135,16 +2147,53 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       await expectApplied(h);
     });
 
-    it("the best-effort post-commit trail row (TENANT_SUBSCRIPTION_ACTIVATED) is NOT a marker", async () => {
+    it("no marker (an activation from before the marker existed): the legacy TENANT_SUBSCRIPTION_ACTIVATED trail row AFTER the session leans STALE", async () => {
       const h = make({ rows: rows(), items: items(), ...manual() });
-      h.audits.push({
-        tenantId: "t1",
+      trailAt(h, SESSION_CREATED_S + 600);
+      await expectStale(h);
+    });
+
+    it("no marker: a trail row long BEFORE the session is not stale, even after a cron roll moved periodStart past the session", async () => {
+      const h = make({
+        rows: rows(),
+        items: items(),
+        baseSub: {
+          externalPayment: true,
+          periodStart: new Date((SESSION_CREATED_S + 3_600) * 1000), // rolled by the cron after the session
+        },
+      });
+      trailAt(h, SESSION_CREATED_S - 3 * 86_400);
+      await expectApplied(h);
+    });
+
+    it("the LATEST of the two decides: an old marker with a later trail row (post-commit, so a moment after the marker) counts as that later time", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      markerAt(h, SESSION_CREATED_S - 120); // outside the skew window on its own
+      trailAt(h, SESSION_CREATED_S - 30); // the post-commit trail row of the same activation: inside it
+      await expectStale(h);
+    });
+
+    it("the in-tx marker is decisive: a LATER marker is never overridden by an older trail row", async () => {
+      const h = make({ rows: rows(), items: items(), ...manual() });
+      trailAt(h, SESSION_CREATED_S - 7 * 86_400);
+      markerAt(h, SESSION_CREATED_S + 600);
+      await expectStale(h);
+    });
+
+    it("scoped by externalPayment and by tenant: a trail row of another tenant, or on a non-manual row, is not stale", async () => {
+      const notManual = make({ rows: rows(), items: items() });
+      trailAt(notManual, SESSION_CREATED_S + 600);
+      await expectApplied(notManual);
+
+      const other = make({ rows: rows(), items: items(), ...manual() });
+      other.audits.push({
+        tenantId: "t2",
         action: "TENANT_SUBSCRIPTION_ACTIVATED",
         entityType: "tenant",
-        entityId: "t1",
+        entityId: "t2",
         createdAt: new Date((SESSION_CREATED_S + 600) * 1000),
       });
-      await expectApplied(h);
+      await expectApplied(other);
     });
 
     it("the decisive marker read happens UNDER the tenant row lock, inside the apply transaction, newest first", async () => {
@@ -2152,11 +2201,15 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       markerAt(h, SESSION_CREATED_S - 86_400);
       await h.completed();
 
-      const call = h.tx.auditLog.findFirst.mock.calls.find(
-        (c: any[]) => c[0].where.action === "TENANT_MANUAL_ACTIVATION_MARKER",
+      const call = h.tx.auditLog.findFirst.mock.calls.find((c: any[]) =>
+        c[0].where.action?.in?.includes("TENANT_MANUAL_ACTIVATION_MARKER"),
       );
       expect(call?.[0]).toMatchObject({
-        where: { tenantId: "t1", entityType: "tenant" },
+        where: {
+          tenantId: "t1",
+          entityType: "tenant",
+          action: { in: ["TENANT_MANUAL_ACTIVATION_MARKER", "TENANT_SUBSCRIPTION_ACTIVATED"] },
+        },
         orderBy: [{ createdAt: "desc" }],
       });
       const readAt =

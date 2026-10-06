@@ -1150,6 +1150,92 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
+    /** The legacy post-commit trail row of a manual activation (the only record from before the marker existed). */
+    const insertTrail = (tenantId: string, atS: number) =>
+      prisma.auditLog.create({
+        data: {
+          tenantId,
+          action: "TENANT_SUBSCRIPTION_ACTIVATED",
+          entityType: "tenant",
+          entityId: tenantId,
+          createdAt: new Date(atS * 1000),
+          meta: { platformAdmin: true },
+        },
+      });
+
+    it.each([false, true])(
+      "S3 carry (a, flag on=%s): NO marker, a legacy trail row long BEFORE the session, then a cron rollCycles after it — completes (applied, no cancel)",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        const created = Math.floor(Date.now() / 1000) - 2 * 3600;
+        const now = Date.now();
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: {
+            externalPayment: true,
+            planKey: "STARTER",
+            cycle: "MONTHLY",
+            periodStart: new Date(now - 31 * 86_400_000),
+            periodEnd: new Date(now - 3_600_000),
+          },
+        });
+        await insertTrail(r.tenantId, created - 3 * 86_400);
+        await rollCyclesFor(r.tenantId);
+        expect((await sub(r)).periodStart!.getTime()).toBeGreaterThan(created * 1000);
+        expect(await markerRows(r.tenantId)).toHaveLength(0);
+
+        await r.deliver({ created });
+
+        expect((await sub(r)).stripeSubId).toBe("sub_qa");
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(await decisions(r)).toHaveLength(0);
+        expect(await notices(r)).toHaveLength(0);
+      },
+    );
+
+    it.each([false, true])(
+      "S3 carry (b, flag on=%s): NO marker, a legacy trail row AFTER the session — stale: cancel + notice, nothing applied",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        const created = Math.floor(Date.now() / 1000) - 3600;
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: { externalPayment: true },
+        });
+        await insertTrail(r.tenantId, created + 600);
+
+        await r.deliver({ created });
+
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect((await decisions(r))[0].meta).toMatchObject({ reason: "stale_checkout_manual" });
+        expect(await notices(r)).toHaveLength(1);
+        expect((await sub(r)).stripeSubId).toBeNull();
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+      },
+    );
+
+    it.each([false, true])(
+      "S3 carry (c, flag on=%s): externalPayment but NEITHER a marker nor a trail row — completes",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        const created = Math.floor(Date.now() / 1000) - 3600;
+        const now = Date.now();
+        await prisma.tenantSubscription.update({
+          where: { tenantId: r.tenantId },
+          data: {
+            externalPayment: true,
+            periodStart: new Date(now - 60_000), // moved after the session by something other than an activation
+          },
+        });
+
+        await r.deliver({ created });
+
+        expect((await sub(r)).stripeSubId).toBe("sub_qa");
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(await notices(r)).toHaveLength(0);
+      },
+    );
+
     it.each([
       [30, true],
       [59, true],

@@ -898,25 +898,36 @@ export class BillingService {
   }
 
   /**
-   * When the tenant's LATEST manual activation (or renewal) committed, from its in-transaction marker row —
-   * never from `periodStart`, which the billing cron's cycle roll also moves, and never from the best-effort
-   * post-commit trail row. Called with the tenant lock held (inside the apply transaction) for the decisive
-   * read; null when there is no marker. Only meaningful for a row with externalPayment.
+   * When the tenant's LATEST manual activation (or renewal) committed: the newest `createdAt` over BOTH the
+   * in-transaction marker row and the legacy TENANT_SUBSCRIPTION_ACTIVATED trail row — never `periodStart`,
+   * which the billing cron's cycle roll also moves. Tenant-scoped, and called with the tenant lock held (inside
+   * the apply transaction) for the decisive read.
+   *  - the marker is decisive: written in the activation's own transaction, so it exists exactly when the
+   *    activation does;
+   *  - the trail row is best-effort (AuditService swallows errors) and lands AFTER the commit, so on its own it
+   *    can only be missing or a moment late. It is read for the activations that predate the marker (no migration
+   *    or backfill): it can only lean toward STALE (a later time), never make a later marker look older;
+   *  - with neither row there is nothing to say the tenant moved to manual invoicing after the session: not stale.
    */
   private async latestManualActivationAt(
     db: { auditLog: { findFirst: (args: any) => Promise<{ createdAt: Date } | null> } },
     tenantId: string,
   ): Promise<Date | null> {
-    const marker = await db.auditLog.findFirst({
+    const latest = await db.auditLog.findFirst({
       where: {
         tenantId,
         entityType: ADMIN_AUDIT_ENTITY,
-        action: AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+        action: {
+          in: [
+            AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+            AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED,
+          ],
+        },
       },
       orderBy: [{ createdAt: "desc" }],
       select: { createdAt: true },
     });
-    return marker?.createdAt ?? null;
+    return latest?.createdAt ?? null;
   }
 
   /**
