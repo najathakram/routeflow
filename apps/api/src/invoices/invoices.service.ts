@@ -2913,6 +2913,8 @@ export class InvoicesService {
         include: {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
+          // Shipments lists hide the shipped date of an unmarked order (status only, no column).
+          order: { select: { status: true } },
         },
         skip,
         take: limit,

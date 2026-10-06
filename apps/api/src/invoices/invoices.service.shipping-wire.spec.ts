@@ -1,4 +1,7 @@
 /**
+ * Fold 1: the invoice LIST (Shipments pages) carries the linked order's status, so a list can hide the
+ * shipped date of an unmarked order.
+ *
  * F3 (shipping-flow polish): the invoice detail carries the server's default PDF stage as `pdfVariant`
  * (web and mobile read it): a DRAFT invoice of a shipped SHIP order of a shipping business is "final";
  * every other invoice keeps today's stage.
@@ -38,7 +41,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
-describe("InvoicesService.findOne — pdfVariant on the wire (F3)", () => {
+describe("InvoicesService — shipping fields on the wire (F3, fold 1)", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
@@ -176,5 +179,15 @@ describe("InvoicesService.findOne — pdfVariant on the wire (F3)", () => {
 
   it("unchanged: a standalone draft (no order) is 'draft'", async () => {
     expect((await detail("ship", invoice(null))).pdfVariant).toBe("draft");
+  });
+
+  it("the invoice list selects the linked order's status (Shipments pages, fold 1)", async () => {
+    prisma.invoice.findMany.mockResolvedValue([] as never);
+    prisma.invoice.count.mockResolvedValue(0 as never);
+    await service.findAll({ shipped: true } as never);
+    const args = prisma.invoice.findMany.mock.calls[0][0] as {
+      include: { order?: { select: { status: boolean } } };
+    };
+    expect(args.include.order).toEqual({ select: { status: true } });
   });
 });
