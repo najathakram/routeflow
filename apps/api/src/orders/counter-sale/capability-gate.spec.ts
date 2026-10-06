@@ -62,9 +62,15 @@ describe("default capability reader (the real derivation)", () => {
     expect(counterSaleGate(cap)).toBe(true);
   });
 
-  it("fulfilment_model pickup => 'always'", async () => {
+  it("master truth: a stored pickup is unavailable, so it reads as unset and the gate stays closed", async () => {
     const cap = await make({ fulfilment_model: "pickup" }).get("t1");
-    expect(cap.counter).toBe("always");
+    expect(cap.counter).toBe("off");
+    expect(counterSaleGate(cap)).toBe(false);
+  });
+
+  it("pickup stored + counter_sales on => the gate opens as 'optional'", async () => {
+    const cap = await make({ fulfilment_model: "pickup", counter_sales: "on" }).get("t1");
+    expect(cap.counter).toBe("optional");
   });
 
   it("a null tenant => closed", async () => {
