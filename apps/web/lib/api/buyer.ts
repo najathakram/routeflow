@@ -7,7 +7,7 @@ import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
+import { isTrackingLive, type InvoiceStatus, type OrderTrackingResponse } from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
@@ -135,6 +135,8 @@ export interface BuyerOrderTemplate {
     productId: string;
     qty: number;
     notes: string | null;
+    /** Set when the seller suspended this line — a manual reorder never places it. */
+    suspendedAt?: string | null;
     product: { id: string; name: string; unit: string };
   }>;
   customer: { id: string; businessName: string };
@@ -457,7 +459,7 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: number;
   taxAmount: number;
   discount: number;
@@ -520,9 +522,12 @@ export function useBuyerTemplates() {
   });
 }
 
-export function useBuyerReorder() {
+/** `localErrorToast`: the caller (the reorder review sheet) renders its own fixed error sentence,
+ *  so the app-wide "Something went wrong…" toast must not also fire (one message per failure). */
+export function useBuyerReorder(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (templateId: string) =>
       buyerApiClient.post(`/buyer/templates/${templateId}/reorder`).then((r) => r.data),
     onSuccess: () => {

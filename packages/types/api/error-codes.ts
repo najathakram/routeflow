@@ -16,6 +16,9 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
+//                    invoices no longer match its lines (orphaned invoice line / counter out of step,
+//                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
 //   NSF_LINE_UNTAXED — `body.code` of the 400 when an invoice write gives the NSF fee line a
 //                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
@@ -129,6 +132,15 @@
 //   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
 //                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
 //                    names the add-ons and says to turn them off or contact support.
+//   SA-693 (comp add-ons) — ADDON_COMP_MANAGED_BY_SUPPORT: the 409 of a self-serve add-on quantity change on an ACTIVE comp row
+//                    (a platform grant, never billed). Same quantity stays a no-op and a disable stays allowed. Body {code, message}.
+//                    ADDON_UNCOMP_STRIPE_UNAVAILABLE: the 409 of an admin uncomp on a tenant that has a Stripe subscription while Stripe is not
+//                    configured (it would leave an active unbilled add-on); the comp is untouched. Body {code, message}.
+//   SA-690 (checkout add-ons) — ADDON_CHECKOUT_ITEM_UNREADABLE: the 409 a checkout-completion webhook answers with (so Stripe retries) when
+//                    a subscription item the checkout made for an add-on has no readable price or quantity and so cannot be attached to its row.
+//                    ADDON_CHECKOUT_ITEM_MISSING: the 409 of a completion whose session/subscription metadata LISTS an add-on SKU that no
+//                    recognised subscription item carries (e.g. the product was not expanded) — nothing is created for it (a second item would
+//                    double-bill) and the platform is alerted. Body {code, message}.
 //   B987-D — regulated / common refusals, now named here (value == key, byte-identical to what was sent): MONEY_INVARIANT (the 400 of
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
@@ -173,6 +185,7 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -246,6 +259,7 @@ export const API_ERROR_CODES = {
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
+  ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
@@ -298,6 +312,10 @@ export const API_ERROR_CODES = {
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
+  ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+  ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
+  ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
+  ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
@@ -427,3 +445,12 @@ export const CREDIT_NOTE_ERROR_CODES = [
 ] as const;
 
 export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
+
+/**
+ * B1135: the one sentence for an order that is with the carrier (its lines are frozen, SA-696). Web and
+ * mobile import it from here. The API cannot value-import this package at runtime, so it keeps a literal
+ * copy (`SHIPPED_ORDER_MESSAGE`, apps/api/src/orders/order-carrier-guard.ts), pinned byte-equal to this
+ * one by apps/api/src/common/shipped-order-message-parity.spec.ts.
+ */
+export const SHIPPED_ORDER_MESSAGE =
+  "This order has already shipped. Contact the seller for changes.";

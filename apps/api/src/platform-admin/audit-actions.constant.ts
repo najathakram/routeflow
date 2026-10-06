@@ -22,12 +22,30 @@ export const AdminAuditAction = {
   TENANT_PLAN_CHANGED: "TENANT_PLAN_CHANGED",
   TENANT_TRIAL_EXTENDED: "TENANT_TRIAL_EXTENDED",
   TENANT_SUBSCRIPTION_ACTIVATED: "TENANT_SUBSCRIPTION_ACTIVATED",
+  /**
+   * The billing MARKER of a manual activation, written INSIDE its transaction (so it exists exactly when the
+   * activation does). A completed card checkout reads the latest one, under the same tenant row lock, to know
+   * whether the tenant moved to manual invoicing after the checkout session was created. NOT the post-commit
+   * TENANT_SUBSCRIPTION_ACTIVATED trail row, which is best-effort (AuditService swallows write errors) and
+   * lands after the commit.
+   */
+  TENANT_MANUAL_ACTIVATION_MARKER: "TENANT_MANUAL_ACTIVATION_MARKER",
   TENANT_DELETED: "TENANT_DELETED",
   TENANT_CONFIG_UPDATED: "TENANT_CONFIG_UPDATED",
   TENANT_ADMIN_PASSWORD_RESET: "TENANT_ADMIN_PASSWORD_RESET",
   TENANT_ADMIN_CREATED: "TENANT_ADMIN_CREATED",
   ADDON_ENABLED: "ADDON_ENABLED",
   ADDON_DISABLED: "ADDON_DISABLED",
+  ADDON_COMPED: "ADDON_COMPED",
+  ADDON_UNCOMPED: "ADDON_UNCOMPED",
+  /** A duplicate checkout was cancelled; its first invoice was charged and has to be refunded in Stripe. */
+  STRIPE_DUPLICATE_CHECKOUT: "STRIPE_DUPLICATE_CHECKOUT",
+  /** A checkout add-on (its row, or its item) had no usable quantity: any item was removed (or the SKU left off the checkout) and nothing is billed for it. */
+  ADDON_CHECKOUT_ITEM_UNUSABLE: "ADDON_CHECKOUT_ITEM_UNUSABLE",
+  /** A PAID checkout was refused because no Stripe customer / subscription row exists to verify it against. */
+  STRIPE_PAID_CHECKOUT_NOT_APPLIED: "STRIPE_PAID_CHECKOUT_NOT_APPLIED",
+  /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -59,12 +77,19 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_PLAN_CHANGED: "Plan changed",
   TENANT_TRIAL_EXTENDED: "Trial extended",
   TENANT_SUBSCRIPTION_ACTIVATED: "Subscription activated (manual)",
+  TENANT_MANUAL_ACTIVATION_MARKER: "Manual activation recorded (billing marker)",
   TENANT_DELETED: "Tenant deleted",
   TENANT_CONFIG_UPDATED: "Configuration updated",
   TENANT_ADMIN_PASSWORD_RESET: "Admin password reset",
   TENANT_ADMIN_CREATED: "Admin account created",
   ADDON_ENABLED: "Add-on enabled",
   ADDON_DISABLED: "Add-on disabled",
+  ADDON_COMPED: "Add-on granted as a comp (free, not billed)",
+  ADDON_UNCOMPED: "Add-on comp removed (now billable)",
+  STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
+  ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on not billed (no usable quantity)",
+  STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",

@@ -109,6 +109,21 @@ describe("OrdersService.create — counter-sale options", () => {
     expect(prisma.order.create.mock.calls[0][0].data.fulfillPath).toBe("PICKUP");
   });
 
+  it("options.counterSale writes counterSale: true; without it the column is not written (SA-672e)", async () => {
+    await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
+      skipAutoMerge: true,
+      fulfillPath: "PICKUP" as never,
+      counterSale: true,
+    });
+    expect(prisma.order.create.mock.calls[0][0].data.counterSale).toBe(true);
+    prisma.order.create.mockClear();
+    await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
+      skipAutoMerge: true,
+      fulfillPath: "PICKUP" as never,
+    });
+    expect(prisma.order.create.mock.calls[0][0].data).not.toHaveProperty("counterSale");
+  });
+
   it("without the option the customer default still decides (unchanged)", async () => {
     await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
       skipAutoMerge: true,

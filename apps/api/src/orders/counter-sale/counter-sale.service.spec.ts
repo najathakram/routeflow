@@ -30,7 +30,7 @@ jest.mock("../../common/db-locks", () => ({
   },
 }));
 
-import { ConflictException, BadRequestException } from "@nestjs/common";
+import { ConflictException, BadRequestException, NotFoundException } from "@nestjs/common";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { Test } from "@nestjs/testing";
 import { CounterSaleService } from "./counter-sale.service";
@@ -188,6 +188,15 @@ describe("CounterSaleService.ring", () => {
       reader.get.mockResolvedValue(cap(counter));
       await expect(service.ring(named({ method: "CASH" }) as never, staff)).resolves.toBeDefined();
       expect(reader.get).toHaveBeenCalledWith("test-tenant");
+    });
+
+    it("the counter POST marks the order as a counter sale (SA-672e: counterSale: true into createSale)", async () => {
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale).toHaveBeenCalledWith(
+        expect.anything(),
+        staff,
+        expect.objectContaining({ counterSale: true }),
+      );
     });
 
     it("a carrier tenant (no fleet, counter optional) still rings PICKUP counter sales", async () => {
@@ -862,13 +871,14 @@ describe("CounterSaleService.ring", () => {
   });
 
   describe("byKey (GET /orders/counter-sale/by-key/:key): a definitive answer about a key", () => {
-    // No durable counter marker exists on Order, so a counter sale is recognised by its SHAPE: a PICKUP order
-    // created with skipAutoMerge (only the counter writes both; a buyer's pickup order never skips the merge).
+    // SA-672e: a counter sale is recognised by the durable Order.counterSale marker (set only by the counter
+    // POST), not by its shape: skipAutoMerge/PICKUP are written by other paths too.
     const sale = {
       id: "ord-1",
       orderNumber: "ORD-1",
       fulfillPath: "PICKUP",
       skipAutoMerge: true,
+      counterSale: true,
       status: "DELIVERED",
       customerId: "cust-1",
     };
@@ -1042,8 +1052,12 @@ describe("CounterSaleService.ring", () => {
       expect((await service.byKey("k1")).method).toBe("CARD");
     });
 
-    it("a PICKUP order that is not a counter sale (no skipAutoMerge: a buyer's pickup order) is a 404", async () => {
-      findReplayCandidateByKey.mockResolvedValue({ ...sale, skipAutoMerge: false });
+    it("a buyer's PICKUP order (no counterSale, no skipAutoMerge) is a 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({
+        ...sale,
+        skipAutoMerge: false,
+        counterSale: false,
+      });
       const e = await service.byKey("k1").then(
         () => null,
         (err) => err,
@@ -1173,13 +1187,34 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it("an order that is not a counter (PICKUP) sale is not a sale for this key: 404", async () => {
-      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "ROUTE" });
+    it("an ordinary PICKUP + skipAutoMerge order (counterSale false) found by the key is not a sale: coded 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, counterSale: false });
       const e = await service.byKey("k1").then(
         () => null,
         (err) => err,
       );
+      expect(e).toBeInstanceOf(NotFoundException);
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("an order with no counterSale field at all (an older shape) is not a sale: coded 404", async () => {
+      const { counterSale: _c, ...bare } = sale;
+      findReplayCandidateByKey.mockResolvedValue(bare);
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e).toBeInstanceOf(NotFoundException);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("a counter sale whose fulfillPath later moved off PICKUP is still a live sale (the marker, not the shape)", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "SHIP" });
+      invoices = [inv("inv-1", 37.25)];
+      await expect(service.byKey("k1")).resolves.toMatchObject({
+        orderId: "ord-1",
+        replayed: true,
+      });
     });
 
     it("is NOT gated by the counter capability: it answers even when the counter is off", async () => {

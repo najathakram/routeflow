@@ -59,6 +59,15 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(typeof create.mock.calls[0][2]!.onReplay).toBe("function");
   });
 
+  it("sale.counterSale reaches create() as counterSale: true, and is absent otherwise (SA-672e)", async () => {
+    const a = await setup();
+    await a.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
+    expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, counterSale: true });
+    const b = await setup();
+    await b.h.service.createSale(dto, operatorPayload as never, { fulfillPath: "PICKUP" as never });
+    expect(b.create.mock.calls[0][2]).not.toHaveProperty("counterSale");
+  });
+
   it("suppressInvoiceNotify sends the invoice with { suppressNotify: true } (walk-in: no INVOICE_SENT email)", async () => {
     const { h, invoices } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { suppressInvoiceNotify: true });

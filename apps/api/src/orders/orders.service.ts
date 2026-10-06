@@ -22,6 +22,7 @@ import {
   attachPaymentCreditNotes,
   ORDER_CREDIT_PAYMENT_SELECT,
 } from "./order-payment-credit-notes";
+import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -62,7 +63,7 @@ import {
   saleCreateOptions,
   type SaleOptions,
 } from "./sale-options";
-import { isPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
+import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
@@ -95,7 +96,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
-import { buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
+import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
 import {
@@ -205,7 +206,9 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
-import { EDIT_REVISIONS, recordShipStateChange } from "./order-ship-state";
+import { shippedPushCopy } from "./shipped-push-copy";
+import { attachInvoiceStages } from "./order-invoice-stage";
+import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -214,6 +217,7 @@ import {
   settledAtShipment,
 } from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
+import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -508,6 +512,7 @@ export class OrdersService implements OnApplicationBootstrap {
             invoiceNumber: true,
             status: true,
             total: true,
+            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
             // Classification pending: whether this credit-note-application read
@@ -581,9 +586,11 @@ export class OrdersService implements OnApplicationBootstrap {
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
+    await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
+    await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
     return order;
   }
@@ -2096,6 +2103,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
+                // SA-672e: only the counter-sale POST passes this; every other order keeps the column default.
+                ...(options.counterSale ? { counterSale: true } : {}),
                 lineItems: { create: lineItemsData },
               },
               include: {
@@ -2638,11 +2647,11 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409).
-      return writeStatusIfUnchanged(this.prisma.forTenant(), id, order.status, statusUpdateData);
+      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409), in the
+      // SAME tx as the ship-state marker when there is one (SA-689): order-ship-state.ts.
+      return updateStatusWithShipMarker(this, order, dto, user, statusUpdateData);
     })();
 
-    await recordShipStateChange(this, order, dto.status, user, dto.reason);
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
       orderId: id,
       orderNumber: order.orderNumber ?? "",
@@ -2727,7 +2736,14 @@ export class OrdersService implements OnApplicationBootstrap {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status];
+    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
+    const notif =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
+          isFirstShipment(order)
+          ? shippedPushCopy(order)
+          : undefined
+        : notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
@@ -2745,23 +2761,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
-    // A PICKUP order has no driver: never the driver-named OUT_FOR_DELIVERY template (the push above says
-    // "ready for pickup"). Its handover fires READY_FOR_PICKUP instead; the messaging path honours the
-    // customer's orderStatusEmails opt-out, and a failure never fails the move.
-    if (isPickupHandover(order, dto.status)) {
-      this.messaging
-        .notifyEvent(NotificationEvent.READY_FOR_PICKUP, {
-          customerId: order.customerId,
-          senderId: user.sub || null,
-          // pickupLine: the template's optional address/hours tail; "" until the pickup settings feed it
-          // (never leave the placeholder unfilled).
-          vars: { orderNumber: order.orderNumber ?? "", pickupLine: "" },
-        })
-        .catch(() => {});
-    }
-    const messagingEvent = isPickupHandover(order, dto.status)
-      ? undefined
-      : messagingEventMap[dto.status];
+    // A PICKUP handover fires READY_FOR_PICKUP instead of the driver-named template (order-pickup-wording.ts).
+    const pickupHandled = notifyPickupHandover(this.messaging, order, dto.status, user.sub || null);
+    const messagingEvent = pickupHandled ? undefined : messagingEventMap[dto.status];
     if (
       messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
       order.fulfillPath === FulfillPath.SHIP
@@ -2781,10 +2783,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
         ...(messagingEvent === NotificationEvent.ORDER_CONFIRMED
-          ? {
-              deliveryDate: formatDate(order.requestedDeliveryDate),
-              orderTotal: formatMoney(updated.total),
-            }
+          ? orderConfirmedVars(order, updated.total) // B1127: SHIP wording, no dangling date
           : {}),
         ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
         ...(messagingEvent === NotificationEvent.DELIVERED
@@ -3003,9 +3002,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
-      throw new ForbiddenException(
-        "This order is already out for delivery. Send a change request instead.",
-      );
+      throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice

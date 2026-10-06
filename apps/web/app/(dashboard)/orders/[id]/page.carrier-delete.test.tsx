@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
@@ -55,7 +56,11 @@ const deleteButton = () =>
   screen.queryByRole("button", { name: /^Delete( order)?$/ }) ??
   screen.queryByRole("button", { name: /Delete order/ });
 
-beforeEach(() => jest.clearAllMocks());
+// B1134: the action bar is staff-only; these specs exercise staff behaviour, so sign in as one.
+beforeEach(() => {
+  jest.clearAllMocks();
+  seedSession("OPERATOR");
+});
 
 describe("order detail: Delete is hidden while the order is with the carrier (#3219 S3)", () => {
   it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"])(
