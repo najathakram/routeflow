@@ -30,6 +30,8 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
 import { ConflictException, Logger } from "@nestjs/common";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { settleOrderInvoice } from "./order-status-invoicing";
+import { reconcileDeliveredStopOrders } from "../routes/complete-payment-reconcile";
+import { AfterCommit } from "../common/after-commit";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "../invoices/testing/split-invoice-fake-db";
 import { buildSplitInvoicesService } from "../invoices/testing/split-invoice-service";
 
@@ -121,7 +123,7 @@ async function splitThenReplaceAll(orderStatus: string) {
       moment,
       alreadySettledAtShipment,
     );
-  return { db, real, settle };
+  return { db, real, settle, invPrisma };
 }
 
 const expectReviewConflict = (out: unknown) => {
@@ -167,6 +169,65 @@ describe("SA-687 M1: a replace-all edit of an order with partial invoices, then 
     const after = db.invoicesOf("ord-1");
     expect(after).toHaveLength(2); // unguarded: 3
     expect(sum(after)).toBe(ORDER_TOTAL); // unguarded: 610.54
+  });
+
+  it("SA-687c: the DRIVER's stop completion still commits (no new invoice, review flagged in the audit log) when the order needs review; a PAID partial is not 'payable', so the create path is reached", async () => {
+    const { db, real, invPrisma } = await splitThenReplaceAll("OUT_FOR_DELIVERY");
+    for (const inv of db.invoices) inv.status = "PAID";
+    const tx: any = invPrisma; // the fake-backed mock doubles as the completion tx
+    tx.auditLog.create.mockClear();
+
+    // the real call site of completeWithPayment's reconcile (routes/complete-payment-reconcile.ts)
+    await expect(
+      reconcileDeliveredStopOrders(
+        real,
+        tx,
+        [{ id: "ord-1", status: "OUT_FOR_DELIVERY" as never }],
+        new Set(["ord-1"]),
+        "user-driver",
+      ),
+    ).resolves.toEqual(["ord-1"]); // unguarded-for-driver: throws ConflictException, rolling back the stop
+
+    expect(db.invoicesOf("ord-1")).toHaveLength(2); // nothing new billed
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: "user-driver", // the completing driver
+        action: "ORDER_INVOICES_NEED_REVIEW",
+        entityType: "order",
+        entityId: "ord-1",
+        meta: expect.objectContaining({ context: "stop-completion" }),
+      }),
+    });
+  });
+
+  it("SA-687c: a driver collecting CASH at that flagged stop: booked as an advance on the customer's wallet, the stop commits, no invoice is created", async () => {
+    const { db, real, invPrisma } = await splitThenReplaceAll("OUT_FOR_DELIVERY");
+    for (const inv of db.invoices) inv.status = "PAID";
+    const tx: any = invPrisma;
+    tx.order.findMany.mockResolvedValue([{ customerId: "cust-1" }]);
+    tx.advancePayment.create.mockImplementation(async (a: any) => ({ id: "adv-1", ...a.data }));
+
+    const delivered = await reconcileDeliveredStopOrders(
+      real,
+      tx,
+      [{ id: "ord-1", status: "OUT_FOR_DELIVERY" as never }],
+      new Set(["ord-1"]),
+      "user-driver",
+    );
+    const recorded = await real.recordDeliveryPaymentInTx(
+      tx,
+      new AfterCommit(),
+      delivered,
+      50,
+      "CASH",
+      { runId: "run-1", stopId: "stop-1" },
+    );
+
+    expect(recorded).toMatchObject({ applied: 0, excess: 50, advancePaymentId: "adv-1" });
+    expect(tx.advancePayment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ customerId: "cust-1", amount: 50, balance: 50 }),
+    });
+    expect(db.invoicesOf("ord-1")).toHaveLength(2); // no invoice created
   });
 
   it("S3: 'Split into invoice' for the full qty is refused as well (createPartialFromOrder has the same check)", async () => {

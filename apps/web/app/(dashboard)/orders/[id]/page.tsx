@@ -82,6 +82,7 @@ import {
 } from "@/lib/change-requests";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
+import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
@@ -2606,53 +2607,51 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                />
+                {/* #3219 S3: an order with the carrier is not deleted either (the server 409s) */}
+                {!order.cancelBlockedReason &&
+                  (showDeleteConfirm ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-danger font-medium">Delete order?</span>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        loading={deleteOrder.isPending}
+                        onClick={() => {
+                          deleteOrder.mutate(order.id, {
+                            onSuccess: () => {
+                              toast({ title: "Order deleted", variant: "success" });
+                              router.push("/orders");
+                            },
+                            onError: (e) => {
+                              toast({ title: orderErrorText(e), variant: "error" });
+                              setShowDeleteConfirm(false);
+                            },
+                          });
+                        }}
+                      >
+                        Confirm Delete
+                      </Button>
+                      <button
+                        onClick={() => setShowDeleteConfirm(false)}
+                        className="text-sm text-navy/70 hover:text-navy transition-colors"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
                     <Button
                       size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Order deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
+                      variant="ghost"
+                      leftIcon={<Trash2 className="h-4 w-4" />}
+                      onClick={() => setShowDeleteConfirm(true)}
                     >
-                      Confirm Delete
+                      Delete
                     </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete
-                  </Button>
-                )}
+                  ))}
               </ActionTier>
             </>
           )}
@@ -2695,15 +2694,12 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
-                {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+                />
+                {!order.cancelBlockedReason &&
+                  renderDeleteOrderAction("Delete this order? This can't be undone.")}
               </ActionTier>
             </>
           )}
@@ -2732,17 +2728,14 @@ export default function OrderDetailPage() {
                 </Button>
               </ActionTier>
               <ActionTier tier="danger">
-                <Button
-                  size="sm"
-                  variant="danger"
-                  leftIcon={<XCircle className="h-4 w-4" />}
+                <CancelOrderButton
+                  blockedReason={order.cancelBlockedReason}
                   onClick={handleCancel}
-                >
-                  Cancel Order
-                </Button>
-                {renderDeleteOrderAction(
-                  "Delete this order? It's out for delivery — this can't be undone.",
-                )}
+                />
+                {!order.cancelBlockedReason &&
+                  renderDeleteOrderAction(
+                    "Delete this order? It's out for delivery — this can't be undone.",
+                  )}
               </ActionTier>
             </>
           )}

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Logger,
@@ -73,6 +74,11 @@ import {
   mapLockError,
 } from "../orders/merge-contention";
 import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import {
+  buyerSubmitHash,
+  normalizeBuyerIdempotencyKey,
+  scrubForeignOrderId,
+} from "./buyer-order-idempotency";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -545,8 +551,16 @@ export class BuyerController {
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiHeader({ name: "Idempotency-Key", required: false })
   @ApiOperation({ summary: "Create a new order or merge into existing active order" })
-  async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
+  async createOrder(
+    @Body() dto: BuyerCreateOrderDto,
+    @CurrentBuyerCustomer() ctx: any,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    // B1094: a client-minted key makes a double submit (two concurrent POSTs of one cart) apply ONCE.
+    const idempotencyKey = normalizeBuyerIdempotencyKey(rawIdempotencyKey);
+    const requestHash = idempotencyKey ? buyerSubmitHash(ctx.customerId, dto.items) : undefined;
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
       // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
@@ -566,7 +580,7 @@ export class BuyerController {
       // by deferring every single time, so the sweep would never run at all). This
       // mirrors the staff controller, which likewise sweeps and re-reads after its lock
       // has been released.
-      let mergedOrderId: string | null = null;
+      let merged: { orderId: string; replayed: boolean } | null = null;
       try {
         const lock = await withAdvisoryLock(
           // 10s, not the module default of 20s: the mobile api client aborts every request
@@ -577,10 +591,28 @@ export class BuyerController {
           // and only the sweep/force paths (no client attached) take the service's 20s wait.
           { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
           async () => {
+            // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
+              mergeAs: { audience: "buyer" },
             });
             if (!activeOrder) return null;
+            // B1094: the fold writes ABSOLUTE totals, so a retry that serialized behind the submit that
+            // already folded this cart must replay it, not fold it in a second time (2 + 3 + 3 = 8).
+            if (idempotencyKey) {
+              const replayed = await this.ordersService
+                .findOrderIdByIdempotencyKey(idempotencyKey, ctx.customerId, requestHash)
+                .catch(scrubForeignOrderId); // never hand a buyer another customer's order id
+              if (replayed) {
+                // The fold's convergent tail may not have run (the key commits inside the fold's tx).
+                await this.ordersService.replayMergeReconcile(
+                  replayed.orderId,
+                  ctx.customerId,
+                  undefined,
+                );
+                return { orderId: replayed.orderId, replayed: true };
+              }
+            }
             // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
             // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
             // selling units, so give the fold its real box split before summing.
@@ -646,7 +678,23 @@ export class BuyerController {
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
               makePseudoUser(ctx),
+              ...(idempotencyKey
+                ? [{ idempotency: { key: idempotencyKey, responseHash: requestHash! } }]
+                : []),
             );
+            if (idempotencyKey) {
+              // Order-column stamp for create()'s replay path (best-effort; the key row already
+              // committed with the fold above).
+              await this.ordersService
+                .recordIdempotencyKey(activeOrder.id, idempotencyKey)
+                .catch((err: unknown) =>
+                  this.logger.error(
+                    `buyer idempotency record failed order=${activeOrder.id} key=${idempotencyKey}: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`,
+                  ),
+                );
+            }
             // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
             // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
             // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
@@ -674,7 +722,7 @@ export class BuyerController {
               );
             }
 
-            return activeOrder.id;
+            return { orderId: activeOrder.id, replayed: false };
           },
         );
         // `wait` mode either acquires or throws, so this is defensive only — but it must NOT
@@ -689,12 +737,15 @@ export class BuyerController {
             message: LOCK_UNAVAILABLE_MESSAGE,
           });
         }
-        mergedOrderId = lock.value;
+        merged = lock.value;
       } catch (lockErr) {
         mapLockError(lockErr);
       }
 
-      if (mergedOrderId) {
+      if (merged) {
+        const mergedOrderId = merged.orderId;
+        // B1094: a replayed submit already had its sweep when it first landed.
+        if (merged.replayed) return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
         // Sweep any other PENDING orders for this customer into the winner. The
         // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
         // combined quantity qualifies for (split carts keep the promo).
@@ -737,7 +788,10 @@ export class BuyerController {
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
     };
-    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    const created = await this.ordersService.create(
+      (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key
+      makePseudoUser(ctx),
+    );
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
@@ -749,7 +803,8 @@ export class BuyerController {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         ctx.customerId,
-        { buyerInitiated: true },
+        // focusOrderId: only the new order's path folds, so `merged` is never another path's pair
+        { buyerInitiated: true, focusOrderId: created.id },
         // POST-COMMIT: never wait — see the sibling sweep above.
         { lockMode: "try" },
       );

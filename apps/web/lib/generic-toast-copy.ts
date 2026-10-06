@@ -35,8 +35,13 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
   ORDER_WITH_CARRIER_NO_CANCEL:
     "This order is already with the carrier. Use a return instead of cancelling.",
+  ORDER_WITH_CARRIER_NO_REDUCE:
+    "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+  INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
+    "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:
