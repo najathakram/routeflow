@@ -98,11 +98,19 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       }),
     );
     await raw.orderItem.updateMany({ where: { orderId: created.id }, data: { deliveredQty: 0 } });
+    // create({ skipAutoMerge }) PERSISTS the flag, which would make the order a non-candidate
+    await raw.order.update({ where: { id: created.id }, data: { skipAutoMerge: false } });
     return created.id as string;
   };
   const pair = async () => {
     const loser = await createOrder(LQ);
     const winner = await createOrder(WQ);
+    // harness integrity: a skipAutoMerge fixture makes every merge a silent no-op
+    const flags = await raw.order.findMany({
+      where: { id: { in: [loser, winner] } },
+      select: { skipAutoMerge: true },
+    });
+    expect(flags.map((o) => o.skipAutoMerge)).toEqual([false, false]);
     return { loser, winner };
   };
 
