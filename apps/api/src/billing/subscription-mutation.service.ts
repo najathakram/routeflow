@@ -1744,7 +1744,16 @@ export class SubscriptionMutationService {
       billable.push({ def, quantity: Math.max(1, Math.trunc(Number(oldest.quantity) || 1)) });
     }
     if (billable.length === 0) return none;
-    if (interval === "year") throw refusalException(ADDON_ANNUAL_REFUSAL);
+    if (interval === "year") {
+      // Same code as every annual refusal (the web keys on it), but this one says WHICH add-ons are in the way:
+      // an owner staring at a refused checkout link needs the names to switch off, not "contact support".
+      throw refusalException({
+        code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED,
+        message:
+          `Add-ons can't be billed on an annual plan online yet. Switch off ` +
+          `${billable.map((b) => b.def.name).join(", ")} to continue, choose monthly billing, or contact support.`,
+      });
+    }
     return {
       lineItems: billable.map((b) =>
         checkoutAddonLineItem({

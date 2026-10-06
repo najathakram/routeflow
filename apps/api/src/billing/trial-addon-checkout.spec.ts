@@ -632,6 +632,37 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     expect(bundled.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
   });
 
+  it("NIT: the annual-checkout refusal NAMES the add-ons to switch off (sorted by SKU, comma-joined) and says what else to do", async () => {
+    const h = make({
+      rows: [
+        addonRow("FORECASTING", { qty: 1 }),
+        addonRow("CUSTOMER_PACK_100", { qty: 2 }),
+        addonRow("CUSTOMER_PACK_100", { addonKey: "dupe", qty: 1 }), // one SKU, named once
+        addonRow("MSRP", { qty: 1 }), // not self-serve: not named
+        addonRow("FORECASTING", { isComp: true, addonKey: "comp", qty: 1 }), // a comp: not named, not billed
+      ],
+    });
+
+    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual({
+      code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED,
+      message:
+        "Add-ons can't be billed on an annual plan online yet. Switch off Customer pack (+100), Forecasting to continue, choose monthly billing, or contact support.",
+    });
+  });
+
+  it("NIT: the checkout refusal no longer carries the generic copy (the shared constant of the enable/quantity/preview paths is unchanged)", async () => {
+    // settings-billing.controller.spec / subscription-mutation.addon-billing.spec still pin that constant
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })] });
+    const err: any = await h.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    expect(err.getResponse().message).not.toBe(
+      "Add-ons can't be added to an annual plan online yet. Please contact support.",
+    );
+    expect(err.getResponse().message).toContain("Customer pack (+100)");
+  });
+
   it("refuses an ANNUAL checkout that would bill an add-on: 409 ADDON_ANNUAL_NOT_SUPPORTED, no Stripe call", async () => {
     const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })] });
 

@@ -1598,7 +1598,11 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect(lines.skus).toEqual(["CUSTOMER_PACK_100", "FORECASTING"]);
       expect(lines.lineItems.map((l: any) => l.quantity)).toEqual([2, 1]);
       await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).rejects.toMatchObject({
-        response: { code: "ADDON_ANNUAL_NOT_SUPPORTED" },
+        response: {
+          code: "ADDON_ANNUAL_NOT_SUPPORTED",
+          // the refusal names the add-ons to switch off
+          message: expect.stringContaining("Switch off Customer pack (+100), Forecasting"),
+        },
       });
     });
 
