@@ -227,6 +227,10 @@ function routeDefaultsMatches(q: string): boolean {
   return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
+/** A carrier-only account has no drivers: the user-management card must not promise them. */
+const USERS_HREF = "/settings?tab=users";
+const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
+
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
   // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
@@ -242,17 +246,21 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const groups = React.useMemo(
     () =>
       GROUPS.map((g) => {
-        const items = g.items.filter(
-          (it) =>
-            canShow(it) &&
-            (!q ||
-              it.label.toLowerCase().includes(q) ||
-              it.desc.toLowerCase().includes(q) ||
-              g.title.toLowerCase().includes(q)),
-        );
+        const items = g.items
+          .map((it) =>
+            it.href === USERS_HREF && !fleet ? { ...it, desc: USERS_DESC_NO_FLEET } : it,
+          )
+          .filter(
+            (it) =>
+              canShow(it) &&
+              (!q ||
+                it.label.toLowerCase().includes(q) ||
+                it.desc.toLowerCase().includes(q) ||
+                g.title.toLowerCase().includes(q)),
+          );
         return { ...g, items };
       }).filter((g) => g.items.length > 0),
-    [q, canShow],
+    [q, canShow, fleet],
   );
 
   return (

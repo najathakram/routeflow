@@ -3586,6 +3586,7 @@ export default function OrderDetailPage() {
         onConfirm={handleDemote}
         loading={updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
+        fulfillPath={order?.fulfillPath}
       />
 
       {/* Send invoice modal — shown after marking order as delivered */}

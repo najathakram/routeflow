@@ -28,10 +28,11 @@ jest.mock("@/lib/tenant-features", () => ({
       : undefined,
   }),
 }));
+let query = "";
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/orders",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(query),
 }));
 jest.mock("@/lib/api/orders", () => ({
   ...jest.requireActual("@/lib/api/orders"),
@@ -78,5 +79,44 @@ describe("Orders list — SHIP mode wording", () => {
     expect(screen.queryAllByText("Shipped")).toHaveLength(0);
     expect(screen.getAllByText("Out for Delivery").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByRole("option", { name: "Out for Delivery" })).toBeInTheDocument();
+  });
+});
+
+// A carrier-only account has no delivery runs: the requested-delivery-date filter, its sort option and its
+// column are noise (Mac-mini pixel pass on #3198). Every other account keeps them; a date filter already in
+// the URL keeps them too, so it can still be cleared.
+describe("Orders list — delivery-date UI is fleet-only", () => {
+  beforeEach(() => {
+    query = "";
+  });
+
+  it("ship-only: no Delivery filter, no Delivery Date column, no Delivery Date sort option", () => {
+    ship = true;
+    renderWithProviders(<OrdersPage />);
+
+    expect(screen.queryByText("Delivery:")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delivery date from")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /Delivery Date/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Delivery Date" })).not.toBeInTheDocument();
+    // the rest of the sort options and the Created column are untouched
+    expect(screen.getByRole("option", { name: "Created" })).toBeInTheDocument();
+  });
+
+  it("not ship-only (today's UI, unchanged): the filter, the column and the sort option are there", () => {
+    ship = false;
+    renderWithProviders(<OrdersPage />);
+
+    expect(screen.getAllByText("Delivery:").length).toBeGreaterThanOrEqual(1); // filter label + card line
+    expect(screen.getByRole("columnheader", { name: /Delivery Date/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Delivery Date" })).toBeInTheDocument();
+  });
+
+  it("ship-only with a delivery date filter already in the URL: the filter stays so it can be cleared", () => {
+    ship = true;
+    query = "dateFrom=2026-10-01";
+    renderWithProviders(<OrdersPage />);
+
+    expect(screen.getAllByText("Delivery:").length).toBeGreaterThanOrEqual(1); // filter label + card line
+    expect(screen.getByTitle("Clear dates")).toBeInTheDocument();
   });
 });

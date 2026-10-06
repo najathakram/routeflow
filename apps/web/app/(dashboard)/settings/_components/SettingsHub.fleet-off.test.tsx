@@ -30,4 +30,16 @@ describe("SettingsHub — fleet-off", () => {
     expect(screen.getByText("Route defaults")).toBeInTheDocument();
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
+
+  it("fleet-OFF: the user-management card does not promise drivers; fleet-ON keeps today's words", () => {
+    fleet = false;
+    const { unmount } = renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByText("Team members, roles, passwords")).toBeInTheDocument();
+    expect(screen.queryByText(/drivers/i)).not.toBeInTheDocument();
+    unmount();
+
+    fleet = true;
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getByText("Operators & drivers, roles, passwords")).toBeInTheDocument();
+  });
 });

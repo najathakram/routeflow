@@ -32,7 +32,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
-import { useDeliveryAccess } from "@/lib/api/addons";
+import { useDeliveryAccess, useFleetAccess } from "@/lib/api/addons";
 import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
@@ -345,6 +345,10 @@ export default function OrdersPage() {
   const statusLabel = useOrderStatusLabel();
   // The fulfilment filter lists only the paths the account offers (plus an active URL filter).
   const fulfilMethods = useStaffFulfilment().formMethods;
+  // A carrier-only (fleet-off) account has no delivery runs: the requested-delivery-date filter, sort and
+  // column are noise there. An active date filter in the URL keeps them, so it can still be cleared.
+  const { fleet } = useFleetAccess();
+  const showDelivery = fleet || !!dateFrom || !!dateTo;
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
     label: statusLabel(String(v.filters.status ?? ""), v.label),
@@ -800,7 +804,7 @@ export default function OrdersPage() {
               aria-label="Sort orders by"
               options={[
                 { value: "createdAt", label: "Created" },
-                { value: "deliveryDate", label: "Delivery Date" },
+                ...(showDelivery ? [{ value: "deliveryDate", label: "Delivery Date" }] : []),
                 { value: "orderNumber", label: "Order #" },
                 { value: "customer", label: "Customer" },
                 { value: "total", label: "Total" },
@@ -896,39 +900,41 @@ export default function OrdersPage() {
             that row, so without its own wrap the "to [date]" half ran past
             the viewport edge at 390px instead of dropping to a second line
             the way every other filter control already does (B506). */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
-          <span className="text-xs text-navy/70 font-medium">Delivery:</span>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setFilter("dateFrom", e.target.value)}
-            max={dateTo || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date from"
-          />
-          <span className="text-xs text-navy/40">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setFilter("dateTo", e.target.value)}
-            min={dateFrom || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date to"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => {
-                setFilter("dateFrom", "");
-                setFilter("dateTo", "");
-              }}
-              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {showDelivery && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-navy/70" />
+            <span className="text-xs text-navy/70 font-medium">Delivery:</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setFilter("dateFrom", e.target.value)}
+              max={dateTo || undefined}
+              className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Delivery date from"
+            />
+            <span className="text-xs text-navy/40">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setFilter("dateTo", e.target.value)}
+              min={dateFrom || undefined}
+              className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Delivery date to"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setFilter("dateFrom", "");
+                  setFilter("dateTo", "");
+                }}
+                className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
+                title="Clear dates"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Clear active filters */}
         {(statusFilter ||
@@ -1100,14 +1106,16 @@ export default function OrdersPage() {
                   {/* B823 review (Opus): the desktop table's own Delivery Date column,
                       missing from the card entirely — same formatDateOnly, same em-dash
                       fallback. */}
-                  <div className="text-xs text-navy/60">
-                    Delivery:{" "}
-                    {order.requestedDeliveryDate ? (
-                      formatDateOnly(order.requestedDeliveryDate)
-                    ) : (
-                      <span className="text-navy/30">—</span>
-                    )}
-                  </div>
+                  {showDelivery && (
+                    <div className="text-xs text-navy/60">
+                      Delivery:{" "}
+                      {order.requestedDeliveryDate ? (
+                        formatDateOnly(order.requestedDeliveryDate)
+                      ) : (
+                        <span className="text-navy/30">—</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}
@@ -1148,12 +1156,14 @@ export default function OrdersPage() {
                     >
                       Status <SortIcon col="status" />
                     </th>
-                    <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                      onClick={() => toggleSort("deliveryDate")}
-                    >
-                      Delivery Date <SortIcon col="deliveryDate" />
-                    </th>
+                    {showDelivery && (
+                      <th
+                        className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                        onClick={() => toggleSort("deliveryDate")}
+                      >
+                        Delivery Date <SortIcon col="deliveryDate" />
+                      </th>
+                    )}
                     <th
                       className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("createdAt")}
@@ -1257,15 +1267,17 @@ export default function OrdersPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        {order.requestedDeliveryDate ? (
-                          <span className="text-navy/70">
-                            {formatDateOnly(order.requestedDeliveryDate)}
-                          </span>
-                        ) : (
-                          <span className="text-navy/30">—</span>
-                        )}
-                      </td>
+                      {showDelivery && (
+                        <td className="px-4 py-3 text-sm">
+                          {order.requestedDeliveryDate ? (
+                            <span className="text-navy/70">
+                              {formatDateOnly(order.requestedDeliveryDate)}
+                            </span>
+                          ) : (
+                            <span className="text-navy/30">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-sm text-navy/70">
                         <OrderDateCell order={order} />
                       </td>
