@@ -294,7 +294,7 @@ describe("SA-693 admin uncomp", () => {
   it("a comp DISABLED between uncomp's read and the lock is refused under the lock: never re-activated and billed", async () => {
     const m = make({ stripeSubId: "sub_1", rows: [compRow({ active: false })] });
     // the pre-lock read still saw an active comp; the read under the lock sees the truth
-    m.store.findFirst.mockImplementationOnce(async () => ({ id: "row1", ...compRow() }));
+    m.store.findFirst.mockImplementationOnce((async () => ({ id: "row1", ...compRow() })) as any);
 
     await expect(m.svc.uncompAddon("t1", "REGULATED_ITEMS", "price_x")).rejects.toBeInstanceOf(
       ConflictException,
@@ -306,7 +306,7 @@ describe("SA-693 admin uncomp", () => {
 
   it("a comp disabled AFTER the Stripe item was created is refused in the transaction and the orphan item is deleted", async () => {
     const m = make({ stripeSubId: "sub_1", rows: [compRow({ active: false })] });
-    const active = async () => ({ id: "row1", ...compRow() });
+    const active = (async () => ({ id: "row1", ...compRow() })) as any;
     // reads: 1 uncomp pre-read, 2 under the lock (both active); 3 in the transaction (inactive: the real row)
     m.store.findFirst.mockImplementationOnce(active).mockImplementationOnce(active);
 

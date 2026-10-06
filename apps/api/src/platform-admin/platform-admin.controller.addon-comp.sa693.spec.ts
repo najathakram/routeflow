@@ -29,6 +29,8 @@ function make() {
     stub() as any,
     stub() as any,
     stub() as any,
+    stub() as any,
+    stub() as any,
   );
   return { controller, addonService, svc };
 }
