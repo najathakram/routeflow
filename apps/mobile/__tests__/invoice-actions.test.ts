@@ -162,3 +162,19 @@ describe("canSendInvoiceNow", () => {
     expect(canSendInvoiceNow("DRAFT", pendingMirror)).toBe(false);
   });
 });
+
+describe("isPendingOrderMirror honours the server's pendingMirror flag", () => {
+  const { isPendingOrderMirror } = require("../lib/invoices-logic");
+  const base = { orderId: "o1", deliveryBatchId: null, orderStatus: "OUT_FOR_DELIVERY" };
+  it("derives from the order status when the server sends no flag (unchanged)", () => {
+    expect(isPendingOrderMirror(base)).toBe(true);
+  });
+  it("a shipped carrier order's draft is not a mirror when the server says so", () => {
+    expect(isPendingOrderMirror({ ...base, pendingMirror: false })).toBe(false);
+  });
+  it("the server flag wins the other way too", () => {
+    expect(isPendingOrderMirror({ ...base, orderStatus: "DELIVERED", pendingMirror: true })).toBe(
+      true,
+    );
+  });
+});

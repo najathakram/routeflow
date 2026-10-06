@@ -192,6 +192,25 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     });
   });
 
+  it("M2: the post-create sweep folds only the NEW order's path (focusOrderId), so it returns that order", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
+      expect.anything(),
+    );
+  });
+
+  it("the buyer's active-order search passes mergeAs for the buyer audience (portal path rules)", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer" } }),
+    );
+  });
+
   it("REG-B47 (T14 companion): a BARE-qty incoming add folds against the stored line in SELLING UNITS — 2 + 2 = a plain qty 4, never 2 boxes + 2 loose pieces", async () => {
     // The other half of the denomination convention. `foldMergeItems` reads a bare
     // incoming `{productId, qty}` as loose PIECES (right for the staff scan path),

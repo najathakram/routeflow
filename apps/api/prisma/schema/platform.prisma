@@ -512,6 +512,14 @@ enum NotificationEvent {
   STAFF_NEW_ORDER // internal alert
   BUYER_ORDER_EDITED // internal alert
   BUYER_ORDER_CANCELLED // internal alert
+  // Carrier-shipped orders (additive-only, appended at the END): the accurate "your order has
+  // shipped" email (replaces OUT_FOR_DELIVERY for SHIP orders) and the one-time follow-up when
+  // tracking is first added after the order was already marked shipped.
+  ORDER_SHIPPED
+  SHIPMENT_TRACKING_ADDED
+  // Pickup orders (additive-only, appended at the END): "your order is ready for pickup". The pickup
+  // flow (a separate PR) is its firing site; this PR only creates the event, template and seed rows.
+  READY_FOR_PICKUP
 }
 
 // One conversation with a customer across all channels (the inbox row).

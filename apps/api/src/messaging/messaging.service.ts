@@ -24,7 +24,8 @@ export type SkipReason =
 
 /**
  * N1: order-status events gated by the buyer's own `Customer.orderStatusEmails`
- * preference (opt-OUT, default true) — EMAIL only, and ONLY these five events.
+ * preference (opt-OUT, default true) — EMAIL only, and ONLY these eight events
+ * (ORDER_SHIPPED / SHIPMENT_TRACKING_ADDED are the carrier-shipped successors of OUT_FOR_DELIVERY; READY_FOR_PICKUP the pickup one).
  * ORDER_CHANGED_AT_DOOR joined the set per owner ruling 2026-09-16: a buyer who
  * opted out of order-status email gets no at-door change mail either. Every
  * other EMAIL-capable event (INVOICE_SENT, PAYMENT_REMINDER, LICENSE_EXPIRING)
@@ -35,6 +36,9 @@ export type SkipReason =
 const ORDER_STATUS_EMAIL_EVENTS = new Set<NotificationEvent>([
   NotificationEvent.ORDER_CONFIRMED,
   NotificationEvent.OUT_FOR_DELIVERY,
+  NotificationEvent.ORDER_SHIPPED,
+  NotificationEvent.SHIPMENT_TRACKING_ADDED,
+  NotificationEvent.READY_FOR_PICKUP,
   NotificationEvent.DELIVERED,
   NotificationEvent.CANCELLED,
   NotificationEvent.ORDER_CHANGED_AT_DOOR,
@@ -234,7 +238,15 @@ export class MessagingService {
    */
   async notify(
     eventKey: NotificationEvent,
-    args: { customerId: string; senderId: string; vars?: Record<string, string | number> },
+    args: {
+      customerId: string;
+      senderId: string;
+      vars?: Record<string, string | number>;
+      /** Optional: dispatch ONLY on these channels. Omitted = every enabled channel (all existing callers). */
+      channels?: MessageChannel[];
+      /** Optional: skip these channels. Omitted = none skipped (all existing callers). */
+      exceptChannels?: MessageChannel[];
+    },
   ): Promise<SendOutcome[]> {
     const db = this.prisma.forTenant();
     let rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
@@ -261,6 +273,10 @@ export class MessagingService {
     // invoices.service.ts already sends for real). Only channels EVENT_CHANNELS[eventKey]
     // currently allows are ever dispatched, regardless of what's persisted.
     rules = rules.filter((r) => EVENT_CHANNELS[eventKey].includes(r.channel));
+    const only = args.channels;
+    const except = args.exceptChannels;
+    if (only) rules = rules.filter((r) => only.includes(r.channel));
+    if (except) rules = rules.filter((r) => !except.includes(r.channel));
     const outcomes: SendOutcome[] = [];
     for (const rule of rules) {
       const template = await db.messageTemplate.findFirst({
@@ -285,6 +301,51 @@ export class MessagingService {
       );
     }
     return outcomes;
+  }
+
+  /**
+   * The channels on which this tenant would send `eventKey` with WORDING THE BUSINESS CHANGED: an
+   * ENABLED rule whose ACTIVE template body differs from the shipped DEFAULT_TEMPLATES body
+   * (whitespace-trimmed). MessageTemplate carries no isCustom/updatedBy marker, and the
+   * OUT_FOR_DELIVERY default has never changed since it was introduced, so comparing against the
+   * original default string is a reliable test. Used by the carrier-shipped path to keep a business's
+   * own OUT_FOR_DELIVERY text. Never throws: on a read failure it reports "none customised".
+   */
+  /** Channels with an ENABLED rule for the event (a business that switched an event off has none). Never throws. */
+  async enabledChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {
+    try {
+      const rules = await this.prisma.forTenant().notificationRule.findMany({
+        where: { eventKey, enabled: true },
+      });
+      return rules.map((r) => r.channel).filter((c) => EVENT_CHANNELS[eventKey].includes(c));
+    } catch (err) {
+      this.logger.warn(
+        `enabledChannels(${eventKey}) failed: ${err instanceof Error ? err.message : err}`,
+      );
+      return [];
+    }
+  }
+
+  async customisedChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {
+    try {
+      const db = this.prisma.forTenant();
+      const [rules, templates] = await Promise.all([
+        db.notificationRule.findMany({ where: { eventKey, enabled: true } }),
+        db.messageTemplate.findMany({ where: { eventKey, isActive: true } }),
+      ]);
+      const enabled = new Set(
+        rules.filter((r) => EVENT_CHANNELS[eventKey].includes(r.channel)).map((r) => r.channel),
+      );
+      const original = DEFAULT_TEMPLATES[eventKey].body.trim();
+      return templates
+        .filter((t) => enabled.has(t.channel) && t.body.trim() !== original)
+        .map((t) => t.channel);
+    } catch (err) {
+      this.logger.warn(
+        `customisedChannels(${eventKey}) failed: ${err instanceof Error ? err.message : err}`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -315,7 +376,13 @@ export class MessagingService {
    */
   async notifyEvent(
     eventKey: NotificationEvent,
-    args: { customerId: string; senderId: string | null; vars?: Record<string, string | number> },
+    args: {
+      customerId: string;
+      senderId: string | null;
+      vars?: Record<string, string | number>;
+      channels?: MessageChannel[];
+      exceptChannels?: MessageChannel[];
+    },
   ): Promise<void> {
     try {
       const senderId =
@@ -332,7 +399,13 @@ export class MessagingService {
         });
         vars = { ...vars, customerName: customer?.businessName ?? "Customer" };
       }
-      await this.notify(eventKey, { customerId: args.customerId, senderId, vars });
+      await this.notify(eventKey, {
+        customerId: args.customerId,
+        senderId,
+        vars,
+        channels: args.channels,
+        exceptChannels: args.exceptChannels,
+      });
     } catch (err) {
       this.logger.warn(
         `notifyEvent(${eventKey}) failed: ${err instanceof Error ? err.message : err}`,

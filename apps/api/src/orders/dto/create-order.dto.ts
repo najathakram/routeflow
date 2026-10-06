@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -19,6 +20,7 @@ import {
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../writable-fulfill-paths";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
@@ -115,7 +117,7 @@ export class CreateOrderDto {
    * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
    */
   @IsOptional()
-  @IsEnum(FulfillPath)
+  @IsIn(WRITABLE_FULFILL_PATHS)
   fulfillPath?: FulfillPath;
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */

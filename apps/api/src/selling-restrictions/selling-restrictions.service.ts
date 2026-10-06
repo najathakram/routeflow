@@ -451,3 +451,23 @@ export class SellingRestrictionsService {
     throw new ConflictException(body);
   }
 }
+
+/**
+ * SA-606 WS6: a BUYER order naming a product the tenant hid from the portal is the EXISTING buyer 409 envelope with
+ * `reason: "HIDDEN_FROM_PORTAL"` on the line (and only there: a state/ban reason stays staff-only). Built HERE, at the
+ * one construction site, so the B612 redaction pin ("no other file builds a SELLING_RESTRICTED body") still holds.
+ */
+export function hiddenFromPortalRestriction(blockedLines: BuyerBlockedLine[]): ConflictException {
+  const names = blockedLines.slice(0, 3).map((l) => `"${l.productName}"`);
+  const body: BuyerSellingRestrictedError = {
+    code: API_ERROR_CODES.SELLING_RESTRICTED,
+    message:
+      blockedLines.length === 1
+        ? `${names[0]} isn't available for online ordering.`
+        : `${blockedLines.length} items on this order aren't available for online ordering: ${names.join(", ")}${
+            blockedLines.length > 3 ? ` and ${blockedLines.length - 3} more` : ""
+          }.`,
+    blockedLines,
+  };
+  return new ConflictException(body);
+}
