@@ -4,6 +4,8 @@
  * Harness copied from unit-picker-mount.test.tsx.
  */
 import * as React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { EditableLineItems, type EditItemState } from "./page";
@@ -44,7 +46,11 @@ const line = (over: Partial<EditItemState> = {}): EditItemState => ({
   ...over,
 });
 
-function renderRows(items: EditItemState[], customer?: { id: string; name?: string | null }) {
+function renderRows(
+  items: EditItemState[],
+  customer?: { id: string; name?: string | null },
+  orderId?: string,
+) {
   return renderWithProviders(
     <EditableLineItems
       items={items}
@@ -57,6 +63,7 @@ function renderRows(items: EditItemState[], customer?: { id: string; name?: stri
       tierForProductId={() => 1}
       pricingReady
       customer={customer}
+      orderId={orderId}
     />,
   );
 }
@@ -106,6 +113,24 @@ describe("order edit page - price history button", () => {
     expect(mockGet).toHaveBeenCalledWith("/customers/c1/products/p-1/price-history", {
       params: { limit: 25 },
     });
+  });
+
+  it("hunt2 F6: the edited order is left out of its own history (excludeOrderId)", async () => {
+    renderRows([line()], { id: "c1", name: "Acme Foods" }, "ord-edit");
+    fireEvent.click(screen.getByRole("button", { name: "Price history" }));
+    await screen.findByRole("dialog", { name: "Price history" });
+    expect(mockGet).toHaveBeenCalledWith("/customers/c1/products/p-1/price-history", {
+      params: { limit: 25, excludeOrderId: "ord-edit" },
+    });
+  });
+
+  it("hunt2 F6 wiring: the order page hands EditableLineItems the order's own id", () => {
+    const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
+    const call = src.slice(
+      src.indexOf("<EditableLineItems"),
+      src.indexOf("/>", src.indexOf("<EditableLineItems")),
+    );
+    expect(call).toContain("orderId={order.id}");
   });
 
   it("is disabled when the customer is not known yet, and absent for an unlisted line", () => {

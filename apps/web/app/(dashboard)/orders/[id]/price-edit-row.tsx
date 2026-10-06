@@ -48,6 +48,8 @@ export function PriceEditRow({
     productName: string;
     unitHint?: string | null;
     packHint?: number | null;
+    /** The order being edited: its own lines are not shown as history (hunt2 F6). */
+    excludeOrderId?: string | null;
   };
 }) {
   // "Sell anyway" acknowledges a below-floor price for this session; the override

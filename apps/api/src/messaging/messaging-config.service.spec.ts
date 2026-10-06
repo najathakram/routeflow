@@ -445,6 +445,7 @@ describe("MessagingConfigService (P6-6)", () => {
       });
       prisma.messageTemplate.update.mockResolvedValue({
         id: "tpl-1",
+        eventKey: NotificationEvent.CANCELLED, // a real row always carries it (B1127: the view reads it)
         body: "Hi {{name}}, order {{orderNumber}}",
         variables: ["name", "orderNumber"],
         waTemplateName: null,

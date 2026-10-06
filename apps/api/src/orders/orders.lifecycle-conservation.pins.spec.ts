@@ -348,6 +348,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
     expect(invoicesService.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
       basis: "order",
+      shortDraftIsPartial: true, // SA-681: Mark Delivered only
     });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
   });
