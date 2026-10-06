@@ -6,6 +6,9 @@ import {
   CUSTOMER_ORDER_FIELDS,
   CUSTOMER_ORDER_ITEM_FIELDS,
   CUSTOMER_PAYMENT_FIELDS,
+  invoiceDetailFor,
+  orderFor,
+  ordersFor,
   pickCustomerInvoiceFields,
   pickCustomerOrderFields,
   toCustomerOrder,
@@ -195,5 +198,31 @@ describe("customer-facing PDFs never render a staff-only field", () => {
     // A payment's `notes` never reaches a renderer either.
     expect(src).not.toMatch(/payments?\b[^;\n]*\.notes\b/);
     expect(src).not.toMatch(/\bp(ayment)?\.notes\b/);
+  });
+});
+
+// The role gate the services call (kept out of orders.service / invoices.service, which sit at their
+// size-ratchet caps): a CUSTOMER gets the projected copy, anyone else the value exactly as read.
+describe("orderFor / ordersFor / invoiceDetailFor: the CUSTOMER gate", () => {
+  const customer = { role: "CUSTOMER" };
+  const staff = { role: "OPERATOR" };
+
+  it("a CUSTOMER gets the projection of an order, a page of orders and an invoice detail", () => {
+    expectNoStaffLeaks(orderFor(customer, leakyOrder()) as never, ORDER_LEAK_KEYS);
+    const page = ordersFor(customer, [leakyOrder(), leakyOrder()]);
+    expect(page).toHaveLength(2);
+    for (const row of page) expectNoStaffLeaks(row as never, ORDER_LEAK_KEYS);
+    expectNoStaffLeaks(invoiceDetailFor(customer, leakyInvoice()) as never, INVOICE_LEAK_KEYS);
+  });
+
+  it("anyone else (staff, no user) gets the SAME object back, untouched", () => {
+    const order = leakyOrder();
+    const rows = [leakyOrder()];
+    const invoice = leakyInvoice();
+    for (const caller of [staff, undefined, null, {}]) {
+      expect(orderFor(caller, order)).toBe(order);
+      expect(ordersFor(caller, rows)).toBe(rows);
+      expect(invoiceDetailFor(caller, invoice)).toBe(invoice);
+    }
   });
 });

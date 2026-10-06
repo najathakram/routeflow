@@ -260,6 +260,27 @@ export function toCustomerOrder<T>(order: T): T {
   return pickCustomerOrderFields(redactUpsellForCustomer(order));
 }
 
+const CUSTOMER_ROLE = "CUSTOMER";
+type Caller = { role?: string } | null | undefined;
+
+/** `toCustomerOrder` for a CUSTOMER caller; anyone else gets the order as read. */
+export function orderFor<T>(user: Caller, order: T): T {
+  return user?.role === CUSTOMER_ROLE ? toCustomerOrder(order) : order;
+}
+
+/** `orderFor` over a page of orders. */
+export function ordersFor<T>(user: Caller, rows: T[]): T[] {
+  return user?.role === CUSTOMER_ROLE ? rows.map(toCustomerOrder) : rows;
+}
+
+/**
+ * The invoice detail for a CUSTOMER caller (the allowlist, DRAFT invoices already 404ed by the caller:
+ * a DRAFT is the seller's unissued working copy); anyone else gets the detail as read.
+ */
+export function invoiceDetailFor<T>(user: Caller, detail: T): T {
+  return user?.role === CUSTOMER_ROLE ? pickCustomerInvoiceFields(detail) : detail;
+}
+
 /**
  * A customer-facing copy of an order: the allowlisted scalars, its lines, its change requests, its
  * run's status and its invoice stubs. The order's own invoice list (when present) loses its DRAFT

@@ -48,7 +48,7 @@ import {
   matchEditLines,
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { customerInvoiceList, pickCustomerInvoiceFields } from "../common/staff-only-fields";
+import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
@@ -3046,7 +3046,6 @@ export class InvoicesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
-      // A DRAFT is the seller's unissued working copy: the customer gets the 404 of a missing id.
       if (inv.status === InvoiceStatus.DRAFT) throw new NotFoundException("Invoice not found");
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
@@ -3055,7 +3054,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    const detail = {
+    return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
@@ -3063,8 +3062,7 @@ export class InvoicesService {
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
-    };
-    return user?.role === UserRole.CUSTOMER ? pickCustomerInvoiceFields(detail) : detail;
+    });
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {

@@ -140,7 +140,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { toCustomerOrder } from "../common/staff-only-fields";
+import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -434,9 +434,8 @@ export class OrdersService implements OnApplicationBootstrap {
         include: {
           customer: { select: { id: true, businessName: true } },
           lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-          // P5-11: pending change-request count for the orders-list badge.
-          // Filtered relation count — additive; clients that don't know
-          // `_count` ignore it.
+          // P5-11: pending change-request count for the orders-list badge. Filtered relation count
+          // — additive; clients that don't know `_count` ignore it.
           _count: {
             select: {
               changeRequests: { where: { status: ChangeRequestStatus.PENDING } },
@@ -450,8 +449,7 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().order.count({ where }),
     ]);
 
-    // Customer-facing fields only for the customer (common/staff-only-fields.ts); staff rows as read.
-    const rows = user.role === UserRole.CUSTOMER ? data.map(toCustomerOrder) : data;
+    const rows = ordersFor(user, data); // customer-facing fields only for the customer
     return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
@@ -469,11 +467,10 @@ export class OrdersService implements OnApplicationBootstrap {
             email: true,
           },
         },
-        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs
-        // can render the boxes/pieces split for boxed products and recompute
-        // line subtotals locally without a second roundtrip. `averageCost` +
-        // `category` feed the live cost/margin hint + floor in the edit builder
-        // (pos-cost-roles-spec §1).
+        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs can render the
+        // boxes/pieces split for boxed products and recompute line subtotals locally without a
+        // second roundtrip. `averageCost` + `category` feed the live cost/margin hint + floor in
+        // the edit builder (pos-cost-roles-spec §1).
         lineItems: {
           include: {
             components: { orderBy: { position: "asc" } }, // #2717 M3: frozen FIXED-line components
@@ -595,9 +592,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
-    // Customer-facing fields only for the customer: no staff-only order/line fields, and no DRAFT
-    // invoice in the order's invoice list (common/staff-only-fields.ts). Staff get the order as read.
-    return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
+    return orderFor(user, order); // customer-facing fields only for the customer
   }
 
   /**
