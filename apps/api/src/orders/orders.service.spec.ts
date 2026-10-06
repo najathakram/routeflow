@@ -17,6 +17,10 @@ import { ConfigService } from "@nestjs/config";
 // the critical section inline — the real helper would open a `pg` pool.
 // `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx (no pool), and the
 // pins below assert the SQL it emits and the 409 it maps 55P03 to.
+// B1053: fold-math spec — the row guard is passed through (see testing/merge-recheck-passthrough.ts).
+jest.mock("./merge-lock-recheck", () =>
+  require("./testing/merge-recheck-passthrough").passthrough(),
+);
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({

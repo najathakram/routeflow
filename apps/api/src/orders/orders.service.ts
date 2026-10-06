@@ -59,6 +59,11 @@ import { sourceLineFor, type SourceLines } from "./source-line";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
+  deleteLoserGuarded,
+  lockAndRecheckMergeInputs,
+  readMergeGroup,
+} from "./merge-lock-recheck";
+import {
   OrderStatus,
   UserRole,
   ItemStatus,
@@ -101,7 +106,12 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
+import {
+  cancelBlockedMessage,
+  cancelImpact,
+  lockedOrderStatus,
+  lockOrderForCancel,
+} from "./order-cancel-impact";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
@@ -717,31 +727,13 @@ export class OrdersService implements OnApplicationBootstrap {
           waitMs: 20_000,
         },
         async () => {
-          const pending = await this.prisma.forTenant().order.findMany({
-            where: {
-              customerId,
-              status: OrderStatus.PENDING,
-              routeRunId: null,
-              routeRunStopId: null,
-              transaction: { is: null },
-              invoices: { none: {} },
-              returns: { none: {} },
-              skipAutoMerge: false,
-            },
-            include: {
-              lineItems: {
-                where: { status: { not: ItemStatus.CANCELLED } },
-                // SA-124e(6): the fold/write-plan pick "the FIRST winner line in display
-                // order" as the primary (SA-103/104's rule) — without an explicit orderBy
-                // that "first" is whatever order Postgres happens to return, not a real
-                // display order.
-                orderBy: { position: "asc" },
-              },
-            },
-            orderBy: { updatedAt: "desc" },
-          });
-          // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
-          const pendingOrders = sameFulfilPathAsWinner(unshipped(pending), options.focusOrderId);
+          // B1053: the ONE shared predicate (merge-lock-recheck.ts); the tx re-reads it under lock.
+          const { group: pendingOrders } = await readMergeGroup(
+            this.prisma.forTenant(),
+            customerId,
+            "auto",
+            options.focusOrderId,
+          );
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -811,6 +803,12 @@ export class OrdersService implements OnApplicationBootstrap {
           reportPackWarnings(this.logger, "merge", winner.id, packWarnings, opts);
 
           await this.prisma.tenantTransaction(async (tx) => {
+            await lockAndRecheckMergeInputs(tx, {
+              customerId,
+              kind: "auto",
+              focusOrderId: options.focusOrderId,
+              pre: pendingOrders,
+            });
             // 1/2. Apply every pack-group write: an UPDATE onto the winner's own existing line
             // for its own pack group, a CREATE for every other group (SA-101(1)(b)/(c)).
             for (const write of mergeWrites) {
@@ -902,7 +900,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 data: { orderId: winner.id },
               });
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await tx.order.delete({ where: { id: loser.id } });
+              await deleteLoserGuarded(tx, loser.id, "auto");
             }
 
             // 4. Recompute winner totals.
@@ -987,19 +985,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
         async () => {
-          const found = await this.prisma.forTenant().order.findMany({
-            where: { customerId, status: OrderStatus.PENDING },
-            include: {
-              lineItems: {
-                where: { status: { not: ItemStatus.CANCELLED } },
-                // SA-124e(6): see mergeAllPendingForCustomer's identical note — "first winner
-                // line in display order" needs a real order, not whatever Postgres returns.
-                orderBy: { position: "asc" },
-              },
-            },
-            orderBy: { updatedAt: "desc" },
-          });
-          const orders = sameFulfilPathAsWinner(unshipped(found)); // never fold a SHIP order into a ROUTE one
+          const { group: orders } = await readMergeGroup(
+            this.prisma.forTenant(),
+            customerId,
+            "force",
+          );
           if (orders.length <= 1) return orders[0] ?? null;
           unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),
@@ -1069,6 +1059,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const counts = reportPackWarnings(this.logger, "consolidate", winner.id, packWarnings);
 
           await withAfterCommit(this.prisma, async (tx, after) => {
+            await lockAndRecheckMergeInputs(tx, { customerId, kind: "force", pre: orders });
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
@@ -1123,10 +1114,10 @@ export class OrdersService implements OnApplicationBootstrap {
               });
             }
             for (const loser of losers) {
-              // Remove a loser's pending mirror draft (and its items) before deleting
-              // the order so the Invoice→Order FK doesn't block. A SENT invoice on a
-              // loser is a real bill — leave it, so order.delete FK-fails rather than
-              // silently dropping a billed order (preserves prior safety).
+              // Remove a loser's pending mirror draft (and its items) before deleting the order. The
+              // Invoice→Order FK is ON DELETE SET NULL, so it would NOT block: a loser with a billed
+              // Invoice or a Transaction never reaches here (mergeEligibleWhere("force") skips it, and
+              // deleteLoserGuarded re-checks the same predicate on the delete itself).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
                 // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
@@ -1143,7 +1134,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 data: { orderId: winner.id },
               });
               await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await tx.order.delete({ where: { id: loser.id } });
+              await deleteLoserGuarded(tx, loser.id, "force");
             }
             await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
@@ -2583,10 +2574,7 @@ export class OrdersService implements OnApplicationBootstrap {
             async (tx) => {
               await lockOrderForCancel(tx, id);
               // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
-              const lockedStatus = (await tx.order.findUnique({
-                where: { id },
-                select: { status: true },
-              }))!.status;
+              const lockedStatus = await lockedOrderStatus(tx, id);
               carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
               const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
               const lockedOrder = { ...order, status: lockedStatus };

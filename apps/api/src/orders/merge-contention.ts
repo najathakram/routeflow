@@ -53,6 +53,20 @@ export function isMergeContention(e: unknown): boolean {
   return false;
 }
 
+/** The coded 409 (`isMergeContention` recognises it by code): nothing was written, retry is safe. */
+export function mergeInProgress(): ConflictException {
+  return new ConflictException({ code: MERGE_IN_PROGRESS, message: MERGE_IN_PROGRESS_MESSAGE });
+}
+
+/** A raw 55P03 (the merge tx's write-phase `lock_timeout` backstop) is contention too. */
+export function isRawLockTimeout(e: unknown): boolean {
+  return (
+    (e as any)?.meta?.code === "55P03" ||
+    (e as any)?.code === "55P03" ||
+    /55P03|lock timeout|could not obtain lock/i.test(String((e as any)?.message ?? ""))
+  );
+}
+
 /**
  * The single mapping from a `db-locks` failure to its wire contract: 55P03 (`LockTimeoutError`)
  * → retryable 409, no lock connection (`LockUnavailableError`) → 503, anything else rethrown
@@ -68,6 +82,8 @@ export function mapLockError(e: unknown): never {
       message: LOCK_UNAVAILABLE_MESSAGE,
     });
   }
+  // B1053: the merge tx's write-phase `lock_timeout` (55P03) is the same "someone else is writing".
+  if (isRawLockTimeout(e)) throw mergeInProgress();
   throw e;
 }
 

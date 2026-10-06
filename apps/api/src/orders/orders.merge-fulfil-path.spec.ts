@@ -1,5 +1,9 @@
 // The merge paths run inside a Postgres advisory lock; these specs exercise the merge CANDIDATES, not
 // the lock, so run the critical section inline (same mock as orders.service.b297-merge.spec.ts).
+// B1053: fold-math spec — the row guard is passed through (see testing/merge-recheck-passthrough.ts).
+jest.mock("./merge-lock-recheck", () =>
+  require("./testing/merge-recheck-passthrough").passthrough(),
+);
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
