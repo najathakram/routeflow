@@ -44,6 +44,11 @@ export interface CounterSaleResponse {
   change?: number;
   paymentId?: string;
   /**
+   * The tender method, echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
+   * tender; none = "ON_ACCOUNT", since nothing marks "left on account" apart from "tender failed").
+   */
+  method?: CounterSalePaymentMethod;
+  /**
    * false when the sale committed (an open invoice on account) but recording the payment failed;
    * `paymentErrorCode` then names why. The sale is never rolled back after it commits.
    */
