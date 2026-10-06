@@ -39,7 +39,6 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
-import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 
 /**
@@ -85,7 +84,6 @@ describe("BuyerController oversell call sites", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
-        fulfilmentUnsetProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },

@@ -1,10 +1,12 @@
 import { ServiceUnavailableException } from "@nestjs/common";
-import { GUARDS_METADATA, INTERCEPTORS_METADATA } from "@nestjs/common/constants";
+import { GUARDS_METADATA, INTERCEPTORS_METADATA, MODULE_METADATA } from "@nestjs/common/constants";
 import { FeatureConfigService } from "./feature-config.service";
 import { FulfilmentCapabilityService } from "./fulfilment-capability.service";
 import { deriveFulfilmentCapability } from "./fulfilment-capability";
 import { FULFILMENT_MODE_VALUES } from "@routeflow/types";
-import { BuyerController } from "../buyer/buyer.controller";
+import { BuyerCapabilitiesController } from "../buyer/buyer-capabilities.controller";
+import { BuyerModule } from "../buyer/buyer.module";
+import { BuyerJwtAuthGuard } from "../buyer/guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "../buyer/guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "../buyer/buyer-tenant.interceptor";
 
@@ -114,10 +116,16 @@ describe("forBuyer goes through the ONE derivation (a stored mode never reaches 
 });
 
 describe("GET /buyer/capabilities", () => {
-  const handler = () => (BuyerController.prototype as any).getSellerCapabilities;
+  const handler = () => (BuyerCapabilitiesController.prototype as any).getSellerCapabilities;
 
   it("exists, and is seller-scoped exactly like the other buyer reads", () => {
     expect(typeof handler()).toBe("function");
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, BuyerModule)).toContain(
+      BuyerCapabilitiesController,
+    );
+    expect(Reflect.getMetadata(GUARDS_METADATA, BuyerCapabilitiesController)).toEqual([
+      BuyerJwtAuthGuard,
+    ]);
     expect(Reflect.getMetadata(GUARDS_METADATA, handler())).toEqual([BuyerSellerContextGuard]);
     expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler())).toEqual([BuyerTenantInterceptor]);
   });
@@ -125,8 +133,7 @@ describe("GET /buyer/capabilities", () => {
   it("the body is EXACTLY { portalMethods, portalDefault, fleet } for the active seller", async () => {
     const { svc } = makeService({ mode: "ship" });
     const forBuyer = jest.spyOn(svc, "forBuyer");
-    const controller = Object.create(BuyerController.prototype);
-    (controller as any).fulfilmentCapability = svc;
+    const controller = new BuyerCapabilitiesController(svc);
     const body = await handler().call(controller, { tenantId: "tenant-ship", customerId: "c1" });
     expect(Object.keys(body).sort()).toEqual(BUYER_KEYS);
     for (const staffField of ["methods", "staffDefault", "staffOpensAs", "counter", "consistent"]) {

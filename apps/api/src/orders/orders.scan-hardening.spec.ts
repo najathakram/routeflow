@@ -129,7 +129,6 @@ function requireDbLocksMock(): any {
 }
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
-import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
 import {
@@ -1382,7 +1381,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
       2,
       "cust-1",
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "ord-new" }, // M2: folds only the new order's path
       { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });
@@ -1544,7 +1543,6 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
-        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },

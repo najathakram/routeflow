@@ -11,7 +11,6 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { normalizeScanCode } from "@routeflow/scanning";
 import * as scanMatch from "../products/scan-match";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
-import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { BuyerController } from "./buyer.controller";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -56,7 +55,6 @@ describe("BuyerController.scanProduct — shares findScanMatches, keeps the buye
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
-        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },

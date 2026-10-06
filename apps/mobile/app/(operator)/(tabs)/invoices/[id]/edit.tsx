@@ -468,6 +468,7 @@ export default function EditInvoiceScreen() {
   }
   if (
     isPendingOrderMirror({
+      pendingMirror: invoice.pendingMirror,
       orderId: invoice.orderId,
       deliveryBatchId: invoice.deliveryBatchId,
       orderStatus: invoice.order?.status,

@@ -66,13 +66,16 @@ export class CustomerPriceHistoryService {
   async getHistory(
     customerId: string,
     productId: string,
-    opts: { limit?: unknown; role?: UserRole | null },
+    opts: { limit?: unknown; role?: UserRole | null; excludeOrderId?: string | null },
   ): Promise<PriceHistoryResponse> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
     const limit = clampHistoryLimit(opts.limit);
     const costVisible = canSeeCost(opts.role);
     const db = this.prisma.forTenant();
+    // The order being edited is not its own history: drop its open lines and its invoices (an
+    // invoice with no order stays), so "Last" and the summary never show the price being edited.
+    const ex = opts.excludeOrderId || null;
 
     const [customer, product] = await Promise.all([
       db.customer.findFirst({
@@ -115,6 +118,7 @@ export class CustomerPriceHistoryService {
           customerId,
           status: ISSUED_STATUSES,
           items: { some: { productId } },
+          ...(ex ? { OR: [{ orderId: null }, { orderId: { not: ex } }] } : {}),
         },
         orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         take: limit,
@@ -134,6 +138,7 @@ export class CustomerPriceHistoryService {
           customerId,
           status: { in: BACKING_ORDER_STATUSES },
           lineItems: { some: { productId } },
+          ...(ex ? { id: { not: ex } } : {}),
         },
         orderBy: [
           { orderDate: { sort: "desc", nulls: "last" } },

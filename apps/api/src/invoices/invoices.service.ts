@@ -78,6 +78,9 @@ import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
+import { settledAtShipment } from "../orders/order-status-invoicing";
+import { assertCarrierLinesUnchanged, invoiceOrderWithCarrier } from "./invoice-carrier-lock";
+import { resolvePendingMirror } from "./pending-mirror";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -116,10 +119,13 @@ import { buildInvoiceEmailAttachment, InvoiceEmailAttachment } from "./invoice-a
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import {
+  applyBulkPriceAdjustment,
+  assertAdjustedTotalsSane,
   buildPriceAdjustmentUpdates,
   commitPriceAdjustment,
   loadPriceAdjustmentReference,
   lockInvoiceForPriceAdjustment,
+  preflightBulkPriceAdjustment,
 } from "./price-adjustment-ledger";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -134,6 +140,13 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NSF_FEE_DESCRIPTION_PREFIX } from "../sales-agents/commission-math";
 import { InvoiceItemSystemKind, isNsfLine, notNsfLineWhere } from "./nsf-line";
 import { preservedNsfLines } from "./nsf-preserve";
+import {
+  RECONCILE_PARTIALS,
+  assertOrderInvoicesInStep,
+  draftBillsLessThanOrder,
+  isCleanDraftPartition,
+  isSoleBillingDraftIn,
+} from "./invoice-partition";
 import { partitionInvoiceLines, planResyncPairs, RESYNC_ITEM_SELECT } from "./resync-plan";
 import {
   issueDateStamp,
@@ -561,6 +574,7 @@ export class InvoicesService {
       });
       return existing;
     }
+    await assertOrderInvoicesInStep(db, orderId, { onlyWhenRemainder: true }); // SA-687b: no re-bill
 
     // RF-079: check customer tax-exempt status
     const customer = await db.customer.findFirst({
@@ -1361,7 +1375,8 @@ export class InvoicesService {
    * Keeps the invoice DRAFT, rebuilds its items, recomputes totals (proportional
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
-   * consumer, so set-not-increment stays correct on repeat.
+   * consumer, so set-not-increment stays correct on repeat. SA-681: only when it IS the order's
+   * sole non-void invoice, else "partials" (untouched); `shortDraftIsPartial` adds a lone short draft.
    *
    * SIBLING-AWARE for splits: a regulated SEPARATE_INVOICE order has base + -R# open
    * drafts. `reconcileSplitOrderDrafts` rebuilds each from its OWN category group so the
@@ -1384,7 +1399,12 @@ export class InvoicesService {
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
-    opts: { basis: "order" | "delivered"; tx?: any; after?: AfterCommit },
+    opts: {
+      basis: "order" | "delivered";
+      tx?: any;
+      after?: AfterCommit;
+      shortDraftIsPartial?: boolean;
+    },
   ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const db = opts.tx ?? this.prisma.forTenant();
@@ -1421,9 +1441,12 @@ export class InvoicesService {
       }
     }
     if (!draft) return null;
+    if (!isDepositMirror && !(await isSoleBillingDraftIn(db, orderId, draft.id))) {
+      return RECONCILE_PARTIALS; // SA-681
+    }
     const priorItems = await db.invoiceItem.findMany({
       where: { invoiceId: draft.id },
-      select: { orderItemId: true, unitsPerBox: true },
+      select: { orderItemId: true, unitsPerBox: true, qty: true },
     });
     const priorPackByLine = priorUnitsPerBoxMap(priorItems);
     const order = await db.order.findUnique({
@@ -1446,6 +1469,9 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
+    if (opts.shortDraftIsPartial && draftBillsLessThanOrder(priorItems, order.lineItems)) {
+      return RECONCILE_PARTIALS; // SA-681: a lone partial (6 of 10), not a mirror of the order
+    }
 
     const tenantId = this.prisma.getTenantId();
     // SA-113a/B785: "delivered" bills the evidence-keyed basis (DeliveryMutation rows); a line
@@ -1625,32 +1651,10 @@ export class InvoicesService {
     );
     if (drafts.length === 0) return null;
 
-    // Provenance is a clean per-line partition only for createSplitInvoices siblings /
-    // a lone mirror. BAIL if a member line is also billed by a finalized (non-open-
-    // draft) invoice, or is shared across two open drafts — rebuilding those from a
-    // prior of 0 would double- or over-bill. Conservative: leave them as created.
-    const finalized = invoices.filter(
-      (i: any) => !(i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null),
-    );
-    // A finalized OR draft line with no orderItemId provenance (legacy pre-provenance
-    // rows, or a manually added / freeform invoice line) can't be matched to an order
-    // line, so we can't prove the partition is clean — bail rather than risk an
-    // over-bill (finalized) or an under-bill (dropping an untracked draft line).
-    const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
-    if (finalized.some(hasUntracked) || drafts.some(hasUntracked)) return null;
-    const finalizedLineIds = new Set<string>(
-      finalized
-        .flatMap((i: any) => (i.items ?? []).map((it: any) => it.orderItemId))
-        .filter(Boolean),
-    );
-    const seen = new Set<string>();
-    for (const d of drafts) {
-      for (const it of d.items ?? []) {
-        const id = it.orderItemId as string;
-        if (seen.has(id) || finalizedLineIds.has(id)) return null; // not a clean partition
-        seen.add(id);
-      }
-    }
+    // Provenance is a clean per-line partition only for createSplitInvoices siblings / a lone mirror.
+    // BAIL (leave the invoices as created, never a double) when it is not: an untracked line, a
+    // line also billed by a finalized invoice, or a line shared by two open drafts (SA-681).
+    if (!isCleanDraftPartition(invoices)) return null;
 
     const order = await db.order.findUnique({
       where: { id: orderId },
@@ -1766,6 +1770,8 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
+    // Keyed on the BILLING MOMENT: an order settled at SHIPMENT (and really shipped) is not restated at DELIVERED.
+    if (await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order)) return null;
 
     return this.rebuildSiblingDrafts(
       order,
@@ -2662,6 +2668,7 @@ export class InvoicesService {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    await assertOrderInvoicesInStep(this.prisma.forTenant(), orderId); // SA-687: no 3rd bill
 
     const itemById = new Map(order.lineItems.map((li: any) => [li.id, li]));
 
@@ -3031,7 +3038,7 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true } },
+        order: { select: { status: true, orderNumber: true, fulfillPath: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3052,6 +3059,7 @@ export class InvoicesService {
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
+      pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
     };
   }
 
@@ -3087,6 +3095,9 @@ export class InvoicesService {
         channel: "STAFF",
       });
       await assertOrderItemIdsBelongToOrder(this.prisma.forTenant(), inv.orderId, items); // SA-093a rd6
+      // SA-674b: with the carrier, the shipment invoice keeps its lines and quantities (checked in the tx)
+      const carrierDeps = { featureConfig: this.featureConfig, prisma: this.prisma };
+      const carrierLocked = await invoiceOrderWithCarrier(carrierDeps, inv.orderId);
       // Products (pack + regulated snapshot) and section tax config for the edited lines (mirrors create()).
       const { productMap, categoryMap } = await loadEditCatalog(this.prisma.forTenant(), items);
 
@@ -3103,6 +3114,7 @@ export class InvoicesService {
         // and reasoning: invoice-edit-plan.ts.
         const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
         const matches = matchEditLines(items, storedRows);
+        if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),
@@ -3437,9 +3449,12 @@ export class InvoicesService {
     if (opts?.allowPreDelivery) return;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: inv.orderId },
-      select: { status: true, orderNumber: true },
+      select: { status: true, orderNumber: true, fulfillPath: true },
     });
-    if (order && order.status !== "DELIVERED" && order.status !== "PARTIALLY_DELIVERED") {
+    if (
+      order &&
+      (await resolvePendingMirror(this.featureConfig, this.prisma.getTenantId(), inv, order))
+    ) {
       throw new BadRequestException(
         `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
       );
@@ -4665,6 +4680,7 @@ export class InvoicesService {
     tx: any,
     orderIds: string[],
     reconcileOrderIds?: string[],
+    userId?: string,
   ): Promise<void> {
     return reconcileDeliveredOrdersInTxImpl(
       {
@@ -4676,6 +4692,7 @@ export class InvoicesService {
       tx,
       orderIds,
       reconcileOrderIds,
+      userId,
     );
   }
 
@@ -5809,7 +5826,11 @@ export class InvoicesService {
     const productIdMap = new Map(invoice.items.map((li) => [li.id, li.productId]));
 
     // Helper: update items on a single invoice and recalculate totals
-    const applyToInvoice = async (inv: typeof invoice, localPriceMap: Map<string, number>) => {
+    const applyToInvoice = async (
+      inv: typeof invoice,
+      localPriceMap: Map<string, number>,
+      onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
+    ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
@@ -5833,6 +5854,7 @@ export class InvoicesService {
           unitsPerBoxByProduct,
           isTaxExempt,
         });
+        assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {
           await tx.invoiceItem.updateMany({
             where: { invoiceId: inv.id, taxRate: 0, AND: [notNsfLineWhere] }, // #2243: NSF stays 0
@@ -5851,6 +5873,7 @@ export class InvoicesService {
           resync: (...a) => this.resyncInvoiceLedger(...a),
         });
       });
+      onCommitted?.();
       // Sales agents & commissions: still OUTSIDE the transaction above on purpose (B662 wrapped only
       // the invoice + ledger writes). Pass no tx; the Safe wrapper opens its own transaction, and the
       // hourly reconciliation cron heals the gap if the process dies mid-loop.
@@ -5882,8 +5905,10 @@ export class InvoicesService {
         },
         // F03/R4: CONFIRMED (PAID) payments only — feeds the status recompute below.
         include: { items: true, payments: { where: CONFIRMED_PAYMENT } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }], // B1058: applied / skipped follow a stable order
       });
 
+      const plans: Array<{ inv: typeof invoice; localMap: Map<string, number> }> = [];
       for (const inv of targetInvoices) {
         // Build itemId → newUnitPrice for items whose productId matches
         const localMap = new Map<string, number>();
@@ -5892,10 +5917,12 @@ export class InvoicesService {
             localMap.set(item.id, productPriceMap.get(item.productId)!);
           }
         }
-        if (localMap.size > 0) {
-          await applyToInvoice(inv, localMap);
-        }
+        if (localMap.size > 0) plans.push({ inv, localMap });
       }
+      // B1031/B1058: judge every target (bad line, totals, overpayment) BEFORE writing any.
+      await preflightBulkPriceAdjustment(plans, isTaxExempt, this.prisma.forTenant());
+      // SA-651 MED-1: each tx re-judges under its own lock; a race refusal is named, and a partial batch is reported.
+      await applyBulkPriceAdjustment(plans, applyToInvoice);
     }
 
     return this.prisma.forTenant().invoice.findUnique({

@@ -10,7 +10,6 @@
  * Fixtures are placeholders (acme-style ids); no live-client data.
  */
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
-import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { ForbiddenException, InjectionToken, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { Test } from "@nestjs/testing";
@@ -65,7 +64,6 @@ async function boot(row: ReturnType<typeof invoice>) {
   const moduleRef = await Test.createTestingModule({
     controllers: [BuyerController],
     providers: [
-      fulfilmentUnsetProvider,
       oversellReaderOffProvider,
       { provide: InvoicesService, useValue: { findOne, findAll } },
       { provide: InvoicePdfService, useValue: { getOrGenerate } },

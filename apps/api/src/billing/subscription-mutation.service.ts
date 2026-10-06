@@ -18,7 +18,7 @@ import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
-import { addonRowMatches, findAddonRow } from "./addon-row";
+import { addonCodeOf, addonRowMatches, findAddonRow } from "./addon-row";
 import { isPayingRow } from "./mrr.service";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -30,14 +30,18 @@ import {
   planKeyToEnum,
   normalizePlanKey,
   addonSkuCode,
-  SELF_SERVICE_ADDON_SKUS,
+  isAddonIncludedAtPlan,
+  isSelfServiceAddon,
   isInviteOnlyPlanKey,
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { randomUUID } from "crypto";
 
 export interface SubscribeInput {
   planKey: string;
@@ -88,12 +92,6 @@ export interface PlanChangePreview {
   seatAckRequired: boolean;
 }
 
-/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
- *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
-function isSelfServiceAddon(sku: string): boolean {
-  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
-}
-
 /**
  * B408: the Stripe subscription statuses there is NOTHING LEFT TO CANCEL from. Reaching one of
  * these is the desired end state of a cancel, so `cancel()`'s READ_ONLY branch treats it as
@@ -115,6 +113,78 @@ const STRIPE_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["canceled", "inco
 
 const ADMIN_ONLY_ADDON_MESSAGE =
   "This add-on is enabled by RouteFlow for your workspace — contact support";
+
+/** Fixed tenant-facing copy for the self-serve add-on billing paths — never a Stripe/internal message. */
+const ADDON_ENABLE_BILLING_FAILED =
+  "We couldn't turn this add-on on because billing didn't go through. Nothing was changed. Please try again.";
+const ADDON_DISABLE_BILLING_FAILED =
+  "We couldn't turn this add-on off because billing didn't go through. It is still on. Please try again.";
+const ADDON_ANNUAL_NOT_SUPPORTED =
+  "Add-ons can't be added to an annual plan online yet. Please contact support.";
+
+const ADDON_RAISE_UNBILLED_ROW =
+  "This add-on was set up before online billing, so its quantity can't be raised here yet. Please contact support.";
+
+/**
+ * A refusal of a self-serve add-on enable: a fixed machine code plus fixed tenant-facing copy. The
+ * enable call throws it as a 409 body (`{ code, message }`) and `GET /billing/proration-preview`
+ * returns the SAME object as `refusal`, so the confirm sheet can never promise what enable refuses.
+ */
+export interface AddonRefusal {
+  code: string;
+  message: string;
+}
+
+const ADDON_ANNUAL_REFUSAL: AddonRefusal = {
+  code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED,
+  message: ADDON_ANNUAL_NOT_SUPPORTED,
+};
+
+/** SA-693: the fixed refusal of a tenant's quantity change on an ACTIVE comp row. */
+const ADDON_COMP_REFUSAL: AddonRefusal = {
+  code: API_ERROR_CODES.ADDON_COMP_MANAGED_BY_SUPPORT,
+  message:
+    "This add-on was set up for you by support, so its quantity can't be changed here. Please contact support.",
+};
+
+/** The fixed refusal for an add-on the tenant's plan already bundles (F3). */
+function addonIncludedRefusal(addonName: string): AddonRefusal {
+  return {
+    code: API_ERROR_CODES.ADDON_INCLUDED_IN_PLAN,
+    message: `${addonName} is already included in your plan.`,
+  };
+}
+
+const refusalException = (r: AddonRefusal) =>
+  new ConflictException({ code: r.code, message: r.message });
+
+/**
+ * The ONE annual predicate for self-serve add-ons (enable of a new item AND a quantity raise on a
+ * billed row both use it, and so does the preview): the tenant is billed through a live Stripe
+ * subscription whose interval is not monthly. Interval = `billingInterval`, else the cycle.
+ */
+function isAnnualStripeBilled(
+  mode: AddonBilling,
+  sub: {
+    stripeSubId?: string | null;
+    billingInterval?: string | null;
+    cycle?: string | null;
+  } | null,
+): boolean {
+  if (mode !== "STRIPE" || !sub?.stripeSubId) return false;
+  const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
+  return interval !== "month";
+}
+
+/**
+ * How a tenant's self-serve add-on is billed (owner rulings 2026-10-03):
+ *  - STRIPE:   a Stripe subscription item (Stripe configured AND a `stripeSubId`).
+ *  - MANUAL:   an `externalPayment` tenant the owner invoices by hand — on at the CATALOG price, counted as
+ *              revenue, no Stripe call, and the platform is told to add it to the next manual invoice.
+ *  - UNBILLED: a free pilot (no subscription / no `stripeSubId`) or Stripe not configured — on, priced 0,
+ *              books no revenue.
+ */
+export type AddonBilling = AddonBillingMode;
 
 /**
  * Subscription state MUTATIONS (Plans & Billing Phase 4). Owns the tenant's
@@ -291,6 +361,28 @@ export class SubscriptionMutationService {
     // Read the catalog BEFORE the transaction (pool starvation) — see PlanTransitionConfigService.
     const preparedTransition = await this.planTransition.prepare(transition);
 
+    // B1: a self-serve add-on this subscribe() drops (a cycle switch on /choose-plan sends no add-ons)
+    // is disabled below, but its Stripe item would keep billing and a later re-enable would add a
+    // SECOND one. Remove the billed items FIRST (Stripe-first, exactly like disableAddon); a Stripe
+    // failure refuses the whole subscribe before anything is written. Read pre-tx (no tx held open
+    // across a network call); the locked re-read below refuses, retryably, if a billed row appeared.
+    const droppedBilled = (
+      await this.prisma.tenantAddon.findMany({ where: { tenantId, active: true } })
+    )
+      .map((row: any) => ({ row, code: addonSkuCode(row) }))
+      .filter(
+        (x: any) =>
+          x.code != null &&
+          !desired.has(x.code) &&
+          isSelfServiceAddon(x.code) &&
+          !x.row.isComp &&
+          x.row.stripeItemId,
+      );
+    for (const { row, code } of droppedBilled) {
+      await this.removeStripeAddonItem(tenantId, code as string, row.stripeItemId);
+    }
+    const removedItemIds = new Set(droppedBilled.map((x: any) => x.row.stripeItemId as string));
+
     await this.prisma.$transaction(async (tx) => {
       // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
       // subscription/add-on read or write in this tx.
@@ -303,7 +395,14 @@ export class SubscriptionMutationService {
       const [lockedTenant, lockedSub, lockedAddons] = await Promise.all([
         tx.tenant.findUnique({
           where: { id: tenantId },
-          select: { status: true, plan: true, class: true, deletedAt: true },
+          select: {
+            status: true,
+            plan: true,
+            class: true,
+            deletedAt: true,
+            name: true,
+            slug: true,
+          },
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
@@ -316,6 +415,8 @@ export class SubscriptionMutationService {
             periodEnd: true,
             priceOverrideMonthly: true,
             basePriceSnapshot: true,
+            stripeSubId: true,
+            externalPayment: true,
           },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
@@ -366,7 +467,16 @@ export class SubscriptionMutationService {
       const byAge = [...lockedAddons].sort(
         (a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0),
       );
-      const codes = new Set<string>(desired.keys());
+      // SA-693: an ACTIVE comp is a platform grant, not the tenant's to drop or re-price. A plan
+      // choice / cycle switch (which sends no add-ons) must never remove it, and naming it in addons[]
+      // must not turn it into a billable row: it is left exactly as it is, for support to manage.
+      const compCodes = new Set<string>();
+      for (const row of lockedAddons) {
+        const code = addonSkuCode(row);
+        if (code && row.isComp) compCodes.add(code);
+      }
+      const desiredNow = new Map([...desired].filter(([code]) => !compCodes.has(code)));
+      const codes = new Set<string>(desiredNow.keys());
       for (const row of lockedAddons) {
         const code = addonSkuCode(row);
         if (code) codes.add(code);
@@ -380,8 +490,21 @@ export class SubscriptionMutationService {
       // Only self-service add-ons are the tenant's to drop: an admin-granted SKU the payload
       // is not even allowed to name must not be revoked by omitting it.
       const toDisable = [...priorByCode.keys()].filter(
-        (c) => !desired.has(c) && isSelfServiceAddon(c),
+        (c) => !desiredNow.has(c) && !compCodes.has(c) && isSelfServiceAddon(c),
       );
+
+      // B1 guard: a dropped add-on whose Stripe item was NOT removed above (it appeared after the
+      // pre-tx read) must never be switched off while its item keeps billing — refuse, retryable.
+      for (const code of toDisable) {
+        const itemId = lockedAddons.find((r) => r.id === priorByCode.get(code)?.id)?.stripeItemId;
+        if (itemId && !removedItemIds.has(itemId)) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.PLAN_CHANGED_DURING_SUBSCRIBE,
+            retryable: true,
+            message: "Your add-ons changed while this was being processed — please try again.",
+          });
+        }
+      }
 
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // #2223 / SA-444c (ii): a negotiated fee is what the tenant pays — a cycle change or re-subscribe
@@ -426,7 +549,7 @@ export class SubscriptionMutationService {
           readOnlyReason: null,
         },
       });
-      for (const [code, qty] of desired) {
+      for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
         // the admin path keyed on a legacy addonKey, active or not — else create it.
@@ -440,14 +563,22 @@ export class SubscriptionMutationService {
             quantity: qty,
             active: true,
             priceSnapshot: meta.monthlyPrice,
+            isComp: false,
           },
-          update: { sku: code, quantity: qty, active: true, priceSnapshot: meta.monthlyPrice },
+          update: {
+            sku: code,
+            quantity: qty,
+            active: true,
+            priceSnapshot: meta.monthlyPrice,
+            // SA-693: self-serve is billable; an INACTIVE comp row re-activated here stops being one.
+            isComp: false,
+          },
         });
       }
       for (const code of toDisable) {
         await tx.tenantAddon.update({
           where: { id: priorByCode.get(code)!.id },
-          data: { active: false },
+          data: { active: false, stripeItemId: null },
         });
       }
 
@@ -477,7 +608,7 @@ export class SubscriptionMutationService {
       // already-booked add-on nets its real change); otherwise {0,0}, since a non-paying
       // tenant's add-on never booked anything to begin with, so the crossing books its FULL
       // current contribution instead of the (unbooked) prior→new delta.
-      for (const [code, qty] of desired) {
+      for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         const prior = priorByCode.get(code);
         const before =
@@ -501,6 +632,8 @@ export class SubscriptionMutationService {
           );
         }
       }
+      // (c) A manually-invoiced tenant's dropped, priced add-on: tell the platform to stop invoicing it.
+      const manualTenant = this.addonModeOf(lockedSub) === "MANUAL";
       for (const code of toDisable) {
         const prior = priorByCode.get(code)!;
         const before = wasPaying
@@ -513,6 +646,23 @@ export class SubscriptionMutationService {
           after: { priceSnapshot: 0, quantity: 0 },
           actorId,
         });
+        if (manualTenant && Number(prior.snapshot ?? 0) > 0) {
+          await this.writeManualInvoiceNotice(tx, {
+            tenantId,
+            actorId,
+            action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP,
+            sku: code,
+            quantity: prior.qty,
+            monthlyPrice: Number(prior.snapshot ?? 0),
+            kind: "stop",
+            addonName: skuByCode.get(code)?.name ?? code,
+            fromQty: prior.qty,
+            toQty: 0,
+            message: `Add-on ${skuByCode.get(code)?.name ?? code} turned off for ${
+              lockedTenant.name ?? lockedTenant.slug ?? tenantId
+            }: stop invoicing it`,
+          });
+        }
         if (code === "SEAT_EXTRA") {
           await this.events.emit(
             tenantId,
@@ -529,7 +679,7 @@ export class SubscriptionMutationService {
       // tenant was already paying, its contribution is already on the ledger and nothing changes.
       const kept = lockedAddons.filter((row) => {
         const code = addonSkuCode(row);
-        return code != null && !desired.has(code) && !toDisable.includes(code);
+        return code != null && !desiredNow.has(code) && !toDisable.includes(code);
       });
       if (kept.length > 0) {
         await bookAddonsOnCrossing(
@@ -1401,7 +1551,11 @@ export class SubscriptionMutationService {
     if (!skuDef) throw new BadRequestException(`Unknown add-on "${sku}"`);
     if (!isSelfServiceAddon(sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
-    const preview = await this.proration.prorationPreview(tenantId, sku);
+
+    // F3 (#3129 sandbox checklist): an add-on the tenant's plan already bundles is never sold
+    // again. Refused before the lock and before ANY Stripe call, row write or ledger event.
+    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    if (included) throw refusalException(included);
 
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
     // addon.service.ts, so the two paths serialise against each other and not merely within
@@ -1411,50 +1565,7 @@ export class SubscriptionMutationService {
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
-        async () => {
-          await this.prisma.$transaction(async (tx) => {
-            // B865 / SA-277 FIX-2/FIX-3 (house lock order): tenant row lock FIRST — and the
-            // existence read moves INSIDE the tx, AFTER the lock, so `existing` (and the
-            // `before` snapshot derived from it) can never observe a stale pre-lock state a
-            // concurrent enable/disable committed in between.
-            await lockTenantForLedger(tx, tenantId);
-            // #2188 / SA-385: finds a row the admin path keyed on a legacy addonKey too.
-            const existing = await findAddonRow(tx, tenantId, sku);
-            const before = existing?.active
-              ? { priceSnapshot: existing.priceSnapshot, quantity: existing.quantity }
-              : { priceSnapshot: 0, quantity: 0 };
-
-            // Re-activate an existing row IN PLACE (whichever key it carries); else create.
-            await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey: existing?.addonKey ?? sku } },
-              create: {
-                tenantId,
-                addonKey: sku,
-                sku,
-                quantity: qty,
-                active: true,
-                priceSnapshot: skuDef.monthlyPrice,
-              },
-              update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
-            });
-            await emitAddonDelta(tx, this.events, {
-              tenantId,
-              sku,
-              before,
-              after: { priceSnapshot: skuDef.monthlyPrice, quantity: qty },
-              actorId,
-              payload: { quantity: qty, prorated: preview.proratedToday },
-            });
-            if (sku === "SEAT_EXTRA" && !existing?.active) {
-              await this.events.emit(
-                tenantId,
-                BILLING_EVENTS.SEAT_ADDED,
-                { quantity: qty },
-                { actorId, tx },
-              );
-            }
-          });
-        },
+        () => this.enableAddonLocked(tenantId, sku, skuDef, qty, actorId),
       );
 
       if (!result.acquired) {
@@ -1465,6 +1576,15 @@ export class SubscriptionMutationService {
           `Could not enable add-on "${sku}" for tenant ${tenantId} — lock unavailable`,
         );
       }
+      const outcome = result.value;
+      if (outcome.changed) this.entitlements.invalidate(tenantId);
+      return {
+        // Billed: what STRIPE prorated (authoritative; null when it could not be read back).
+        // Unbilled: 0. The local `prorationPreview` is only an estimate and is never returned here.
+        proratedNow: outcome.proratedNow,
+        billing: outcome.billing,
+        subscription: await this.subscription.getSubscription(tenantId),
+      };
     } catch (e) {
       if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
         this.logger.error(
@@ -1476,16 +1596,556 @@ export class SubscriptionMutationService {
       }
       throw e;
     }
+  }
 
-    this.entitlements.invalidate(tenantId);
+  /**
+   * How this tenant's self-serve add-ons are billed. Read-only; the preview uses it to word the
+   * confirm sheet ("included at no charge" / "will appear on your next invoice" / a card charge).
+   * The ONE place the billing mode is decided — switch the manual / pilot treatment here.
+   */
+  async addonBillingMode(tenantId: string): Promise<AddonBilling> {
+    return (await this.addonBillingContext(tenantId)).mode;
+  }
+
+  private async addonBillingContext(tenantId: string) {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: {
+        stripeSubId: true,
+        stripeCustomerId: true,
+        billingInterval: true,
+        cycle: true,
+        externalPayment: true,
+      },
+    });
+    return { sub, mode: this.addonModeOf(sub) };
+  }
+
+  /**
+   * Would a self-serve ENABLE be refused for this tenant, and why? The preview reads this so it can
+   * never disagree with `enableAddon`, which throws the SAME objects: plan-included first (the
+   * add-on is bundled, nothing to buy), then annual (a monthly item can't join a yearly Stripe
+   * subscription online). Row-independent on purpose: the preview carries no quantity, and on
+   * annual both a new item and a raise are refused. Never throws for an unknown SKU (null).
+   */
+  async addonEnableRefusal(tenantId: string, sku: string): Promise<AddonRefusal | null> {
+    const version = await this.catalog.getPublishedCatalog();
+    const skuDef = version.addonSkus.find((s) => s.sku === sku);
+    if (!skuDef) return null;
+    const included = await this.planIncludedRefusal(tenantId, skuDef);
+    if (included) return included;
+    // SA-693: an ACTIVE comp is the platform's to manage, so the preview shows the same refusal the enable
+    // call throws (and therefore no charge line), never a price for something that would not be billed.
+    const row = await findAddonRow(this.prisma, tenantId, sku);
+    if (row?.active && row.isComp) return ADDON_COMP_REFUSAL;
+    const { sub, mode } = await this.addonBillingContext(tenantId);
+    return isAnnualStripeBilled(mode, sub) ? ADDON_ANNUAL_REFUSAL : null;
+  }
+
+  /**
+   * The "already in your plan" refusal: the SKU's `includedAtPlan` (the plan at and above which the
+   * catalog bundles it free, the same rule the choose-plan quote prices with) is at or below the
+   * tenant's CURRENT plan. The plan resolves as everywhere else here: the subscription's planKey,
+   * else the legacy `Tenant.plan` enum. Only SKUs that have a bundling plan cost a read.
+   */
+  private async planIncludedRefusal(
+    tenantId: string,
+    skuDef: { name: string; includedAtPlan?: string | null },
+  ): Promise<AddonRefusal | null> {
+    if (!skuDef.includedAtPlan) return null;
+    const [sub, tenant] = await Promise.all([
+      this.prisma.tenantSubscription.findUnique({ where: { tenantId }, select: { planKey: true } }),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } }),
+    ]);
+    const planKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
+    return isAddonIncludedAtPlan(skuDef.includedAtPlan, planKey)
+      ? addonIncludedRefusal(skuDef.name)
+      : null;
+  }
+
+  /**
+   * The ONE place a tenant's add-on billing mode is decided. STRIPE is checked FIRST: nothing ever
+   * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
+   * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
+   * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
+   */
+  private addonModeOf(
+    sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
+  ): AddonBilling {
+    if (this.stripe.isConfigured && sub?.stripeSubId) return "STRIPE";
+    if (sub?.externalPayment) return "MANUAL";
+    return "UNBILLED";
+  }
+
+  /** Display name of the tenant for platform notices (never throws; falls back to the id). */
+  private async tenantLabelOf(tenantId: string): Promise<string> {
+    try {
+      const t = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { slug: true, name: true },
+      });
+      return t?.name ?? t?.slug ?? tenantId;
+    } catch {
+      return tenantId;
+    }
+  }
+
+  /**
+   * A platform notice for a manually-invoiced tenant, in the platform-admin audit feed (the one
+   * existing per-tenant notice channel; same row shape as `PlatformAdminService.recordAdminAction`),
+   * written in the caller's transaction so it can never exist without the change it announces.
+   */
+  private async writeManualInvoiceNotice(
+    tx: any,
+    n: {
+      tenantId: string;
+      actorId?: string | null;
+      action: string;
+      sku: string;
+      quantity: number;
+      monthlyPrice: number;
+      message: string;
+      /** What the platform must do on the manual invoice. */
+      kind: "add" | "stop" | "change";
+      addonName: string;
+      fromQty: number;
+      toQty: number;
+    },
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: n.tenantId,
+        userId: n.actorId ?? null,
+        action: n.action,
+        entityType: ADMIN_AUDIT_ENTITY,
+        entityId: n.tenantId,
+        meta: {
+          platformAdmin: true,
+          sku: n.sku,
+          quantity: n.quantity,
+          monthlyPrice: n.monthlyPrice,
+          message: n.message,
+          addonName: n.addonName,
+          kind: n.kind,
+          fromQty: n.fromQty,
+          toQty: n.toQty,
+        },
+      },
+    });
+  }
+
+  /**
+   * What Stripe actually prorated for `itemId` — the pending proration invoice items of this
+   * subscription item, in dollars. null when it cannot be read (the add-on is on and billed
+   * regardless; the amount then simply shows on the next invoice). Never throws.
+   */
+  private async readStripeProration(
+    sub: { stripeCustomerId?: string | null } | null,
+    itemId: string,
+    callStartSec: number,
+  ): Promise<number | null> {
+    if (!sub?.stripeCustomerId) return null;
+    try {
+      const list = await this.stripe.client.invoiceItems.list({
+        customer: sub.stripeCustomerId,
+        pending: true,
+        // Only lines this call produced: an older proration line of the same item (an earlier
+        // quantity change still pending on the next invoice) must not be summed in. (`created` is
+        // the list REQUEST filter; the object itself carries its creation time as `date`.)
+        created: { gte: callStartSec },
+        limit: 100,
+      });
+      // API 2026-08-26.dahlia (pinned, verified against the sandbox + the SDK types): an InvoiceItem
+      // has NO `created` field, its creation time is `date`; the subscription item a proration line
+      // belongs to is `parent.subscription_details.subscription_item` (the old top-level
+      // `subscription_item` is gone). Reading `created` here made `proratedNow` null on every call.
+      const mine = (list?.data ?? []).filter(
+        (ii: any) =>
+          ii?.proration === true &&
+          Number(ii?.date ?? 0) >= callStartSec &&
+          ii?.parent?.subscription_details?.subscription_item === itemId,
+      );
+      if (mine.length === 0) return null;
+      const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
+      return roundMoney(cents / 100);
+    } catch (err) {
+      this.logger.warn(
+        `Could not read Stripe's proration for item ${itemId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * ORPHAN adoption. If Stripe created an item but every response was lost (timeout), we returned a
+   * 503 with no item id and never cleaned up — a user retry would then create a SECOND item. So,
+   * under the add-on lock and BEFORE creating, list the subscription's items and adopt a matching
+   * (metadata {tenantId, sku}) item no row of this tenant references; delete any extra matching
+   * unreferenced items. Returns the adopted item id, or null when there is nothing to adopt.
+   * A listing failure refuses the enable (fail closed): we cannot rule out an orphan.
+   */
+  private async adoptOrphanItem(
+    tenantId: string,
+    sku: string,
+    stripeSubId: string,
+    qty: number,
+  ): Promise<string | null> {
+    try {
+      const list = await this.stripe.client.subscriptionItems.list({
+        subscription: stripeSubId,
+        limit: 100,
+      });
+      const mine = (list?.data ?? []).filter(
+        (i: any) => i?.metadata?.tenantId === tenantId && i?.metadata?.sku === sku,
+      );
+      if (mine.length === 0) return null;
+      const referenced = await this.prisma.tenantAddon.findMany({
+        where: { tenantId, stripeItemId: { in: mine.map((i: any) => i.id) } },
+        select: { stripeItemId: true },
+      });
+      const refIds = new Set(referenced.map((r: any) => r.stripeItemId));
+      const orphans = mine.filter((i: any) => !refIds.has(i.id));
+      if (orphans.length === 0) return null;
+      const [keep, ...extra] = orphans;
+      for (const e of extra) await this.deleteOrphanItem(e.id, tenantId, sku);
+      if (Number(keep.quantity) !== qty) {
+        await this.stripe.client.subscriptionItems.update(keep.id, {
+          quantity: qty,
+          proration_behavior: "create_prorations",
+        });
+      }
+      this.logger.warn(
+        `Add-on "${sku}" tenant ${tenantId}: adopted unreferenced Stripe item ${keep.id} instead of creating another`,
+      );
+      return keep.id as string;
+    } catch (err) {
+      this.logger.error(
+        `Add-on "${sku}" tenant ${tenantId}: could not check Stripe for an orphaned item: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+    }
+  }
+
+  /** Best-effort removal of a Stripe item THIS call created but could not commit a row for. */
+  private async deleteOrphanItem(itemId: string, tenantId: string, sku: string): Promise<void> {
+    try {
+      await this.stripe.client.subscriptionItems.del(itemId);
+    } catch (err) {
+      if (!isStripeResourceMissing(err)) {
+        this.logger.error(
+          `Add-on "${sku}" for tenant ${tenantId}: could not remove orphan Stripe item ${itemId}: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * The enable critical section (runs under the `addon:<tenant>:<sku>` advisory lock).
+   *
+   * BILLED = Stripe configured AND the tenant has a `stripeSubId`. Then, for a new / re-activated
+   * add-on, ONE Stripe subscription item is created (inline `price_data`, explicit
+   * `create_prorations`) BEFORE any row is written; a Stripe failure refuses the call with fixed
+   * copy and leaves no enabled row and no ledger event. The ledger books the add-on only after
+   * Stripe succeeded, inside the same transaction as the row.
+   *
+   * UNBILLED (a free pilot with no `stripeSubId`, or Stripe not configured): the add-on is on, the
+   * row's `priceSnapshot` is explicitly 0 and the ledger books nothing — never revenue we do not bill.
+   * A row that was ALREADY active is never retro-billed: a same-qty re-enable is a no-op and a row
+   * with no Stripe item keeps its stored snapshot.
+   */
+  private async enableAddonLocked(
+    tenantId: string,
+    sku: string,
+    skuDef: PlanVersionWithCatalog["addonSkus"][number],
+    qty: number,
+    actorId?: string,
+  ): Promise<{ changed: boolean; proratedNow: number | null; billing: AddonBilling }> {
+    const { sub, mode } = await this.addonBillingContext(tenantId);
+    const existing = await findAddonRow(this.prisma, tenantId, sku);
+    const existingBilling: AddonBilling = existing?.stripeItemId ? "STRIPE" : mode;
+
+    // Idempotent: already on at this quantity — nothing to create, update or book.
+    if (existing?.active && existing.quantity === qty) {
+      return { changed: false, proratedNow: 0, billing: existingBilling };
+    }
+
+    // SA-693: an ACTIVE comp is a platform grant: its quantity is support's to manage, never the
+    // tenant's (a change here would otherwise start billing a row nobody agreed to bill). Refused
+    // before any Stripe call, write or ledger event. A DISABLED comp falls through and re-bills below.
+    if (existing?.active && existing.isComp) throw refusalException(ADDON_COMP_REFUSAL);
+
+    let stripeItemId: string | null = null;
+    let createdItemId: string | null = null;
+    let proratedNow: number | null = 0;
+    let priceSnapshot: number;
+    // Seconds; Stripe's `created` clock. Only proration lines produced AFTER this are ours.
+    const callStartSec = Math.floor(Date.now() / 1000) - 2;
+    // Set only for a MANUAL tenant: what the owner must change on the manual invoice.
+    let manualNotice: { action: string; kind: "enable" | "reduce" } | null = null;
+
+    if (existing?.active && existing.stripeItemId) {
+      // F2 (B1088): a quantity RAISE on an annual Stripe subscription is refused exactly like a new
+      // item (same predicate, same coded 409), before any Stripe call, write or ledger event. A
+      // decrease (and a disable) stay allowed so the tenant can always shrink what it pays for.
+      if (qty > existing.quantity && isAnnualStripeBilled(mode, sub)) {
+        throw refusalException(ADDON_ANNUAL_REFUSAL);
+      }
+      // Billed row, new quantity: update the item (prorated). Its price stays the one it was
+      // created at (grandfathered) — only the quantity moves.
+      if (!this.stripe.isConfigured) {
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      try {
+        await this.stripe.client.subscriptionItems.update(existing.stripeItemId, {
+          quantity: qty,
+          proration_behavior: "create_prorations",
+        });
+      } catch (err) {
+        this.logger.error(
+          `Add-on "${sku}" tenant ${tenantId}: Stripe quantity update failed: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      stripeItemId = existing.stripeItemId;
+      priceSnapshot = Number(existing.priceSnapshot ?? 0);
+      proratedNow = await this.readStripeProration(sub, stripeItemId, callStartSec);
+    } else if (existing?.active) {
+      // Already on with NO Stripe item (a legacy / pilot / manual row): never retro-bill.
+      if (mode === "STRIPE" && qty > existing.quantity) {
+        // Raising billable quantity on a Stripe-billed tenant's OLD unbilled row would book MRR with
+        // no Stripe charge. Refuse until that row is billed (support moves it onto an item).
+        throw new ConflictException(ADDON_RAISE_UNBILLED_ROW);
+      }
+      const stored = Number(existing.priceSnapshot ?? 0);
+      if (mode === "MANUAL" && qty > existing.quantity) {
+        // An INCREASE re-prices a $0 row to the catalog price and tells the owner to invoice it.
+        priceSnapshot = stored > 0 ? stored : Number(skuDef.monthlyPrice);
+        proratedNow = null;
+        manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE, kind: "enable" };
+      } else {
+        // A DECREASE (or any non-manual change) never re-prices: it reverses at the row's OWN price
+        // (a $0 row books nothing). The owner is told to reduce the invoice only if it was invoiced.
+        // UNBILLED (a pilot / Stripe not configured): nothing is billed, so ANY change stores snapshot 0
+        // and books no revenue (a legacy non-zero snapshot is withdrawn, never grown).
+        priceSnapshot = mode === "UNBILLED" ? 0 : stored;
+        if (mode === "MANUAL" && stored > 0) {
+          manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP, kind: "reduce" };
+        }
+      }
+    } else if (mode === "STRIPE" && sub?.stripeSubId) {
+      if (isAnnualStripeBilled(mode, sub)) {
+        // Online add-ons are monthly items; an annual subscription is refused by policy (support
+        // sets it up). Fail closed, no Stripe call.
+        throw refusalException(ADDON_ANNUAL_REFUSAL);
+      }
+      // A previous attempt may have created an item whose response was lost: adopt it, never add a second.
+      const adopted = await this.adoptOrphanItem(tenantId, sku, sub.stripeSubId, qty);
+      try {
+        if (adopted) {
+          stripeItemId = adopted;
+        } else {
+          const product = await this.stripe.client.products.create({
+            name: `RouteFlow add-on — ${skuDef.name}`,
+            metadata: { tenantId, sku },
+          });
+          const item = await this.stripe.client.subscriptionItems.create(
+            {
+              subscription: sub.stripeSubId,
+              quantity: qty,
+              proration_behavior: "create_prorations",
+              price_data: {
+                currency: "usd",
+                unit_amount: Math.round(Number(skuDef.monthlyPrice) * 100),
+                recurring: { interval: "month" },
+                product: product.id,
+              },
+              metadata: { tenantId, sku },
+            },
+            // Per-ATTEMPT key: protects this one request against a transport retry creating a second
+            // item, yet a later attempt (e.g. after an orphan was cleaned up) is never answered with
+            // the earlier, deleted item.
+            { idempotencyKey: `addon-item:${tenantId}:${sku}:${randomUUID()}` },
+          );
+          createdItemId = item.id;
+          stripeItemId = item.id;
+        }
+      } catch (err) {
+        this.logger.error(
+          `Add-on "${sku}" tenant ${tenantId}: Stripe item create failed: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      priceSnapshot = Number(skuDef.monthlyPrice);
+      // An adopted item's proration happened in an earlier attempt: no figure to show for it.
+      proratedNow = createdItemId
+        ? await this.readStripeProration(sub, createdItemId, callStartSec)
+        : null;
+    } else if (mode === "MANUAL") {
+      // Manually-invoiced tenant (owner ruling 2026-10-03): on at the CATALOG price, counted as
+      // revenue, NO Stripe call; the owner adds it to the next manual invoice (notice below).
+      priceSnapshot = Number(skuDef.monthlyPrice);
+      proratedNow = null;
+      manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE, kind: "enable" };
+    } else {
+      // Free pilot / Stripe not configured: on, unbilled, priced explicitly at 0 (books nothing).
+      priceSnapshot = 0;
+    }
+
+    // Tenant label for the platform notice (read outside the transaction; display only).
+    const tenantName = manualNotice ? await this.tenantLabelOf(tenantId) : null;
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // B865 / SA-277 FIX-2/FIX-3 (house lock order): tenant row lock FIRST, and the existence
+        // read INSIDE the tx, AFTER the lock, so `before` can never observe a stale pre-lock state.
+        await lockTenantForLedger(tx, tenantId);
+        // #2188 / SA-385: finds a row the admin path keyed on a legacy addonKey too.
+        const current = await findAddonRow(tx, tenantId, sku);
+        if (createdItemId && current?.active) {
+          // Lost a race against an unlocked writer (subscribe): never leave two billing handles.
+          throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
+        }
+        const before = current?.active
+          ? { priceSnapshot: current.priceSnapshot, quantity: current.quantity }
+          : { priceSnapshot: 0, quantity: 0 };
+
+        // Re-activate an existing row IN PLACE (whichever key it carries); else create.
+        await tx.tenantAddon.upsert({
+          where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? sku } },
+          create: {
+            tenantId,
+            addonKey: sku,
+            sku,
+            quantity: qty,
+            active: true,
+            priceSnapshot,
+            stripeItemId,
+            isComp: false,
+          },
+          update: {
+            sku,
+            quantity: qty,
+            active: true,
+            priceSnapshot,
+            // SA-693: self-serve is billable: it never writes a comp and resets a re-activated one.
+            isComp: false,
+            ...(stripeItemId ? { stripeItemId } : {}),
+          },
+        });
+        await emitAddonDelta(tx, this.events, {
+          tenantId,
+          sku,
+          before,
+          after: { priceSnapshot, quantity: qty },
+          actorId,
+          payload: { quantity: qty, prorated: proratedNow ?? 0, billed: stripeItemId != null },
+        });
+        if (sku === "SEAT_EXTRA" && !current?.active) {
+          await this.events.emit(
+            tenantId,
+            BILLING_EVENTS.SEAT_ADDED,
+            { quantity: qty },
+            { actorId, tx },
+          );
+        }
+        if (manualNotice) {
+          const reduce = manualNotice.kind === "reduce";
+          await this.writeManualInvoiceNotice(tx, {
+            tenantId,
+            actorId,
+            action: manualNotice.action,
+            sku,
+            quantity: qty,
+            monthlyPrice: priceSnapshot,
+            kind: reduce || current?.active ? "change" : "add",
+            addonName: skuDef.name,
+            fromQty: current?.active ? current.quantity : 0,
+            toQty: qty,
+            message: reduce
+              ? `Add-on ${skuDef.name} reduced to ${qty} for ${tenantName}: reduce their next manual invoice to ${qty}`
+              : `Add-on ${skuDef.name} enabled for ${tenantName}: add to their next manual invoice`,
+          });
+        }
+      });
+    } catch (err) {
+      // The item exists in Stripe but no row points at it: remove it so nothing bills unowned.
+      if (createdItemId) await this.deleteOrphanItem(createdItemId, tenantId, sku);
+      throw err;
+    }
+
     return {
-      proratedNow: preview.proratedToday,
-      subscription: await this.subscription.getSubscription(tenantId),
+      changed: true,
+      proratedNow,
+      billing: stripeItemId ? "STRIPE" : mode === "MANUAL" ? "MANUAL" : "UNBILLED",
     };
+  }
+
+  /**
+   * Remove a billed add-on's Stripe item (prorated credit). `resource_missing` = already gone =
+   * success; ANY other failure refuses with fixed copy so we never keep billing for an add-on the
+   * tenant no longer has. A no-op without an item. With an item but Stripe NOT configured we cannot
+   * remove it, so the call is refused (fixed copy) and the handle is kept: dropping the pointer would
+   * leave the item billing in Stripe with nothing left to stop it.
+   */
+  private async removeStripeAddonItem(
+    tenantId: string,
+    code: string,
+    itemId: string | null | undefined,
+  ): Promise<void> {
+    if (!itemId) return;
+    if (!this.stripe.isConfigured) {
+      this.logger.error(
+        `Add-on "${code}" tenant ${tenantId}: Stripe item ${itemId} cannot be removed — Stripe is not configured; keeping the handle`,
+      );
+      throw new ServiceUnavailableException(ADDON_DISABLE_BILLING_FAILED);
+    }
+    try {
+      await this.stripe.client.subscriptionItems.del(itemId, {
+        proration_behavior: "create_prorations",
+      });
+    } catch (err) {
+      if (!isStripeResourceMissing(err)) {
+        this.logger.error(
+          `Add-on "${code}" tenant ${tenantId}: Stripe item ${itemId} removal failed: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_DISABLE_BILLING_FAILED);
+      }
+      this.logger.warn(
+        `Add-on "${code}" tenant ${tenantId}: Stripe item ${itemId} was already removed; clearing the pointer`,
+      );
+    }
   }
 
   /** Disable an add-on. Keeps the row (history read-only); nav/flag simply drops. */
   async disableAddon(tenantId: string, sku: string, actorId?: string) {
+    // The SAME `addon:<tenant>:<sku>` advisory lock enableAddon (and the admin path) holds, so a
+    // disable can never interleave with an enable of the same add-on (two items / a stale pointer).
+    const lockKey = `addon:${tenantId}:${addonCodeOf(sku)}`;
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
+        () => this.disableAddonLocked(tenantId, sku, actorId),
+      );
+      if (!result.acquired) {
+        throw new ServiceUnavailableException(
+          `Could not disable add-on "${sku}" for tenant ${tenantId} — lock unavailable`,
+        );
+      }
+      return result.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        this.logger.error(
+          `Add-on "${sku}" lock unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+        );
+        throw new ServiceUnavailableException(
+          `Could not serialise disabling add-on "${sku}" for tenant ${tenantId} — retry shortly`,
+        );
+      }
+      throw e;
+    }
+  }
+
+  private async disableAddonLocked(tenantId: string, sku: string, actorId?: string) {
     // #2188 / SA-385: the shared lookup (legacy addonKey or SKU) — its deterministic pick
     // (active first, then oldest) — refused unless that row is active.
     const addon = await findAddonRow(this.prisma, tenantId, sku);
@@ -1495,6 +2155,22 @@ export class SubscriptionMutationService {
     // Symmetric with enableAddon: an admin-granted ("ships dark") add-on is revocable only by
     // platform-admin — self-disabling one is a dead end, since re-enabling it is a 403.
     if (!isSelfServiceAddon(code)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
+
+    // A billed add-on carries a Stripe subscription item: it must actually be removed (or already
+    // gone) BEFORE the entitlement is turned off. Any other Stripe failure refuses the call.
+    await this.removeStripeAddonItem(tenantId, code, addon.stripeItemId);
+
+    // MANUAL tenant (owner invoices by hand): tell the platform to stop invoicing it. Only a row that
+    // was actually priced (> 0) was ever invoiced.
+    const { mode } = await this.addonBillingContext(tenantId);
+    const manualStopName =
+      mode === "MANUAL" && !addon.stripeItemId && Number(addon.priceSnapshot ?? 0) > 0
+        ? await this.tenantLabelOf(tenantId)
+        : null;
+    const stopSkuName = manualStopName
+      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((x) => x.sku === code)?.name ??
+        code)
+      : code;
 
     await this.prisma.$transaction(async (tx) => {
       // FIX-864 r2 finding #0: `addon` above was read outside the transaction and before any
@@ -1508,7 +2184,10 @@ export class SubscriptionMutationService {
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({ where: { id: addon.id } });
       if (!current?.active) return; // already disabled by a concurrent call that won the race
-      await tx.tenantAddon.update({ where: { id: addon.id }, data: { active: false } });
+      await tx.tenantAddon.update({
+        where: { id: addon.id },
+        data: { active: false, stripeItemId: null },
+      });
       await emitAddonDelta(tx, this.events, {
         tenantId,
         sku: code,
@@ -1523,6 +2202,21 @@ export class SubscriptionMutationService {
           { quantity: current.quantity },
           { actorId, tx },
         );
+      }
+      if (manualStopName) {
+        await this.writeManualInvoiceNotice(tx, {
+          tenantId,
+          actorId,
+          action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP,
+          sku: code,
+          quantity: current.quantity,
+          monthlyPrice: Number(current.priceSnapshot ?? 0),
+          kind: "stop",
+          addonName: stopSkuName,
+          fromQty: current.quantity,
+          toQty: 0,
+          message: `Add-on ${stopSkuName} turned off for ${manualStopName}: stop invoicing it`,
+        });
       }
     });
 
