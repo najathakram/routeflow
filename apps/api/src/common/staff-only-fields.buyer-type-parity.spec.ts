@@ -109,6 +109,10 @@ const ORDER = {
   },
   changeRequests: { plan: CHANGE_REQUEST, many: true },
   editWindow: "keep",
+  fulfillPath: "keep",
+  shippingCarrier: "keep",
+  shippingTrackingNumber: "keep",
+  shippedAt: "keep",
   routeRun: {
     plan: { status: "keep", startedAt: "keep" } satisfies Record<
       keyof NonNullable<BuyerOrder["routeRun"]>,
