@@ -213,6 +213,13 @@
 - **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
 - **Guard:** the landing script's merge-base check.
 
+### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
+
+- **Symptom:** review of the counter-sale change found that a repeated submit with the same idempotency key could replay or re-open a sale that an office action had already ended (cancelled, returned or voided), and that a sale read as "final" from facts that are not terminal.
+- **Root cause:** the replay lookup matched on the key alone, so it did not ask which states a staff action can end; and the "final" flag was inferred from a non-terminal signal instead of a terminal fact.
+- **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
+- **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -663,19 +670,6 @@
 - **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
-
-### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
-
-- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
-  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
-  server silently ignored.
-- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
-  is not a real member of the keyed set.
-- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
-  segregate the null class explicitly, mirroring web's established filter and the server's own
-  definition (`isUnlisted = !productId`).**
-- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
-  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
 
 ## security
 

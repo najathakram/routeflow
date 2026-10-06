@@ -3495,3 +3495,17 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **When a rule is relaxed by comparing to the stored value, a missing or non-numeric stored value returns "unknown" (undefined) and the check runs strictly; coercing it to 0 turns the relaxation into a bypass. An absent optional amount (discount) may default to 0; an absent required one may not.**
 - **Guard:** `storedInvoiceTotals` returns undefined for missing or non-finite totals; pinned by the money-invariants util spec and the invoices update specs (#3135).
   (Archived 2026-10-06 whole and verbatim to make room at cap: L-260 is guarded by apps/api/src/common/money-invariants.util.spec.ts (storedInvoiceTotals) and the invoices update specs, with no citation outside the code-map bookkeeping.)
+
+### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
+
+- **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
+  (`productId` null) collapsed into one "Product" row, and Save sent `productId: null`, which the
+  server silently ignored.
+- **Root cause:** a draft keyed by a nullable id: every null collides on one key, and the null class
+  is not a real member of the keyed set.
+- **Lesson:** **Never key a UI draft or map by a nullable id. Key on the non-null identity and skip or
+  segregate the null class explicitly, mirroring web's established filter and the server's own
+  definition (`isUnlisted = !productId`).**
+- **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
+  (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
+  (Archived 2026-10-06 whole and verbatim to make room at cap: L-242 is guarded by apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts (isCustomLine in hydrateBuyerDraft), with no citation outside the code-map and bug-history bookkeeping.)
