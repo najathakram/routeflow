@@ -1528,6 +1528,31 @@ describe("S4: a checkout item whose price or quantity cannot be read is a coded 
   );
 });
 
+describe("NIT 7/8: the path-(c) snapshot goes through the pricing helpers, and the live-sub guard runs first", () => {
+  it("(c) snapshot is fromCents(toCents(monthlyPrice)): a 49.999 catalog price is stored as 50, matching the item's 5000 cents", async () => {
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 1 })], items: [baseItem()] });
+    // the catalog price is read at completion
+    (h.mutations as any).catalog.getPublishedCatalog.mockResolvedValue({
+      addonSkus: [
+        { sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", monthlyPrice: "49.999" },
+      ],
+    });
+    await h.completed();
+    expect(h.client.subscriptionItems.create.mock.calls[0][0].price_data.unit_amount).toBe(5000);
+    expect(h.rows[0].priceSnapshot).toBe(50);
+  });
+
+  it("an existing LIVE Stripe subscription is refused BEFORE the add-on rows are read", async () => {
+    const h = make({ rows: [addonRow("CUSTOMER_PACK_100")], baseSub: { stripeSubId: "sub_live" } });
+    const spy = jest.spyOn(h.mutations, "checkoutAddonLines");
+    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    expect(err.status).toBe(400);
+    expect(String(err.message)).toMatch(/already has a active Stripe subscription|already has a/);
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at checkout and never blocks it", () => {
   const comp = (sku: string, o: RowOpts = {}) => addonRow(sku, { ...o, isComp: true });
 

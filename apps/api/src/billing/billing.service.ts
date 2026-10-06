@@ -355,11 +355,7 @@ export class BillingService {
       );
     }
 
-    // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
-    // pilot's) is billed on THIS checkout as one extra line. Read before ANY Stripe call: an annual
-    // checkout with such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) with nothing created.
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
-    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
     // A second checkout on a tenant that already has a live subscription creates a
     // SECOND Stripe subscription on the same customer: both invoice every cycle, and
@@ -388,6 +384,13 @@ export class BillingService {
         );
       }
     }
+
+    // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
+    // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
+    // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
+    // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
+    // is created.
+    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price

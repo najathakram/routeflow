@@ -2016,7 +2016,8 @@ export class SubscriptionMutationService {
         sku,
         row.id,
         billed.itemId,
-        Number(skuDef.monthlyPrice),
+        // The same cents the item was created at, through the pricing helpers (never inline rounding).
+        fromCents(toCents(skuDef.monthlyPrice)),
         quantity,
         row.quantity,
         ctx,
