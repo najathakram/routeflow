@@ -1854,10 +1854,20 @@ export class SubscriptionMutationService {
 
     let changed = false;
     let firstError: Error | null = null;
+    // Set (and logged once) by the first SKU that finds the tenant no longer stores this subscription.
+    const state = { superseded: false };
     for (const sku of [...bySku.keys()].sort()) {
       try {
         const adopted = await this.runUnderAddonLock(tenantId, sku, () =>
-          this.adoptCheckoutSku(tenantId, sku, bySku.get(sku) ?? [], subId, currentItemIds, ctx),
+          this.adoptCheckoutSku(
+            tenantId,
+            sku,
+            bySku.get(sku) ?? [],
+            subId,
+            currentItemIds,
+            ctx,
+            state,
+          ),
         );
         changed = changed || adopted;
       } catch (err) {
@@ -1868,7 +1878,8 @@ export class SubscriptionMutationService {
       }
     }
     if (changed) this.entitlements.invalidate(tenantId);
-    if (missing.length > 0) {
+    // a superseded subscription's items are not this tenant's business any more: no "missing item" alert for them
+    if (missing.length > 0 && !state.superseded) {
       await this.alertListedAddonItemsMissing(tenantId, subId, missing, ctx.sessionId ?? null);
       firstError ??= new ConflictException({
         code: API_ERROR_CODES.ADDON_CHECKOUT_ITEM_MISSING,
@@ -1976,7 +1987,26 @@ export class SubscriptionMutationService {
     subId: string,
     currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
+    state: { superseded: boolean },
   ): Promise<boolean> {
+    // Under this SKU's add-on lock: is this subscription still the one the tenant stores? A newer one may have
+    // replaced it since the caller looked (A applied, sub_A paused, B applied — or B committing between the
+    // caller's read and now). Then NOTHING is written for the SKU: no item created or touched on the old
+    // subscription, no pointer moved off the new one's items, nothing booked.
+    const stored = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { stripeSubId: true },
+    });
+    if ((stored?.stripeSubId ?? null) !== subId) {
+      if (!state.superseded) {
+        state.superseded = true;
+        this.logger.warn(
+          `Checkout add-ons tenant ${tenantId}: subscription ${subId} is no longer the stored one ` +
+            `(${stored?.stripeSubId ?? "none"}) — nothing adopted, created or touched on it`,
+        );
+      }
+      return false;
+    }
     // SA-693: only a BILLABLE row (never a comp) can own an item. A SKU whose only rows are comps has
     // no row here, so a checkout item for it is an orphan (deleted), and no item is ever created for it.
     const row = await this.prisma.tenantAddon.findFirst({
@@ -2068,6 +2098,7 @@ export class SubscriptionMutationService {
       keep.quantity,
       row.quantity,
       pointer,
+      subId,
       ctx,
     );
     // The row changed under us (switched off / given another item / another quantity): fail so the
@@ -2193,10 +2224,19 @@ export class SubscriptionMutationService {
     itemQuantity: number,
     rowQuantity: number,
     expectedItemId: string | null,
+    subId: string,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
+      // Under the tenant row lock: still the subscription the tenant stores? (a newer one may have committed
+      // since adoptCheckoutSku's own read, between its Stripe calls and this write) — never adopt onto a
+      // superseded subscription: a lost claim fails the call, the webhook is retried, and the redelivery skips.
+      const stored = await tx.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { stripeSubId: true },
+      });
+      if ((stored?.stripeSubId ?? null) !== subId) return false;
       const current = await tx.tenantAddon.findUnique({ where: { id: rowId } });
       if (
         !current?.active ||
@@ -2285,6 +2325,7 @@ export class SubscriptionMutationService {
         quantity,
         row.quantity,
         expectedItemId,
+        subId,
         ctx,
       );
     } catch (err) {

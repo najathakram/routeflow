@@ -952,6 +952,44 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
+    it.each([false, true])(
+      "S2 carry RACE (flag on=%s): B commits between A's early read and A's per-SKU adopt — the re-read under the add-on lock writes nothing; B's items stay owned",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        await r.completed(); // A applied: the row owns si_pack
+        const ledger = await r.ledger();
+        for (const fn of ["create", "update", "del"] as const) {
+          r.stripeClient.subscriptionItems[fn].mockClear();
+        }
+        const real = (r.mutations as any).runUnderAddonLock.bind(r.mutations);
+        jest
+          .spyOn(r.mutations as any, "runUnderAddonLock")
+          .mockImplementation(async (...a: any[]) => {
+            // B commits HERE: it is stored now, and the row owns B's item
+            await prisma.tenantSubscription.update({
+              where: { tenantId: r.tenantId },
+              data: { stripeSubId: "sub_dup" },
+            });
+            await prisma.tenantAddon.updateMany({
+              where: { tenantId: r.tenantId },
+              data: { stripeItemId: "si_dup_pack", priceSnapshot: 50 },
+            });
+            return real(...a);
+          });
+
+        await r.completed(); // A redelivered
+
+        for (const fn of ["create", "update", "del"] as const) {
+          expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect((await sub(r)).stripeSubId).toBe("sub_dup");
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+          ["si_dup_pack", 50],
+        ]);
+        expect(await r.ledger()).toEqual(ledger);
+      },
+    );
+
     it("S2: a session that already has its APPLIED row is an idempotent redelivery even when a different live subscription is stored now", async () => {
       const r = await twoSessions(true);
       await r.completed(); // A applied (APPLIED row written)
@@ -960,12 +998,27 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         data: { stripeSubId: "sub_dup" }, // a different, live subscription is stored NOW
       });
 
+      // the live active rows now point at sub_dup's items (B's), as they would after B was applied
+      await prisma.tenantAddon.updateMany({
+        where: { tenantId: r.tenantId },
+        data: { stripeItemId: "si_dup_pack", priceSnapshot: 50 },
+      });
+      const ledger = await r.ledger();
+
       await r.completed(); // A redelivered, its own subscription still active
 
       expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
       expect(await decisions(r)).toHaveLength(0);
       expect(await notices(r)).toHaveLength(0);
       expect((await sub(r)).stripeSubId).toBe("sub_dup");
+      // ...and the adoption did NOT run against sub_A: no item created or touched anywhere, B's pointers stay
+      for (const fn of ["create", "update", "del"] as const) {
+        expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled();
+      }
+      expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+        ["si_dup_pack", 50],
+      ]);
+      expect(await r.ledger()).toEqual(ledger);
     });
 
     it("3: a REDELIVERY of the duplicate session — no second cancel, no second notice, no second decision row", async () => {

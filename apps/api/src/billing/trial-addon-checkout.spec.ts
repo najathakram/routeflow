@@ -314,7 +314,8 @@ function make(opts: Opts = {}) {
     isConfigured: true,
     client,
     getSubscription: jest.fn(async (id: string) => {
-      if (opts.storedSubId && id === opts.storedSubId) {
+      // the tenant's STORED subscription — unless it IS the session's own (sub_1), which is retrieved with its items
+      if (opts.storedSubId && id === opts.storedSubId && id !== "sub_1") {
         if (opts.storedSubStatus === "missing") {
           throw Object.assign(new Error("No such subscription"), { code: "resource_missing" });
         }
@@ -1386,10 +1387,11 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.rows[1]).toMatchObject({ stripeItemId: "si_fc", priceSnapshot: 19 });
   });
 
-  it("flag ON, session already applied: a redelivery STILL adopts (an earlier attempt may have failed on Stripe after the plan applied)", async () => {
+  it("flag ON, session already applied: a redelivery STILL adopts (an earlier attempt may have failed on Stripe after the plan applied) — onto the subscription the tenant STILL stores", async () => {
     const h = make({
       flagOn: true,
       alreadyApplied: true,
+      storedSubId: "sub_1", // the applied session's own subscription is the stored one
       status: "ACTIVE",
       rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
       items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
@@ -2038,8 +2040,145 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
       expect(noticeRows(h)).toEqual([]);
       expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
       expect(h.sub.stripeSubId).toBe("sub_B");
-      // the adoption still ran (it is idempotent and heals an earlier Stripe failure)
-      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack" });
+    });
+
+    describe("an APPLIED redelivery adopts ONLY onto the subscription the tenant still stores", () => {
+      const heldBySubB = () => [
+        addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_B_pack", priceSnapshot: 50 }),
+        addonRow("FORECASTING", { qty: 1, stripeItemId: "si_B_fc", priceSnapshot: 19 }),
+      ];
+
+      it("A applied, sub_A paused, B applied (stored), A redelivered: NO item is created on sub_A and no pointer moves off sub_B's items", async () => {
+        const h = make({
+          flagOn: true,
+          alreadyApplied: true,
+          storedSubId: "sub_B",
+          status: "ACTIVE",
+          rows: heldBySubB(),
+          items: items(), // sub_A's items (the retrieved, session's subscription)
+        });
+        const warn = jest
+          .spyOn((h.billing as any).logger, "warn")
+          .mockImplementation(() => undefined);
+
+        await expect(h.completed()).resolves.toBeUndefined();
+
+        for (const fn of ["create", "update", "del", "list"] as const) {
+          expect(h.client.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect(h.rows.map((r) => [r.stripeItemId, Number(r.priceSnapshot)])).toEqual([
+          ["si_B_pack", 50],
+          ["si_B_fc", 19],
+        ]);
+        expect(h.ledger()).toEqual([]);
+        expect(h.sub.stripeSubId).toBe("sub_B");
+        expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("sub_B"); // says which subscription is stored, and that nothing was adopted
+      });
+
+      it("rows with NO pointer yet (nothing to swap) are not given an item on the stale subscription either", async () => {
+        const h = make({
+          flagOn: true,
+          alreadyApplied: true,
+          storedSubId: "sub_B",
+          status: "ACTIVE",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed();
+        expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+        expect(h.rows.map((r) => r.stripeItemId)).toEqual([null, null]);
+      });
+
+      it("control: the stored subscription IS the session's — the redelivery adopts (heals an earlier Stripe failure)", async () => {
+        const h = make({
+          flagOn: true,
+          alreadyApplied: true,
+          storedSubId: "sub_1",
+          status: "ACTIVE",
+          rows: rows(),
+          items: items(),
+        });
+        await h.completed();
+        expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_pack", "si_fc"]);
+      });
+
+      it("RACE: B commits between A's early read and A's per-SKU adopt — the re-read UNDER the add-on lock writes nothing (no item created or touched, no pointer moved)", async () => {
+        const h = make({
+          flagOn: true,
+          alreadyApplied: true,
+          storedSubId: "sub_1", // the early read still sees A stored
+          status: "ACTIVE",
+          rows: [
+            addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_pack", priceSnapshot: 50 }),
+            addonRow("FORECASTING", { qty: 1 }),
+          ],
+          items: items(),
+        });
+        const real = (h.mutations as any).runUnderAddonLock.bind(h.mutations);
+        jest
+          .spyOn(h.mutations as any, "runUnderAddonLock")
+          .mockImplementation(async (...a: any[]) => {
+            h.sub.stripeSubId = "sub_B"; // B commits here
+            h.rows[0].stripeItemId = "si_B_pack";
+            return real(...a);
+          });
+        const warn = jest
+          .spyOn((h.mutations as any).logger, "warn")
+          .mockImplementation(() => undefined);
+
+        await expect(h.completed()).resolves.toBeUndefined();
+
+        for (const fn of ["create", "update", "del"] as const) {
+          expect(h.client.subscriptionItems[fn]).not.toHaveBeenCalled();
+        }
+        expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_B_pack", null]);
+        expect(h.ledger()).toEqual([]);
+        // logged ONCE per call, not once per SKU
+        expect(
+          warn.mock.calls.filter((c) => String(c[0]).includes("no longer the stored one")),
+        ).toHaveLength(1);
+        expect(
+          h.audits.filter((a: any) => a.action === "ADDON_CHECKOUT_ITEMS_UNRECOGNISED"),
+        ).toEqual([]);
+      });
+
+      it("RACE inside the claim: the stored subscription moves between the Stripe quantity update and the write — the claim (under the tenant lock) refuses, the webhook fails, nothing is adopted", async () => {
+        const h = make({
+          rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })], // item 2, row 3: Stripe is raised first
+          items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+        });
+        h.client.subscriptionItems.update.mockImplementationOnce(async (id: string, args: any) => {
+          h.sub.stripeSubId = "sub_B"; // B commits after the per-SKU re-read, before the claim
+          const i = h.stripeItems.find((x) => x.id === id);
+          if (i) i.quantity = args.quantity;
+          return { id };
+        });
+
+        await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
+
+        expect(h.rows[0]).toMatchObject({ stripeItemId: null, priceSnapshot: 0 });
+        expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+      });
+
+      it("the in-transaction ALREADY_APPLIED branch (a racing delivery applied it) reads the stored subscription FRESH and is guarded the same way", async () => {
+        const h = make({ flagOn: true, rows: heldBySubB(), items: items() });
+        // the early reads see no APPLIED row; the transaction's own check finds the winner's row
+        h.tx.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where?.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "applied-by-racer" } : null,
+        );
+        // the first read (the early one) sees nothing stored; by the fresh read after the transaction, B is stored
+        let reads = 0;
+        h.prisma.tenantSubscription.findUnique.mockImplementation(async () => ({
+          ...h.sub,
+          stripeSubId: reads++ === 0 ? null : "sub_B",
+        }));
+
+        await expect(h.completed()).resolves.toBeUndefined();
+
+        expect(reads).toBeGreaterThan(1);
+        expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+        expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_B_pack", "si_B_fc"]);
+      });
     });
 
     it("APPLIED wins even when the flag is OFF now (it was ON when the session applied)", async () => {
@@ -3248,6 +3387,7 @@ describe("SHOULD-1: a SKU the checkout LISTED but whose item is not recognised t
     const h = make({
       flagOn: true,
       alreadyApplied: true,
+      storedSubId: "sub_1",
       status: "ACTIVE",
       rows: [addonRow("FORECASTING")],
       items: [baseItem(), unexpanded("si_fc", "FORECASTING", 1900, 1)],

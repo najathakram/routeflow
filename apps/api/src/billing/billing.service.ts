@@ -874,6 +874,30 @@ export class BillingService {
     );
   }
 
+  /**
+   * The add-on adoption of a REDELIVERED (already applied) session — only when the tenant STILL stores the
+   * session's own subscription. Otherwise a newer subscription replaced it (A applied, sub_A paused, B applied):
+   * adopting would create items on sub_A and swap the rows' pointers off B's items, leaving B's items billing
+   * with no row owning them and a resumed sub_A billing twice. A cheap early skip with a log; the per-SKU
+   * re-read under the add-on lock (SubscriptionMutationService.adoptCheckoutSku) is what closes the race.
+   */
+  private async adoptOntoCurrentSubscription(
+    tenantId: string,
+    subscriptionId: string,
+    storedSubId: string | null,
+    stripeSub: any,
+    adoptCtx: { sessionId?: string | null; listedSkus?: readonly string[] },
+  ): Promise<void> {
+    if (storedSubId !== subscriptionId) {
+      this.logger.warn(
+        `checkout.session.completed ${adoptCtx.sessionId ?? "?"} for tenant ${tenantId}: the tenant stores ` +
+          `${storedSubId ?? "no subscription"}, not this session's ${subscriptionId} — add-on adoption skipped`,
+      );
+      return;
+    }
+    await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+  }
+
   /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
   private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
     const row = await this.prisma.auditLog.findFirst({
@@ -1320,8 +1344,16 @@ export class BillingService {
       this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
       // SA-690: the add-on adoption is idempotent (a row that already holds its item books nothing) and runs
       // on a redelivery too — an earlier attempt may have applied the plan and then failed on Stripe before
-      // adopting, and a retry that skipped it would leave the customer billed for an item no row owns.
-      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+      // adopting, and a retry that skipped it would leave the customer billed for an item no row owns. But ONLY
+      // onto the subscription the tenant STILL stores: after A applied, sub_A paused and B applied, a redelivery
+      // of A must not create items on sub_A or swap B's rows off B's items.
+      await this.adoptOntoCurrentSubscription(
+        tenantId,
+        subscriptionId,
+        existingOverride?.stripeSubId ?? null,
+        stripeSub,
+        adoptCtx,
+      );
       return;
     }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
@@ -1639,7 +1671,18 @@ export class BillingService {
 
     if (upserted === ALREADY_APPLIED) {
       this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
-      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+      // a racing delivery applied it: what the tenant stores is read FRESH (it may have moved on since)
+      const nowStored = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { stripeSubId: true },
+      });
+      await this.adoptOntoCurrentSubscription(
+        tenantId,
+        subscriptionId,
+        nowStored?.stripeSubId ?? null,
+        stripeSub,
+        adoptCtx,
+      );
       return;
     }
 
