@@ -27,7 +27,6 @@ import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BusinessProfileService } from "../billing/business-profile.service";
-import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
