@@ -1,6 +1,10 @@
 import { BATCH_SHIP_MAX_ORDERS } from "@routeflow/types";
 import { batchShipLimit, orderSelectControls, visibleSelectedIds } from "../lib/batch-ship-select";
-import { BATCH_SHIP_COPY, batchShipDetail } from "../lib/batch-ship-copy";
+import {
+  BATCH_SHIP_COPY,
+  BATCH_SHIP_TRACKING_SAVED_DETAIL,
+  batchShipDetail,
+} from "../lib/batch-ship-copy";
 
 describe("orderSelectControls (#3168 MUST 1)", () => {
   it("ship-only tenant: Select shown, Plan trip hidden", () => {
@@ -55,6 +59,14 @@ describe("batchShipDetail (#3168 c)", () => {
     expect(d).not.toMatch(/nothing was/i);
     const c = batchShipDetail({ outcome: "CREDIT_HOLD", trackingSaved: true });
     expect(c).toMatch(/tracking was saved/i);
+  });
+  it("has an explicit tracking-saved sentence for every outcome, none cut from another", () => {
+    expect(Object.keys(BATCH_SHIP_TRACKING_SAVED_DETAIL).sort()).toEqual(
+      Object.keys(BATCH_SHIP_COPY).sort(),
+    );
+    for (const d of Object.values(BATCH_SHIP_TRACKING_SAVED_DETAIL)) {
+      expect(d).not.toMatch(/Nothing was/);
+    }
   });
   it("otherwise the plain outcome copy", () => {
     expect(batchShipDetail({ outcome: "INVALID_TRACKING" })).toBe(

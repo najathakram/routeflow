@@ -8,7 +8,13 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BATCH_SHIP_MAX } from "./dto/batch-ship.dto";
-import { BATCH_SHIP_OUTCOMES, OrderBatchShipService, classifyForShip } from "./order-batch-ship";
+import {
+  BATCH_SHIP_OUTCOMES,
+  MESSAGES,
+  TRACKING_SAVED_MESSAGES,
+  OrderBatchShipService,
+  classifyForShip,
+} from "./order-batch-ship";
 import { ORDER_STATUS_TRANSITIONS } from "./order-status-transitions";
 
 const user = { sub: "u1", role: "OPERATOR", tenantId: "t1" } as any;
@@ -226,9 +232,10 @@ describe("OrderBatchShipService.batchShip", () => {
     const { svc, ordersService, db } = build([row("a")]);
     ordersService.changeStatus.mockImplementationOnce(async (id: string) => {
       db.get(id)!.status = OrderStatus.OUT_FOR_DELIVERY; // committed
-      throw new ConflictException(
-        "The order was marked shipped, but its invoice could not be created",
-      );
+      throw new ConflictException({
+        code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+        message: "The order was marked shipped, but its invoice could not be created",
+      });
     });
     const res = await svc.batchShip([{ orderId: "a" }], user);
     expect(res.results[0].outcome).toBe("SHIPPED_INVOICE_PENDING");
@@ -251,6 +258,18 @@ describe("OrderBatchShipService.batchShip", () => {
     expect(res.results[0].outcome).toBe("FAILED");
   });
 
+  it("a 409 with the invoice-failure TEXT but no code on a shipped order -> FAILED (#3168 b)", async () => {
+    const { svc, ordersService, db } = build([row("a")]);
+    ordersService.changeStatus.mockImplementationOnce(async (id: string) => {
+      db.get(id)!.status = OrderStatus.OUT_FOR_DELIVERY;
+      throw new ConflictException(
+        "The order was marked shipped, but its invoice could not be created",
+      );
+    });
+    const res = await svc.batchShip([{ orderId: "a" }], user);
+    expect(res.results[0].outcome).toBe("FAILED");
+  });
+
   it("ORDER_INVOICES_NEED_REVIEW on a shipped order -> SHIPPED_INVOICE_PENDING (#3168 b)", async () => {
     const { svc, ordersService, db } = build([row("a")]);
     ordersService.changeStatus.mockImplementationOnce(async (id: string) => {
@@ -259,6 +278,19 @@ describe("OrderBatchShipService.batchShip", () => {
     });
     const res = await svc.batchShip([{ orderId: "a" }], user);
     expect(res.results[0].outcome).toBe("SHIPPED_INVOICE_PENDING");
+  });
+
+  it("every outcome has both a plain and a tracking-saved sentence; no cut sentences (#3168 c)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = (require("@routeflow/types") as Record<string, unknown>)
+      .BATCH_SHIP_OUTCOMES as readonly string[];
+    expect(Object.keys(MESSAGES).sort()).toEqual([...shared].sort());
+    expect(Object.keys(TRACKING_SAVED_MESSAGES).sort()).toEqual([...shared].sort());
+    for (const [outcome, m] of Object.entries(TRACKING_SAVED_MESSAGES)) {
+      expect(m).not.toMatch(/Nothing was/);
+      // the two shipped outcomes keep their plain sentence (tracking saved is implied by shipping)
+      if (!outcome.startsWith("SHIPPED")) expect(m.endsWith("The tracking was saved.")).toBe(true);
+    }
   });
 
   it("tracking saved but the ship failed -> trackingSaved + message says so (#3168 c)", async () => {

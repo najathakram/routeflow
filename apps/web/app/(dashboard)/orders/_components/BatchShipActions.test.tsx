@@ -1,7 +1,12 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { BatchShipActions } from "./BatchShipActions";
-import { BATCH_SHIP_COPY, batchShipDetail, shippedOrderIds } from "@/lib/batch-ship-copy";
+import {
+  BATCH_SHIP_COPY,
+  BATCH_SHIP_TRACKING_SAVED_DETAIL,
+  batchShipDetail,
+  shippedOrderIds,
+} from "@/lib/batch-ship-copy";
 import { BATCH_SHIP_MAX_ORDERS, BATCH_SHIP_OUTCOMES } from "@routeflow/types";
 
 const batchMutateAsync = jest.fn();
@@ -172,6 +177,15 @@ describe("tracking-saved copy (#3168 c)", () => {
     expect(batchShipDetail({ outcome: "INVALID_TRACKING" })).toBe(
       BATCH_SHIP_COPY.INVALID_TRACKING.detail,
     );
+  });
+
+  it("has an explicit tracking-saved sentence for every outcome, none cut from another", () => {
+    expect(Object.keys(BATCH_SHIP_TRACKING_SAVED_DETAIL).sort()).toEqual(
+      [...BATCH_SHIP_OUTCOMES].sort(),
+    );
+    for (const d of Object.values(BATCH_SHIP_TRACKING_SAVED_DETAIL)) {
+      expect(d).not.toMatch(/Nothing was/);
+    }
   });
 
   it("the result row renders it", async () => {

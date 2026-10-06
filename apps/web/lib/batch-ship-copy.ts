@@ -66,6 +66,20 @@ export const BATCH_SHIP_COPY: Record<
   },
 };
 
+/** Result detail when the tracking was written but the order did not ship: a full sentence per outcome. */
+export const BATCH_SHIP_TRACKING_SAVED_DETAIL: Record<BatchShipOutcome, string> = {
+  SHIPPED: BATCH_SHIP_COPY.SHIPPED.detail,
+  SHIPPED_INVOICE_PENDING: BATCH_SHIP_COPY.SHIPPED_INVOICE_PENDING.detail,
+  NOT_CARRIER_ORDER: "Only carrier orders can be marked shipped here. Tracking was saved.",
+  ALREADY_SHIPPED: "Already shipped. Tracking was saved.",
+  NOT_CONFIRMED: "Only confirmed orders can be marked shipped. Tracking was saved.",
+  CREDIT_HOLD: "Resolve the customer's credit limit, then ship it again. Tracking was saved.",
+  ORDER_CHANGED: "The order changed while shipping. Review it and try again. Tracking was saved.",
+  INVALID_TRACKING: "Check the carrier and tracking number. Tracking was saved.",
+  NOT_FOUND: "This order could not be found. Tracking was saved.",
+  FAILED: "Could not be marked shipped. Open the order to check it. Tracking was saved.",
+};
+
 /**
  * The per-order result wording. When the tracking was written but the order did not ship, the row says
  * the tracking was saved (never "Nothing was changed", which would be false).
@@ -73,7 +87,7 @@ export const BATCH_SHIP_COPY: Record<
 export function batchShipDetail(r: { outcome: BatchShipOutcome; trackingSaved?: boolean }): string {
   const copy = BATCH_SHIP_COPY[r.outcome];
   if (!r.trackingSaved || copy.shipped) return copy.detail;
-  return `${copy.detail.replace(/ ?Nothing was changed\./, "").trim()} Tracking was saved.`;
+  return BATCH_SHIP_TRACKING_SAVED_DETAIL[r.outcome];
 }
 
 /** The ids that actually shipped in a batch result: the only ones a packing slip is printed for. */

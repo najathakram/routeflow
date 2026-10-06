@@ -49,7 +49,7 @@ export interface BatchShipRow {
   trackingSaved?: boolean;
 }
 
-const MESSAGES: Record<BatchShipOutcome, string> = {
+export const MESSAGES: Record<BatchShipOutcome, string> = {
   SHIPPED: "Marked shipped.",
   SHIPPED_INVOICE_PENDING:
     "Marked shipped, but its invoice could not be created. Open the order to generate it.",
@@ -61,6 +61,26 @@ const MESSAGES: Record<BatchShipOutcome, string> = {
   INVALID_TRACKING: "The carrier or tracking number is not valid. Nothing was changed.",
   NOT_FOUND: "Order not found.",
   FAILED: "Could not be marked shipped. Nothing was confirmed; try it from the order page.",
+};
+
+/**
+ * The result sentence when the tracking was already written but the order did not ship: one full
+ * sentence per outcome, each ending "The tracking was saved." (the shipped outcomes keep MESSAGES).
+ */
+export const TRACKING_SAVED_MESSAGES: Record<BatchShipOutcome, string> = {
+  SHIPPED: MESSAGES.SHIPPED,
+  SHIPPED_INVOICE_PENDING: MESSAGES.SHIPPED_INVOICE_PENDING,
+  NOT_CARRIER_ORDER:
+    "Not a carrier order, so it cannot be marked shipped here. The tracking was saved.",
+  ALREADY_SHIPPED: "Already shipped. The tracking was saved.",
+  NOT_CONFIRMED: "Only confirmed orders can be marked shipped. The tracking was saved.",
+  CREDIT_HOLD:
+    "On credit hold. Resolve the customer's credit limit, then ship it again. The tracking was saved.",
+  ORDER_CHANGED:
+    "The order changed while shipping. Review it and try again. The tracking was saved.",
+  INVALID_TRACKING: "The carrier or tracking number is not valid. The tracking was saved.",
+  NOT_FOUND: "Order not found. The tracking was saved.",
+  FAILED: "Could not be marked shipped. Try it from the order page. The tracking was saved.",
 };
 
 /** Same limits as UpdateShipmentDto (carrier 64, tracking 128). */
@@ -92,14 +112,10 @@ const codeOf = (err: unknown): string | undefined => {
   return res && typeof res === "object" ? (res as { code?: string }).code : undefined;
 };
 
-/** The invoice-settle failure shape (order-status-invoicing.ts): the review code, or its "marked ..., but its invoice" 409. */
-const isInvoiceFailure = (err: unknown, code: string | undefined): boolean => {
-  if (code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW) return true;
-  return (
-    err instanceof ConflictException &&
-    /^The order was marked \w+, but its invoice /.test(err.message ?? "")
-  );
-};
+/** The invoice-settle failure: only these codes (order-status-invoicing.ts), never message text. */
+const isInvoiceFailure = (code: string | undefined): boolean =>
+  code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW ||
+  code === API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED;
 
 @Injectable()
 export class OrderBatchShipService {
@@ -139,12 +155,11 @@ export class OrderBatchShipService {
     outcome: BatchShipOutcome,
   ): BatchShipRow {
     if (SHIPPED_OUTCOMES.has(outcome)) return this.row(orderId, orderNumber, outcome);
-    const base = MESSAGES[outcome].replace(/ ?Nothing was (changed|confirmed)[^.]*\.?/, "");
     return {
       orderId,
       orderNumber,
       outcome,
-      message: `${base.trim()} The tracking was saved.`,
+      message: TRACKING_SAVED_MESSAGES[outcome],
       trackingSaved: true,
     };
   }
@@ -216,7 +231,7 @@ export class OrderBatchShipService {
     if (code === API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT) return "ORDER_CHANGED";
     // A 400 from changeStatus is a status/transition refusal, not bad tracking (tracking was validated
     // by updateShipment above), so it falls through to FAILED.
-    if (isInvoiceFailure(err, code)) {
+    if (isInvoiceFailure(code)) {
       // changeStatus raises the invoice-settle failure AFTER the status committed.
       if (await this.isShippedNow(orderId)) return "SHIPPED_INVOICE_PENDING";
     }
