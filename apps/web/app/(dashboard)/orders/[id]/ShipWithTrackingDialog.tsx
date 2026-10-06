@@ -2,20 +2,30 @@
 
 import * as React from "react";
 import { Button, Modal, cn } from "@routeflow/ui/web";
-import { CARRIERS } from "@/lib/shipping";
+import { CARRIERS, normalizeCarrier } from "@/lib/shipping";
 import type { ShipWithTrackingValues } from "@/lib/ship-with-tracking";
 
 /**
  * "Mark shipped" on a carrier (SHIP) order: asks for the carrier + tracking first so the customer gets
  * ONE shipped email that carries it. "Skip, ship now" is the old behaviour. The save-then-ship order
- * lives in `shipWithTracking` (lib), so it is testable without the page.
+ * lives in `shipWithTracking` (lib), so it is testable without the page. It opens pre-filled with the
+ * carrier + tracking number already saved on the order (the operator may have added them earlier).
  */
+function initialCarrierId(saved?: string | null): string {
+  if (!saved?.trim()) return CARRIERS[0].id;
+  // A recognised carrier (id or label) selects its option; a custom courier lands on "Other"
+  // instead of silently showing UPS.
+  return normalizeCarrier(saved) ?? "other";
+}
+
 export function ShipWithTrackingDialog({
   open,
   onClose,
   onShipWithTracking,
   onSkip,
   isPending,
+  initialCarrier,
+  initialTracking,
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,18 +34,24 @@ export function ShipWithTrackingDialog({
   /** Ships now, without tracking. */
   onSkip: () => void;
   isPending?: boolean;
+  /** The carrier + tracking number already saved on the order; read each time the dialog opens. */
+  initialCarrier?: string | null;
+  initialTracking?: string | null;
 }) {
-  const [carrier, setCarrier] = React.useState<string>(CARRIERS[0].id);
-  const [tracking, setTracking] = React.useState("");
+  const [carrier, setCarrier] = React.useState<string>(initialCarrierId(initialCarrier));
+  const [tracking, setTracking] = React.useState(initialTracking ?? "");
   const [busy, setBusy] = React.useState(false);
   const carrierId = React.useId();
   const trackingId = React.useId();
 
   React.useEffect(() => {
     if (open) {
-      setCarrier(CARRIERS[0].id);
-      setTracking("");
+      setCarrier(initialCarrierId(initialCarrier));
+      setTracking(initialTracking ?? "");
     }
+    // Seed on the open transition only: a background refetch while the operator types must not
+    // overwrite what they have typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   async function shipWith() {

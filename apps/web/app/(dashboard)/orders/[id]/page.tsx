@@ -1853,9 +1853,6 @@ export default function OrderDetailPage() {
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
-  // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
-  // tracking-entry dialog open — see openSignal prop below.
-  const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
   const [showShipDialog, setShowShipDialog] = React.useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
 
@@ -2189,19 +2186,14 @@ export default function OrderDetailPage() {
     );
   };
 
-  // `withTracking`: the shipment (carrier + tracking) was saved first via the "Add tracking" dialog (F4),
-  // so the shipped email already carries it and the tracking card is not opened.
-  const handleLock = (withTracking = false) => {
+  // A SHIP order asks for its tracking in the "Add tracking" dialog BEFORE this runs (F4), so nothing
+  // here opens a second tracking prompt after the order ships.
+  const handleLock = () => {
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
       {
-        onSuccess: () => {
-          setLocalStatus("OUT_FOR_DELIVERY");
-          // Nudge the operator straight into tracking entry for a SHIP order —
-          // there's nowhere else on this screen prompting for it.
-          if (order.fulfillPath === "SHIP" && !withTracking) setShipmentOpenSignal((n) => n + 1);
-        },
-        onError: guardError(() => handleLock(withTracking)),
+        onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY"),
+        onError: guardError(() => handleLock()),
       },
     );
   };
@@ -3375,6 +3367,8 @@ export default function OrderDetailPage() {
               open={showShipDialog}
               onClose={() => setShowShipDialog(false)}
               isPending={updateShipment.isPending || updateStatus.isPending}
+              initialCarrier={order.shippingCarrier}
+              initialTracking={order.shippingTrackingNumber}
               onSkip={() => handleLock()}
               onShipWithTracking={(values) =>
                 shipWithTracking(
@@ -3388,7 +3382,7 @@ export default function OrderDetailPage() {
                         });
                         throw e;
                       }),
-                    ship: () => handleLock(true),
+                    ship: () => handleLock(),
                   },
                   values,
                 )
@@ -3405,7 +3399,6 @@ export default function OrderDetailPage() {
               orderStatus={localStatus}
               isSaving={updateShipment.isPending}
               onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-              openSignal={shipmentOpenSignal}
             />
           )}
 
