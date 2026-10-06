@@ -166,7 +166,9 @@ describe("reconcileOrderAfterEdit — the credit-sync tx takes Order FOR UPDATE 
     await syncAndSettle([{ creditNoteId: CN_NEW.id }]);
 
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
-    expect(prisma.tenantTransaction.mock.calls[0][1]).toEqual({ isolationLevel: "Serializable" });
+    expect((prisma.tenantTransaction.mock.calls[0] as unknown[])[1]).toEqual({
+      isolationLevel: "Serializable",
+    });
     expectOrderLockFirst(log);
     // The insert whose FK takes KEY SHARE on the CreditNote comes strictly after the Order lock.
     expect(log.map((e) => e.op).indexOf("orderCreditNote.create")).toBeGreaterThan(0);
