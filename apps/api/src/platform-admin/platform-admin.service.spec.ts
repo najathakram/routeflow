@@ -2995,6 +2995,22 @@ describe("PlatformAdminService — audit provenance", () => {
       });
     });
 
+    it("MUST-A1: a lapsed trial reaches the helper as READ_ONLY + its readOnlyReason, read in the tx", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({
+        fromStatus: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+      });
+      // the in-tx `before` read selects it (it is read under the tenant row lock, with the status)
+      const select = prisma.tenant.findUniqueOrThrow.mock.calls
+        .map((c: any[]) => c[0]?.select)
+        .find((x: any) => x?.status && x?.name);
+      expect(select).toMatchObject({ status: true, readOnlyReason: true });
+    });
+
     it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
       tenantBefore();
       await service.activateManualSubscription(

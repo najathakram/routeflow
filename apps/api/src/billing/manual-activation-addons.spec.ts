@@ -375,6 +375,56 @@ describe("M-A: pricing happens on the TRIAL → ACTIVE crossing ONLY", () => {
   });
 });
 
+describe("MUST-A1: a LAPSED trial (READ_ONLY + trial_expired / trial_cancelled) activated manually is priced like a trial", () => {
+  it.each(["trial_expired", "trial_cancelled"])(
+    "READ_ONLY + %s: priced at today's catalog price, MRR booked once, a DUE notice raised",
+    async (readOnlyReason) => {
+      const h = make([
+        row("CUSTOMER_PACK_100", { quantity: 2 }),
+        row("FORECASTING", { quantity: 1 }),
+      ]);
+
+      const out = await h.price("STARTER", { fromStatus: "READ_ONLY", readOnlyReason });
+
+      expect(out.map((x) => [x.sku, x.priced, x.noticed])).toEqual([
+        ["CUSTOMER_PACK_100", true, true],
+        ["FORECASTING", true, true],
+      ]);
+      expect(h.ledger()).toEqual([
+        { type: BILLING_EVENTS.ADDON_ENABLED, sku: "CUSTOMER_PACK_100", delta: 100 },
+        { type: BILLING_EVENTS.ADDON_ENABLED, sku: "FORECASTING", delta: 19 },
+      ]);
+      expect(h.noticeMeta().map((n: any) => [n.action, n.meta.sku])).toEqual([
+        ["ADDON_MANUAL_INVOICE_DUE", "CUSTOMER_PACK_100"],
+        ["ADDON_MANUAL_INVOICE_DUE", "FORECASTING"],
+      ]);
+      expect(h.rows.map((r) => Number(r.priceSnapshot))).toEqual([50, 19]);
+    },
+  );
+
+  it.each([["subscription_cancelled"], [null], [undefined], ["something_else"]])(
+    "READ_ONLY with reason %p (a cancelled PAID subscription, or none) is NOT a lapsed trial: prices nothing",
+    async (readOnlyReason) => {
+      const h = make([row("CUSTOMER_PACK_100", { quantity: 2 })]);
+
+      const out = await h.price("STARTER", { fromStatus: "READ_ONLY", readOnlyReason });
+
+      expect(out).toEqual([]);
+      expect(h.tx.tenantAddon.findMany).not.toHaveBeenCalled();
+      expect(h.ledger()).toEqual([]);
+      expect(h.noticeMeta()).toEqual([]);
+    },
+  );
+
+  it("a trial_expired reason on a tenant that is NOT READ_ONLY (a stale reason on an ACTIVE tenant) prices nothing", async () => {
+    const h = make([row("CUSTOMER_PACK_100", { quantity: 2 })]);
+    expect(
+      await h.price("STARTER", { fromStatus: "ACTIVE", readOnlyReason: "trial_expired" }),
+    ).toEqual([]);
+    expect(h.ledger()).toEqual([]);
+  });
+});
+
 describe("M-A: rows that cannot be priced are announced, never silently priced or skipped", () => {
   it("a SKU the catalog does not price: no price, no MRR, a DUE notice saying 'price unknown — set it before invoicing'", async () => {
     const h = make([row("CUSTOMER_PACK_100", { quantity: 2 })]);

@@ -2,7 +2,7 @@ import { Logger, ServiceUnavailableException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { withAdvisoryLocks, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
-import { billableAddonWhere } from "./addon-row";
+import { billableAddonWhere, keepsTrialAddons } from "./addon-row";
 import { emitAddonDelta } from "./addon-ledger";
 import { BillingEventService } from "./billing-event.service";
 import { cyclePrice, Cycle } from "./billing-math";
@@ -111,9 +111,11 @@ const dollars = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 /**
  * SA-668c residual ("price them + notify"): a trial's self-serve add-ons are on at price 0 with no
  * Stripe item. The MANUAL activation that turns the trial into a tenant the owner invoices by hand is
- * the ONE moment they are priced and announced — a TRIAL → ACTIVE crossing and nothing else (M-A): a
- * renewal of an already-ACTIVE manual tenant (or any other prior status) prices NOTHING, books nothing
- * and writes no notice, whatever add-on rows it carries. Inside the crossing:
+ * the ONE moment they are priced and announced — the activation of a TRIAL, or of a LAPSED trial (READ_ONLY
+ * with trial_expired / trial_cancelled; MUST-A1, `keepsTrialAddons`) and nothing else (M-A): a renewal of an
+ * already-ACTIVE manual tenant (or any other prior status, such as READ_ONLY after a cancelled paid
+ * subscription) prices NOTHING, books nothing and writes no notice, whatever add-on rows it carries. Inside
+ * that activation:
  *  - each row with NO price (snapshot 0/null) AND a usable quantity AND a catalog price > 0 is priced at
  *    TODAY's catalog price (cents) and its MRR delta booked ONCE ({0, qty} → {price, qty}) — MRR is always
  *    monthly, whatever the tenant's invoice cycle;
@@ -138,6 +140,8 @@ export async function priceUnbilledAddonsOnActivation(
     tenantLabel: string;
     /** The tenant's status BEFORE this activation, read in the tx under the tenant row lock. */
     fromStatus: string;
+    /** `Tenant.readOnlyReason` BEFORE it (a lapsed trial is READ_ONLY + trial_expired / trial_cancelled). */
+    readOnlyReason?: string | null;
     /** The tenant's class (DUE notices are written for PRODUCTION only; default PRODUCTION). */
     tenantClass?: string;
     /** The invoice cycle of the activation (default MONTHLY). */
@@ -152,7 +156,10 @@ export async function priceUnbilledAddonsOnActivation(
     actorId?: string | null;
   },
 ): Promise<ActivatedAddon[]> {
-  if (a.fromStatus !== "TRIAL") return [];
+  // M-A + MUST-A1: only a TRIAL, or a LAPSED trial (READ_ONLY because it expired or was cancelled), is
+  // priced — the same predicate that keeps its add-ons across a plan pick. A renewal, or a READ_ONLY tenant
+  // whose paid subscription was cancelled, prices nothing.
+  if (!keepsTrialAddons({ status: a.fromStatus, readOnlyReason: a.readOnlyReason })) return [];
   const cycle: Cycle = a.cycle ?? "MONTHLY";
   const announce = (a.tenantClass ?? "PRODUCTION") === "PRODUCTION";
   const rows: any[] = await tx.tenantAddon.findMany({

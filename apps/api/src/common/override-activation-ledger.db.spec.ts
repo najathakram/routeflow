@@ -571,6 +571,75 @@ describeDb(
       expect(await notices(tenantId)).toHaveLength(0);
     });
 
+    const lapse = (tenantId: string, readOnlyReason: string | null) =>
+      prisma.tenant.update({
+        where: { id: tenantId },
+        data: { status: TenantStatus.READ_ONLY, readOnlyReason },
+      });
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "MUST-A1: a LAPSED trial (READ_ONLY + %s) activated manually is priced, booked once and announced like a trial",
+      async (reason) => {
+        const tenantId = await makeTrialTenant(`sa668c-a1-${reason}`.slice(0, 40), "GROWTH");
+        await prisma.tenantSubscription.update({
+          where: { tenantId },
+          data: { basePriceSnapshot: starterPrice },
+        });
+        await addAddon(tenantId, "CUSTOMER_PACK_100", 2);
+        await addAddon(tenantId, "FORECASTING", 1);
+        await lapse(tenantId, reason);
+        const pack = await catalogPrice("CUSTOMER_PACK_100");
+        const forecasting = await catalogPrice("FORECASTING");
+
+        await activate(tenantId, `ref-a1-${reason}`);
+
+        const rows = await prisma.tenantAddon.findMany({
+          where: { tenantId },
+          orderBy: { sku: "asc" },
+        });
+        expect(rows.map((r) => [r.sku, Number(r.priceSnapshot)])).toEqual([
+          ["CUSTOMER_PACK_100", pack],
+          ["FORECASTING", forecasting],
+        ]);
+        // the crossing books the base; each add-on's delta is booked once after it
+        expect(await ledgerSum(tenantId)).toBe(starterPrice + pack * 2 + forecasting);
+        expect(
+          (await events(tenantId, "addon.enabled")).map((e) => Number(e.amountDelta)).sort(),
+        ).toEqual([pack * 2, forecasting].sort());
+        expect((await notices(tenantId)).map((n) => (n.meta as any).sku).sort()).toEqual([
+          "CUSTOMER_PACK_100",
+          "FORECASTING",
+        ]);
+        expect((await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status).toBe(
+          TenantStatus.ACTIVE,
+        );
+
+        // IDEMPOTENT: a renewal books nothing and writes no second notice
+        const sum = await ledgerSum(tenantId);
+        await activate(tenantId, `ref-a1b-${reason}`);
+        expect(await ledgerSum(tenantId)).toBe(sum);
+        expect(await notices(tenantId)).toHaveLength(2);
+      },
+    );
+
+    it("MUST-A1: READ_ONLY after a cancelled PAID subscription is not a lapsed trial — manual activation prices nothing", async () => {
+      const tenantId = await makeTrialTenant("sa668c-a1-paid", "GROWTH");
+      await prisma.tenantSubscription.update({
+        where: { tenantId },
+        data: { basePriceSnapshot: starterPrice },
+      });
+      await addAddon(tenantId, "CUSTOMER_PACK_100", 2);
+      await lapse(tenantId, "subscription_cancelled");
+
+      await activate(tenantId, "ref-a1-paid");
+
+      expect(
+        Number((await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId } })).priceSnapshot),
+      ).toBe(0);
+      expect(await events(tenantId, "addon.enabled")).toHaveLength(0);
+      expect(await notices(tenantId)).toHaveLength(0);
+    });
+
     it("M-A: a SKU with no catalog price (gone, or free) is NOT priced — a DUE notice says 'price unknown — set it before invoicing'", async () => {
       const tenantId = await makeTrialTenant("sa668c-ma-price", "GROWTH");
       await prisma.tenantSubscription.update({

@@ -31,7 +31,11 @@ import {
   addonRowWhere,
   billableAddonWhere,
   findAddonRow,
+  keepsTrialAddons,
 } from "./addon-row";
+
+// Kept importable from here: the MUST-1 predicate moved to the leaf module (addon-row.ts).
+export { keepsTrialAddons };
 import {
   ManualInvoiceNotice,
   writeAdminNotice,
@@ -227,21 +231,6 @@ export type AddonBilling = AddonBillingMode;
  * Payment rails (Stripe card capture) are orthogonal (BillingService/StripeService);
  * this service owns the internal entitlement state.
  */
-/**
- * SA-690 (MUST-1): a trial keeps its self-serve add-ons across the plan pick — and so does a LAPSED one,
- * a tenant that is READ_ONLY because its trial expired or was cancelled (its rows are still the unbilled
- * trial rows the card checkout is meant to bill). Any other READ_ONLY reason (a cancelled paid
- * subscription) is not a trial. Used ONLY to decide what subscribe() drops; `wasTrial` keeps its other
- * meanings (the TRIAL_CONVERTED event, `trialConvertedAt`).
- */
-export function keepsTrialAddons(t: { status: string; readOnlyReason?: string | null }): boolean {
-  return (
-    t.status === "TRIAL" ||
-    (t.status === "READ_ONLY" &&
-      (t.readOnlyReason === "trial_expired" || t.readOnlyReason === "trial_cancelled"))
-  );
-}
-
 @Injectable()
 export class SubscriptionMutationService {
   constructor(

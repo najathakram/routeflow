@@ -1032,6 +1032,7 @@ export class PlatformAdminService {
             name: true,
             slug: true,
             status: true,
+            readOnlyReason: true,
             class: true,
             deletedAt: true,
             subscription: {
@@ -1208,12 +1209,14 @@ export class PlatformAdminService {
         // add-ons at their stored 0 and booked nothing for them), each unbilled self-serve add-on is
         // priced at today's catalog price, its delta booked once, and the platform told to invoice it.
         // ONLY on the TRIAL → ACTIVE crossing (M-A): the status read above, under the tenant row lock,
-        // is what the helper gates on — a renewal of an already-ACTIVE manual tenant prices nothing.
+        // (with `readOnlyReason`, so a LAPSED trial counts too) is what the helper gates on — a renewal of an
+        // already-ACTIVE manual tenant prices nothing.
         if (addonSkusToPrice.length > 0) {
           await priceUnbilledAddonsOnActivation(tx, this.billingEventService, {
             tenantId: id,
             tenantLabel: before.name ?? before.slug ?? id,
             fromStatus: before.status,
+            readOnlyReason: before.readOnlyReason,
             tenantClass: before.class,
             cycle,
             planKey: definition.planKey,
