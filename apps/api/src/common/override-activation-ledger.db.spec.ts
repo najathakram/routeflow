@@ -18,10 +18,10 @@
  *
  * REG-B865-DB: `SubscriptionMutationService.enableAddon()` books through the shared
  * `emitAddonDelta` ledger writer (`addon-ledger.ts`), which gates its own emit on the same
- * `isPayingRow` check — a TRIAL tenant's self-serve add-on writes the `TenantAddon` row (so it
- * prices correctly once the tenant activates) but books nothing. Activation then books the base
- * in one `plan.changed` row and the add-on once, in one `addon.enabled` row, through the same
- * crossing helper `subscribe()` uses (SA-277b) — the total is base + snapshot, exactly once.
+ * `isPayingRow` check — a TRIAL tenant's self-serve add-on writes the `TenantAddon` row but books
+ * nothing. Since #3129 (SA-690) that row is UNBILLED: `priceSnapshot` 0.00, so activation books
+ * the base in one `plan.changed` row through the same crossing helper `subscribe()` uses
+ * (SA-277b) and no `addon.enabled` row at all — the total is the base, exactly once.
  *
  * `PlatformAdminService` and `SubscriptionMutationService` are constructed directly (bypassing
  * Nest DI) with REAL `PrismaService`/`BillingEventService`/`MrrService`/`PlanCatalogService`/
@@ -269,7 +269,7 @@ describeDb(
       expect(await ledgerSum(tenantId)).toBe(1200);
     });
 
-    it("REG-B865-DB: a TRIAL tenant's self-serve add-on books zero events; manual activation books base + add-on together, exactly once", async () => {
+    it("REG-B865-DB: a TRIAL tenant's unbilled self-serve add-on is priced 0 and books zero events; manual activation books the base exactly once and nothing for the add-on", async () => {
       const tenantId = await makeTrialTenant("b865", "GROWTH");
       // This case's base is already known (unlike B864's null-snapshot shape) — the add-on
       // ledger gate is what's under test here, not the backfill path.
@@ -287,8 +287,8 @@ describeDb(
         select: { active: true, priceSnapshot: true, quantity: true },
       });
       expect(addon.active).toBe(true);
-      const addonPrice = Number(addon.priceSnapshot);
-      expect(addonPrice).toBeGreaterThan(0);
+      // SA-690 / #3129: a trial/pilot add-on is UNBILLED — snapshot 0.00, never the catalog price.
+      expect(Number(addon.priceSnapshot)).toBe(0);
 
       await platformAdmin.activateManualSubscription(
         tenantId,
@@ -301,9 +301,11 @@ describeDb(
         "admin-1",
       );
 
-      expect(await ledgerSum(tenantId)).toBe(starterPrice + addonPrice);
+      // SA-690 / #3129: the unbilled add-on is not retro-billed at activation — the total is the base.
+      expect(await ledgerSum(tenantId)).toBe(starterPrice);
 
-      // SA-277b: base and add-on book as separate rows via the shared crossing helper.
+      // SA-277b: the crossing helper books the base in its own plan.changed row; a zero-priced
+      // add-on writes no addon.enabled row (emitAddonDelta skips a zero delta).
       const plan = await prisma.billingEvent.findMany({
         where: { tenantId, type: "plan.changed" },
         select: { amountDelta: true },
@@ -314,8 +316,7 @@ describeDb(
         where: { tenantId, type: "addon.enabled" },
         select: { amountDelta: true },
       });
-      expect(addonRows).toHaveLength(1);
-      expect(Number(addonRows[0].amountDelta)).toBe(addonPrice);
+      expect(addonRows).toHaveLength(0);
     });
   },
 );

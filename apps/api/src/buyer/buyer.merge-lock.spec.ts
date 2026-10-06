@@ -349,7 +349,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     expect(result).toEqual({ id: "order-fresh" });
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
       { lockMode: "try" },
     );
     expect(warn).toHaveBeenCalledTimes(1);
