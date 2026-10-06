@@ -12,7 +12,8 @@ jest.mock("@/lib/platform-admin/features", () => ({
     addonKey: string,
     stripePriceId?: string,
     acknowledgeUnmetRequires?: boolean,
-  ) => mockEnableAddon(tenantId, addonKey, stripePriceId, acknowledgeUnmetRequires),
+    comp?: boolean,
+  ) => mockEnableAddon(tenantId, addonKey, stripePriceId, acknowledgeUnmetRequires, comp),
 }));
 
 const TENANT_ID = "tenant-1";
@@ -81,13 +82,15 @@ describe("EnableAddonModal — Stripe configured", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", "price_123", undefined),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", "price_123", undefined, false),
     );
     await waitFor(() => expect(onEnabled).toHaveBeenCalledTimes(1));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("grant-without-billing is its own explicit choice: confirm omits stripePriceId and states no Stripe item will be created", async () => {
+  // SA-693: "Grant without billing" is a COMP, an explicit `comp: true` on the wire. Without it the row
+  // would be isComp=false and the trial-billing work would start BILLING a deliberate free grant.
+  it("grant-without-billing is its own explicit choice: confirm omits stripePriceId, sends comp true and states no Stripe item will be created", async () => {
     renderModal();
     await screen.findByText(/Choose how/);
 
@@ -102,7 +105,7 @@ describe("EnableAddonModal — Stripe configured", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined, true),
     );
   });
 
@@ -160,7 +163,7 @@ describe("EnableAddonModal — Stripe NOT configured", () => {
     mockEnableAddon.mockResolvedValueOnce({});
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined, true),
     );
   });
 });
@@ -184,7 +187,7 @@ describe("EnableAddonModal — unmet requirement (B519 warning, B524 ack prep)",
     fireEvent.click(confirmButton);
 
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, true),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, true, true),
     );
   });
 
@@ -197,7 +200,7 @@ describe("EnableAddonModal — unmet requirement (B519 warning, B524 ack prep)",
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     await waitFor(() =>
-      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined),
+      expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "ocr", undefined, undefined, true),
     );
   });
 });

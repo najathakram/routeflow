@@ -7,7 +7,7 @@ import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
+import { isTrackingLive, type InvoiceStatus, type OrderTrackingResponse } from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
@@ -457,7 +457,7 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: number;
   taxAmount: number;
   discount: number;

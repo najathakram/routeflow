@@ -29,7 +29,7 @@ describe("CancelOrderButton (B1083)", () => {
     expect(
       (src.match(/<CancelOrderButton\s+blockedReason=\{order\.cancelBlockedReason\}/g) ?? [])
         .length,
-    ).toBe(3);
+    ).toBe(4); // PENDING, CONFIRMED, OUT_FOR_DELIVERY, and (B1134) a customer's DRAFT
     expect(src).not.toMatch(/>\s*Cancel Order\s*<\/Button>/);
   });
 });

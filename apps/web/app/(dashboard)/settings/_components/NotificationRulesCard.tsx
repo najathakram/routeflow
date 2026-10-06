@@ -57,7 +57,7 @@ const GROUP_TITLE: Record<NotificationAudience, string> = {
 
 /** One line per event: who gets it, and when. Closed copy keyed by the event code. */
 const EVENT_DESCRIPTION: Record<string, string> = {
-  ORDER_CONFIRMED: "Sent when an order is confirmed for delivery.",
+  ORDER_CONFIRMED: "Sent when an order is confirmed.",
   OUT_FOR_DELIVERY: "Sent when the driver starts the route with this order.",
   ORDER_SHIPPED: "Sent when an order is marked shipped with a carrier (UPS, FedEx and so on).",
   READY_FOR_PICKUP: "Sent when a pickup order is ready for the customer to collect.",

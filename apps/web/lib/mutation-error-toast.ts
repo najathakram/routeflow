@@ -34,6 +34,8 @@ export function handleMutationError(
     "LINE_ALREADY_DELIVERED",
     "CHANGE_WINDOW_CLOSED",
     "EDIT_WINDOW_OPEN",
+    // B1135: a change request on an order with the carrier; the buyer's request form says it inline.
+    API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
     // Selling restrictions settings: the page turns these into guided in-app messages
     // (a fix list / a two-step instruction) and toasts them itself, once.
     "SELLING_RESTRICTIONS_NOT_READY",
