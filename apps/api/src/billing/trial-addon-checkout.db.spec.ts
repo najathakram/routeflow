@@ -953,6 +953,71 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     );
 
     it.each([false, true])(
+      "B1155 (flag on=%s): A applied, sub_A paused, B applied (sub_A cancelled Stripe-first, once, under cancel-superseded:sub_A), then A redelivered — no item on sub_A, no pointer moved off sub_B, B's items stay owned",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        await r.completed(); // A applied: the row owns A's si_pack
+        r.subs.sub_qa.status = "paused";
+
+        await r.deliver(dupSession(r)); // B completes: sub_A is not live and not cancelled
+
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledWith(
+          "sub_qa",
+          { prorate: false, invoice_now: false },
+          { idempotencyKey: "cancel-superseded:sub_qa" },
+        );
+        expect(r.subs.sub_qa.status).toBe("canceled");
+        expect((await sub(r)).stripeSubId).toBe("sub_dup");
+        expect((await r.rows()).map((x) => [x.stripeItemId, Number(x.priceSnapshot)])).toEqual([
+          ["si_dup_pack", 50],
+        ]);
+        expect(await decisions(r)).toHaveLength(0); // B is not a duplicate: no refund notice
+        expect(await notices(r)).toHaveLength(0);
+        const ledger = await r.ledger();
+        for (const fn of ["create", "update", "del"] as const) {
+          r.stripeClient.subscriptionItems[fn].mockClear();
+        }
+        r.stripe.cancelSubscription.mockClear();
+
+        await r.completed(); // A redelivered: its own subscription is cancelled now
+
+        for (const fn of ["create", "update", "del"] as const) {
+          expect(r.stripeClient.subscriptionItems[fn]).not.toHaveBeenCalled(); // nothing on sub_A
+        }
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect((await sub(r)).stripeSubId).toBe("sub_dup");
+        expect((await r.rows()).map((x) => x.stripeItemId)).toEqual(["si_dup_pack"]); // B's item still owned
+        expect(await notices(r)).toHaveLength(0);
+        expect(await r.ledger()).toEqual(ledger);
+      },
+    );
+
+    it("B1155: a transient Stripe error on the superseded cancel fails the webhook with nothing applied; the retry cancels under the SAME key and applies", async () => {
+      const r = await twoSessions(false);
+      await r.completed();
+      r.subs.sub_qa.status = "paused";
+      r.failNextCancel(1);
+
+      await expect(r.deliver(dupSession(r))).rejects.toThrow(/Stripe API error/);
+
+      expect((await sub(r)).stripeSubId).toBe("sub_qa"); // untouched
+      expect((await r.rows())[0].stripeItemId).toBe("si_pack");
+
+      await r.deliver(dupSession(r));
+
+      expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(2);
+      for (const call of r.stripe.cancelSubscription.mock.calls) {
+        expect(call).toEqual([
+          "sub_qa",
+          { prorate: false, invoice_now: false },
+          { idempotencyKey: "cancel-superseded:sub_qa" },
+        ]);
+      }
+      expect((await sub(r)).stripeSubId).toBe("sub_dup");
+    });
+
+    it.each([false, true])(
       "S2 carry RACE (flag on=%s): B commits between A's early read and A's per-SKU adopt — the re-read under the add-on lock writes nothing; B's items stay owned",
       async (flagOn) => {
         const r = await twoSessions(flagOn);
@@ -1128,7 +1193,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
 
         expect((await sub(r)).stripeSubId).toBe("sub_qa");
         expect(await tenantStatus(r)).toBe(TenantStatus.ACTIVE);
-        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        // terminal: nothing to cancel; incomplete: superseded, cancelled first by the checkout that replaces it (B1155)
+        expect(r.stripe.cancelSubscription).toHaveBeenCalledTimes(status === "incomplete" ? 1 : 0);
+        if (status === "incomplete") {
+          expect(r.stripe.cancelSubscription.mock.calls[0][2]).toEqual({
+            idempotencyKey: "cancel-superseded:sub_old",
+          });
+        }
         expect(await decisions(r)).toHaveLength(0);
         expect(await notices(r)).toHaveLength(0);
         expect((await r.rows())[0]).toMatchObject({ stripeItemId: "si_pack" });

@@ -3,6 +3,7 @@ import * as path from "path";
 import {
   STRIPE_API_VERSION,
   isLiveStripeSubscriptionStatus,
+  isTerminalStripeSubscriptionStatus,
   stripeSubscriptionPeriod,
 } from "./stripe-period";
 
@@ -114,5 +115,25 @@ describe("stripe-period", () => {
         expect(isLiveStripeSubscriptionStatus(s)).toBe(false);
       },
     );
+  });
+
+  // A stored subscription that is neither live nor terminal (paused / incomplete) is what a new checkout supersedes.
+  describe("isTerminalStripeSubscriptionStatus", () => {
+    it.each(["canceled", "incomplete_expired"])("%s is terminal (it can never be revived)", (s) => {
+      expect(isTerminalStripeSubscriptionStatus(s)).toBe(true);
+    });
+    it.each([
+      "active",
+      "trialing",
+      "past_due",
+      "unpaid",
+      "paused",
+      "incomplete",
+      "",
+      undefined,
+      null,
+    ])("%p is not terminal", (s) => {
+      expect(isTerminalStripeSubscriptionStatus(s)).toBe(false);
+    });
   });
 });

@@ -59,6 +59,14 @@ const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 export const isLiveStripeSubscriptionStatus = (status: unknown): boolean =>
   typeof status === "string" && LIVE_SUBSCRIPTION_STATUSES.has(status);
 
+/**
+ * A subscription that can never be revived: `canceled`, or `incomplete_expired` (it expired without ever
+ * activating). Anything else that is not LIVE (`paused`, `incomplete`) can still come back, which is what a new
+ * checkout that replaces it has to cancel.
+ */
+export const isTerminalStripeSubscriptionStatus = (status: unknown): boolean =>
+  status === "canceled" || status === "incomplete_expired";
+
 /** A Stripe expandable reference (`"id"` or an expanded `{ id }`) as its id, else null. */
 export function stripeRefId(v: unknown): string | null {
   if (typeof v === "string") return v || null;

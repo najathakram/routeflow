@@ -2552,7 +2552,7 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     expect(noticeRows(h)).toEqual([]);
   });
 
-  it("liveness is ONE predicate: incomplete / incomplete_expired / canceled / unknown are not live, so a fresh checkout completes", async () => {
+  it("liveness is ONE predicate: incomplete / incomplete_expired / canceled / paused are not live, so a fresh checkout completes (and supersedes a paused / incomplete one)", async () => {
     for (const status of ["incomplete", "incomplete_expired", "canceled", "paused"]) {
       const h = make({
         storedSubId: "sub_old",
@@ -2561,7 +2561,13 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         items: items(),
       });
       await h.completed();
-      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      // not live: the session applies. A terminal stored sub needs no cancel; a paused / incomplete one is
+      // cancelled FIRST by the checkout that supersedes it (B1155) — never as a duplicate (no notice).
+      const superseded = status === "incomplete" || status === "paused";
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(superseded ? 1 : 0);
+      if (superseded) {
+        expect(h.stripe.cancelSubscription.mock.calls[0][0]).toBe("sub_old");
+      }
       expect(h.sub.stripeSubId).toBe("sub_1");
       expect(noticeRows(h)).toEqual([]);
     }
@@ -2892,6 +2898,134 @@ describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent u
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
       expect(unusableNotices(h)).toHaveLength(1);
     });
+  });
+});
+
+describe("B1155 fold: a checkout applied over a stored subscription that is NOT live but NOT cancelled (paused / incomplete) cancels it, Stripe-first", () => {
+  const rows = () => [addonRow("CUSTOMER_PACK_100", { qty: 2 })];
+  const items = () => [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)];
+  const KEY = { idempotencyKey: "cancel-superseded:sub_old" };
+  const PARAMS = { prorate: false, invoice_now: false };
+  const noticesOf = (h: ReturnType<typeof make>) =>
+    h.audits.filter((a: any) =>
+      ["STRIPE_DUPLICATE_CHECKOUT", "STRIPE_PAID_CHECKOUT_NOT_APPLIED"].includes(a.action),
+    );
+
+  it.each(["paused", "incomplete"])(
+    "stored sub %s: the superseded sub is cancelled ONCE (no proration, key cancel-superseded:<id>) BEFORE the new checkout is applied, which then applies normally",
+    async (status) => {
+      const h = make({
+        storedSubId: "sub_old",
+        storedSubStatus: status,
+        rows: rows(),
+        items: items(),
+      });
+
+      await h.completed();
+
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledWith("sub_old", PARAMS, KEY);
+      expect(h.stripe.cancelSubscription.mock.invocationCallOrder[0]).toBeLessThan(
+        h.prisma.tenantSubscription.upsert.mock.invocationCallOrder[0], // Stripe-first
+      );
+      expect(h.sub.stripeSubId).toBe("sub_1");
+      expect(h.rows.map((r) => r.stripeItemId)).toEqual(["si_pack"]);
+      expect(noticesOf(h)).toEqual([]); // not a duplicate: no refund notice
+    },
+  );
+
+  it.each(["canceled", "incomplete_expired", "missing"])(
+    "stored sub %s: already terminal / unknown to Stripe — nothing to cancel",
+    async (status) => {
+      const h = make({
+        storedSubId: "sub_old",
+        storedSubStatus: status,
+        rows: rows(),
+        items: items(),
+      });
+      await h.completed();
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(h.sub.stripeSubId).toBe("sub_1");
+    },
+  );
+
+  it.each(["active", "trialing", "past_due", "unpaid"])(
+    "stored sub %s is LIVE: the session is the duplicate (X1), never a 'superseded' cancel of the stored one",
+    async (status) => {
+      const h = make({
+        storedSubId: "sub_old",
+        storedSubStatus: status,
+        rows: rows(),
+        items: items(),
+      });
+      await h.completed(h.session({ subscription: "sub_dup1", id: "cs_dup" }));
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(h.stripe.cancelSubscription.mock.calls[0][0]).toBe("sub_dup1");
+      expect(h.sub.stripeSubId).toBe("sub_old");
+    },
+  );
+
+  it("a Stripe failure on the cancel FAILS the webhook with NOTHING applied (stored sub unchanged, no upsert, no adoption); the retry cancels again under the SAME key and applies", async () => {
+    const h = make({
+      storedSubId: "sub_old",
+      storedSubStatus: "paused",
+      rows: rows(),
+      items: items(),
+      cancelFails: true,
+    });
+
+    await expect(h.completed()).rejects.toThrow("stripe down");
+
+    expect(h.sub.stripeSubId).toBe("sub_old");
+    expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(h.rows.map((r) => r.stripeItemId)).toEqual([null]);
+    expect(h.ledger()).toEqual([]);
+
+    const retry = make({
+      storedSubId: "sub_old",
+      storedSubStatus: "paused",
+      rows: rows(),
+      items: items(),
+    });
+    await retry.completed();
+    expect(retry.stripe.cancelSubscription).toHaveBeenCalledWith("sub_old", PARAMS, KEY);
+    expect(retry.sub.stripeSubId).toBe("sub_1");
+  });
+
+  it("a cancel that errors but left the sub CANCELLED at Stripe (a lost response) counts as done", async () => {
+    const h = make({
+      storedSubId: "sub_old",
+      storedSubStatus: "paused",
+      rows: rows(),
+      items: items(),
+    });
+    h.stripe.cancelSubscription.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("connection reset"), { type: "StripeConnectionError" });
+    });
+    const real = h.stripe.getSubscription.getMockImplementation()!;
+    let reads = 0;
+    h.stripe.getSubscription.mockImplementation(async (id: string, p?: unknown) =>
+      id === "sub_old" && ++reads > 1
+        ? { id, object: "subscription", status: "canceled", customer: "cus_1", items: { data: [] } }
+        : real(id, p),
+    );
+
+    await expect(h.completed()).resolves.toBeUndefined();
+
+    expect(h.sub.stripeSubId).toBe("sub_1");
+  });
+
+  it("a REDELIVERY of the applied session cancels nothing more (the stored subscription is the session's)", async () => {
+    const h = make({
+      storedSubId: "sub_old",
+      storedSubStatus: "paused",
+      rows: rows(),
+      items: items(),
+    });
+    await h.completed();
+    h.stripe.cancelSubscription.mockClear();
+    await h.completed();
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
   });
 });
 

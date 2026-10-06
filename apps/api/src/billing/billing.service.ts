@@ -52,6 +52,7 @@ import {
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
   isLiveStripeSubscriptionStatus,
+  isTerminalStripeSubscriptionStatus,
   stripeBaseItem,
   stripeInvoiceSubscriptionId,
   stripeRefId,
@@ -926,22 +927,60 @@ export class BillingService {
   }
 
   /**
-   * Is the tenant's stored subscription still live at Stripe? ONLY `resource_missing` (Stripe no longer knows
-   * it) means "not live". Any other error — a timeout, a 5xx, a rate limit, a bad key — says nothing about the
-   * subscription, and reading it as "not live" would let a paid duplicate overwrite the stored one: it
-   * RETHROWS, before anything is written, so the webhook fails and Stripe redelivers.
+   * The tenant's stored subscription at Stripe: its status, and whether that is LIVE. ONLY `resource_missing`
+   * (Stripe no longer knows it: status null, not live) means "not live". Any other error — a timeout, a 5xx, a
+   * rate limit, a bad key — says nothing about the subscription, and reading it as "not live" would let a paid
+   * duplicate overwrite the stored one: it RETHROWS, before anything is written, so the webhook fails and
+   * Stripe redelivers.
    */
-  private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
+  private async readStoredSubscription(
+    storedSubId: string,
+  ): Promise<{ live: boolean; status: string | null }> {
     try {
-      return isLiveStripeSubscriptionStatus(
-        (await this.stripe.getSubscription(storedSubId))?.status,
-      );
+      const status = (await this.stripe.getSubscription(storedSubId))?.status;
+      return {
+        live: isLiveStripeSubscriptionStatus(status),
+        status: typeof status === "string" ? status : null,
+      };
     } catch (err) {
-      if (isStripeResourceMissing(err)) return false;
+      if (isStripeResourceMissing(err)) return { live: false, status: null };
       this.logger.error(
         `checkout.session.completed: could not read the stored subscription ${storedSubId} at Stripe (${(err as Error)?.message}) — the webhook is retried, nothing was applied`,
       );
       throw err;
+    }
+  }
+
+  private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
+    return (await this.readStoredSubscription(storedSubId)).live;
+  }
+
+  /**
+   * B1155: a checkout is about to be applied over a stored subscription that is NOT live but NOT cancelled
+   * either (paused / incomplete): it would be left behind, alive in Stripe, with nothing in RouteFlow pointing
+   * at it — and a later resume would bill the tenant a second time. Cancel it FIRST (Stripe-first: a failure
+   * fails the webhook with nothing applied, and the retry does it again), at once with no proration, under its
+   * own idempotency key. A cancel that errors but left it cancelled is done; anything else rethrows.
+   */
+  private async cancelSupersededSubscription(
+    supersededSubId: string,
+    status: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `checkout.session.completed: cancelling superseded subscription ${supersededSubId} (${status}) before the new checkout is applied`,
+    );
+    try {
+      await this.stripe.cancelSubscription(
+        supersededSubId,
+        { prorate: false, invoice_now: false },
+        { idempotencyKey: `cancel-superseded:${supersededSubId}` },
+      );
+    } catch (err) {
+      const again = await this.stripe.getSubscription(supersededSubId).catch((e: unknown) => {
+        if (isStripeResourceMissing(e)) return { status: "canceled" };
+        return null;
+      });
+      if (!isTerminalStripeSubscriptionStatus(again?.status)) throw err;
     }
   }
 
@@ -1360,10 +1399,11 @@ export class BillingService {
     // The stored subscription's liveness is read at Stripe HERE, outside any transaction (never a
     // Stripe call under the tenant lock); the transactions below re-read the stored id under the lock
     // and refuse to proceed if it moved.
-    const storedLive =
+    const stored =
       storedSubId && storedSubId !== subscriptionId
-        ? await this.storedSubscriptionIsLive(storedSubId)
-        : false;
+        ? await this.readStoredSubscription(storedSubId)
+        : { live: false, status: null as string | null };
+    const storedLive = stored.live;
     // Staleness is keyed on the manual activation's own marker (read only for a manual row).
     const earlyManualAt =
       existingOverride?.externalPayment === true
@@ -1379,6 +1419,17 @@ export class BillingService {
     if (earlyVerdict) {
       await this.handleDuplicate(session, tenantId, stripeSub, earlyVerdict);
       return;
+    }
+    // B1155: this checkout is going to REPLACE a stored subscription that is neither live nor cancelled
+    // (paused / incomplete): cancel that one first, so it is not left alive and unreferenced.
+    if (
+      storedSubId &&
+      storedSubId !== subscriptionId &&
+      !stored.live &&
+      stored.status &&
+      !isTerminalStripeSubscriptionStatus(stored.status)
+    ) {
+      await this.cancelSupersededSubscription(storedSubId, stored.status);
     }
     /** Re-judged under the tenant row lock, from the row as it is NOW (a racing completion or a manual
      *  activation may have committed since the read above). A moved stored id is a retryable conflict. */
