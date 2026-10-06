@@ -676,6 +676,27 @@ describe("CounterSaleScreen: API contract wiring", () => {
           expect(screen.queryByTestId("counter-on-account")).toBeNull();
         });
 
+        it("a recovered CASH sale whose tender failed (by-key ?method=CASH answers paymentRecorded false) shows the not-recorded panel with Record payment", async () => {
+          await recover({
+            paid: 0,
+            balanceDue: 2.5,
+            change: undefined,
+            method: "CASH",
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+          });
+          // the by-key request carried the method THIS attempt rang
+          expect(lookupAsync).toHaveBeenCalledWith({ idempotencyKey: "key-1", method: "CASH" });
+          expect(screen.getByTestId("counter-payment-not-recorded")).toHaveTextContent(
+            "Sale recorded — payment not recorded",
+          );
+          expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
+            "href",
+            "/invoices/i1",
+          );
+          expect(screen.queryByTestId("counter-on-account")).toBeNull();
+        });
+
         it("an INTENDED partial (CASH 3.00 tendered, the server's total is 5.00, stored 3.00) is recorded, with the balance due and no second collection", async () => {
           mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
           renderWithProviders(<CounterSaleScreen />);
