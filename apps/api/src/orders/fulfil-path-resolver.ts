@@ -97,6 +97,11 @@ function activePath(
           `fulfil path: explicit "SHIP" equals the customer's stored path but is not offered ` +
             `(methods PICKUP); treated as omitted tenant=${deps.tenantId}`,
         );
+      } else if (!explicit && stored === SHIP) {
+        deps.logger?.warn(
+          `fulfil path: the customer's stored "SHIP" is not offered (methods PICKUP); coerced to PICKUP ` +
+            `tenant=${deps.tenantId}`,
+        );
       }
       return PICKUP;
     }
