@@ -88,6 +88,9 @@ export function EnableAddonModal({
         // ackUnmetRequirement starts false and there's no unmet requirement to acknowledge
         // otherwise, so this never sends `true` for a row with no warning.
         unmetRequirement ? ackUnmetRequirement : undefined,
+        // SA-693: a free grant is a COMP, said explicitly. Never left to the server to infer from
+        // "no price", or the row would be billable and a later trial-billing step would charge it.
+        effectiveChoice === "free",
       );
       onEnabled();
       onClose();

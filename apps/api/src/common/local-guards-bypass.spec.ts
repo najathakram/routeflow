@@ -52,6 +52,12 @@ const GUARDS: Guard[] = [
     control: true,
   },
   {
+    name: "stamp-addon-comp (a WRITER under --apply)",
+    cmd: mjs("stamp-addon-comp.mjs", "--local", "--ids", "00000000-0000-4000-8000-000000000001"),
+    refusal: /not provably local|requires DATABASE_URL/,
+    control: true,
+  },
+  {
     name: "data-questions-report",
     cmd: mjs("data-questions-report.mjs", "--local"),
     refusal: /not provably local|requires DATABASE_URL/,
