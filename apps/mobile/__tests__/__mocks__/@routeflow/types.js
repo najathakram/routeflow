@@ -22,6 +22,9 @@
 // API_ERROR_CODES (#2163): must stay equal to `packages/types/api/error-codes.ts`; pinned by
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
+  // Hand copy of packages/types/api/orders.ts BATCH_SHIP_MAX_ORDERS; pinned equal by
+  // apps/api/src/orders/order-batch-ship.spec.ts (which `require`s THIS file).
+  BATCH_SHIP_MAX_ORDERS: 50,
   // Hand copy of packages/types/api/ship-state.ts; pinned equal by
   // apps/api/src/orders/shipped-statuses-parity.spec.ts (which `require`s THIS file).
   SHIPPED_ORDER_STATUSES: ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"],

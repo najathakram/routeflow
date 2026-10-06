@@ -13,7 +13,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ios } from "@routeflow/ui/tokens";
 import type { BatchShipResultRow } from "@routeflow/types";
 import { useBatchShipOrders } from "../lib/api/orders";
-import { BATCH_SHIP_COPY, buildBatchShipRows, shippedOrderIds } from "../lib/batch-ship-copy";
+import {
+  BATCH_SHIP_COPY,
+  batchShipDetail,
+  buildBatchShipRows,
+  shippedOrderIds,
+} from "../lib/batch-ship-copy";
 import { CARRIERS } from "../lib/shipping";
 
 /**
@@ -121,7 +126,7 @@ export function BatchShipSheet({
                         {copy.label}
                       </Text>
                     </View>
-                    <Text style={styles.detail}>{copy.detail}</Text>
+                    <Text style={styles.detail}>{batchShipDetail(r)}</Text>
                   </View>
                 );
               })

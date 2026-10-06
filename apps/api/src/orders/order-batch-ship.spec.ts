@@ -7,6 +7,7 @@ import * as path from "path";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BATCH_SHIP_MAX } from "./dto/batch-ship.dto";
 import { BATCH_SHIP_OUTCOMES, OrderBatchShipService, classifyForShip } from "./order-batch-ship";
 import { ORDER_STATUS_TRANSITIONS } from "./order-status-transitions";
 
@@ -58,6 +59,15 @@ describe("outcome parity (L-072)", () => {
     const shared = (require("@routeflow/types") as Record<string, unknown>).BATCH_SHIP_OUTCOMES as
       readonly string[] | undefined;
     expect([...(shared ?? [])].sort()).toEqual([...BATCH_SHIP_OUTCOMES].sort());
+  });
+  it("api BATCH_SHIP_MAX === packages/types BATCH_SHIP_MAX_ORDERS", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = (require("@routeflow/types") as Record<string, unknown>).BATCH_SHIP_MAX_ORDERS;
+    expect(shared).toBe(BATCH_SHIP_MAX);
+    // The mobile jest stub of @routeflow/types carries a hand copy; pin it too.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mobileStub = require("../../../mobile/__tests__/__mocks__/@routeflow/types.js");
+    expect(mobileStub.BATCH_SHIP_MAX_ORDERS).toBe(BATCH_SHIP_MAX);
   });
 });
 
@@ -222,6 +232,47 @@ describe("OrderBatchShipService.batchShip", () => {
     });
     const res = await svc.batchShip([{ orderId: "a" }], user);
     expect(res.results[0].outcome).toBe("SHIPPED_INVOICE_PENDING");
+  });
+
+  it("a 400 from changeStatus -> FAILED, not INVALID_TRACKING (#3168 a)", async () => {
+    const { svc, ordersService } = build([row("a")]);
+    ordersService.changeStatus.mockRejectedValueOnce(new BadRequestException("bad transition"));
+    const res = await svc.batchShip([{ orderId: "a" }], user);
+    expect(res.results[0].outcome).toBe("FAILED");
+  });
+
+  it("a non-invoice 409 on an order that ended shipped -> FAILED, not SHIPPED_INVOICE_PENDING (#3168 b)", async () => {
+    const { svc, ordersService, db } = build([row("a")]);
+    ordersService.changeStatus.mockImplementationOnce(async (id: string) => {
+      db.get(id)!.status = OrderStatus.OUT_FOR_DELIVERY;
+      throw new ConflictException({ code: "SOME_OTHER_CONFLICT" });
+    });
+    const res = await svc.batchShip([{ orderId: "a" }], user);
+    expect(res.results[0].outcome).toBe("FAILED");
+  });
+
+  it("ORDER_INVOICES_NEED_REVIEW on a shipped order -> SHIPPED_INVOICE_PENDING (#3168 b)", async () => {
+    const { svc, ordersService, db } = build([row("a")]);
+    ordersService.changeStatus.mockImplementationOnce(async (id: string) => {
+      db.get(id)!.status = OrderStatus.OUT_FOR_DELIVERY;
+      throw new ConflictException({ code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW });
+    });
+    const res = await svc.batchShip([{ orderId: "a" }], user);
+    expect(res.results[0].outcome).toBe("SHIPPED_INVOICE_PENDING");
+  });
+
+  it("tracking saved but the ship failed -> trackingSaved + message says so (#3168 c)", async () => {
+    const { svc, ordersService } = build([row("a"), row("b")]);
+    ordersService.changeStatus.mockRejectedValueOnce(new Error("pg down"));
+    const res = await svc.batchShip(
+      [{ orderId: "a", carrier: "UPS", trackingNumber: "1Z" }, { orderId: "b" }],
+      user,
+    );
+    expect(res.results[0].outcome).toBe("FAILED");
+    expect(res.results[0].trackingSaved).toBe(true);
+    expect(res.results[0].message).toMatch(/tracking was saved/i);
+    expect(res.results[0].message).not.toMatch(/nothing was/i);
+    expect(res.results[1].trackingSaved).toBeFalsy();
   });
 
   it("an unknown error with the status unchanged -> FAILED (message not leaked raw)", async () => {

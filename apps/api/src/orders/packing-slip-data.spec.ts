@@ -101,4 +101,38 @@ describe("buildPackingSlipPages", () => {
       /unitPrice|subtotal|taxAmount|\btotal\b|price|fmt\(|toFixed|\$\{?\s*\d/i,
     );
   });
+
+  it("prefers the SHIPPING address over a default billing one, then falls back (#3168 d)", () => {
+    const billing = {
+      line1: "1 Bill",
+      city: "B",
+      state: "CA",
+      zip: "1",
+      isDefault: true,
+      addressType: "BILLING",
+    };
+    const shipping = {
+      line1: "2 Ship",
+      city: "S",
+      state: "CA",
+      zip: "2",
+      isDefault: false,
+      addressType: "SHIPPING",
+    };
+    const withShip = buildPackingSlipPages(
+      [
+        order({
+          customer: { businessName: "Shop", contactName: "Pat", addresses: [billing, shipping] },
+        }),
+      ],
+      seller,
+    )[0];
+    expect(withShip.shipTo).toContain("2 Ship");
+    expect(withShip.shipTo).not.toContain("1 Bill");
+    const billingOnly = buildPackingSlipPages(
+      [order({ customer: { businessName: "Shop", contactName: "Pat", addresses: [billing] } })],
+      seller,
+    )[0];
+    expect(billingOnly.shipTo).toContain("1 Bill");
+  });
 });

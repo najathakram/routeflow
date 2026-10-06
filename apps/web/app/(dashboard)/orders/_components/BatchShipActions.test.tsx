@@ -1,8 +1,8 @@
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { BatchShipActions } from "./BatchShipActions";
-import { BATCH_SHIP_COPY, shippedOrderIds } from "@/lib/batch-ship-copy";
-import { BATCH_SHIP_OUTCOMES } from "@routeflow/types";
+import { BATCH_SHIP_COPY, batchShipDetail, shippedOrderIds } from "@/lib/batch-ship-copy";
+import { BATCH_SHIP_MAX_ORDERS, BATCH_SHIP_OUTCOMES } from "@routeflow/types";
 
 const batchMutateAsync = jest.fn();
 const slipsMutateAsync = jest.fn();
@@ -134,6 +134,65 @@ describe("BatchShipActions", () => {
     fireEvent.click(screen.getByTestId("batch-ship-slips-open"));
     await waitFor(() => expect(slipsMutateAsync).toHaveBeenCalledWith(["o1", "o2", "o3"]));
     await waitFor(() => expect(printPdfBlob).toHaveBeenCalled());
+  });
+});
+
+describe("batch size cap (#3168 MUST 2)", () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `m${i}`, orderNumber: `SO-${i}` }));
+
+  it("at the cap both actions are enabled and no limit copy shows", () => {
+    renderWithProviders(
+      <BatchShipActions orders={many(BATCH_SHIP_MAX_ORDERS)} onDone={jest.fn()} />,
+    );
+    expect(screen.getByTestId("batch-ship-open")).toBeEnabled();
+    expect(screen.getByTestId("batch-ship-slips-open")).toBeEnabled();
+    expect(screen.queryByTestId("batch-ship-limit")).toBeNull();
+  });
+
+  it("over the cap both actions are disabled with the exact copy and nothing is sent", () => {
+    renderWithProviders(
+      <BatchShipActions orders={many(BATCH_SHIP_MAX_ORDERS + 1)} onDone={jest.fn()} />,
+    );
+    expect(screen.getByTestId("batch-ship-open")).toBeDisabled();
+    expect(screen.getByTestId("batch-ship-slips-open")).toBeDisabled();
+    expect(screen.getByTestId("batch-ship-limit")).toHaveTextContent(
+      "Select up to 50 orders to ship at once",
+    );
+    fireEvent.click(screen.getByTestId("batch-ship-slips-open"));
+    expect(slipsMutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe("tracking-saved copy (#3168 c)", () => {
+  it("batchShipDetail says the tracking was saved, never 'nothing was changed'", () => {
+    const d = batchShipDetail({ outcome: "FAILED", trackingSaved: true });
+    expect(d).toMatch(/tracking was saved/i);
+    expect(d).not.toMatch(/nothing was/i);
+    expect(batchShipDetail({ outcome: "INVALID_TRACKING" })).toBe(
+      BATCH_SHIP_COPY.INVALID_TRACKING.detail,
+    );
+  });
+
+  it("the result row renders it", async () => {
+    batchMutateAsync.mockResolvedValue({
+      results: [
+        {
+          orderId: "o1",
+          orderNumber: "SO-1",
+          outcome: "CREDIT_HOLD",
+          message: "",
+          trackingSaved: true,
+        },
+      ],
+    });
+    const onDone = jest.fn();
+    renderWithProviders(<BatchShipActions orders={orders} onDone={onDone} />);
+    fireEvent.click(screen.getByTestId("batch-ship-open"));
+    fireEvent.click(screen.getByTestId("batch-ship-submit"));
+    expect(await screen.findByTestId("batch-ship-result-o1")).toHaveTextContent(
+      /tracking was saved/i,
+    );
   });
 });
 

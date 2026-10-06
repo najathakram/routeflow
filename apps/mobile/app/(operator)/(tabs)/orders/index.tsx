@@ -21,6 +21,11 @@ import { DraftStrip } from "../../../../components/DraftStrip";
 import { BatchShipSheet } from "../../../../components/BatchShipSheet";
 import { usePackingSlips } from "../../../../lib/api/orders";
 import { useTenantFeatures } from "../../../../lib/tenant-features";
+import {
+  batchShipLimit,
+  orderSelectControls,
+  visibleSelectedIds,
+} from "../../../../lib/batch-ship-select";
 import { printPdf } from "../../../../lib/print-pdf";
 import { showToast } from "../../../../lib/toast";
 import {
@@ -177,6 +182,14 @@ export default function OrdersListScreen() {
   };
 
   const orders = data?.data ?? [];
+  const { showSelect, showPlanTrip } = orderSelectControls({ deliveryEnabled, offersShip });
+  // Only selected orders still in the loaded list count / ship / print (a filter change can leave
+  // off-screen ids selected).
+  const selectedIds = visibleSelectedIds(
+    selected,
+    orders.map((o) => o.id),
+  );
+  const shipLimit = batchShipLimit(selectedIds.length);
 
   // O-6: detect customers with multiple PENDING orders so the operator can see duplicates at a glance
   const pendingCountByCustomer = useMemo(() => {
@@ -195,7 +208,7 @@ export default function OrdersListScreen() {
       <NavBar
         largeTitle="Orders"
         leading={
-          deliveryEnabled ? (
+          showSelect ? (
             <NavAction label={selectMode ? "Done" : "Select"} onPress={toggleSelectMode} />
           ) : undefined
         }
@@ -296,37 +309,45 @@ export default function OrdersListScreen() {
           target, no double-submit. */}
       {selectMode ? (
         <View style={styles.bulkBar}>
-          <Pressable
-            style={[styles.bulkBtn, selected.size === 0 && styles.bulkBtnDisabled]}
-            disabled={selected.size === 0}
-            onPress={handlePlanTrip}
-          >
-            <Ionicons name="navigate-outline" size={18} color="#fff" />
-            <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
-          </Pressable>
+          {showPlanTrip ? (
+            <Pressable
+              style={[styles.bulkBtn, selected.size === 0 && styles.bulkBtnDisabled]}
+              disabled={selected.size === 0}
+              onPress={handlePlanTrip}
+            >
+              <Ionicons name="navigate-outline" size={18} color="#fff" />
+              <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
+            </Pressable>
+          ) : null}
+          {offersShip && shipLimit.message ? (
+            <Text style={styles.bulkLimitText} testID="batch-ship-limit">
+              {shipLimit.message}
+            </Text>
+          ) : null}
           {offersShip ? (
             <View style={styles.bulkShipRow}>
               <Pressable
                 style={[
                   styles.bulkBtn,
                   styles.bulkShipBtn,
-                  selected.size === 0 && styles.bulkBtnDisabled,
+                  (selectedIds.length === 0 || shipLimit.tooMany) && styles.bulkBtnDisabled,
                 ]}
-                disabled={selected.size === 0}
+                disabled={selectedIds.length === 0 || shipLimit.tooMany}
                 onPress={() => setShipSheetOpen(true)}
                 accessibilityRole="button"
                 testID="batch-ship-open"
               >
-                <Text style={styles.bulkBtnText}>Mark shipped ({selected.size})</Text>
+                <Text style={styles.bulkBtnText}>Mark shipped ({selectedIds.length})</Text>
               </Pressable>
               <Pressable
                 style={[
                   styles.bulkBtn,
                   styles.bulkShipBtn,
-                  (selected.size === 0 || packingSlips.isPending) && styles.bulkBtnDisabled,
+                  (selectedIds.length === 0 || shipLimit.tooMany || packingSlips.isPending) &&
+                    styles.bulkBtnDisabled,
                 ]}
-                disabled={selected.size === 0 || packingSlips.isPending}
-                onPress={() => void printSlips([...selected])}
+                disabled={selectedIds.length === 0 || shipLimit.tooMany || packingSlips.isPending}
+                onPress={() => void printSlips(selectedIds)}
                 accessibilityRole="button"
                 testID="batch-ship-slips-open"
               >
@@ -533,6 +554,7 @@ const styles = StyleSheet.create({
   },
   bulkBtnDisabled: { opacity: 0.4 },
   bulkShipRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  bulkLimitText: { fontSize: 13, color: ios.system.redInk, marginTop: 8, textAlign: "center" },
   bulkShipBtn: { flex: 1, paddingHorizontal: 8 },
   bulkBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });

@@ -94,7 +94,7 @@ export interface LineComponentView {
 // ─── Batch ship + packing slips (#3168) ────────────────────────────────────────────────────────
 // "Mark shipped" for several carrier (fulfillPath SHIP) orders in one action, and one printable
 // packing slip per order. The api keeps a literal copy of BATCH_SHIP_OUTCOMES (it cannot value-import
-// this raw-TS package, L-072); apps/api/src/orders/order-batch-ship.parity.spec.ts pins the two equal.
+// this raw-TS package, L-072); apps/api/src/orders/order-batch-ship.spec.ts pins the two equal.
 
 /** The per-order result of a batch ship. Refusals (everything but SHIPPED*) write nothing. */
 export const BATCH_SHIP_OUTCOMES = [
@@ -129,6 +129,8 @@ export interface BatchShipResultRow {
   orderNumber: string | null;
   outcome: BatchShipOutcome;
   message: string;
+  /** True when the tracking was written but the order did not ship (the tracking stays saved). */
+  trackingSaved?: boolean;
 }
 
 export interface BatchShipResult {

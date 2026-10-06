@@ -17,13 +17,13 @@ const full = (id: string, over: any = {}) => ({
   ...over,
 });
 
-function build(rows: any[]) {
+function build(rows: any[], tenantId: string | null = "t1") {
   const findMany = jest.fn(async ({ where }: any) =>
     rows.filter((r) => where.id.in.includes(r.id)),
   );
   const prisma = {
     forTenant: () => ({ order: { findMany } }),
-    getTenantId: () => "t1",
+    getTenantId: () => tenantId,
     tenantConfig: { findUnique: jest.fn(async () => ({ businessName: "Seller" })) },
   } as any;
   const storage = {
@@ -69,5 +69,19 @@ describe("PackingSlipService.generate", () => {
     const { svc, findMany } = build([full("a")]);
     await svc.generate(["a"]);
     expect(findMany).toHaveBeenCalled();
+  });
+
+  it("throws (never writes under a literal 'none' prefix) when the tenant id is missing", async () => {
+    const { svc, storage } = build([full("a")], null);
+    await expect(svc.generate(["a"])).rejects.toThrow(/tenant/i);
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it("reads the customer's addresses with addressType and without a take:1 cut", async () => {
+    const { svc, findMany } = build([full("a")]);
+    await svc.generate(["a"]);
+    const addr = findMany.mock.calls[0][0].select.customer.select.addresses;
+    expect(addr.select.addressType).toBe(true);
+    expect(addr.take).toBeUndefined();
   });
 });

@@ -66,6 +66,16 @@ export const BATCH_SHIP_COPY: Record<
   },
 };
 
+/**
+ * The per-order result wording. When the tracking was written but the order did not ship, the row says
+ * the tracking was saved (never "Nothing was changed", which would be false).
+ */
+export function batchShipDetail(r: { outcome: BatchShipOutcome; trackingSaved?: boolean }): string {
+  const copy = BATCH_SHIP_COPY[r.outcome];
+  if (!r.trackingSaved || copy.shipped) return copy.detail;
+  return `${copy.detail.replace(/ ?Nothing was changed\./, "").trim()} Tracking was saved.`;
+}
+
 /** The ids that actually shipped in a batch result: the only ones a packing slip is printed for. */
 export function shippedOrderIds(
   results: { orderId: string; outcome: BatchShipOutcome }[],

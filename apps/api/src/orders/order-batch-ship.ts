@@ -45,6 +45,8 @@ export interface BatchShipRow {
   orderNumber: string | null;
   outcome: BatchShipOutcome;
   message: string;
+  /** True when the tracking was written but the order did not ship (the tracking stays saved). */
+  trackingSaved?: boolean;
 }
 
 const MESSAGES: Record<BatchShipOutcome, string> = {
@@ -64,6 +66,10 @@ const MESSAGES: Record<BatchShipOutcome, string> = {
 /** Same limits as UpdateShipmentDto (carrier 64, tracking 128). */
 const MAX_CARRIER = 64;
 const MAX_TRACKING = 128;
+const SHIPPED_OUTCOMES: ReadonlySet<BatchShipOutcome> = new Set<BatchShipOutcome>([
+  "SHIPPED",
+  "SHIPPED_INVOICE_PENDING",
+]);
 
 /**
  * Pure: why this order cannot ship, or null when it can. Reads the shared transition table and
@@ -84,6 +90,15 @@ export function classifyForShip(order: {
 const codeOf = (err: unknown): string | undefined => {
   const res = (err as { getResponse?: () => unknown } | null)?.getResponse?.();
   return res && typeof res === "object" ? (res as { code?: string }).code : undefined;
+};
+
+/** The invoice-settle failure shape (order-status-invoicing.ts): the review code, or its "marked ..., but its invoice" 409. */
+const isInvoiceFailure = (err: unknown, code: string | undefined): boolean => {
+  if (code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW) return true;
+  return (
+    err instanceof ConflictException &&
+    /^The order was marked \w+, but its invoice /.test(err.message ?? "")
+  );
 };
 
 @Injectable()
@@ -117,6 +132,23 @@ export class OrderBatchShipService {
     return { orderId, orderNumber, outcome, message: MESSAGES[outcome] };
   }
 
+  /** A not-shipped result after the tracking was already written: say the tracking was saved. */
+  private rowTrackingSaved(
+    orderId: string,
+    orderNumber: string | null,
+    outcome: BatchShipOutcome,
+  ): BatchShipRow {
+    if (SHIPPED_OUTCOMES.has(outcome)) return this.row(orderId, orderNumber, outcome);
+    const base = MESSAGES[outcome].replace(/ ?Nothing was (changed|confirmed)[^.]*\.?/, "");
+    return {
+      orderId,
+      orderNumber,
+      outcome,
+      message: `${base.trim()} The tracking was saved.`,
+      trackingSaved: true,
+    };
+  }
+
   private async shipOne(input: BatchShipInput, user: JwtPayload): Promise<BatchShipRow> {
     const { orderId } = input;
     let order: {
@@ -146,6 +178,7 @@ export class OrderBatchShipService {
       return this.row(orderId, num, "INVALID_TRACKING");
     }
 
+    let trackingWritten = false;
     try {
       if (tracking) {
         await this.ordersService.updateShipment(
@@ -153,6 +186,7 @@ export class OrderBatchShipService {
           { shippingCarrier: carrier, shippingTrackingNumber: tracking },
           user,
         );
+        trackingWritten = true;
       }
     } catch (err) {
       if (err instanceof BadRequestException) return this.row(orderId, num, "INVALID_TRACKING");
@@ -168,7 +202,10 @@ export class OrderBatchShipService {
       );
       return this.row(orderId, num, "SHIPPED");
     } catch (err) {
-      return this.row(orderId, num, await this.mapStatusError(orderId, err));
+      const outcome = await this.mapStatusError(orderId, err);
+      return trackingWritten
+        ? this.rowTrackingSaved(orderId, num, outcome)
+        : this.row(orderId, num, outcome);
     }
   }
 
@@ -177,13 +214,14 @@ export class OrderBatchShipService {
     const code = codeOf(err);
     if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED) return "CREDIT_HOLD";
     if (code === API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT) return "ORDER_CHANGED";
-    if (err instanceof BadRequestException) return "INVALID_TRACKING";
-    if (err instanceof ConflictException || code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW) {
+    // A 400 from changeStatus is a status/transition refusal, not bad tracking (tracking was validated
+    // by updateShipment above), so it falls through to FAILED.
+    if (isInvoiceFailure(err, code)) {
       // changeStatus raises the invoice-settle failure AFTER the status committed.
       if (await this.isShippedNow(orderId)) return "SHIPPED_INVOICE_PENDING";
     }
     this.logger.warn(
-      `batch ship failed for ${orderId}: ${err instanceof Error ? err.message : err}`,
+      `batch ship failed for ${orderId}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return "FAILED";
   }

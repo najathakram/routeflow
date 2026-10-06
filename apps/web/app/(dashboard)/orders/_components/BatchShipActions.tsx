@@ -3,12 +3,12 @@
 import * as React from "react";
 import { Loader2, Printer, Truck } from "lucide-react";
 import { Button, Modal, cn, useToast } from "@routeflow/ui/web";
-import type { BatchShipResultRow } from "@routeflow/types";
+import { BATCH_SHIP_MAX_ORDERS, type BatchShipResultRow } from "@routeflow/types";
 import { useBatchShipOrders, usePackingSlips } from "@/lib/api/orders";
 import { useTenantFeatures } from "@/lib/tenant-features";
 import { CARRIERS } from "@/lib/shipping";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
-import { BATCH_SHIP_COPY, shippedOrderIds } from "@/lib/batch-ship-copy";
+import { BATCH_SHIP_COPY, batchShipDetail, shippedOrderIds } from "@/lib/batch-ship-copy";
 
 /**
  * Bulk-bar actions for carrier orders (#3168): "Mark shipped (n)" opens a dialog with an optional
@@ -40,7 +40,11 @@ export function BatchShipActions({
 
   if (!offersShip || orders.length === 0) return null;
 
+  // The API 400s above BATCH_SHIP_MAX_ORDERS, so block it here.
+  const tooMany = orders.length > BATCH_SHIP_MAX_ORDERS;
+
   const printSlips = async (ids: string[]) => {
+    if (ids.length > BATCH_SHIP_MAX_ORDERS) return;
     try {
       const res = await slips.mutateAsync(ids);
       if (!res.blob) {
@@ -107,7 +111,8 @@ export function BatchShipActions({
         type="button"
         data-testid="batch-ship-open"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
+        disabled={tooMany}
+        className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
       >
         <Truck className="h-3.5 w-3.5" />
         Mark shipped ({orders.length})
@@ -116,7 +121,7 @@ export function BatchShipActions({
         type="button"
         data-testid="batch-ship-slips-open"
         onClick={() => void printSlips(orders.map((o) => o.id))}
-        disabled={slips.isPending}
+        disabled={slips.isPending || tooMany}
         className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
       >
         {slips.isPending ? (
@@ -126,6 +131,11 @@ export function BatchShipActions({
         )}
         Print packing slips
       </button>
+      {tooMany && (
+        <span data-testid="batch-ship-limit" role="status" className="text-[12.5px] text-amber-300">
+          Select up to {BATCH_SHIP_MAX_ORDERS} orders to ship at once
+        </span>
+      )}
 
       <Modal
         open={open}
@@ -192,7 +202,7 @@ export function BatchShipActions({
                       <div className="font-medium text-navy">
                         {r.orderNumber ?? numberOf(r.orderId)}
                       </div>
-                      <div className="text-xs text-navy/60">{copy.detail}</div>
+                      <div className="text-xs text-navy/60">{batchShipDetail(r)}</div>
                     </div>
                     <span
                       className={cn(

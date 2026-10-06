@@ -37,6 +37,7 @@ export interface PackingSlipOrderLike {
       state: string;
       zip: string;
       isDefault?: boolean;
+      addressType?: string | null;
     }[];
   };
   items: {
@@ -88,8 +89,14 @@ export function buildPackingSlipPages(
   seller: PackingSlipSeller,
 ): PackingSlipPage[] {
   return orders.map((o) => {
+    // Ship-to: the customer's SHIPPING/DELIVERY address first (a billing default must not win), then
+    // the default, then the first one.
+    const isShipping = (a: { addressType?: string | null }) =>
+      ["SHIPPING", "DELIVERY"].includes((a.addressType ?? "").trim().toUpperCase());
     const addr = [...o.customer.addresses].sort(
-      (a, b) => Number(!!b.isDefault) - Number(!!a.isDefault),
+      (a, b) =>
+        Number(isShipping(b)) - Number(isShipping(a)) ||
+        Number(!!b.isDefault) - Number(!!a.isDefault),
     )[0];
     const shipTo = [
       o.customer.businessName,

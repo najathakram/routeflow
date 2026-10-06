@@ -58,9 +58,9 @@ export class PackingSlipService {
                   state: true,
                   zip: true,
                   isDefault: true,
+                  addressType: true,
                 },
                 orderBy: { isDefault: "desc" },
-                take: 1,
               },
             },
           },
@@ -124,7 +124,9 @@ export class PackingSlipService {
       this.logger.error(`Packing slip render failed: ${err instanceof Error ? err.stack : err}`);
       throw new Error("Packing slip render failed");
     }
-    const key = `packing-slips/${tenantId ?? "none"}/${randomUUID()}.pdf`;
+    // The key embeds the tenant id (uploads.controller enforces it on read): never write one without it.
+    if (!tenantId) throw new Error("Packing slip storage requires a tenant id");
+    const key = `packing-slips/${tenantId}/${randomUUID()}.pdf`;
     await this.storage.upload(key, pdf, "application/pdf");
     return {
       url: await this.storage.presignedUrl(key),
