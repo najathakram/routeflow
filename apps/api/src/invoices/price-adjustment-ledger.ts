@@ -2,7 +2,9 @@ import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
   computeCategoryTax,
+  computeLineSubtotal,
   inferredGoodsFlatRate,
+  packFromOwnSplit,
   regulatedUnitBasis,
   roundMoney,
   type CategoryTaxType,
@@ -85,10 +87,49 @@ export async function syncLedgerAfterPriceChange(
 }
 
 /**
+ * B1120: a re-priced line's total (after its stored line discount) AT `newPrice`, a whole-cent price already
+ * rounded by the caller. The line is priced from its OWN numbers through `computeLineSubtotal`, the same
+ * helper every other line writer uses (a box + loose pieces split at the BOX price, free units taken off
+ * first, a loose line at `price x qty`), never from a multiplier recovered out of the stored subtotal: that
+ * subtotal is already rounded, so `subtotal / oldPrice` is not the quantity (50.13 / 8.36 = 5.9964 for six),
+ * and a fractional multiplier drifted a few cents on every repeat adjust.
+ *
+ * The pack comes from the line's own snapshot, else from its OWN boxes/pieces/qty (`packFromOwnSplit`), never
+ * from the live product (which may have been repacked since). A line that HAS a box split but whose pack
+ * neither source yields (a legacy `boxes: 0, pieces: N` line with no snapshot) cannot be priced from its
+ * fields: reading the split as loose pieces would bill the BOX price per piece, so that one shape keeps the
+ * proportional recovery (a re-price to the same price is then the identity, and it is never a 12x overcharge).
+ */
+function repricedLineTotal(line: any, newPrice: number, discount: number): number {
+  const qty = Number(line.qty);
+  const hasSplit = line.boxes != null || line.pieces != null;
+  const snapshot = Number(line.unitsPerBox ?? 0);
+  const pack =
+    snapshot > 1 ? snapshot : packFromOwnSplit({ qty, boxes: line.boxes, pieces: line.pieces });
+  if (hasSplit && pack == null) {
+    const oldUnitPrice = Number(line.unitPrice);
+    const multiplier = oldUnitPrice > 0 ? (Number(line.subtotal) + discount) / oldUnitPrice : qty;
+    return roundMoney(newPrice * multiplier - discount);
+  }
+  const beforeDiscount = computeLineSubtotal({
+    unitPrice: newPrice,
+    qty,
+    boxes: line.boxes,
+    pieces: line.pieces,
+    unitsPerBox: pack,
+    freeUnits: line.promoFreeUnits,
+  });
+  return roundMoney(beforeDiscount - discount);
+}
+
+/**
  * The per-line writes of `applyPriceAdjustment` (moved here so `invoices.service.ts` holds flat, B662): the
  * new unit price and subtotal, and, for a REGULATED line, the category tax re-derived from the NEW subtotal
  * (F03/R3/T-B57). An exempt customer owes $0 of category tax just as they owe $0 of the regular tax
  * (foldCategoryTax's contract), so re-deriving it would bill excise the creation path correctly zeroed.
+ * B1120: the price is rounded to whole cents HERE, before it is written or priced from (every unit price
+ * column is numeric(10,2); the DTO already refuses a 3rd decimal, this is the write-site guarantee for every
+ * caller, the bulk map included), so the stored price and the stored line total can never disagree.
  * Pure: it only reads its arguments.
  */
 export function buildPriceAdjustmentUpdates(args: {
@@ -112,16 +153,10 @@ export function buildPriceAdjustmentUpdates(args: {
     ).unitBasisQty;
   const updates: Array<{ id: string; data: Record<string, any> }> = [];
   for (const item of items) {
-    const newPrice = localPriceMap.get(item.id);
-    if (newPrice == null) continue;
-    // Recover the line's selling-unit multiplier (box-equivalent for boxed lines, plain qty otherwise)
-    // from the existing line so re-pricing keeps boxed proration without needing unitsPerBox here:
-    //   beforeDiscount = subtotal + discount = oldUnitPrice * multiplier.
-    const oldUnitPrice = Number(item.unitPrice);
-    const oldDiscount = Number(item.discount ?? 0);
-    const multiplier =
-      oldUnitPrice > 0 ? (Number(item.subtotal) + oldDiscount) / oldUnitPrice : Number(item.qty);
-    const newSubtotal = roundMoney(newPrice * multiplier - oldDiscount);
+    const requested = localPriceMap.get(item.id);
+    if (requested == null) continue;
+    const newPrice = roundMoney(requested); // B1120: whole cents, the price the line is priced AT and stored as
+    const newSubtotal = repricedLineTotal(item, newPrice, Number(item.discount ?? 0));
     const data: Record<string, any> = { unitPrice: newPrice, subtotal: newSubtotal };
     const category = item.trackedCategoryId ? categoriesById.get(item.trackedCategoryId) : null;
     if (category) {
