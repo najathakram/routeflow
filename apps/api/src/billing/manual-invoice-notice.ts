@@ -13,6 +13,12 @@ export interface ManualInvoiceNotice {
   addonName: string;
   fromQty: number;
   toQty: number;
+  /** Billing cycle the owner invoices on — written only for ANNUAL, with `cycleAmount`. */
+  cycle?: "MONTHLY" | "ANNUAL";
+  /** What this line comes to per `cycle` (annual: cyclePrice × qty). The ledger's MRR stays monthly. */
+  cycleAmount?: number;
+  /** Set when the owner must complete the line before invoicing it. */
+  reason?: "price_unknown" | "quantity_missing";
 }
 
 /**
@@ -39,6 +45,8 @@ export async function writeManualInvoiceNotice(tx: any, n: ManualInvoiceNotice):
         kind: n.kind,
         fromQty: n.fromQty,
         toQty: n.toQty,
+        ...(n.cycle === "ANNUAL" ? { cycle: n.cycle, cycleAmount: n.cycleAmount } : {}),
+        ...(n.reason ? { reason: n.reason } : {}),
       },
     },
   });

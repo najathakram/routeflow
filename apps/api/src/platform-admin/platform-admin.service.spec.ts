@@ -22,6 +22,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
+import * as manualActivationAddons from "../billing/manual-activation-addons";
 import { UserRole } from "@prisma/client";
 
 /**
@@ -2911,6 +2912,138 @@ describe("PlatformAdminService — audit provenance", () => {
       const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
       expect(upsertArg.create.cycle).toBe("ANNUAL");
       expect(upsertArg.update.cycle).toBe("ANNUAL");
+    });
+  });
+
+  // SA-668c residual / M-A: the manual activation hands a trial's unbilled self-serve add-ons to the pricing
+  // helper — the wiring (which status/class/cycle it sees, which locks it takes) is what these pin; the helper's
+  // own rules are in billing/manual-activation-addons.spec.ts and, on real Postgres, the override-activation DB spec.
+  describe("activateManualSubscription — wiring to priceUnbilledAddonsOnActivation (SA-668c / M-A)", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+    let priceSpy: jest.SpyInstance;
+    let lockSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+        addonSkus: [{ sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", monthlyPrice: 50 }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([
+        {
+          sku: "CUSTOMER_PACK_100",
+          addonKey: "CUSTOMER_PACK_100",
+          quantity: 2,
+          active: true,
+          priceSnapshot: 0,
+          stripeItemId: null,
+          isComp: false,
+        },
+      ]);
+      priceSpy = jest.spyOn(manualActivationAddons, "priceUnbilledAddonsOnActivation");
+      priceSpy.mockResolvedValue([]);
+      lockSpy = jest.spyOn(manualActivationAddons, "withAddonLocks");
+      lockSpy.mockImplementation(async (_t: string, _s: readonly string[], fn: () => unknown) =>
+        fn(),
+      );
+    });
+    afterEach(() => {
+      priceSpy.mockRestore();
+      lockSpy.mockRestore();
+    });
+
+    const tenantBefore = (over: Record<string, unknown> = {}) =>
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        name: "Acme Foods",
+        slug: "acme",
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+        ...over,
+      } as any);
+
+    it("hands the helper the tx, the ledger, the status/class it read under the tenant lock, the cycle, plan, catalog and actor", async () => {
+      tenantBefore();
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy).toHaveBeenCalledTimes(1);
+      const [tx, events, args] = priceSpy.mock.calls[0];
+      expect(tx).toBeDefined();
+      expect(events).toBe(billingEventService);
+      expect(args).toMatchObject({
+        tenantId: TENANT_ID,
+        tenantLabel: "Acme Foods",
+        fromStatus: "TRIAL",
+        tenantClass: "PRODUCTION",
+        cycle: "MONTHLY",
+        planKey: "SCALE",
+        actorId: ADMIN_ID,
+        catalogAddons: [expect.objectContaining({ sku: "CUSTOMER_PACK_100" })],
+      });
+    });
+
+    it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
+      tenantBefore();
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 365 },
+        ADMIN_ID,
+      );
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ cycle: "ANNUAL" });
+    });
+
+    it("passes the status as it stands in the tx — an ACTIVE tenant's renewal reaches the helper as ACTIVE (which prices nothing)", async () => {
+      tenantBefore({ status: "ACTIVE", subscription: { planKey: "SCALE" } });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ fromStatus: "ACTIVE" });
+    });
+
+    it("a non-PRODUCTION class is passed through (the helper writes no notice for it)", async () => {
+      tenantBefore({ class: "DEMO" });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ tenantClass: "DEMO" });
+    });
+
+    it("takes the add-on billing locks for the unbilled self-serve SKUs BEFORE the transaction, and the tenant row lock inside it", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      lockSpy.mockImplementation(async (t: string, skus: readonly string[], fn: () => unknown) => {
+        order.push(`locks:${t}:${skus.join(",")}`);
+        return fn();
+      });
+      (prisma.$transaction as jest.Mock).mockImplementation((fn: any) => {
+        order.push("tx");
+        return fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+      });
+      priceSpy.mockImplementation(async () => {
+        order.push("price");
+        return [];
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual([`locks:${TENANT_ID}:CUSTOMER_PACK_100`, "tx", "price"]);
+    });
+
+    it("no unbilled self-serve add-on: the helper is not called and no lock is taken", async () => {
+      tenantBefore();
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy).not.toHaveBeenCalled();
+      expect(lockSpy).toHaveBeenCalledWith(TENANT_ID, [], expect.any(Function));
     });
   });
 

@@ -40,7 +40,7 @@ import {
 import { bookAddonsOnCrossing, lockTenantForLedger } from "../billing/addon-ledger";
 import {
   priceUnbilledAddonsOnActivation,
-  unpricedSelfServeSkus,
+  unbilledSelfServeSkus,
   withAddonLocks,
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
@@ -971,7 +971,7 @@ export class PlatformAdminService {
     dto: ActivateSubscriptionDto,
     adminId: string | null = null,
   ) {
-    const tenantRow = await this._findOrThrow(id);
+    await this._findOrThrow(id);
 
     // FINDING-2 (Lite-L2 review): resolve + validate against the published catalog, and persist
     // both planKey and planVersionId — this write previously set tenant.plan/currentPlan with no
@@ -1011,7 +1011,7 @@ export class PlatformAdminService {
     // SA-668c residual: the trial's unbilled self-serve add-ons are priced by this activation (see
     // `priceUnbilledAddonsOnActivation`). Their billing add-on locks are taken BEFORE the transaction
     // (house order: add-on lock, then the tenant row lock inside it); none to price, none taken.
-    const addonSkusToPrice = await unpricedSelfServeSkus(this.prisma, id);
+    const addonSkusToPrice = await unbilledSelfServeSkus(this.prisma, id);
 
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
@@ -1207,10 +1207,15 @@ export class PlatformAdminService {
         // SA-668c residual ("price them + notify"): after the crossing above (which saw the trial's
         // add-ons at their stored 0 and booked nothing for them), each unbilled self-serve add-on is
         // priced at today's catalog price, its delta booked once, and the platform told to invoice it.
+        // ONLY on the TRIAL → ACTIVE crossing (M-A): the status read above, under the tenant row lock,
+        // is what the helper gates on — a renewal of an already-ACTIVE manual tenant prices nothing.
         if (addonSkusToPrice.length > 0) {
           await priceUnbilledAddonsOnActivation(tx, this.billingEventService, {
             tenantId: id,
             tenantLabel: before.name ?? before.slug ?? id,
+            fromStatus: before.status,
+            tenantClass: before.class,
+            cycle,
             planKey: definition.planKey,
             catalogAddons: version.addonSkus,
             actorId: adminId,
