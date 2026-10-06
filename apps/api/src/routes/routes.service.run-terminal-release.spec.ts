@@ -12,6 +12,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({
@@ -176,6 +177,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
   beforeEach(async () => {
     stopStatus = {};
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2", a3: "c3" });
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest

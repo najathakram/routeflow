@@ -204,6 +204,9 @@ describe("MessagingService (P6-2 engine)", () => {
 
     it.each([
       NotificationEvent.OUT_FOR_DELIVERY,
+      NotificationEvent.ORDER_SHIPPED,
+      NotificationEvent.SHIPMENT_TRACKING_ADDED,
+      NotificationEvent.READY_FOR_PICKUP,
       NotificationEvent.DELIVERED,
       NotificationEvent.CANCELLED,
       NotificationEvent.ORDER_CHANGED_AT_DOOR,
@@ -239,6 +242,116 @@ describe("MessagingService (P6-2 engine)", () => {
       });
       expect(res.outcome).toBe("sent");
       expect(provider.send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("notify() channels / exceptChannels (carrier-shipped per-channel split)", () => {
+    const tpl = { body: "Hi {{customerName}}", isActive: true, waTemplateName: null };
+    const rulesOn = (...channels: MessageChannel[]) =>
+      prisma.notificationRule.findMany.mockResolvedValue(channels.map((channel) => ({ channel })));
+
+    it("channels: dispatches ONLY on the listed channels", async () => {
+      rulesOn(MessageChannel.EMAIL, MessageChannel.PORTAL);
+      prisma.messageTemplate.findFirst.mockResolvedValue(tpl);
+      const out = await service.notify(NotificationEvent.ORDER_SHIPPED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        channels: [MessageChannel.PORTAL],
+      });
+      expect(out.map((o) => o.channel)).toEqual([MessageChannel.PORTAL]);
+    });
+
+    it("exceptChannels: skips the listed channels, the rest still send", async () => {
+      rulesOn(MessageChannel.EMAIL, MessageChannel.PORTAL);
+      prisma.messageTemplate.findFirst.mockResolvedValue(tpl);
+      const out = await service.notify(NotificationEvent.ORDER_SHIPPED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        exceptChannels: [MessageChannel.EMAIL],
+      });
+      expect(out.map((o) => o.channel)).toEqual([MessageChannel.PORTAL]);
+    });
+
+    it("omitted: every enabled channel sends (existing callers unchanged)", async () => {
+      rulesOn(MessageChannel.EMAIL, MessageChannel.PORTAL);
+      prisma.messageTemplate.findFirst.mockResolvedValue(tpl);
+      const out = await service.notify(NotificationEvent.ORDER_SHIPPED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+      });
+      expect(out.map((o) => o.channel)).toEqual([MessageChannel.EMAIL, MessageChannel.PORTAL]);
+    });
+
+    it("a disabled rule (not returned by the enabled query) never sends, even when listed in channels", async () => {
+      rulesOn(MessageChannel.PORTAL);
+      prisma.messageTemplate.findFirst.mockResolvedValue(tpl);
+      const out = await service.notify(NotificationEvent.ORDER_SHIPPED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+        channels: [MessageChannel.EMAIL],
+      });
+      expect(out).toHaveLength(0);
+    });
+
+    it("ORDER_SHIPPED over EMAIL is suppressed by Customer.orderStatusEmails=false but PORTAL still sends", async () => {
+      prisma.customer.findFirst.mockResolvedValue({
+        id: "cust-1",
+        phone: null,
+        mobile: null,
+        email: "buyer@example.com",
+        smsConsent: false,
+        waConsent: false,
+        orderStatusEmails: false,
+      });
+      rulesOn(MessageChannel.EMAIL, MessageChannel.PORTAL);
+      prisma.messageTemplate.findFirst.mockResolvedValue(tpl);
+      const out = await service.notify(NotificationEvent.SHIPMENT_TRACKING_ADDED, {
+        customerId: "cust-1",
+        senderId: "op-1",
+      });
+      expect(out.find((o) => o.channel === MessageChannel.EMAIL)).toMatchObject({
+        outcome: "skipped",
+        reason: "OPTED_OUT",
+      });
+      expect(out.find((o) => o.channel === MessageChannel.PORTAL)?.outcome).toBe("sent");
+    });
+  });
+
+  describe("customisedChannels()", () => {
+    const orig = DEFAULT_TEMPLATES[NotificationEvent.OUT_FOR_DELIVERY].body;
+
+    it("reports only ENABLED, ACTIVE channels whose body differs from the shipped default", async () => {
+      prisma.notificationRule.findMany.mockResolvedValue([
+        { channel: MessageChannel.EMAIL },
+        { channel: MessageChannel.PORTAL },
+        { channel: MessageChannel.WHATSAPP },
+      ]);
+      prisma.messageTemplate.findMany.mockResolvedValue([
+        { channel: MessageChannel.EMAIL, body: "Our own words for {{orderNumber}}" },
+        { channel: MessageChannel.PORTAL, body: orig },
+        {
+          channel: MessageChannel.WHATSAPP,
+          body: `  ${orig}
+`,
+        }, // whitespace-only drift is NOT a customisation
+        { channel: MessageChannel.SMS, body: "customised but its rule is off" },
+      ]);
+      expect(await service.customisedChannels(NotificationEvent.OUT_FOR_DELIVERY)).toEqual([
+        MessageChannel.EMAIL,
+      ]);
+    });
+
+    it("reports none when nothing was ever seeded", async () => {
+      prisma.notificationRule.findMany.mockResolvedValue([]);
+      prisma.messageTemplate.findMany.mockResolvedValue([]);
+      expect(await service.customisedChannels(NotificationEvent.OUT_FOR_DELIVERY)).toEqual([]);
+    });
+
+    it("never throws: a read failure reports none customised", async () => {
+      prisma.notificationRule.findMany.mockRejectedValue(new Error("db down"));
+      await expect(service.customisedChannels(NotificationEvent.OUT_FOR_DELIVERY)).resolves.toEqual(
+        [],
+      );
     });
   });
 

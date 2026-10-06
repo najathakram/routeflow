@@ -116,6 +116,7 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
