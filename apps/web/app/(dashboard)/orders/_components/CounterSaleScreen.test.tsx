@@ -1,4 +1,5 @@
 import * as React from "react";
+import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
@@ -10,6 +11,11 @@ import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen
  * unavailable), FIXED error copy, the capability-driven "Ship this order instead", and an always-focused scan field.
  */
 
+let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useOptionalAuth: () => ({ user: authUser }),
+}));
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push, replace: jest.fn() }) }));
 
@@ -54,6 +60,8 @@ const printSpy = jest.fn();
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
+  window.sessionStorage.clear();
+  authUser = { id: "u-a", tenantSlug: "acme" };
   window.print = printSpy;
   customersFor = [];
   productFor = { "012345678905": COLA, WATER: WATER_CASE, ONE: ONE_PACK };
@@ -1467,5 +1475,177 @@ describe("CounterSaleScreen: API contract wiring", () => {
       }
       expect(printSpy).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("CounterSaleScreen: held attempt hardening", () => {
+  const STORE_KEY = "rf.counterSale.heldAttempt:acme:u-a";
+  const fillCola = async () => {
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+  };
+  const keyOfCall = (i: number) => mutateAsync.mock.calls[i][0].idempotencyKey as string;
+  const goUnknown = async (failure: unknown = { response: { status: 503 } }) => {
+    mutateAsync.mockRejectedValueOnce(failure);
+    const view = renderWithProviders(<CounterSaleScreen />);
+    await fillCola();
+    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await screen.findByTestId("counter-outcome-unknown");
+    return view;
+  };
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("MUST1: while the outcome is unknown, 'Ship this order instead' is disabled and keeps the key and cart", async () => {
+    gate = { ...gate, offerShipInstead: true };
+    await goUnknown();
+    const ship = screen.getByRole("button", { name: "Ship this order instead" });
+    expect(ship).toBeDisabled();
+    fireEvent.click(ship);
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    expect(keyOfCall(1)).toBe(keyOfCall(0));
+  });
+
+  it("MUST2: unknown -> unmount -> remount restores the locked screen and the retry uses the SAME key and body", async () => {
+    const view = await goUnknown();
+    view.unmount();
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    expect(keyOfCall(1)).toBe(keyOfCall(0));
+    expect(mutateAsync.mock.calls[1][0].dto).toEqual(mutateAsync.mock.calls[0][0].dto);
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+  });
+
+  it("MUST2: a known outcome clears the stored attempt (success, and a definitive 404 from the lookup)", async () => {
+    const view = await goUnknown();
+    expect(window.sessionStorage.getItem(STORE_KEY)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+    view.unmount();
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+  });
+
+  it("MUST2: a lookup 404 (nothing written) clears the stored attempt", async () => {
+    await goUnknown();
+    lookupAsync.mockRejectedValueOnce({
+      response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check sale status" }));
+    await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+  });
+
+  it("MUST2: unavailable or corrupt sessionStorage never crashes the screen", () => {
+    window.sessionStorage.setItem(STORE_KEY, "{not json");
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+  });
+
+  it("a held attempt never restores for another user or tenant, and restores again for the owner", async () => {
+    const view = await goUnknown();
+    view.unmount();
+    authUser = { id: "u-b", tenantSlug: "acme" };
+    const b = renderWithProviders(<CounterSaleScreen />);
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    b.unmount();
+    authUser = { id: "u-a", tenantSlug: "other" };
+    const c = renderWithProviders(<CounterSaleScreen />);
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    c.unmount();
+    authUser = { id: "u-a", tenantSlug: "acme" };
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+  });
+
+  it("with no known tenant or user nothing is stored or restored", async () => {
+    authUser = { id: "u-a", tenantSlug: null };
+    await goUnknown();
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("MUST3: the cash amount sent is rounded to cents", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(roundMoney(10.005));
+    expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(10.01);
+  });
+
+  it("SHOULD a: a double click on Complete sale sends ONE POST", async () => {
+    let release: (v: unknown) => void = () => {};
+    mutateAsync.mockReturnValueOnce(new Promise((r) => (release = r)));
+    renderWithProviders(<CounterSaleScreen />);
+    await fillCola();
+    const btn = screen.getByRole("button", { name: "Complete sale" });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    fireEvent.keyDown(screen.getByLabelText("Amount tendered"), { key: "Enter" });
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    release({
+      orderId: "o",
+      orderNumber: "O",
+      invoiceId: "i",
+      invoiceNumber: "I",
+      total: 2.5,
+      paid: 20,
+      balanceDue: 0,
+      change: 17.5,
+      paymentRecorded: true,
+    });
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("SHOULD b: a first-attempt WALK_IN_OPEN_CREDIT says what to do", async () => {
+    mutateAsync.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } },
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await fillCola();
+    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This walk-in has open credit. Resolve it on the customer, then ring the sale again.",
+    );
+  });
+
+  it("SHOULD b: a FIRST-attempt COUNTER_SALE_KEY_CONFLICT is definitive: new key, clear copy", async () => {
+    mutateAsync.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "COUNTER_SALE_KEY_CONFLICT" } },
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await fillCola();
+    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That sale reference was already used. Ring the sale again.",
+    );
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+  });
+
+  it("SHOULD b: COUNTER_SALE_KEY_CONFLICT on a RETRY stays the unknown-outcome path", async () => {
+    await goUnknown();
+    mutateAsync.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "COUNTER_SALE_KEY_CONFLICT" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
   });
 });

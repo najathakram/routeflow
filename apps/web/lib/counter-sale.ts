@@ -250,6 +250,10 @@ export function counterSaleErrorCopy(err: unknown): string {
   if (final) return final;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
+    return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
+    return "That sale reference was already used. Ring the sale again.";
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
@@ -282,5 +286,63 @@ export function writeAutoPrint(on: boolean): void {
     window.localStorage.setItem(AUTO_PRINT_KEY, on ? "1" : "0");
   } catch {
     /* storage unavailable: the toggle simply does not persist */
+  }
+}
+
+/**
+ * The ONE held attempt (Idempotency-Key + body + the cart the clerk rang), kept in sessionStorage while its outcome is
+ * UNKNOWN so leaving the screen and coming back restores the locked sale with the same key. Per tab; every access is guarded.
+ */
+export const HELD_ATTEMPT_KEY = "rf.counterSale.heldAttempt";
+export interface HeldAttemptSnapshot {
+  key: string;
+  dto: unknown;
+  next: boolean;
+  estimate: { total: number; change: number };
+  lines: unknown[];
+  customer: unknown;
+  method: string;
+  tendered: string;
+  reference: string;
+}
+/** The storage key for one signed-in tenant + user, or null when either is unknown (then nothing is stored or restored). */
+export function heldAttemptKey(tenant?: string | null, userId?: string | null): string | null {
+  return tenant && userId ? `${HELD_ATTEMPT_KEY}:${tenant}:${userId}` : null;
+}
+export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | null {
+  if (!storeKey) return null;
+  try {
+    const raw = window.sessionStorage.getItem(storeKey);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<HeldAttemptSnapshot> | null;
+    if (
+      !v ||
+      typeof v.key !== "string" ||
+      !v.key ||
+      !v.dto ||
+      typeof v.dto !== "object" ||
+      !Array.isArray(v.lines) ||
+      typeof v.method !== "string"
+    )
+      return null;
+    return v as HeldAttemptSnapshot;
+  } catch {
+    return null;
+  }
+}
+export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnapshot): void {
+  if (!storeKey) return;
+  try {
+    window.sessionStorage.setItem(storeKey, JSON.stringify(snap));
+  } catch {
+    /* storage unavailable: the attempt is still held in memory */
+  }
+}
+export function clearHeldAttempt(storeKey: string | null): void {
+  if (!storeKey) return;
+  try {
+    window.sessionStorage.removeItem(storeKey);
+  } catch {
+    /* nothing to clear */
   }
 }
