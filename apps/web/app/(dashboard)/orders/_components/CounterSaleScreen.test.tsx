@@ -547,6 +547,29 @@ describe("CounterSaleScreen: API contract wiring", () => {
       const check = () =>
         fireEvent.click(screen.getByRole("button", { name: "Check sale status" }));
 
+      it.each(["CARD", "CHECK"])(
+        "the lookup sends the method THIS attempt rang (%s), as ?method=",
+        async (method) => {
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          renderWithProviders(<CounterSaleScreen />);
+          await scan("012345678905");
+          await waitFor(() =>
+            expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"),
+          );
+          fireEvent.click(
+            screen.getByRole("button", { name: method === "CARD" ? "Card" : "Check" }),
+          );
+          if (method === "CHECK")
+            fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1001" } });
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await screen.findByTestId("counter-outcome-unknown");
+          lookupAsync.mockRejectedValueOnce({ response: { status: 500 } });
+          check();
+          await waitFor(() => expect(lookupAsync).toHaveBeenCalledTimes(1));
+          expect(lookupAsync).toHaveBeenCalledWith({ idempotencyKey: keyOfCall(0), method });
+        },
+      );
+
       it("a 404 COUNTER_SALE_NOT_FOUND unlocks the cart, and the next submit uses a NEW key", async () => {
         await goUnknown({ response: { status: 503 } });
         lookupAsync.mockRejectedValueOnce({
@@ -554,7 +577,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         });
         check();
         await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
-        expect(lookupAsync).toHaveBeenCalledWith(keyOfCall(0));
+        expect(lookupAsync).toHaveBeenCalledWith({ idempotencyKey: keyOfCall(0), method: "CASH" });
         expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
         expect(screen.queryByText(/nothing was charged/i)).toBeNull();
         fireEvent.click(screen.getByRole("button", { name: "$20" }));

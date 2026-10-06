@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
+  CounterSalePaymentMethod,
   CounterSaleRequest,
   CounterSaleResponse,
   FulfilmentCapability,
@@ -43,10 +44,18 @@ export function useCreateCounterSale() {
  */
 export function useCounterSaleByKey() {
   return useMutation({
-    mutationFn: (idempotencyKey: string) =>
+    mutationFn: ({
+      idempotencyKey,
+      method,
+    }: {
+      idempotencyKey: string;
+      /** the method THIS attempt rang: the server applies POST's paymentRecorded rule for it */
+      method: CounterSalePaymentMethod;
+    }) =>
       apiClient
         .get<CounterSaleResponse>(
           `/orders/counter-sale/by-key/${encodeURIComponent(idempotencyKey)}`,
+          { params: { method } },
         )
         .then((r) => r.data),
   });

@@ -81,18 +81,20 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
   });
 });
 
-describe("useCounterSaleByKey: GET /orders/counter-sale/by-key/:key", () => {
+describe("useCounterSaleByKey: GET /orders/counter-sale/by-key/:key?method=", () => {
   beforeEach(() => get.mockReset());
 
-  it("looks the held key up and returns the sale body", async () => {
+  it("looks the held key up with the method THIS attempt rang and returns the sale body", async () => {
     const body = { orderId: "o1", replayed: true };
     get.mockResolvedValue({ data: body });
     const { result } = renderHook(() => useCounterSaleByKey(), { wrapper });
     let res: unknown;
     await act(async () => {
-      res = await result.current.mutateAsync("key abc/1");
+      res = await result.current.mutateAsync({ idempotencyKey: "key abc/1", method: "CARD" });
     });
-    expect(get).toHaveBeenCalledWith("/orders/counter-sale/by-key/key%20abc%2F1");
+    expect(get).toHaveBeenCalledWith("/orders/counter-sale/by-key/key%20abc%2F1", {
+      params: { method: "CARD" },
+    });
     expect(res).toEqual(body);
   });
 });

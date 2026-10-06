@@ -330,50 +330,60 @@ export function CounterSaleScreen() {
     }
   };
 
-  // "Check sale status": ask the server whether a sale exists under the held key. A sale shows its receipt; ONLY a 404
-  // COUNTER_SALE_NOT_FOUND unlocks the cart (the next submit then mints a new key); every other answer keeps the lock.
+  // "Check sale status": ask the server whether a sale exists under the held key (with the method THIS attempt rang). A sale
+  // shows its receipt; a 404 COUNTER_SALE_NOT_FOUND unlocks the cart (the next submit then mints a new key); every other answer keeps the lock.
   const checkSaleStatus = async () => {
     const attempt = attemptRef.current;
     if (!attempt || submittingRef.current) return;
     submittingRef.current = true;
     setLookupFailed(false);
     try {
-      let res: CounterSaleResponse;
-      try {
-        res = await lookupSale.mutateAsync(attempt.key);
-      } catch (err) {
-        if (isCounterSaleNotFound(err)) {
-          attemptRef.current = null;
-          setOutcomeUnknown(false);
-          refocus();
-        } else {
-          // Not an answer: the lock and banner stay, and the clerk is told the CHECK failed (fixed copy).
-          setLookupFailed(true);
-        }
-        return;
-      }
-      attemptRef.current = null;
-      setOutcomeUnknown(false);
-      // The server's body cannot say whether "no tender" was On account or a failed tender, nor whether a partial was
-      // intended, so the recovered sale is judged against what THIS screen submitted for the key.
-      const { method: sentMethod, amount } = attempt.dto.payment;
-      const verdict = judgeRecoveredSale({ method: sentMethod, tendered: amount }, res);
-      const judged: CounterSaleResponse = {
-        ...res,
-        method: sentMethod,
-        paymentRecorded: verdict.recorded,
-        ...(verdict.recorded
-          ? { paymentErrorCode: undefined }
-          : {
-              paymentErrorCode:
-                res.paymentErrorCode ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
-            }),
-      };
-      setEnteredTender(sentMethod === "CASH" && amount != null && verdict.recorded ? amount : null);
-      finishSale(judged, attempt.next);
+      await lookupAndSettle(attempt);
     } finally {
       submittingRef.current = false;
     }
+  };
+
+  // One lookup, settled.
+  const lookupAndSettle = async (
+    attempt: NonNullable<typeof attemptRef.current>,
+  ): Promise<boolean> => {
+    let res: CounterSaleResponse;
+    try {
+      res = await lookupSale.mutateAsync({
+        idempotencyKey: attempt.key,
+        method: attempt.dto.payment.method,
+      });
+    } catch (err) {
+      if (isCounterSaleNotFound(err)) {
+        attemptRef.current = null;
+        setOutcomeUnknown(false);
+        refocus();
+      } else {
+        // Not an answer: the lock and banner stay, and the clerk is told the CHECK failed (fixed copy).
+        setLookupFailed(true);
+      }
+      return false;
+    }
+    attemptRef.current = null;
+    setOutcomeUnknown(false);
+    // The server's body cannot say whether "no tender" was On account or a failed tender, nor whether a partial was
+    // intended, so the recovered sale is judged against what THIS screen submitted for the key.
+    const { method: sentMethod, amount } = attempt.dto.payment;
+    const verdict = judgeRecoveredSale({ method: sentMethod, tendered: amount }, res);
+    const judged: CounterSaleResponse = {
+      ...res,
+      method: sentMethod,
+      paymentRecorded: verdict.recorded,
+      ...(verdict.recorded
+        ? { paymentErrorCode: undefined }
+        : {
+            paymentErrorCode: res.paymentErrorCode ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
+          }),
+    };
+    setEnteredTender(sentMethod === "CASH" && amount != null && verdict.recorded ? amount : null);
+    finishSale(judged, attempt.next);
+    return false;
   };
 
   const toggleAutoPrint = (on: boolean) => {
