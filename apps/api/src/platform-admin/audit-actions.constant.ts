@@ -40,7 +40,7 @@ export const AdminAuditAction = {
   ADDON_UNCOMPED: "ADDON_UNCOMPED",
   /** A duplicate checkout was cancelled; its first invoice was charged and has to be refunded in Stripe. */
   STRIPE_DUPLICATE_CHECKOUT: "STRIPE_DUPLICATE_CHECKOUT",
-  /** A checkout add-on item (or its row) had no usable quantity: the item was removed and nothing is billed for it. */
+  /** A checkout add-on (its row, or its item) had no usable quantity: any item was removed (or the SKU left off the checkout) and nothing is billed for it. */
   ADDON_CHECKOUT_ITEM_UNUSABLE: "ADDON_CHECKOUT_ITEM_UNUSABLE",
   /** A PAID checkout was refused because no Stripe customer / subscription row exists to verify it against. */
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "STRIPE_PAID_CHECKOUT_NOT_APPLIED",
@@ -87,7 +87,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_COMPED: "Add-on granted as a comp (free, not billed)",
   ADDON_UNCOMPED: "Add-on comp removed (now billable)",
   STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
-  ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on removed (no usable quantity)",
+  ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on not billed (no usable quantity)",
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",

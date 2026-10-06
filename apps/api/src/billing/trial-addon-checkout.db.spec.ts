@@ -1955,6 +1955,32 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       });
     });
 
+    it("NIT3: the same quantity-0 row raises ONE quantity-missing notice, however many checkouts are created", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 0 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [base()],
+      });
+
+      await r.mutations.checkoutAddonLines(r.tenantId, "month");
+      await r.mutations.checkoutAddonLines(r.tenantId, "month");
+      await r.mutations.checkoutAddonLines(r.tenantId, "month");
+
+      const told = await prisma.auditLog.findMany({
+        where: { tenantId: r.tenantId, action: "ADDON_CHECKOUT_ITEM_UNUSABLE" },
+      });
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ entityType: "tenant", entityId: r.tenantId });
+      expect(told[0].meta).toMatchObject({
+        reason: "quantity_missing",
+        sku: "CUSTOMER_PACK_100",
+        rowQuantity: 0,
+        message: expect.stringContaining("quantity missing (row 0)"),
+      });
+    });
+
     it("NIT1: a quantity-0 row gets no checkout line (no charge-then-credit) and never refuses an annual checkout", async () => {
       const r = await rig({
         rows: [

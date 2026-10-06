@@ -646,6 +646,67 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     expect(bundled.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
   });
 
+  describe("NIT3: an active quantity-0 row at checkout raises the quantity-missing notice (as the manual path does)", () => {
+    const qtyNotices = (h: ReturnType<typeof make>) =>
+      h.audits.filter((a: any) => a.action === "ADDON_CHECKOUT_ITEM_UNUSABLE");
+
+    it("the SKU is left off the checkout AND the platform is told, with the same wording class as the manual path", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 }), addonRow("FORECASTING", { qty: 1 })],
+      });
+
+      await h.billing.createCheckoutSession("t1", "month");
+
+      expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2);
+      const told = qtyNotices(h);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+      expect(told[0].meta).toMatchObject({
+        platformAdmin: true,
+        reason: "quantity_missing",
+        sku: "CUSTOMER_PACK_100",
+        rowQuantity: 0,
+      });
+      expect(told[0].meta.message).toBe(
+        "Add-on Customer pack (+100) for Acme was left off the checkout: quantity missing (row 0) — set it, then send a new checkout link. Nothing is billed for it until then.",
+      );
+    });
+
+    it("once per row however many checkouts are created (the dedupe key is the row)", async () => {
+      const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
+      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", "month");
+      await h.billing.createCheckoutSession("t1", "year"); // an annual checkout too: nothing to bill, so no refusal
+      expect(qtyNotices(h)).toHaveLength(1);
+    });
+
+    it("a quantity-0 comp, a plan-bundled SKU and a non-self-serve SKU raise nothing (they are never billed anyway)", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 0, isComp: true }),
+          addonRow("MSRP", { qty: 0 }),
+          addonRow("FORECASTING", { qty: 0 }),
+        ],
+        tenantPlan: "BUSINESS",
+        planKey: "SCALE", // FORECASTING is bundled at SCALE
+      });
+      await h.billing.createCheckoutSession("t1", "month");
+      expect(qtyNotices(h)).toEqual([]);
+    });
+
+    it("a quantity >= 1 row raises nothing; a notice that cannot be written never fails the checkout", async () => {
+      const ok = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 1 })] });
+      await ok.billing.createCheckoutSession("t1", "month");
+      expect(qtyNotices(ok)).toEqual([]);
+
+      const bad = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
+      bad.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(bad.billing.createCheckoutSession("t1", "month")).resolves.toMatchObject({
+        sessionId: "cs_1",
+      });
+    });
+  });
+
   it("NIT1: a row with quantity 0 gets NO checkout line (no charge-then-credit), and never makes an annual checkout refuse", async () => {
     const h = make({
       rows: [

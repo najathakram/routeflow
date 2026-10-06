@@ -1736,6 +1736,8 @@ export class SubscriptionMutationService {
         );
         continue;
       }
+      // A plan-bundled SKU is never sold again: no line, nothing to announce.
+      if (await this.planIncludedRefusal(tenantId, def)) continue;
       // The row findAddonRow picks (oldest) decides the quantity — the same row the completion adopts onto.
       const oldest = [...rows].sort(
         (x, y) => Number(x.createdAt ?? 0) - Number(y.createdAt ?? 0),
@@ -1744,13 +1746,14 @@ export class SubscriptionMutationService {
       if (!(quantity >= 1)) {
         // NIT1: nothing to bill. A line for it would charge one unit now and have the completion delete the item
         // and credit it straight back (a row below 1 is deleted Stripe-first) — and could refuse an annual
-        // checkout over an add-on that bills nothing.
+        // checkout over an add-on that bills nothing. NIT3: and, like the manual-activation path, the platform is
+        // told its quantity is missing (once per row, best-effort) instead of the SKU vanishing from the checkout.
         this.logger.warn(
           `Checkout for tenant ${tenantId}: add-on "${code}" has quantity ${String(oldest.quantity)} — no line`,
         );
+        await this.announceCheckoutQuantityMissing(tenantId, code, def.name, oldest);
         continue;
       }
-      if (await this.planIncludedRefusal(tenantId, def)) continue;
       billable.push({ def, quantity });
     }
     if (billable.length === 0) return none;
@@ -2099,6 +2102,29 @@ export class SubscriptionMutationService {
       );
       throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
     }
+  }
+
+  /**
+   * NIT3: an active billable self-serve row with a quantity below 1 was left off a checkout. One platform notice
+   * per ROW (the dedupe key is its id, so repeated checkout links do not repeat it), same wording class as the
+   * manual-activation path's "quantity missing". Best-effort: it never fails the checkout.
+   */
+  private async announceCheckoutQuantityMissing(
+    tenantId: string,
+    sku: string,
+    addonName: string,
+    row: { id: string; quantity: unknown },
+  ): Promise<void> {
+    const label = await this.tenantLabelOf(tenantId);
+    const quantity = Number(row.quantity);
+    const shown = Number.isFinite(quantity) ? quantity : 0;
+    await this.raiseAdminAlertOnce(
+      tenantId,
+      AdminAuditAction.ADDON_CHECKOUT_ITEM_UNUSABLE,
+      `${AdminAuditAction.ADDON_CHECKOUT_ITEM_UNUSABLE}:quantity_missing:${tenantId}:${sku}:${row.id}`,
+      `Add-on ${addonName} for ${label} was left off the checkout: quantity missing (row ${shown}) — set it, then send a new checkout link. Nothing is billed for it until then.`,
+      { reason: "quantity_missing", sku, rowQuantity: shown, rowId: row.id },
+    );
   }
 
   /**
