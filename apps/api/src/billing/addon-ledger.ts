@@ -43,9 +43,12 @@ export async function lockTenantForLedger(
  *
  * amountDelta = roundMoney(after.priceSnapshot × after.quantity − before.priceSnapshot × before.quantity).
  * A zero delta (e.g. a free grant, or a no-op re-enable at the same price/qty) writes NO event
- * (SA-277a D1). Event type is ADDON_ENABLED when the quantity grew, ADDON_DISABLED when it
- * shrank, and for a price-only change (equal quantities) ENABLED if the amount is positive else
- * DISABLED.
+ * (SA-277a D1). The label follows the MONEY: ADDON_ENABLED when the run-rate grew (amount > 0),
+ * ADDON_DISABLED when it shrank. For every plain enable/raise/disable/price change that is the same
+ * as reading the quantity (more units cost more); it differs only when quantity and price move
+ * together in opposite directions (checkout adoption of a row at a different quantity), where
+ * labelling by quantity called a +$45 adoption "disabled". There is no quantity-change event type
+ * and nothing reads the label — the run-rate is Σ amountDelta — so no new type is introduced.
  *
  * Returns the amountDelta booked (0 when gated or zero).
  */
@@ -73,13 +76,7 @@ export async function emitAddonDelta(
   if (!isPayingRow(row, row.subscription?.planKey ?? null)) return 0;
 
   const type: BillingEventType =
-    d.after.quantity > d.before.quantity
-      ? BILLING_EVENTS.ADDON_ENABLED
-      : d.after.quantity < d.before.quantity
-        ? BILLING_EVENTS.ADDON_DISABLED
-        : amountDelta > 0
-          ? BILLING_EVENTS.ADDON_ENABLED
-          : BILLING_EVENTS.ADDON_DISABLED;
+    amountDelta > 0 ? BILLING_EVENTS.ADDON_ENABLED : BILLING_EVENTS.ADDON_DISABLED;
   await events.emit(
     d.tenantId,
     type,

@@ -36,6 +36,7 @@ import { useDeliveryAccess } from "@/lib/api/addons";
 import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
+import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
@@ -381,16 +382,20 @@ export default function OrdersPage() {
     if (isCancelling) return;
     setIsCancelling(true);
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         Array.from(selected).map((id) => updateStatus.mutateAsync({ id, status: "CANCELLED" })),
       );
-      toast({
-        title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
-        variant: "success",
-      });
-      exitSelectMode();
-    } catch {
-      toast({ title: "Failed to cancel some orders", variant: "error" });
+      const failures = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      if (failures.length > 0) {
+        // Orders with the carrier are refused (ORDER_WITH_CARRIER_NO_CANCEL): name them, with the count.
+        toast({ title: bulkCancelFailureTitle(failures), variant: "error" });
+      } else {
+        toast({
+          title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
+          variant: "success",
+        });
+        exitSelectMode();
+      }
     } finally {
       setIsCancelling(false);
       setCancelConfirm(false);
