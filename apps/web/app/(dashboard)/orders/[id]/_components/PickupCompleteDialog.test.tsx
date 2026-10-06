@@ -238,3 +238,113 @@ describe("PickupCompleteDialog — results, retries, errors", () => {
     );
   });
 });
+
+describe("PickupCompleteDialog — the API's pickup codes", () => {
+  it("PICKUP_PAYMENT_REQUIRED: fixed copy, tender step, then the SAME key with the payment", async () => {
+    balance(0, "PAID");
+    post.mockResolvedValueOnce(
+      result({
+        paymentRecorded: false,
+        paymentErrorCode: "PICKUP_PAYMENT_REQUIRED",
+        paid: 0,
+        balanceDue: 25,
+      }),
+    );
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A balance is due on this order now. Take payment to finish.",
+    );
+    expect(screen.queryByText("Payment not recorded")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][1]).toEqual({ payment: { method: "CARD" } });
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+  });
+
+  it("400 COUNTER_TENDER_SHORT: fixed copy, stays on the tender step", async () => {
+    balance(25);
+    post.mockRejectedValueOnce({
+      response: { status: 400, data: { code: "COUNTER_TENDER_SHORT", message: "raw text" } },
+    });
+    mount({ isWalkIn: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A walk-in customer must pay the full balance.",
+    );
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Cash" })).toBeVisible();
+  });
+
+  it("200 COUNTER_TENDER_SHORT: fixed copy, stays on the tender step", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({ paymentRecorded: false, paymentErrorCode: "COUNTER_TENDER_SHORT", balanceDue: 25 }),
+    );
+    mount({ isWalkIn: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A walk-in customer must pay the full balance.",
+    );
+    expect(screen.getByRole("button", { name: "Cash" })).toBeVisible();
+    expect(screen.queryByText("Payment not recorded")).toBeNull();
+  });
+
+  it("409 PICKUP_KEY_CONFLICT: fixed copy, Reload invalidates the order and closes", async () => {
+    balance(0, "PAID");
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "PICKUP_KEY_CONFLICT", message: "raw text" } },
+    });
+    const { invalidate, onClose } = mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Already picked up. Record any payment on the invoice.",
+    );
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    invalidate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["orders"] }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("409 PICKUP_INVOICE_MISSING: fixed copy, Retry reposts under the SAME key", async () => {
+    balance(0, "PAID");
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "PICKUP_INVOICE_MISSING", message: "raw text" } },
+    });
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The order may be picked up, but its invoice isn't ready yet. Retry to finish.",
+    );
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    expect(screen.queryByText(/nothing was/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+  });
+
+  it("409 WALK_IN_OPEN_CREDIT: fixed copy, never the server text", async () => {
+    balance(0, "PAID");
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT", message: "raw text" } },
+    });
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This walk-in has open credit. Resolve it on the customer before handing over.",
+    );
+    expect(screen.queryByText(/raw text/)).toBeNull();
+  });
+});

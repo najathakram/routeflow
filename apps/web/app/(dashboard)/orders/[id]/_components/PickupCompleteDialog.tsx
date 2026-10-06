@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import {
@@ -12,6 +14,7 @@ import {
   paymentMethodOptions,
   pickupBalanceDue,
   pickupCompleteErrorCopy,
+  pickupErrorCode,
   quickTenderOptions,
   validatePayment,
 } from "@/lib/counter-sale";
@@ -57,13 +60,18 @@ export function PickupCompleteDialog({
         total,
         balances.data ?? (liveIds.length > 0 ? [{ status: "SENT", total }] : []),
       );
-  const nothingToCollect = balanceDue !== null && balanceDue <= 0;
+  // A balance that appeared at hand-over (server said so) forces the tender step even if the read said paid.
+  const [owed, setOwed] = React.useState<number | null>(null);
+  const due = owed ?? balanceDue;
+  const nothingToCollect = due !== null && due <= 0;
+  const qc = useQueryClient();
 
   const keyRef = React.useRef<string>("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [errorCode, setErrorCode] = React.useState<string | undefined>();
   const [outcome, setOutcome] = React.useState<PickupCompleteResponse | null>(null);
   const lastBody = React.useRef<Body>({});
 
@@ -74,6 +82,8 @@ export function PickupCompleteDialog({
       setTendered("");
       setReference("");
       setError(null);
+      setErrorCode(undefined);
+      setOwed(null);
       setOutcome(null);
     }
   }, [open]);
@@ -82,20 +92,39 @@ export function PickupCompleteDialog({
 
   async function send(body: Body) {
     setError(null);
+    setErrorCode(undefined);
     lastBody.current = body;
     try {
-      setOutcome(await complete.mutateAsync({ body, idempotencyKey: keyRef.current }));
+      const res = await complete.mutateAsync({ body, idempotencyKey: keyRef.current });
+      const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
+      if (
+        code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
+        code === API_ERROR_CODES.COUNTER_TENDER_SHORT
+      ) {
+        // Back to the tender step; the next attempt is the same hand-over (same key) carrying the payment.
+        if (res.balanceDue > 0) setOwed(res.balanceDue);
+        setErrorCode(code);
+        setError(pickupCompleteErrorCopy({ response: { data: { code } } }));
+        return;
+      }
+      setOutcome(res);
     } catch (err) {
+      setErrorCode(pickupErrorCode(err));
       setError(pickupCompleteErrorCopy(err));
     }
   }
 
+  function reload() {
+    void qc.invalidateQueries({ queryKey: ["orders"] });
+    onClose();
+  }
+
   function confirm() {
-    if (balanceDue === null) return;
+    if (due === null) return;
     if (nothingToCollect) return void send({});
     const problem = validatePayment({
       method,
-      total: balanceDue,
+      total: due,
       tendered: tenderedNum,
       reference,
       isWalkIn,
@@ -140,14 +169,32 @@ export function PickupCompleteDialog({
             <Button variant="ghost" type="button" disabled={complete.isPending} onClick={onClose}>
               Cancel
             </Button>
-            <Button
-              type="button"
-              onClick={confirm}
-              loading={complete.isPending}
-              disabled={balanceDue === null}
-            >
-              {nothingToCollect ? "Confirm picked up" : "Picked up"}
-            </Button>
+            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ? (
+              <Button type="button" onClick={reload}>
+                Reload
+              </Button>
+            ) : (
+              <>
+                {errorCode === API_ERROR_CODES.PICKUP_INVOICE_MISSING && (
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    loading={complete.isPending}
+                    onClick={() => void send(lastBody.current)}
+                  >
+                    Retry
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  onClick={confirm}
+                  loading={complete.isPending}
+                  disabled={due === null}
+                >
+                  {nothingToCollect ? "Confirm picked up" : "Picked up"}
+                </Button>
+              </>
+            )}
           </>
         )
       }
@@ -179,14 +226,14 @@ export function PickupCompleteDialog({
               </p>
             )}
           </div>
-        ) : balanceDue === null ? (
+        ) : due === null ? (
           <p className="text-sm text-navy/70">Checking the balance…</p>
         ) : nothingToCollect ? (
           <p className="text-sm font-medium text-navy">Paid — nothing to collect</p>
         ) : (
           <section aria-label="Payment" className="space-y-3">
             <p className="text-sm text-navy">
-              Collect <strong>{money(balanceDue)}</strong>
+              Collect <strong>{money(due)}</strong>
             </p>
             <div className="flex flex-wrap gap-2">
               {paymentMethodOptions(isWalkIn)
@@ -213,7 +260,7 @@ export function PickupCompleteDialog({
             {method === "CASH" && (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
-                  {quickTenderOptions(balanceDue).map((q) => (
+                  {quickTenderOptions(due).map((q) => (
                     <button
                       key={q.label}
                       type="button"
@@ -236,7 +283,7 @@ export function PickupCompleteDialog({
                   />
                 </label>
                 <p className="text-2xl font-bold" data-testid="pickup-change-due">
-                  Change {money(changeDue(balanceDue, tenderedNum))}
+                  Change {money(changeDue(due, tenderedNum))}
                 </p>
               </div>
             )}

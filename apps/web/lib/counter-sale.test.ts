@@ -18,6 +18,11 @@ import {
   paymentMethodOptions,
   PICKUP_NOT_READY_COPY,
   PICKUP_ONLY_COPY,
+  PICKUP_KEY_CONFLICT_COPY,
+  PICKUP_INVOICE_MISSING_COPY,
+  PICKUP_WALK_IN_CREDIT_COPY,
+  PICKUP_TENDER_SHORT_COPY,
+  PICKUP_PAYMENT_REQUIRED_COPY,
   pickupBalanceDue,
   pickupCompleteErrorCopy,
   parseScanField,
@@ -413,6 +418,30 @@ describe("pickupCompleteErrorCopy", () => {
       },
     });
     expect(check).toBe(PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED);
+  });
+  it.each([
+    [409, "PICKUP_KEY_CONFLICT", PICKUP_KEY_CONFLICT_COPY],
+    [409, "PICKUP_INVOICE_MISSING", PICKUP_INVOICE_MISSING_COPY],
+    [409, "WALK_IN_OPEN_CREDIT", PICKUP_WALK_IN_CREDIT_COPY],
+    [400, "COUNTER_TENDER_SHORT", PICKUP_TENDER_SHORT_COPY],
+    [200, "PICKUP_PAYMENT_REQUIRED", PICKUP_PAYMENT_REQUIRED_COPY],
+  ])("%s %s maps to fixed copy, never the server text", (status, code, copy) => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status, data: { code, message: "raw server text" } } }),
+    ).toBe(copy);
+  });
+  it("the copy is the agreed wording", () => {
+    expect(PICKUP_PAYMENT_REQUIRED_COPY).toBe(
+      "A balance is due on this order now. Take payment to finish.",
+    );
+    expect(PICKUP_TENDER_SHORT_COPY).toBe("A walk-in customer must pay the full balance.");
+    expect(PICKUP_KEY_CONFLICT_COPY).toBe("Already picked up. Record any payment on the invoice.");
+    expect(PICKUP_INVOICE_MISSING_COPY).toBe(
+      "The order may be picked up, but its invoice isn't ready yet. Retry to finish.",
+    );
+    expect(PICKUP_WALK_IN_CREDIT_COPY).toBe(
+      "This walk-in has open credit. Resolve it on the customer before handing over.",
+    );
   });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(

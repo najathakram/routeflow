@@ -310,10 +310,32 @@ export const PICKUP_NOT_READY_COPY =
 export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
+export const PICKUP_PAYMENT_REQUIRED_COPY =
+  "A balance is due on this order now. Take payment to finish.";
+export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
+export const PICKUP_KEY_CONFLICT_COPY = "Already picked up. Record any payment on the invoice.";
+export const PICKUP_INVOICE_MISSING_COPY =
+  "The order may be picked up, but its invoice isn't ready yet. Retry to finish.";
+export const PICKUP_WALK_IN_CREDIT_COPY =
+  "This walk-in has open credit. Resolve it on the customer before handing over.";
+
+/** The API error code of a failed pickup-complete call, if any. */
+export function pickupErrorCode(err: unknown): string | undefined {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 /** Fixed copy by error code; the server's own message is never shown. */
 export function pickupCompleteErrorCopy(err: unknown): string {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
+    return PICKUP_PAYMENT_REQUIRED_COPY;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT) return PICKUP_TENDER_SHORT_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_KEY_CONFLICT) return PICKUP_KEY_CONFLICT_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_INVOICE_MISSING)
+    return PICKUP_INVOICE_MISSING_COPY;
+  if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
