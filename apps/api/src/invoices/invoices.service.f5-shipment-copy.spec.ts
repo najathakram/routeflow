@@ -84,7 +84,7 @@ describe("InvoicesService.createInvoiceFromOrderWithTenant — carrier shipment 
     fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
     // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
-    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as never);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -123,6 +123,14 @@ describe("InvoicesService.createInvoiceFromOrderWithTenant — carrier shipment 
     service = module.get<InvoicesService>(InvoicesService);
   });
 
+  // the three private helpers this spec stubs
+  const priv = () =>
+    service as unknown as {
+      resolveDefaultTerms: () => Promise<unknown>;
+      resolveTenantInvoiceDefaults: () => Promise<unknown>;
+      generateInvoiceNumber: () => Promise<string>;
+    };
+
   const orderWith = (over: Record<string, unknown> = {}) => ({
     id: "ord-f5",
     customerId: "cust-1",
@@ -151,20 +159,18 @@ describe("InvoicesService.createInvoiceFromOrderWithTenant — carrier shipment 
   });
 
   const seed = () => {
+    jest.spyOn(priv(), "resolveDefaultTerms").mockResolvedValue({ terms: "Net 30", dueDays: 30 });
     jest
-      .spyOn(service as any, "resolveDefaultTerms")
-      .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
-    jest
-      .spyOn(service as any, "resolveTenantInvoiceDefaults")
+      .spyOn(priv(), "resolveTenantInvoiceDefaults")
       .mockResolvedValue({ notes: null, terms: null, timezone: "America/Los_Angeles" });
-    jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-F5");
+    jest.spyOn(priv(), "generateInvoiceNumber").mockResolvedValue("INV-F5");
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false, defaultPaymentTerms: null });
     prisma.orderItem.update.mockResolvedValue({});
     prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
     prisma.systemConfig.findFirst.mockResolvedValue(null);
     prisma.tenantConfig.findUnique.mockResolvedValue(null);
-    prisma.invoice.create.mockImplementation((args: any) =>
+    prisma.invoice.create.mockImplementation((args: { data: Record<string, unknown> }) =>
       Promise.resolve({ ...args.data, id: "inv-f5", items: [], payments: [], customer: {} }),
     );
   };

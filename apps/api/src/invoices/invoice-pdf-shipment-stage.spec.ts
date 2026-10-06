@@ -4,10 +4,10 @@
  * settled at shipment), never on order.status === DELIVERED alone. Every other invoice keeps today's
  * stage.
  */
-let mockCaptured: any = null;
+let mockCaptured: { variant: string } | null = null;
 
 jest.mock("@react-pdf/renderer", () => ({
-  renderToBuffer: jest.fn(async (element: any) => {
+  renderToBuffer: jest.fn(async (element: { props?: { invoice?: { variant: string } } }) => {
     mockCaptured = element?.props?.invoice ?? null;
     return Buffer.from("");
   }),
@@ -56,8 +56,8 @@ async function variantFor(opts: {
     items: [],
     payments: [],
     order: opts.order,
-  } as any);
-  prisma.tenantConfig.findUnique.mockResolvedValue(null as any);
+  } as never);
+  prisma.tenantConfig.findUnique.mockResolvedValue(null as never);
   const module = await Test.createTestingModule({
     providers: [
       InvoicePdfService,
@@ -77,7 +77,7 @@ async function variantFor(opts: {
     ],
   }).compile();
   await module.get(InvoicePdfService).generateAndUpload("inv-1");
-  return mockCaptured.variant;
+  return (mockCaptured as unknown as { variant: string }).variant;
 }
 
 describe("InvoicePdfService stage for a shipment invoice (F3)", () => {

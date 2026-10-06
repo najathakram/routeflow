@@ -308,7 +308,7 @@ describe("OrdersService.changeStatus: customer push wording for a SHIP order (F1
   const push = async (over: Record<string, unknown>, to: string) => {
     prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED", ...over });
     prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: to, ...over });
-    await service.changeStatus("ord-1", { status: to as any }, operatorPayload as any);
+    await service.changeStatus("ord-1", { status: to as never }, operatorPayload as never);
     await new Promise((r) => setImmediate(r));
     const call = notificationsService.sendToCustomer.mock.calls[0];
     return { title: call?.[1] as string, body: call?.[2] as string };
