@@ -2822,6 +2822,87 @@ describe("SHOULD-1: a SKU the checkout LISTED but whose item is not recognised t
     expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
   });
 
+  describe("S1: a listed SKU nothing can be attached to is NOT an anomaly (no 409 loop, no false alert)", () => {
+    it("a legitimate deletion then a redelivery: the first delivery deletes the orphan item of a switched-off row; the REDELIVERY resolves with no alert and no create", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2, active: false })], // switched off after the session
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      const session = withListed(h, "CUSTOMER_PACK_100");
+
+      await expect(h.completed(session)).resolves.toBeUndefined(); // (a): item deleted
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_pack", {
+        proration_behavior: "create_prorations",
+      });
+      expect(h.stripeItems.map((i) => i.id)).toEqual(["si_base"]);
+
+      await expect(h.completed(session)).resolves.toBeUndefined(); // the redelivery: item is gone, row inactive
+      await expect(h.completed(session)).resolves.toBeUndefined();
+
+      expect(missingNotices(h)).toEqual([]);
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["an INACTIVE row", () => [addonRow("CUSTOMER_PACK_100", { qty: 2, active: false })]],
+      ["no row at all", () => []],
+      ["a row with quantity 0", () => [addonRow("CUSTOMER_PACK_100", { qty: 0 })]],
+      ["only a COMP row", () => [addonRow("CUSTOMER_PACK_100", { qty: 2, isComp: true })]],
+    ] as const)(
+      "listed SKU, %s, no item: resolves, no alert, no second item",
+      async (_n, rowsOf) => {
+        const h = make({ rows: [...rowsOf()], items: [baseItem()] });
+
+        await expect(h.completed(withListed(h, "CUSTOMER_PACK_100"))).resolves.toBeUndefined();
+
+        expect(missingNotices(h)).toEqual([]);
+        expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+        expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      },
+    );
+
+    it("listed SKU whose row holds a pointer that is LIVE on the subscription (an item the tag does not name): no alert, the row untouched", async () => {
+      const inApp = {
+        id: "si_inapp",
+        metadata: { tenantId: "t1", sku: "CUSTOMER_PACK_100" },
+        quantity: 2,
+        subscription: "sub_1",
+      };
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_inapp", priceSnapshot: 50 }),
+        ],
+        items: [baseItem(), inApp],
+      });
+
+      await expect(h.completed(withListed(h, "CUSTOMER_PACK_100"))).resolves.toBeUndefined();
+
+      expect(missingNotices(h)).toEqual([]);
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_inapp" });
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    });
+
+    it("control: an ACTIVE row with quantity >= 1 and no live pointer still alerts and fails (the SHOULD-1 anomaly)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 })],
+        items: [baseItem(), unexpanded("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await expect(h.completed(withListed(h, "CUSTOMER_PACK_100"))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(missingNotices(h)).toHaveLength(1);
+
+      // a STALE pointer (not on this subscription) is not a live one: it still alerts
+      const stale = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_dead" })],
+        items: [baseItem(), unexpanded("si_pack", "CUSTOMER_PACK_100", 5000, 2)],
+      });
+      await expect(stale.completed(withListed(stale, "CUSTOMER_PACK_100"))).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+  });
+
   it("control: every listed SKU recognised -> adopted, no alert; an add-on enabled AFTER the session (not listed) still goes through path (c)", async () => {
     const h = make({
       rows: [addonRow("CUSTOMER_PACK_100", { qty: 2 }), addonRow("FORECASTING", { qty: 1 })],

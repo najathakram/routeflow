@@ -1426,6 +1426,45 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect((await alerts(r.tenantId))[0].meta).toMatchObject({ skus: ["FORECASTING"] });
     });
 
+    it.each([false, true])(
+      "S1 (flag on=%s): a legitimate deletion then redeliveries — the first delivery deletes the switched-off row's item, the redeliveries resolve with NO alert (no 409 loop)",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2, active: false }],
+          items: [
+            base(),
+            stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          ],
+        });
+        const session = listed(r, "CUSTOMER_PACK_100");
+
+        await r.deliver(session);
+        expect(r.items.map((i: any) => i.id)).toEqual(["si_base"]);
+        await r.deliver(session);
+        await r.deliver(session);
+
+        expect(await alerts(r.tenantId)).toHaveLength(0);
+        expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+        expect(r.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("S1: listed SKUs with a quantity-0 row, or only a comp row, and no item: resolves, no alert", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 0 },
+          { sku: "FORECASTING", quantity: 1, isComp: true },
+        ],
+        items: [base()],
+      });
+
+      await expect(r.deliver(listed(r, "CUSTOMER_PACK_100,FORECASTING"))).resolves.toBeUndefined();
+
+      expect(await alerts(r.tenantId)).toHaveLength(0);
+      expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    });
+
     it("control: an add-on enabled AFTER the session (not listed) still goes through path (c), no alert", async () => {
       const r = await rig({
         rows: [

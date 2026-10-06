@@ -1795,10 +1795,6 @@ export class SubscriptionMutationService {
     for (const item of checkoutAddonItems(stripeSub)) {
       bySku.set(item.sku, [...(bySku.get(item.sku) ?? []), item]);
     }
-    // SHOULD-1: a SKU the checkout LISTED (session/subscription metadata) must have a recognised item. One that
-    // has none (the product not expanded, an unrecognised shape) is an anomaly: its item may well exist and bill,
-    // so it must NEVER fall into (c) below — that would create a SECOND item. It fails the webhook, loudly.
-    const missing = (ctx.listedSkus ?? []).filter((sku) => !bySku.has(sku));
     // Every item on the subscription this checkout made (the base plan's too): a row pointing at an item that
     // is NOT among them points at a dead subscription — it is STALE (the checkout only ever runs for a tenant
     // with no live subscription), whatever the row says.
@@ -1807,16 +1803,32 @@ export class SubscriptionMutationService {
         .map((i) => i.id)
         .filter((id): id is string => typeof id === "string"),
     );
+    const billableRows = await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ tenantId }),
+    });
+    const active = billableRows.filter((r) => r.active);
+    const unbilledOnThisSub = (r: { stripeItemId?: string | null }) =>
+      !r.stripeItemId || !currentItemIds.has(r.stripeItemId);
+    // SHOULD-1: a SKU the checkout LISTED (session/subscription metadata) must have a recognised item. One that
+    // has none (the product not expanded, an unrecognised shape) is an anomaly: its item may well exist and bill,
+    // so it must NEVER fall into (c) below — that would create a SECOND item. It fails the webhook, loudly.
+    // S1: but only while a row could still be owed that item. A SKU whose billable rows are all inactive (or
+    // gone), whose quantity is below 1, or whose row holds a pointer that is live on this subscription has
+    // nothing to attach: its item was legitimately deleted (an earlier delivery's orphan cleanup) or never
+    // needed — so a redelivery must not alert, and must not 409-loop for days.
+    const missing = (ctx.listedSkus ?? []).filter(
+      (sku) =>
+        !bySku.has(sku) &&
+        active.some(
+          (r) => addonSkuCode(r) === sku && Number(r.quantity) >= 1 && unbilledOnThisSub(r),
+        ),
+    );
     // (c): active self-serve rows nothing bills on THIS subscription (no item, or a stale one) and this
     // checkout had no line for.
-    const active = await this.prisma.tenantAddon.findMany({
-      where: billableAddonWhere({ tenantId, active: true }),
-    });
     for (const row of active) {
       const code = addonSkuCode(row);
-      const unbilled = !row.stripeItemId || !currentItemIds.has(row.stripeItemId);
       if (
-        unbilled &&
+        unbilledOnThisSub(row) &&
         code &&
         isSelfServiceAddon(code) &&
         !bySku.has(code) &&
