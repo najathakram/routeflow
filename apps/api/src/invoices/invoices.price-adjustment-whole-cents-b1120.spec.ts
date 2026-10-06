@@ -201,6 +201,44 @@ describe("buildPriceAdjustmentUpdates: a boxed line goes through computeLineSubt
   });
 });
 
+describe("buildPriceAdjustmentUpdates: the no-derivable-pack fallback round trip is bounded (B1120)", () => {
+  /** boxes 0, pieces 5, no unitsPerBox snapshot: the one shape no pack can price, 5/12 of a case at price A. */
+  const legacy = (price: number, subtotal: number) =>
+    line("l1", { qty: 5, boxes: 0, pieces: 5, unitsPerBox: null, unitPrice: price, subtotal });
+
+  /** A -> B -> A through the builder, each step re-reading the line the previous one stored. Cents moved. */
+  const driftCents = (priceA: number, priceB: number): number => {
+    const start = roundMoney((priceA * 5) / 12);
+    const atB = build([legacy(priceA, start)], { l1: priceB })[0].data;
+    const back = build([legacy(priceB, atB.subtotal)], { l1: priceA })[0].data;
+    return Math.round((back.subtotal - start) * 100);
+  };
+
+  it("the pinned pair 5.01 -> 3.01 -> 5.01 really does move one cent (so the bound below is tight, not vacuous)", () => {
+    expect(build([legacy(5.01, 2.09)], { l1: 3.01 })[0].data.subtotal).toBe(1.26);
+    expect(build([legacy(3.01, 1.26)], { l1: 5.01 })[0].data.subtotal).toBe(2.1);
+  });
+
+  it("one round trip moves the total by at most 1/2 cent x A/B + 1/2 cent, and by at most 1 cent when B is at least half of A (executed sweep)", () => {
+    let worstWithinRatio = 0;
+    let checked = 0;
+    for (let a = 100; a <= 3000; a += 3) {
+      const priceA = a / 100;
+      for (const priceB of [0.25, 1, 5, priceA * 0.5, priceA * 0.75, priceA * 1.5, priceA * 2]) {
+        const b = roundMoney(priceB);
+        if (b <= 0) continue;
+        const moved = Math.abs(driftCents(priceA, b));
+        // the general bound: a multiplier error of (1/2 cent) / B, scaled back up by A, plus the final rounding
+        expect(moved).toBeLessThanOrEqual(0.5 * (priceA / b) + 0.5 + 1e-9);
+        if (priceA <= 2 * b) worstWithinRatio = Math.max(worstWithinRatio, moved);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(5000);
+    expect(worstWithinRatio).toBeLessThanOrEqual(1);
+  });
+});
+
 describe("PriceAdjustmentItemDto: a unit price is whole cents the column can hold (B1120)", () => {
   const pipe = new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true });
   const body = (newUnitPrice: unknown) => ({

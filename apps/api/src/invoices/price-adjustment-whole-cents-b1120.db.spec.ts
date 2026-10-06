@@ -23,6 +23,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 import { Test } from "@nestjs/testing";
 import { randomUUID } from "crypto";
+import { roundMoney } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -158,9 +159,9 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
   });
 
   /**
-   * A SENT $150.00 invoice (one line: 10 x $15.00, no tax) with `paid` of cash recorded through the
-   * production `recordPayment` writer, which also derives the status (PARTIAL for a part payment).
-   * `opts.second` seeds a second SENT $150.00 invoice for the same customer (bulk scope).
+   * One seeded invoice line, written as the stored row (so a legacy shape, such as a box split with no
+   * pack snapshot, can be planted exactly). Every invoice a spec seeds is SENT and untaxed unless the line
+   * says otherwise; a part payment is recorded afterwards through the production `recordPayment` writer.
    */
   type Line = {
     qty: number;
@@ -448,5 +449,61 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
       subtotal: "360.00",
     });
     expect((await stored(invoiceId)).invoice.total).toBe("383.97");
+  });
+
+  it("a PART-PAID invoice re-priced down stays PARTIAL, and its balance is the new total less what was paid, to the cent", async () => {
+    const s = await seed("partpaid", [[{ qty: 6, unitPrice: 10, subtotal: 60 }]]);
+    const { invoiceId } = s.rows[0];
+    await tenantCtx.run(s.tenantId, () =>
+      invoices.recordPayment(invoiceId, { amount: 20.01, method: "CASH" } as any),
+    );
+    const before = await tenantCtx.run(s.tenantId, () => invoices.findOne(invoiceId));
+    expect(before).toMatchObject({ status: "PARTIAL", balanceDue: 39.99 }); // the production writer's own state
+
+    await single(s, [8.355]); // typed 8.355 is stored as 8.36: 6 x 8.36 = 50.16
+
+    const after = await tenantCtx.run(s.tenantId, () => invoices.findOne(invoiceId));
+    const [row] = await prisma.$queryRaw<Array<{ status: string; total: string; paid: string }>>`
+      SELECT i.status::text AS status, i."total"::text AS total,
+             coalesce((SELECT sum(p.amount) FROM "InvoicePayment" p
+                        WHERE p."invoiceId" = i.id AND p.status = 'PAID'), 0)::text AS paid
+        FROM "Invoice" i WHERE i.id = ${invoiceId}`;
+    expect(row).toEqual({ status: "PARTIAL", total: "50.16", paid: "20.01" });
+    // the read path's balance is the stored total minus the confirmed cash, rounded to cents: 50.16 - 20.01
+    expect(after).toMatchObject({ status: "PARTIAL", paidAmount: 20.01 });
+    expect((after as any).balanceDue).toBe(roundMoney(Number(row.total) - Number(row.paid)));
+    expect((after as any).balanceDue).toBe(30.15);
+  });
+
+  /**
+   * The ONE line shape `buildPriceAdjustmentUpdates` cannot price from the line's own fields: a box split
+   * with no pack anywhere (boxes 0, pieces 5, no unitsPerBox snapshot, so the pack is not derivable). It keeps
+   * the proportional recovery `newSubtotal = round(newPrice x (storedSubtotal / oldPrice))`, which re-derives
+   * its multiplier from an already-rounded subtotal on every call. So a round trip A -> B -> A is NOT exactly
+   * the identity here. The bound: one step moves the multiplier by at most (1/2 cent) / B, so back at A the
+   * subtotal is within (1/2 cent) x A / B + 1/2 cent of where it began, which is at most 1 cent whenever the
+   * intermediate price B is at least half of A, and wider as B falls further below A. Pinned at 5.01 -> 3.01
+   * -> 5.01, a pair where the drift is a real, whole cent (2.09 -> 2.10), never more. It applies only to this
+   * legacy shape (update() refuses it through `unpackableSplit`, update-pack-resolution.ts, but a row stored
+   * before that can still carry it); every other line prices from qty, boxes, pieces and pack through
+   * computeLineSubtotal and round-trips exactly (the boxed case above).
+   */
+  it("a line with a box split but NO derivable pack: A -> B -> A drifts by at most 1 cent (B at least half of A)", async () => {
+    const s = await seed("nopack", [
+      [{ qty: 5, boxes: 0, pieces: 5, unitsPerBox: null, unitPrice: 5.01, subtotal: 2.09 }],
+    ]);
+    const { invoiceId, lineIds } = s.rows[0];
+
+    await single(s, [3.01]);
+    expect(await line(invoiceId, lineIds[0])).toMatchObject({
+      unitPrice: "3.01",
+      subtotal: "1.26",
+    });
+    await single(s, [5.01]);
+
+    const back = await line(invoiceId, lineIds[0]);
+    expect(back).toMatchObject({ unitPrice: "5.01", subtotal: "2.10" });
+    expect(Math.abs(roundMoney(Number(back.subtotal) - 2.09))).toBeLessThanOrEqual(0.01);
+    expect((await stored(invoiceId)).invoice.total).toBe("2.10");
   });
 });
