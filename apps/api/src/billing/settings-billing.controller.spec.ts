@@ -16,7 +16,15 @@ interface AuthUser {
 
 /** Instantiate the controller with mocked proration + mutations (+ billing) only (no
  *  Nest module needed). */
-function make(opts: { change?: any; checkoutResult?: any; planKey?: string } = {}) {
+function make(
+  opts: {
+    change?: any;
+    checkoutResult?: any;
+    planKey?: string;
+    billing?: string;
+    refusal?: { code: string; message: string } | null;
+  } = {},
+) {
   const subscription = {
     getSubscription: jest
       .fn()
@@ -26,8 +34,11 @@ function make(opts: { change?: any; checkoutResult?: any; planKey?: string } = {
   } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
+    prorationPreview: jest.fn().mockResolvedValue({ sku: "FORECASTING", proratedToday: 6.4 }),
   } as any;
   const mutations = {
+    addonBillingMode: jest.fn().mockResolvedValue(opts.billing ?? "STRIPE"),
+    addonEnableRefusal: jest.fn().mockResolvedValue(opts.refusal ?? null),
     planChangePreview: jest
       .fn()
       .mockResolvedValue(opts.change ?? { action: "UPGRADE", proratedNow: 12.3 }),
@@ -146,4 +157,68 @@ describe("SettingsBillingController.subscribe — PLAN_CHANGED_DURING_SUBSCRIBE 
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toEqual(body);
   });
+});
+
+describe("SettingsBillingController.prorationPreview — says how the add-on is billed", () => {
+  it("a Stripe-billed tenant: billing STRIPE / billed true next to the estimate", async () => {
+    const { controller, mutations } = make({ billing: "STRIPE" });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res).toMatchObject({ proratedToday: 6.4, billing: "STRIPE", billed: true });
+    expect(mutations.addonBillingMode).toHaveBeenCalledWith("t1");
+  });
+
+  it("a manually-invoiced tenant: billing MANUAL, still billed (it appears on the next invoice)", async () => {
+    const { controller } = make({ billing: "MANUAL" });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res).toMatchObject({ billing: "MANUAL", billed: true });
+  });
+
+  it("a free pilot: billing UNBILLED / billed false, so the sheet says it is included at no charge", async () => {
+    const { controller } = make({ billing: "UNBILLED" });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res).toMatchObject({ billing: "UNBILLED", billed: false });
+  });
+
+  it("a free pilot (billed false) carries NO proratedToday: there is nothing to charge", async () => {
+    const { controller } = make({ billing: "UNBILLED" });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res.proratedToday).toBeNull();
+    expect(res.refusal).toBeNull();
+  });
+
+  it("billed tenants keep the estimate and carry no refusal (additive field, unchanged otherwise)", async () => {
+    for (const billing of ["STRIPE", "MANUAL"]) {
+      const { controller } = make({ billing });
+      const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+      expect(res).toMatchObject({ proratedToday: 6.4, billing, billed: true, refusal: null });
+    }
+  });
+
+  it.each([
+    [
+      "annual (the enable 409)",
+      "ADDON_ANNUAL_NOT_SUPPORTED",
+      "Add-ons can't be added to an annual plan online yet. Please contact support.",
+    ],
+    [
+      "plan-included (the F3 refusal)",
+      "ADDON_INCLUDED_IN_PLAN",
+      "Forecasting is already included in your plan.",
+    ],
+  ])(
+    "a refused enable (%s): REFUSED / billed false, the SAME code, no charge figure",
+    async (_l, code, message) => {
+      // The mode is still STRIPE underneath: the refusal, not the mode, must win.
+      const { controller, mutations } = make({ billing: "STRIPE", refusal: { code, message } });
+      const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+      expect(res).toMatchObject({
+        sku: "FORECASTING",
+        billing: "REFUSED",
+        billed: false,
+        proratedToday: null,
+        refusal: { code, message },
+      });
+      expect(mutations.addonEnableRefusal).toHaveBeenCalledWith("t1", "FORECASTING");
+    },
+  );
 });

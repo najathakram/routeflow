@@ -206,6 +206,7 @@ export default function InvoiceDetailScreen() {
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
   const pendingMirror = isPendingOrderMirror({
+    pendingMirror: invoice.pendingMirror,
     orderId: invoice.orderId,
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,

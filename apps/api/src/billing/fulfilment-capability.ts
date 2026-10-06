@@ -1,7 +1,7 @@
 import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
-import { gateVia } from "./feature-registry";
+import { featureDefByKey, gateVia } from "./feature-registry";
 
 /**
  * The two keys that make a tenant a delivery operation (the fleet modules). `driver_payments` is
@@ -35,12 +35,16 @@ export function deriveFulfilmentCapability(input: {
   fleet: boolean;
 }): FulfilmentCapability {
   const { fleet } = input;
-  const def = BY_MODE[input.mode];
+  // SA-666a: a stored mode the registry marks UNAVAILABLE (pickup, pickup_ship until the counter flow
+  // lands) is treated as unset, read from the registry (no second constant): a tenant that already
+  // holds one keeps today's behavior instead of an order path nothing can create.
+  const available = featureDefByKey("fulfilment_model")?.config?.modes[input.mode]?.available;
+  const def = available === false ? undefined : BY_MODE[input.mode];
   const methods: FulfilmentMethod[] = def ? [...def.methods] : ["ROUTE", "SHIP"];
   const staffDefault = methods[0];
-  const inStore = input.mode === "pickup" || input.mode === "pickup_ship";
+  const inStore = def !== undefined && (input.mode === "pickup" || input.mode === "pickup_ship");
   const counter = inStore ? "always" : input.counterSales === "on" ? "optional" : "off";
-  const needsFleet = input.mode === "delivery" || input.mode === "both";
+  const needsFleet = def !== undefined && (input.mode === "delivery" || input.mode === "both");
   return {
     methods,
     staffDefault,
