@@ -5,6 +5,7 @@ import {
   lockCustomerCreditsForSweep,
   lockInvoiceForCredit,
   lockOrderCreditSettle,
+  lockOrderRow,
 } from "./credit-note-locks";
 
 /**
@@ -22,6 +23,7 @@ describe("credit-note-locks — every FOR UPDATE is tenant-scoped", () => {
   const cases: Array<[string, (tx: any, tenantId: string | null) => Promise<void>, number]> = [
     ["lockCreditNotes", (tx, t) => lockCreditNotes(tx, t, ["cn-b", "cn-a"]), 1],
     ["lockInvoiceForCredit", (tx, t) => lockInvoiceForCredit(tx, t, "inv-1"), 2],
+    ["lockOrderRow", (tx, t) => lockOrderRow(tx, t, "ord-1"), 1],
     ["lockOrderCreditSettle", (tx, t) => lockOrderCreditSettle(tx, t, "ord-1"), 3],
     [
       "lockCustomerCreditsForSweep",

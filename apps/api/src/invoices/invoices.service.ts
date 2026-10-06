@@ -132,7 +132,7 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { lockCreditsForSend } from "../credit-notes/credit-note-locks";
+import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
@@ -1241,6 +1241,7 @@ export class InvoicesService {
       ? null
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
+      if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2782,20 +2783,19 @@ export class InvoicesService {
           : {};
     const tenantId = this.prisma.getTenantId();
 
-    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside
-    // ONE tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape.
-    // Previously this ran with no transaction at all AND never settled the
-    // order's explicit-amount OrderCreditNote selections, so a leftover selection
-    // was neither auto-applied (send()'s explicitIds exclusion assumes settle
-    // already ran) nor settled here — stranding it. B100/F16b: the number is reserved
-    // BEFORE this transaction opens, in reserveNext's own short transaction
-    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method
-    // never receives a caller tx; if it ever does, it must reserve INSIDE it with
-    // `generateInvoiceNumber(tenantId, tx)`, the createSplitInvoices rule
-    // (fix-round-2b.md D7) — a hoisted reservation under a caller's tx is the
-    // pool-starving nested open.
+    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside ONE
+    // tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape. Previously this ran
+    // with no transaction at all AND never settled the order's explicit-amount OrderCreditNote
+    // selections, so a leftover selection was neither auto-applied (send()'s explicitIds exclusion
+    // assumes settle already ran) nor settled here — stranding it. B100/F16b: the number is
+    // reserved BEFORE this transaction opens, in reserveNext's own short transaction
+    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method never receives
+    // a caller tx; if it ever does, it must reserve INSIDE it with `generateInvoiceNumber(tenantId,
+    // tx)`, the createSplitInvoices rule (fix-round-2b.md D7) — a hoisted reservation under a
+    // caller's tx is the pool-starving nested open.
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
+      await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
       let created: any;
       try {
         created = await tx.invoice.create({

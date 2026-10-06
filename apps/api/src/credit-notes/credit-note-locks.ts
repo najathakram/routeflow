@@ -44,6 +44,22 @@ export async function lockInvoiceForCredit(
 }
 
 /**
+ * The Order row alone. A transaction that INSERTs an invoice and settles the order's credits must
+ * take this FIRST, before the insert: the invoice's `orderId` foreign key takes KEY SHARE on the
+ * Order, and settle's own Order lock then UPGRADES it to FOR UPDATE — two such transactions (two
+ * partial creates, or one against Mark Delivered) each hold KEY SHARE and wait on the other's
+ * upgrade, a 40P01 deadlock that surfaces as an uncoded 500. Locking first makes the second wait
+ * its turn; settle's later Order lock is then a no-op on a row this transaction already holds.
+ */
+export async function lockOrderRow(
+  tx: LockTx,
+  tenantId: string | null,
+  orderId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+}
+
+/**
  * `settleOrderCreditsInTx`'s FIRST statements: this Order, every invoice of the order, then every
  * note the settle can touch — the notes its intents name and the notes already paying its invoices
  * (the shrink pass restores those).
@@ -53,7 +69,7 @@ export async function lockOrderCreditSettle(
   tenantId: string | null,
   orderId: string,
 ): Promise<void> {
-  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+  await lockOrderRow(tx, tenantId, orderId);
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
   await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id IN (
       SELECT "creditNoteId" FROM "OrderCreditNote" WHERE "orderId" = ${orderId}
