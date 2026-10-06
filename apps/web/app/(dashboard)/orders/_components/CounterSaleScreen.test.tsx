@@ -619,6 +619,55 @@ describe("CounterSaleScreen: API contract wiring", () => {
           expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
         });
 
+        describe("a recovered CASH receipt shows tendered and change (S3)", () => {
+          it("without a change from the server: tendered and change come from the submitted attempt, labelled 'as entered'", async () => {
+            await recover({ paid: 2.5, balanceDue: 0, change: undefined, method: "CASH" });
+            const tendered = screen.getByText("Tendered").closest("div")!;
+            expect(tendered).toHaveTextContent("$20.00");
+            expect(tendered).toHaveTextContent("as entered");
+            const change = screen.getByText("Change").closest("div")!;
+            expect(change).toHaveTextContent("$17.50");
+            expect(change).toHaveTextContent("as entered");
+          });
+
+          it("with the server's change: that change is shown unlabelled; the tendered stays 'as entered'", async () => {
+            await recover({ paid: 2.5, balanceDue: 0, change: 17.5, method: "CASH" });
+            const change = screen.getByText("Change").closest("div")!;
+            expect(change).toHaveTextContent("$17.50");
+            expect(change.textContent).not.toMatch(/as entered/);
+            expect(screen.getByText("Tendered").closest("div")).toHaveTextContent("as entered");
+          });
+
+          it("an exact cash tender has no change line", async () => {
+            mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+            renderWithProviders(<CounterSaleScreen />);
+            await fillCola();
+            fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+            fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+            await screen.findByTestId("counter-outcome-unknown");
+            lookupAsync.mockResolvedValueOnce({ ...sale, change: undefined, method: "CASH" });
+            check();
+            await screen.findByTestId("counter-sale-receipt");
+            expect(screen.queryByText("Change")).toBeNull();
+            expect(screen.getByText("Tendered").closest("div")).toHaveTextContent("$2.50");
+          });
+
+          it("a CARD receipt shows no tendered and no change", async () => {
+            await recover({ paid: 2.5, balanceDue: 0, change: undefined, method: "CARD" });
+            expect(screen.queryByText("Tendered")).toBeNull();
+            expect(screen.queryByText("Change")).toBeNull();
+          });
+
+          it("a live (non-recovered) cash receipt is unchanged: server change, no Tendered row, no 'as entered'", async () => {
+            renderWithProviders(<CounterSaleScreen />);
+            await fillCola();
+            fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+            const receipt = await screen.findByTestId("counter-sale-receipt");
+            expect(screen.getByText("Change")).toBeInTheDocument();
+            expect(receipt.textContent).not.toMatch(/as entered|Tendered/);
+          });
+        });
+
         it("a partial stored tender (paymentRecorded false) still says payment not recorded", async () => {
           await recover({
             paid: 1,

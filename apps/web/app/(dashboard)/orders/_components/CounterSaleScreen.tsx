@@ -111,6 +111,9 @@ export function CounterSaleScreen() {
   const [reference, setReference] = React.useState("");
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
+  // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
+  // no cash tendered), so the receipt can show tendered and change, labelled "as entered".
+  const [enteredTender, setEnteredTender] = React.useState<number | null>(null);
   const [autoPrint, setAutoPrint] = React.useState(false);
 
   React.useEffect(() => setAutoPrint(readAutoPrint()), []);
@@ -218,6 +221,7 @@ export function CounterSaleScreen() {
     setReference("");
     setError("");
     setReceipt(null);
+    setEnteredTender(null);
     attemptRef.current = null;
     setOutcomeUnknown(false);
     setLookupFailed(false);
@@ -339,6 +343,8 @@ export function CounterSaleScreen() {
       }
       attemptRef.current = null;
       setOutcomeUnknown(false);
+      const amount = attempt.dto.payment.method === "CASH" ? attempt.dto.payment.amount : undefined;
+      setEnteredTender(res.method === "CASH" && amount != null ? amount : null);
       finishSale(res, attempt.next);
     } finally {
       submittingRef.current = false;
@@ -369,6 +375,16 @@ export function CounterSaleScreen() {
     // The server's tender method (echoed on the POST, derived from storage on a recovered sale): an ON_ACCOUNT sale is
     // owed on account, which is not a failed payment.
     const onAccount = receipt.method === "ON_ACCOUNT" && !paymentNotRecorded;
+    // Change: the server's when it has one; else, on a RECOVERED cash sale (the server stores no cash tendered), the
+    // attempt's tendered minus what was paid, labelled "as entered".
+    const serverChange = receipt.change != null && receipt.change > 0 ? receipt.change : null;
+    const derivedChange =
+      serverChange == null && enteredTender != null && !paymentNotRecorded
+        ? roundMoney(enteredTender - receipt.paid)
+        : null;
+    const shownChange =
+      serverChange ?? (derivedChange != null && derivedChange > 0 ? derivedChange : null);
+    const changeAsEntered = serverChange == null && shownChange != null;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
         <h1 className="text-xl font-semibold">Receipt</h1>
@@ -427,10 +443,23 @@ export function CounterSaleScreen() {
               <dd>{money(receipt.balanceDue)}</dd>
             </div>
           ) : null}
-          {!paymentNotRecorded && receipt.change != null && receipt.change > 0 ? (
+          {enteredTender != null && !paymentNotRecorded ? (
+            <div className="flex justify-between">
+              <dt>Tendered</dt>
+              <dd>
+                {money(enteredTender)} <span className="text-xs text-navy/60">as entered</span>
+              </dd>
+            </div>
+          ) : null}
+          {!paymentNotRecorded && shownChange != null && shownChange > 0 ? (
             <div className="flex justify-between text-lg font-semibold">
               <dt>Change</dt>
-              <dd>{money(receipt.change)}</dd>
+              <dd>
+                {money(shownChange)}
+                {changeAsEntered ? (
+                  <span className="ml-1 text-xs font-normal text-navy/60">as entered</span>
+                ) : null}
+              </dd>
             </div>
           ) : null}
         </dl>
