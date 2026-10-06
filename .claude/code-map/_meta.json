@@ -1,6 +1,6 @@
 {
-  "mappedSha": "f3d686fa70e8f7c3f0d9beb17670b4e182fbdc79",
-  "generatedAt": "2026-10-04T00:00:00.000Z",
+  "mappedSha": "cb9fc26785805531264ecd7276d77d9ff4db6374",
+  "generatedAt": "2026-10-05T18:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -14,6 +14,6 @@
     "mobile": 5,
     "packages": 0
   },
-  "fileCount": 1046,
-  "notes": "**2026-10-04 \u2014 window 1 landings #3190, #3196, #3191, #3188, #3194, #3192, #3135 (master `f3d686fa7`) (docs-only bookkeeping).** New `api/landing-2026-10-04-w1.md` (TOC row in `api.md`), one bullet per PR, each symbol grepped at HEAD; `packages.md` gains a \"Landed 2026-10-04 (window 1)\" section (fulfilment and price-history types). `mappedSha` restamped to `f3d686fa7`. Lessons L-259 and L-260 minted. No source changed."
+  "fileCount": 1047,
+  "notes": "**2026-10-05 — window 6 landings #3217, #3161, #3199, #3129, #3219, #3225 and #3229 (master `64922829c`) (docs-only bookkeeping).** `api/landing-2026-10-05-w6.md` has one bullet per PR, each symbol grepped at `cb9fc2678`; `packages.md` and `web/landing-2026-10-01-w12-w27.md` gain the types and web side. `mappedSha` restamped to `cb9fc2678`. #3229 is spec-only (no map entry). No source changed. See CHANGELOG.md."
 }

@@ -1381,7 +1381,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
       2,
       "cust-1",
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "ord-new" }, // M2: folds only the new order's path
       { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });

@@ -316,9 +316,6 @@ export function CreateOrderModal({
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Selling restrictions: lines the API refused for this customer (shown instead of a raw toast).
   const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
-  // Pre-check: as soon as a customer is selected, look up their active order so we can
-  // surface the prompt the moment "Create Order" is clicked.
-  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
 
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
@@ -439,6 +436,12 @@ export function CreateOrderModal({
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
   const fulfillPath = watch("fulfillPath");
+  // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
+  // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
+  const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
+    selectedCustomer?.id,
+    fulfillPath,
+  );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
