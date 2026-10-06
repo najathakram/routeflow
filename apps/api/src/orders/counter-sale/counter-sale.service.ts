@@ -4,12 +4,11 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing";
+import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -19,6 +18,12 @@ import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { counterSaleGate } from "./capability-shape";
 import { toCounterOrderItem } from "./counter-sale-lines";
+import {
+  buildCounterSaleResponse,
+  isCounterSaleOrder,
+  isTender,
+  type InvoiceRow,
+} from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -39,21 +44,6 @@ import { WalkInCustomerService } from "./walk-in-customer";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
 const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
-
-type InvoiceRow = {
-  id: string;
-  invoiceNumber?: string;
-  total: unknown;
-  payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
-};
-
-/**
- * A payment the counter itself took (cash / card / check): not a credit-note or advance application.
- * scan-ok: draft-payment-not-void — a replay asks "was a tender already recorded?", and a VOIDED one
- * does not count; the counter never writes a DRAFT payment (recordPayment's default status is PAID).
- */
-const isTender = (p: { method?: string; status?: string }) =>
-  p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE";
 
 /**
  * POST /orders/counter-sale (SA-655): ONE staff call that rings an over-the-counter sale as a
@@ -190,7 +180,7 @@ export class CounterSaleService {
       }
     }
 
-    return this.respond(dto.payment, order, invoices, replayed, planError);
+    return buildCounterSaleResponse({ payment: dto.payment, order, invoices, replayed, planError });
   }
 
   /**
@@ -272,14 +262,14 @@ export class CounterSaleService {
     // A customer id no row can hold: only the tenant-wide steps of the lookup can match (the key is the
     // identity here, not the customer).
     const order = await this.orders.findReplayCandidateByKey(key, NO_CUSTOMER);
-    if (!order || order.fulfillPath !== FulfillPath.PICKUP) {
+    if (!order || !isCounterSaleOrder(order)) {
       throw new NotFoundException({
         code: API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
         message: "No sale exists for this key",
       });
     }
     const invoices = await this.readInvoices(order.id);
-    return this.respond(undefined, order, invoices, true, undefined);
+    return buildCounterSaleResponse({ order, invoices, replayed: true });
   }
 
   private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
@@ -319,58 +309,5 @@ export class CounterSaleService {
       include: { payments: true },
       orderBy: { createdAt: "asc" },
     });
-  }
-
-  /** Every figure comes from the stored invoices/payments; `change` is display-only (no money row). */
-  private respond(
-    payment: CounterSaleDto["payment"] | undefined,
-    order: { id: string; orderNumber: string | null } | null,
-    invoices: InvoiceRow[],
-    replayed: boolean,
-    planError: string | undefined,
-  ): CounterSaleResponse {
-    const first = invoices[0];
-    if (!order || !first) {
-      throw new InternalServerErrorException(
-        "The sale was created but its invoice could not be found. Open the order from the orders list.",
-      );
-    }
-    const payments = invoices.flatMap((i) => i.payments ?? []);
-    const total = roundMoney(invoices.reduce((s, i) => s + Number(i.total), 0));
-    const paid = roundMoney(sumConfirmed(payments));
-    const balanceDue = Math.max(0, roundMoney(total - paid));
-    const method = payment?.method;
-    const firstTender = payments.find(isTender);
-    // Recorded = nothing was asked of the till (on account / nothing owing) or a tender is STORED (a partial
-    // included: its balanceDue stays open on purpose).
-    // A throw part-way (a sibling invoice's allocation) can leave an EARLIER invoice's tender stored while
-    // balance remains: that must never read as recorded, so a planError beats "a tender exists" (paid and
-    // balanceDue still come from storage). A balance that storage shows fully covered is recorded regardless
-    // (the loser of a race whose own recordPayment the invoice row lock refused).
-    const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
-    // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
-    const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
-    const tendered = payment?.amount;
-    const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
-    // Change is handed back ONLY once the STORED balance is fully covered: this call's tender against stored
-    // cash is otherwise money still owed (a replay must never read an unpaid sibling's share as change).
-    const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
-
-    return {
-      orderId: order.id,
-      orderNumber: order.orderNumber ?? "",
-      invoiceId: first.id,
-      invoiceNumber: first.invoiceNumber ?? "",
-      total,
-      paid,
-      balanceDue,
-      ...(change != null ? { change } : {}),
-      ...(firstTender ? { paymentId: firstTender.id } : {}),
-      paymentRecorded: settled,
-      ...(!settled
-        ? { paymentErrorCode: planError ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
-        : {}),
-      ...(replayed ? { replayed: true } : {}),
-    };
   }
 }

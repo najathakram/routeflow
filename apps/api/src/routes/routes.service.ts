@@ -1296,11 +1296,10 @@ export class RoutesService {
             status: { notIn: [OrderStatus.CANCELLED] },
             fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
           },
-          // B305 round 5: same drift as the main stops query above — this
-          // legacy fallback had its own hand-rolled select, missing the same
-          // money fields. `RUN_STOP_INCLUDE.orders.select` already carries
-          // exactly what an order needs here (incl. lineItems); `customerId`
-          // is the one extra field this fallback needs to group by.
+          // B305 round 5: same drift as the main stops query above — this legacy fallback
+          // had its own hand-rolled select, missing the same money fields.
+          // `RUN_STOP_INCLUDE.orders.select` already carries what an order needs here (incl.
+          // lineItems); `customerId` is the one extra field this fallback groups by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
         const ordersWithBalances = await withPayableInvoicesFlat(this.prisma.forTenant(), orders);
