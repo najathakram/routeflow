@@ -129,6 +129,9 @@
 //                    add-on the tenant's plan already bundles, `includedAtPlan`). Both are `body.code` of the refusal and also `refusal.code`
 //                    of GET /billing/proration-preview (billing "REFUSED"), so the confirm sheet and the enable call agree. Clients show
 //                    the body's fixed copy or their own, never a Stripe message.
+//   SA-690 (interim gate) — ADDON_BILLING_PENDING_CHECKOUT: the 409 of a Stripe Checkout start (the tenant's own, or the platform-admin
+//                    link) while the tenant holds an active self-serve add-on that no Stripe item bills. Body {code, message}; the message
+//                    names the add-ons and says to turn them off or contact support.
 //   SA-693 (comp add-ons) — ADDON_COMP_MANAGED_BY_SUPPORT: the 409 of a self-serve add-on quantity change on an ACTIVE comp row
 //                    (a platform grant, never billed). Same quantity stays a no-op and a disable stays allowed. Body {code, message}.
 //                    ADDON_UNCOMP_STRIPE_UNAVAILABLE: the 409 of an admin uncomp on a tenant that has a Stripe subscription while Stripe is not
@@ -291,6 +294,7 @@ export const API_ERROR_CODES = {
   PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
+  ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
   ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
