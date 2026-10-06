@@ -1018,6 +1018,7 @@ export function EditableLineItems({
   tierForProductId,
   pricingReady,
   customer,
+  orderId,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -1044,6 +1045,8 @@ export function EditableLineItems({
   pricingReady: boolean;
   /** Whose price history the per-line popover shows. */
   customer?: { id: string; name?: string | null };
+  /** The order being edited: its own lines are left out of that history (hunt2 F6). */
+  orderId?: string;
 }) {
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
@@ -1526,6 +1529,7 @@ export function EditableLineItems({
                         item.unitLabel ??
                         (item.unitsPerBox && item.unitsPerBox > 1 ? "case" : item.unit),
                       packHint: item.unitsPerBox ?? null,
+                      excludeOrderId: orderId,
                     }
               }
             />
@@ -2877,6 +2881,7 @@ export default function OrderDetailPage() {
                   tierForProductId={tierForProductId}
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
+                  orderId={order.id}
                 />
 
                 {/* Live total preview */}
