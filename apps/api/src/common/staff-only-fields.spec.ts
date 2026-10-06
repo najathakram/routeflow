@@ -8,6 +8,7 @@ import {
   CUSTOMER_PAYMENT_FIELDS,
   pickCustomerInvoiceFields,
   pickCustomerOrderFields,
+  toCustomerOrder,
 } from "./staff-only-fields";
 import {
   INVOICE_LEAK_KEYS,
@@ -83,6 +84,23 @@ describe("pickCustomerOrderFields", () => {
     expect(out.routeRun).toEqual({ status: "ACTIVE", startedAt: null });
     expect(out.changeRequests).toEqual([{ id: "cr-1", type: "ADD_ITEM", status: "PENDING" }]);
     expect(out._count).toEqual({ changeRequests: 1 });
+  });
+
+  it("keeps a shipped order's fulfilment and shipment fields (the buyer's shipment card reads them)", () => {
+    const shippedAt = new Date("2026-10-01T15:00:00.000Z");
+    const out = toCustomerOrder({
+      ...leakyOrder(),
+      fulfillPath: "SHIP",
+      shippingCarrier: "UPS",
+      shippingTrackingNumber: "1Z999",
+      shippedAt,
+    }) as Row;
+    expect(out).toMatchObject({
+      fulfillPath: "SHIP",
+      shippingCarrier: "UPS",
+      shippingTrackingNumber: "1Z999",
+      shippedAt,
+    });
   });
 
   it("drops DRAFT invoices from the order's invoice list and keeps a lean stub of the rest", () => {

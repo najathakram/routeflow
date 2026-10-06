@@ -33,6 +33,11 @@ export const CUSTOMER_ORDER_FIELDS = [
   "total",
   "discountAmount",
   "editWindow",
+  // How the order reaches the buyer and, once shipped, its carrier details (the shipment card).
+  "fulfillPath",
+  "shippingCarrier",
+  "shippingTrackingNumber",
+  "shippedAt",
 ] as const;
 
 /** Order line (OrderItem) scalars a buyer screen reads. `product` and `components` are projected below. */
@@ -88,7 +93,8 @@ export const CUSTOMER_INVOICE_FIELDS = [
   "isOverdue",
 ] as const;
 
-/** Invoice line scalars a buyer screen reads. `product`, `trackedCategory`, `components` are projected below. */
+/** Invoice line scalars a buyer screen reads. `product` and `components` are projected below; the
+ *  line's tracked category / subcategory are not (no buyer screen renders them). */
 export const CUSTOMER_INVOICE_ITEM_FIELDS = [
   "id",
   "description",
@@ -198,11 +204,6 @@ function customerInvoiceItem(line: Row): Row {
   const out = pick(line, CUSTOMER_INVOICE_ITEM_FIELDS);
   if ("product" in line) out.product = shape(line.product, customerProduct);
   if ("components" in line) out.components = shape(line.components, customerComponent);
-  for (const key of ["trackedCategory", "trackedSubcategory"] as const) {
-    if (key in line) {
-      out[key] = shape(line[key], (c) => pick(c, ["id", "name", "invoiceTreatment"]));
-    }
-  }
   return out;
 }
 
