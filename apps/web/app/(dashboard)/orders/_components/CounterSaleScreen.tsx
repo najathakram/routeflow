@@ -358,6 +358,9 @@ export function CounterSaleScreen() {
 
   if (receipt) {
     const paymentNotRecorded = receipt.paymentRecorded === false;
+    // The server's tender method (echoed on the POST, derived from storage on a recovered sale): an ON_ACCOUNT sale is
+    // owed on account, which is not a failed payment.
+    const onAccount = receipt.method === "ON_ACCOUNT" && !paymentNotRecorded;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
         <h1 className="text-xl font-semibold">Receipt</h1>
@@ -374,6 +377,16 @@ export function CounterSaleScreen() {
             </li>
           ))}
         </ul>
+        {onAccount ? (
+          <div
+            role="status"
+            className="space-y-1 rounded border border-navy/20 bg-navy/5 p-3 text-sm"
+            data-testid="counter-on-account"
+          >
+            <p className="font-semibold">On account</p>
+            <p>{money(receipt.balanceDue)} balance due on account</p>
+          </div>
+        ) : null}
         {paymentNotRecorded ? (
           <div
             role="status"
@@ -394,13 +407,13 @@ export function CounterSaleScreen() {
             <dt>Total</dt>
             <dd>{money(receipt.total)}</dd>
           </div>
-          {paymentNotRecorded ? null : (
+          {paymentNotRecorded || onAccount ? null : (
             <div className="flex justify-between">
               <dt>Paid</dt>
               <dd>{money(receipt.paid)}</dd>
             </div>
           )}
-          {paymentNotRecorded || receipt.balanceDue > 0 ? (
+          {paymentNotRecorded || onAccount || receipt.balanceDue > 0 ? (
             <div className="flex justify-between">
               <dt>Balance due</dt>
               <dd>{money(receipt.balanceDue)}</dd>
