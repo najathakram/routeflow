@@ -138,10 +138,20 @@ describe("PickupCompleteDialog — tender", () => {
     expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CARD" } });
   });
 
-  it("a walk-in cannot be charged on account", async () => {
+  it("a walk-in is never offered On account (hidden, not just disabled)", async () => {
     balance(25);
     mount({ isWalkIn: true });
-    expect(await screen.findByRole("button", { name: "On account" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Cash" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "On account" })).toBeNull();
+  });
+
+  it("a non-walk-in is offered On account, and it posts the method alone", async () => {
+    balance(25);
+    mount({ isWalkIn: false });
+    fireEvent.click(await screen.findByRole("button", { name: "On account" }));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "ON_ACCOUNT" } });
   });
 });
 

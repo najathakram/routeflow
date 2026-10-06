@@ -289,15 +289,18 @@ export function writeAutoPrint(on: boolean): void {
 
 /**
  * What is left to collect at the hand-over, BEFORE the call: the sum of the server's per-invoice `balanceDue` over the
- * order's live (non-VOID) invoices; with no invoice yet, the order total. The order payload carries no paid figure, so
+ * order's live (not VOID / WRITTEN_OFF) invoices; with no invoice yet, the order total. The order payload carries no paid figure, so
  * the dialog reads each invoice's detail for `balanceDue`. Cents via `roundMoney`; the server still judges the real
  * balance (it never over-collects), this only decides whether to ask for a tender.
  */
+/** Invoices that owe nothing and are never collected on: VOID and WRITTEN_OFF. */
+export const PICKUP_DEAD_INVOICE: ReadonlySet<string> = new Set(["VOID", "WRITTEN_OFF"]);
+
 export function pickupBalanceDue(
   orderTotal: number,
   invoices: ReadonlyArray<{ status: string; total: number; balanceDue?: number }>,
 ): number {
-  const live = invoices.filter((inv) => inv.status !== "VOID");
+  const live = invoices.filter((inv) => !PICKUP_DEAD_INVOICE.has(inv.status));
   if (live.length === 0) return roundMoney(orderTotal);
   return roundMoney(live.reduce((sum, inv) => sum + (inv.balanceDue ?? inv.total), 0));
 }
@@ -313,5 +316,9 @@ export function pickupCompleteErrorCopy(err: unknown): string {
     ?.response;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
+  if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
+    return PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED)
+    return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
   return PICKUP_GENERIC_COPY;
 }

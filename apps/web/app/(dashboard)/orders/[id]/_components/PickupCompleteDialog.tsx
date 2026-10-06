@@ -6,6 +6,7 @@ import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflo
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import {
   PAYMENT_PROBLEM_COPY,
+  PICKUP_DEAD_INVOICE,
   changeDue,
   newIdempotencyKey,
   paymentMethodOptions,
@@ -46,7 +47,7 @@ export function PickupCompleteDialog({
   isWalkIn: boolean;
 }) {
   const complete = usePickupComplete(orderId);
-  const liveIds = invoices.filter((i) => i.status !== "VOID").map((i) => i.id);
+  const liveIds = invoices.filter((i) => !PICKUP_DEAD_INVOICE.has(i.status)).map((i) => i.id);
   const balances = usePickupInvoiceBalances(liveIds, open);
   const loading = liveIds.length > 0 && balances.isLoading;
   // A failed balance read falls back to the order total: the server never over-collects.
@@ -188,24 +189,26 @@ export function PickupCompleteDialog({
               Collect <strong>{money(balanceDue)}</strong>
             </p>
             <div className="flex flex-wrap gap-2">
-              {paymentMethodOptions(isWalkIn).map((m) => (
-                <button
-                  key={m.method}
-                  type="button"
-                  disabled={m.disabled}
-                  aria-pressed={method === m.method}
-                  className={cn(
-                    "rounded border px-3 py-2 text-sm disabled:opacity-40",
-                    method === m.method && "border-brand-600 bg-brand-50 font-semibold",
-                  )}
-                  onClick={() => {
-                    setMethod(m.method);
-                    setError(null);
-                  }}
-                >
-                  {m.label}
-                </button>
-              ))}
+              {paymentMethodOptions(isWalkIn)
+                .filter((m) => !m.disabled) // a walk-in has no account: On account is not offered at all
+                .map((m) => (
+                  <button
+                    key={m.method}
+                    type="button"
+                    disabled={m.disabled}
+                    aria-pressed={method === m.method}
+                    className={cn(
+                      "rounded border px-3 py-2 text-sm disabled:opacity-40",
+                      method === m.method && "border-brand-600 bg-brand-50 font-semibold",
+                    )}
+                    onClick={() => {
+                      setMethod(m.method);
+                      setError(null);
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
             </div>
             {method === "CASH" && (
               <div className="space-y-2">

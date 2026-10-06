@@ -14,6 +14,7 @@ import {
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
+  PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
   PICKUP_NOT_READY_COPY,
   PICKUP_ONLY_COPY,
@@ -377,6 +378,15 @@ describe("pickupBalanceDue (what is left to collect before pickup-complete)", ()
       ]),
     ).toBe(10.3);
   });
+  it("WRITTEN_OFF is ignored like VOID", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10 },
+        { status: "WRITTEN_OFF", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10);
+    expect(pickupBalanceDue(25, [{ status: "WRITTEN_OFF", total: 25, balanceDue: 25 }])).toBe(25);
+  });
   it("a settled invoice is nothing to collect", () => {
     expect(pickupBalanceDue(30, [{ status: "PAID", total: 30, balanceDue: 0 }])).toBe(0);
   });
@@ -390,6 +400,19 @@ describe("pickupCompleteErrorCopy", () => {
   it("maps PICKUP_NOT_READY and PICKUP_ONLY to fixed copy", () => {
     expect(pickupCompleteErrorCopy(err(409, "PICKUP_NOT_READY"))).toBe(PICKUP_NOT_READY_COPY);
     expect(pickupCompleteErrorCopy(err(400, "PICKUP_ONLY"))).toBe(PICKUP_ONLY_COPY);
+  });
+  it("maps WALK_IN_NO_ACCOUNT and COUNTER_CHECK_NUMBER_REQUIRED to fixed copy, not the server text", () => {
+    const walk = pickupCompleteErrorCopy({
+      response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "raw server text" } },
+    });
+    expect(walk).toBe(PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT);
+    const check = pickupCompleteErrorCopy({
+      response: {
+        status: 400,
+        data: { code: "COUNTER_CHECK_NUMBER_REQUIRED", message: "raw server text" },
+      },
+    });
+    expect(check).toBe(PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED);
   });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(

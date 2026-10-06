@@ -95,7 +95,11 @@ export class BuyerService {
           // identity only once the link is ACTIVE; pending/invited rows show the
           // seller branding + status badge only.
           customer: link.status === "ACTIVE" ? link.customer : null,
-          fulfilment: await this.fulfilmentOffer(link.tenantId),
+          // Same rule as `customer`: the offer is a seller-config read, so only an ACTIVE link gets it.
+          fulfilment:
+            link.status === "ACTIVE"
+              ? await this.fulfilmentOffer(link.tenantId)
+              : { portalMethods: [], portalDefault: null },
         };
       }),
     );

@@ -81,4 +81,24 @@ describe("BuyerService.getSellers fulfilment offer", () => {
     const [row] = await service.getSellers("b1");
     expect(row.fulfilment).toEqual({ portalMethods: [], portalDefault: null });
   });
+
+  it("an INVITED or PENDING_SELLER_APPROVAL link gets the empty offer and its mode is never read", async () => {
+    modes.t1 = "pickup_ship";
+    modes.t2 = "pickup_ship";
+    modes.t3 = "pickup_ship";
+    prisma.customerLink.findMany.mockResolvedValue([
+      { ...link("t1", "a"), status: "INVITED" },
+      { ...link("t2", "b"), status: "PENDING_SELLER_APPROVAL" },
+      link("t3", "c"),
+    ] as any);
+    const rows = await service.getSellers("b1");
+    const empty = { portalMethods: [], portalDefault: null };
+    expect(rows.map((r) => r.fulfilment)).toEqual([
+      empty,
+      empty,
+      { portalMethods: ["PICKUP", "SHIP"], portalDefault: "PICKUP" },
+    ]);
+    expect(getEffectiveMode).toHaveBeenCalledTimes(1);
+    expect(getEffectiveMode).toHaveBeenCalledWith("t3", "fulfilment_model");
+  });
 });
