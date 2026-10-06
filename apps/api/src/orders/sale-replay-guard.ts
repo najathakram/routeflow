@@ -2,25 +2,35 @@ import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** What a stored counter sale is, judged from its order status and its invoices' statuses (ALL of them, voided included). */
-export type StoredSaleState = "live" | "incomplete" | "voided";
+export type StoredSaleState = "live" | "incomplete" | "voided" | "changed";
 
 /**
- * The ONE rule for "is this stored sale still a sale?" (SA-672c), shared by createSale's replay and GET .../by-key:
- *  - an order that is not PENDING or DELIVERED (CANCELLED, or anything else that moved on) is VOIDED;
- *  - invoices exist but every one is VOID / WRITTEN_OFF: VOIDED (nothing live to finish or charge);
- *  - a PENDING/DELIVERED order with NO invoice rows at all: INCOMPLETE (the first attempt stopped early, so a
- *    re-POST with the same key finishes it);
- *  - otherwise live.
+ * The ONE rule for "is this stored sale still a sale?" (SA-672c/d), used by GET .../by-key (all four answers) and by
+ * createSale's replay guard (which separates a moved order BEFORE asking, see assertSaleReplayable):
+ *  - voided: the order is CANCELLED, or there is at least one invoice and EVERY one is VOID / WRITTEN_OFF;
+ *  - incomplete: a PENDING or DELIVERED order with NO invoice rows at all (a re-POST with the same key finishes it);
+ *  - changed: an order in any OTHER status (CONFIRMED, OUT_FOR_DELIVERY, PARTIALLY_DELIVERED, ...) with NO invoice
+ *    rows: staff moved it on and nothing can be read back;
+ *  - live: anything else, which includes a PAID sale that staff moved to CONFIRMED or PARTIALLY_DELIVERED (a live
+ *    invoice exists), so the clerk never rings it again and charges the customer twice.
  * A re-POST of a VOIDED sale must never invoice, send, charge or write a status again.
  */
 export function storedSaleState(
   orderStatus: string,
   invoiceStatuses: readonly string[],
 ): StoredSaleState {
-  if (orderStatus !== "PENDING" && orderStatus !== "DELIVERED") return "voided";
-  if (invoiceStatuses.length === 0) return "incomplete";
+  if (orderStatus === "CANCELLED") return "voided";
+  if (invoiceStatuses.length === 0) {
+    return orderStatus === "PENDING" || orderStatus === "DELIVERED" ? "incomplete" : "changed";
+  }
   return invoiceStatuses.every((s) => s === "VOID" || s === "WRITTEN_OFF") ? "voided" : "live";
 }
+
+export const saleChangedConflict = () =>
+  new ConflictException({
+    code: API_ERROR_CODES.COUNTER_SALE_CHANGED,
+    message: "This sale was changed after it was rung — check with the office.",
+  });
 
 export const saleVoidedConflict = () =>
   new ConflictException({

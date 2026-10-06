@@ -1097,19 +1097,61 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
     });
 
-    it.each(["CANCELLED", "CONFIRMED", "OUT_FOR_DELIVERY"])(
-      "an order in status %s (not PENDING/DELIVERED) is COUNTER_SALE_VOIDED, even with a live invoice",
+    it("a CANCELLED order is COUNTER_SALE_VOIDED, even with a live invoice", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CANCELLED" });
+      invoices = [inv("inv-1", 37.25)];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
+
+    // SA-672d: a PAID sale that staff moved on is still a live sale, never "voided" (a new ring would charge twice).
+    it.each(["CONFIRMED", "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY"])(
+      "ring (paid) then staff move it to %s: by-key is the live read-back, not VOIDED",
+      async (status) => {
+        invoices = [inv("inv-1", 37.25)];
+        await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-moved");
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        const r = await service.byKey("k-moved", "CASH");
+        expect(r).toMatchObject({
+          orderId: "ord-1",
+          paid: 37.25,
+          balanceDue: 0,
+          paymentRecorded: true,
+          replayed: true,
+        });
+      },
+    );
+
+    it.each(["CONFIRMED", "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY"])(
+      "an order moved to %s with NO invoice rows is a definitive 409 COUNTER_SALE_CHANGED (neither VOIDED nor ORDER_CHANGED)",
       async (status) => {
         findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
-        invoices = [inv("inv-1", 37.25)];
+        invoices = [];
         const e = await service.byKey("k1").then(
           () => null,
           (err) => err,
         );
         expect(e.getStatus()).toBe(409);
-        expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+        expect(e.getResponse()).toEqual({
+          code: "COUNTER_SALE_CHANGED",
+          message: "This sale was changed after it was rung — check with the office.",
+        });
       },
     );
+
+    it("a moved order whose invoices are all VOID is still VOIDED", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CONFIRMED" });
+      invoices = [{ ...inv("inv-v", 10, [], 0), status: "VOID" }];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
 
     it("ring then cancel the order: by-key is VOIDED", async () => {
       invoices = [inv("inv-1", 37.25)];

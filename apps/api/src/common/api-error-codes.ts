@@ -227,6 +227,12 @@ export const API_ERROR_CODES = {
    * A re-POST never resurrects or re-charges it.
    */
   COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
+  /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
+   * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
+   * (A moved order that still has a live invoice reads back as the normal sale.)
+   */
+  COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /**
