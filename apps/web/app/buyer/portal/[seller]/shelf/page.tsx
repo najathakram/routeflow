@@ -24,6 +24,7 @@ import {
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { buyerFulfilmentChoice } from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -194,7 +195,7 @@ function Section({
 export default function BuyerShelfPage() {
   const params = useParams();
   const router = useRouter();
-  const { activeSeller, isLoading: authLoading } = useBuyerAuth();
+  const { activeSeller, sellers, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
   const { data: shelf, isLoading, isError } = useBuyerShelf();
@@ -216,6 +217,12 @@ export default function BuyerShelfPage() {
   const snoozed = estimates.filter((e) => e.snoozed);
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
+  // Order ahead: a quick order carries the seller's default method when it offers one.
+  const shelfOffer =
+    (sellers ?? []).find((x) => x.linkId === activeSeller?.linkId)?.fulfilment ??
+    activeSeller?.fulfilment;
+  const quickFulfillPath = buyerFulfilmentChoice(shelfOffer).defaultMethod;
+
   const handleAdd = async (e: ShelfEstimate) => {
     if (pendingAdd) return;
     setPendingAdd(e.productId);
@@ -235,6 +242,7 @@ export default function BuyerShelfPage() {
               : {}),
           },
         ],
+        ...(quickFulfillPath ? { fulfillPath: quickFulfillPath } : {}),
       });
     } finally {
       setPendingAdd(null);

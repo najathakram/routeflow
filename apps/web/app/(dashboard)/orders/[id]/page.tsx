@@ -93,6 +93,7 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { PickupHandOver } from "./_components/PickupHandOver";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditScanBar } from "./_components/EditScanBar";
@@ -2696,7 +2697,11 @@ export default function OrderDetailPage() {
                     onClick={handleMarkShipped}
                     loading={updateStatus.isPending}
                   >
-                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                    {order.fulfillPath === "SHIP"
+                      ? "Mark shipped"
+                      : order.fulfillPath === "PICKUP"
+                        ? "Ready for pickup"
+                        : "Out for Delivery"}
                   </Button>
                   {order.fulfillPath === "SHIP" && (
                     <p className="text-[11px] text-navy/50">
@@ -2706,6 +2711,11 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </ActionTier>
+              {order.fulfillPath === "PICKUP" && (
+                <ActionTier tier="secondary">
+                  <PickupHandOver order={order} />
+                </ActionTier>
+              )}
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -2736,14 +2746,18 @@ export default function OrderDetailPage() {
           {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
               <ActionTier tier="primary">
-                <Button
-                  size="sm"
-                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                  onClick={handleDeliver}
-                  loading={updateStatus.isPending}
-                >
-                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-                </Button>
+                {order.fulfillPath === "PICKUP" ? (
+                  <PickupHandOver order={order} />
+                ) : (
+                  <Button
+                    size="sm"
+                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                    onClick={handleDeliver}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                  </Button>
+                )}
               </ActionTier>
               <ActionTier tier="secondary">
                 <Button

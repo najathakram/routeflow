@@ -15,6 +15,10 @@ import {
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
   paymentMethodOptions,
+  PICKUP_NOT_READY_COPY,
+  PICKUP_ONLY_COPY,
+  pickupBalanceDue,
+  pickupCompleteErrorCopy,
   parseScanField,
   preselectFulfilment,
   quickTenderOptions,
@@ -359,3 +363,37 @@ describe("auto-print preference: per device, local, never throws", () => {
  * storage cannot say whether "no tender" means On account or a failed tender, nor whether a partial was intended:
  * expected = ON_ACCOUNT 0 / CASH min(tendered, total) / CARD, CHECK total.
  */
+
+describe("pickupBalanceDue (what is left to collect before pickup-complete)", () => {
+  it("no invoice yet: the order total", () => {
+    expect(pickupBalanceDue(42.5, [])).toBe(42.5);
+  });
+  it("sums the server's balanceDue over live invoices; VOID is ignored", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10.1 },
+        { status: "PARTIAL", total: 40, balanceDue: 0.2 },
+        { status: "VOID", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10.3);
+  });
+  it("a settled invoice is nothing to collect", () => {
+    expect(pickupBalanceDue(30, [{ status: "PAID", total: 30, balanceDue: 0 }])).toBe(0);
+  });
+  it("an invoice without a balanceDue falls back to its total", () => {
+    expect(pickupBalanceDue(30, [{ status: "DRAFT", total: 30 }])).toBe(30);
+  });
+});
+
+describe("pickupCompleteErrorCopy", () => {
+  const err = (status: number, code: string) => ({ response: { status, data: { code } } });
+  it("maps PICKUP_NOT_READY and PICKUP_ONLY to fixed copy", () => {
+    expect(pickupCompleteErrorCopy(err(409, "PICKUP_NOT_READY"))).toBe(PICKUP_NOT_READY_COPY);
+    expect(pickupCompleteErrorCopy(err(400, "PICKUP_ONLY"))).toBe(PICKUP_ONLY_COPY);
+  });
+  it("anything else is the generic retry copy, never the server message", () => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),
+    ).toBe("Couldn't complete the pickup. Check the order and try again.");
+  });
+});

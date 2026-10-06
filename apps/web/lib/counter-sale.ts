@@ -284,3 +284,34 @@ export function writeAutoPrint(on: boolean): void {
     /* storage unavailable: the toggle simply does not persist */
   }
 }
+
+// ─── Pickup complete (order ahead, "Picked up") ───────────────────────────────────────────────────────────
+
+/**
+ * What is left to collect at the hand-over, BEFORE the call: the sum of the server's per-invoice `balanceDue` over the
+ * order's live (non-VOID) invoices; with no invoice yet, the order total. The order payload carries no paid figure, so
+ * the dialog reads each invoice's detail for `balanceDue`. Cents via `roundMoney`; the server still judges the real
+ * balance (it never over-collects), this only decides whether to ask for a tender.
+ */
+export function pickupBalanceDue(
+  orderTotal: number,
+  invoices: ReadonlyArray<{ status: string; total: number; balanceDue?: number }>,
+): number {
+  const live = invoices.filter((inv) => inv.status !== "VOID");
+  if (live.length === 0) return roundMoney(orderTotal);
+  return roundMoney(live.reduce((sum, inv) => sum + (inv.balanceDue ?? inv.total), 0));
+}
+
+export const PICKUP_NOT_READY_COPY =
+  "This order isn't ready for pickup yet. Confirm it and mark it ready first.";
+export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
+export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
+
+/** Fixed copy by error code; the server's own message is never shown. */
+export function pickupCompleteErrorCopy(err: unknown): string {
+  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
+    ?.response;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
+  return PICKUP_GENERIC_COPY;
+}

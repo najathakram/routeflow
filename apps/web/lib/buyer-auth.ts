@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { BuyerFulfilmentOffer } from "@routeflow/types";
 import { BUYER_KEYS } from "./auth-keys";
 import { setBuyerPresenceCookie, clearBuyerPresenceCookie } from "./presence-cookies";
 import { clearBuyerSubmitKey } from "./api/buyer-submit-key";
@@ -25,6 +26,8 @@ export interface BuyerSeller {
     primaryColor: string | null;
   };
   customer: { id: string; businessName: string; email: string | null } | null;
+  /** the seller's buyer-facing pickup / ship offer (absent on a stale stored seller = no choice) */
+  fulfilment?: BuyerFulfilmentOffer;
 }
 
 interface BuyerAuthResponse {
