@@ -240,6 +240,17 @@ export function pickCustomerInvoiceFields<T>(
 }
 
 /**
+ * A page of invoices for a caller: a CUSTOMER gets the allowlist of each, with confirmed (PAID)
+ * payment rows only (the money is derived from the payments BEFORE this runs); staff get `rows`
+ * itself.
+ */
+export function customerInvoiceList<T>(rows: T[], isCustomer: boolean): T[] {
+  return isCustomer
+    ? rows.map((inv) => pickCustomerInvoiceFields(inv, { confirmedPaymentsOnly: true }))
+    : rows;
+}
+
+/**
  * What a CUSTOMER / buyer response carries for an order, in the one right order: an upsell line's
  * base price is redacted first (in place, on the freshly read row — `redactUpsellForCustomer`),
  * then the allowlist projects a copy. Use this at every customer-reachable order route.

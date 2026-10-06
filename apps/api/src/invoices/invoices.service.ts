@@ -48,7 +48,7 @@ import {
   matchEditLines,
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
-import { pickCustomerInvoiceFields } from "../common/staff-only-fields";
+import { customerInvoiceList, pickCustomerInvoiceFields } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
@@ -2983,12 +2983,8 @@ export class InvoicesService {
       };
     });
 
-    const rows =
-      user?.role === UserRole.CUSTOMER
-        ? computedData.map((inv) => pickCustomerInvoiceFields(inv, { confirmedPaymentsOnly: true }))
-        : computedData;
     return {
-      data: rows,
+      data: customerInvoiceList(computedData, user?.role === UserRole.CUSTOMER),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
