@@ -377,6 +377,32 @@ export interface BuyerOrder extends BuyerOrderListItem {
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
 }
 
+// ─── Invoice list rows (B1122) ──────────────────────────────────────────────────
+
+/** GET /buyer/invoices — one row of the paginated list (InvoicesService.findAll). The invoice's
+ *  own money columns keep their column names (`total`, never `totalAmount`/`amount`) and the
+ *  server derives `balanceDue` (never `balance`): a client reading any other name gets nothing
+ *  and renders "N/A" (B1122). */
+export interface BuyerInvoiceListItem {
+  id: string;
+  invoiceNumber: string;
+  status: InvoiceStatus;
+  issueDate: string;
+  createdAt: string;
+  dueDate: string | null;
+  subtotal: DecimalWire;
+  taxAmount: DecimalWire;
+  total: DecimalWire;
+  /** What the buyer still owes — 0 for a settled invoice (confirmed payments + credits applied). */
+  balanceDue: DecimalWire;
+  /** Cash received only; credit-note and advance applications are the two fields below. */
+  paidAmount: DecimalWire;
+  creditApplied: DecimalWire;
+  advanceApplied: DecimalWire;
+  isOverdue: boolean;
+  customer: { id: string; businessName: string };
+}
+
 // ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────
 
 /** An invoice line as GET /buyer/invoices/:id returns it (InvoicesService.findOne; the buyer
