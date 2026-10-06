@@ -638,6 +638,40 @@ describe("CounterSaleScreen: API contract wiring", () => {
         ["a 429", { response: { status: 429 } }],
         ["a 500", { response: { status: 500 } }],
         ["a network error", new Error("Network Error")],
+      ])(
+        "%s shows exactly the fixed lookup-failure copy, with the lock and banner kept (S2)",
+        async (_l, failure) => {
+          await goUnknown({ response: { status: 503 } });
+          lookupAsync.mockRejectedValueOnce(failure);
+          check();
+          const msg = await screen.findByText("Couldn't check the sale. Try again.");
+          expect(msg.textContent).toBe("Couldn't check the sale. Try again.");
+          expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+          expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+          // a later successful check clears it
+          lookupAsync.mockResolvedValueOnce(sale);
+          check();
+          await screen.findByTestId("counter-sale-receipt");
+          expect(screen.queryByText("Couldn't check the sale. Try again.")).toBeNull();
+        },
+      );
+
+      it("a 404 COUNTER_SALE_NOT_FOUND shows no lookup-failure copy (it is an answer)", async () => {
+        await goUnknown({ response: { status: 503 } });
+        lookupAsync.mockRejectedValueOnce({
+          response: { status: 404, data: { code: "COUNTER_SALE_NOT_FOUND" } },
+        });
+        check();
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(screen.queryByText("Couldn't check the sale. Try again.")).toBeNull();
+      });
+
+      it.each([
+        ["a 404 without the code", { response: { status: 404 } }],
+        ["a 403", { response: { status: 403 } }],
+        ["a 429", { response: { status: 429 } }],
+        ["a 500", { response: { status: 500 } }],
+        ["a network error", new Error("Network Error")],
       ])("%s keeps the lock and the banner", async (_l, failure) => {
         await goUnknown({ response: { status: 503 } });
         lookupAsync.mockRejectedValueOnce(failure);

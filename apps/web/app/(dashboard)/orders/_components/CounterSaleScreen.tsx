@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
 import {
+  COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
@@ -96,6 +97,7 @@ export function CounterSaleScreen() {
   // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
+  const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   const submittingRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
@@ -218,6 +220,7 @@ export function CounterSaleScreen() {
     setReceipt(null);
     attemptRef.current = null;
     setOutcomeUnknown(false);
+    setLookupFailed(false);
     refocus();
   }
 
@@ -229,6 +232,7 @@ export function CounterSaleScreen() {
     dto: CounterSaleRequest;
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
+    setLookupFailed(false);
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
@@ -317,6 +321,7 @@ export function CounterSaleScreen() {
     const attempt = attemptRef.current;
     if (!attempt || submittingRef.current) return;
     submittingRef.current = true;
+    setLookupFailed(false);
     try {
       let res: CounterSaleResponse;
       try {
@@ -326,6 +331,9 @@ export function CounterSaleScreen() {
           attemptRef.current = null;
           setOutcomeUnknown(false);
           refocus();
+        } else {
+          // Not an answer: the lock and banner stay, and the clerk is told the CHECK failed (fixed copy).
+          setLookupFailed(true);
         }
         return;
       }
@@ -656,6 +664,7 @@ export function CounterSaleScreen() {
           data-testid="counter-outcome-unknown"
         >
           <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
+          {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
           <div className="flex flex-wrap items-center gap-3">
             <Button
               onClick={() => void completeSale(false, true)}

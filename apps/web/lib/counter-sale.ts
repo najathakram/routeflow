@@ -157,6 +157,9 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** Shown under the unknown-outcome banner when "Check sale status" itself failed (anything but a 404 answer). */
+export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
+
 /** After a 5xx, a network error or a timeout the sale may or may not have been written: say exactly that. */
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
