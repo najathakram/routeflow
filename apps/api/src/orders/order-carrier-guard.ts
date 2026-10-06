@@ -41,7 +41,11 @@ export function carrierBlocked({ featureConfig, prisma }: CarrierDeps, order: Ca
   );
 }
 
-/** B1135: the one buyer-facing sentence for a with-carrier order (the change-request 409 and the buyer's edit 403). */
+/**
+ * B1135: the one buyer-facing sentence for a with-carrier order (the change-request 409 and the buyer's
+ * edit 403). A literal copy of `SHIPPED_ORDER_MESSAGE` in packages/types (this app never value-imports
+ * that package at runtime); common/shipped-order-message-parity.spec.ts pins the two byte-equal.
+ */
 export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
 

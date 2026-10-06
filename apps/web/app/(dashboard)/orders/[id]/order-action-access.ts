@@ -27,6 +27,12 @@ export interface OrderActionAccess {
   cancel: boolean;
   /** A customer's way forward on an order with the carrier: it has shipped, so offer the exits that exist. */
   shippedExits: boolean;
+  /** Invoice card controls: "Generate Invoice (full order)" and "Split into invoice…". */
+  invoiceActions: boolean;
+  /** The Summary card's Fulfillment row (the delivery-route / carrier selector). */
+  fulfillmentPath: boolean;
+  /** The Shipment card's "Add tracking" / "Edit shipment" (the tracking details stay visible). */
+  shipmentEdit: boolean;
 }
 
 export function orderActionAccess(
@@ -43,5 +49,8 @@ export function orderActionAccess(
     editItems: staff || customerMay,
     cancel: staff || customerMay,
     shippedExits: customer && withCarrier,
+    invoiceActions: staff,
+    fulfillmentPath: staff,
+    shipmentEdit: staff,
   };
 }

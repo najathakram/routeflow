@@ -225,3 +225,100 @@ describe("B1135: a customer on an order with the carrier is shown the exits that
     expect(screen.getAllByText(/already with the carrier/i).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * B1134 (same class): three more staff-only controls on this page. Generate Invoice / Split into invoice
+ * (the Invoice card), the Fulfillment selector (Summary), and Add tracking / Edit shipment (the Shipment
+ * card). A customer sees none of them; staff see all of them as before. The invoice list itself and the
+ * tracking details stay visible to a customer: only the controls go.
+ */
+describe("B1134: invoice, fulfillment and shipment controls", () => {
+  const LINE = {
+    id: "li-1",
+    productId: "p-1",
+    product: { id: "p-1", name: "Sample Widget", unit: "each", unitsPerBox: null },
+    qty: 4,
+    invoicedQty: 0,
+    unitPrice: 5,
+    subtotal: 20,
+    status: "PENDING",
+  };
+  // A carrier order with a line left to bill and no invoice yet: every one of the three controls applies.
+  const carrierOrder = { fulfillPath: "SHIP", lineItems: [LINE] };
+
+  const generate = () =>
+    screen.queryByRole("button", { name: /^Generate Invoice \(full order\)$/ });
+  const split = () => screen.queryByRole("button", { name: /^Split into invoice…$/ });
+  const fulfillmentRow = () => screen.queryByText(/^Fulfillment$/);
+  const fulfillmentSelect = () => screen.queryByRole("combobox");
+  const addTracking = () => screen.queryByRole("button", { name: /^Add tracking$/ });
+  const editShipment = () => screen.queryByRole("button", { name: /^Edit shipment$/ });
+
+  describe.each<[string, Role]>([
+    ["a CUSTOMER", "CUSTOMER"],
+    ["a DRIVER", "DRIVER"],
+    ["no session yet", null],
+  ])("%s", (_label, role) => {
+    it("sees none of the three controls on a carrier order", async () => {
+      await open(role, "CONFIRMED", carrierOrder);
+      expect(generate()).toBeNull();
+      expect(split()).toBeNull();
+      expect(fulfillmentRow()).toBeNull();
+      expect(fulfillmentSelect()).toBeNull();
+      expect(addTracking()).toBeNull();
+    });
+  });
+
+  it("a CUSTOMER still sees the carrier tracking details, but cannot edit them", async () => {
+    await open("CUSTOMER", "OUT_FOR_DELIVERY", {
+      ...carrierOrder,
+      cancelBlockedReason: "WITH_CARRIER",
+      shippingCarrier: "UPS",
+      shippingTrackingNumber: "1Z999AA10123456784",
+    });
+    expect(screen.getByText("1Z999AA10123456784")).toBeInTheDocument();
+    expect(editShipment()).toBeNull();
+    expect(addTracking()).toBeNull();
+  });
+
+  it("a CUSTOMER still sees an existing invoice and its links, without the billing buttons", async () => {
+    await open("CUSTOMER", "CONFIRMED", {
+      fulfillPath: "ROUTE",
+      lineItems: [LINE],
+      invoices: [{ id: "inv-1", invoiceNumber: "INV-1", status: "SENT", total: 20, amountPaid: 0 }],
+    });
+    expect(screen.getByRole("link", { name: /Open/ })).toHaveAttribute("href", "/invoices/inv-1");
+    expect(generate()).toBeNull();
+    expect(split()).toBeNull();
+  });
+
+  it("a CUSTOMER with no invoice yet is told so, and offered nothing to generate", async () => {
+    await open("CUSTOMER", "CONFIRMED", { fulfillPath: "ROUTE", lineItems: [LINE] });
+    expect(screen.getByText("No invoice has been generated for this order.")).toBeInTheDocument();
+    expect(generate()).toBeNull();
+  });
+
+  describe.each<[string, Role]>([
+    ["OPERATOR", "OPERATOR"],
+    ["TENANT_ADMIN", "TENANT_ADMIN"],
+    ["SUPER_ADMIN", "SUPER_ADMIN"],
+  ])("%s (regression pin: as before)", (_name, role) => {
+    it("sees all three controls on a carrier order", async () => {
+      await open(role, "CONFIRMED", carrierOrder);
+      expect(generate()).not.toBeNull();
+      expect(split()).not.toBeNull();
+      expect(fulfillmentRow()).not.toBeNull();
+      expect(fulfillmentSelect()).toHaveValue("SHIP");
+      expect(addTracking()).not.toBeNull();
+    });
+
+    it("sees Edit shipment once tracking is recorded", async () => {
+      await open(role, "CONFIRMED", {
+        ...carrierOrder,
+        shippingCarrier: "UPS",
+        shippingTrackingNumber: "1Z999AA10123456784",
+      });
+      expect(editShipment()).not.toBeNull();
+    });
+  });
+});

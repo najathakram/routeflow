@@ -1,6 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
-import { SHIPPED_ORDER_COPY } from "@/lib/shipped-order-copy";
+import { SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 
 /**
  * What a customer can do about an order that is with the carrier. Its lines are frozen (SA-696), so
@@ -13,7 +13,7 @@ export function ShippedOrderExits() {
       data-testid="shipped-order-exits"
       className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3 text-sm text-navy"
     >
-      <p className="font-medium">{SHIPPED_ORDER_COPY}</p>
+      <p className="font-medium">{SHIPPED_ORDER_MESSAGE}</p>
       <p className="mt-1 text-navy/70">
         You can also{" "}
         <Link href="/returns" className="font-medium text-brand-600 underline">

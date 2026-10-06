@@ -3257,47 +3257,49 @@ export default function OrderDetailPage() {
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-navy/70">Fulfillment</dt>
-                <dd className="flex flex-col items-end gap-0.5">
-                  <div className="w-40">
-                    <Select
-                      options={[
-                        { value: "ROUTE", label: "Delivery route" },
-                        { value: "SHIP", label: "Ship via carrier" },
-                      ]}
-                      value={order.fulfillPath}
-                      disabled={fulfillPathLocked || patchFulfillPath.isPending}
-                      title={
-                        fulfillPathLocked
-                          ? "Fulfillment path can only be changed while the order is open"
-                          : undefined
-                      }
-                      onChange={(e) => {
-                        const fulfillPath = e.target.value as "ROUTE" | "SHIP";
-                        patchFulfillPath.mutate(
-                          { id: order.id, fulfillPath },
-                          {
-                            onSuccess: () =>
-                              toast({ title: "Fulfillment updated", variant: "success" }),
-                            onError: (err: any) =>
-                              toast({
-                                title: "Could not update fulfillment",
-                                description: codedToastCopy(err) ?? err?.response?.data?.message,
-                                variant: "error",
-                              }),
-                          },
-                        );
-                      }}
-                    />
-                  </div>
-                  {order.fulfillPath === "SHIP" && (
-                    <span className="text-[11px] text-navy/50">
-                      Ships via carrier — won&apos;t appear on delivery routes.
-                    </span>
-                  )}
-                </dd>
-              </div>
+              {access.fulfillmentPath && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Fulfillment</dt>
+                  <dd className="flex flex-col items-end gap-0.5">
+                    <div className="w-40">
+                      <Select
+                        options={[
+                          { value: "ROUTE", label: "Delivery route" },
+                          { value: "SHIP", label: "Ship via carrier" },
+                        ]}
+                        value={order.fulfillPath}
+                        disabled={fulfillPathLocked || patchFulfillPath.isPending}
+                        title={
+                          fulfillPathLocked
+                            ? "Fulfillment path can only be changed while the order is open"
+                            : undefined
+                        }
+                        onChange={(e) => {
+                          const fulfillPath = e.target.value as "ROUTE" | "SHIP";
+                          patchFulfillPath.mutate(
+                            { id: order.id, fulfillPath },
+                            {
+                              onSuccess: () =>
+                                toast({ title: "Fulfillment updated", variant: "success" }),
+                              onError: (err: any) =>
+                                toast({
+                                  title: "Could not update fulfillment",
+                                  description: codedToastCopy(err) ?? err?.response?.data?.message,
+                                  variant: "error",
+                                }),
+                            },
+                          );
+                        }}
+                      />
+                    </div>
+                    {order.fulfillPath === "SHIP" && (
+                      <span className="text-[11px] text-navy/50">
+                        Ships via carrier — won&apos;t appear on delivery routes.
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
               {order.orderDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Order date</dt>
@@ -3389,6 +3391,7 @@ export default function OrderDetailPage() {
               isSaving={updateShipment.isPending}
               onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
               openSignal={shipmentOpenSignal}
+              readOnly={!access.shipmentEdit}
             />
           )}
 
@@ -3463,6 +3466,14 @@ export default function OrderDetailPage() {
                 );
                 const hasNoInvoiceYet = !((order as any).invoices?.length > 0);
                 if (!hasRemaining && !hasNoInvoiceYet) return null;
+                // B1134: a customer may read the invoice list above, but not bill the order.
+                if (!access.invoiceActions) {
+                  return hasNoInvoiceYet ? (
+                    <p className="mt-3 text-xs text-navy/70">
+                      No invoice has been generated for this order.
+                    </p>
+                  ) : null;
+                }
                 return (
                   <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
                     {hasNoInvoiceYet && (
