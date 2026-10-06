@@ -349,4 +349,25 @@ describe("OrdersService.changeStatus: customer push wording for a SHIP order (F1
     const { title } = await push({ fulfillPath: "SHIP", status: "OUT_FOR_DELIVERY" }, "DELIVERED");
     expect(title).toBe("Order Delivered ✓");
   });
+
+  it("a re-mark after an unmark (shippedAt kept) sends no second push, like the email", async () => {
+    const { title } = await push(
+      {
+        fulfillPath: "SHIP",
+        shippingCarrier: "UPS",
+        shippedAt: new Date("2026-06-20T00:00:00.000Z"),
+      },
+      "OUT_FOR_DELIVERY",
+    );
+    expect(title).toBeUndefined();
+    expect(notificationsService.sendToCustomer).not.toHaveBeenCalled();
+  });
+
+  it("unchanged: a ROUTE order's re-dispatch still pushes (the once-rule is for carrier orders)", async () => {
+    const { title } = await push(
+      { fulfillPath: "ROUTE", shippedAt: new Date("2026-06-20T00:00:00.000Z") },
+      "OUT_FOR_DELIVERY",
+    );
+    expect(title).toBe("Out for Delivery 🚚");
+  });
 });

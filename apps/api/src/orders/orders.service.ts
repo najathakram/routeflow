@@ -2734,7 +2734,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
     const notif =
       dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
-        ? shippedPushCopy(order)
+        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
+          isFirstShipment(order)
+          ? shippedPushCopy(order)
+          : undefined
         : notifMap[dto.status];
     if (notif) {
       this.notifications
