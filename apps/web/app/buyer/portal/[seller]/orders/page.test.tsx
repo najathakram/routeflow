@@ -30,6 +30,15 @@ jest.mock("@/lib/api/buyer", () => ({
     error: null,
   }),
 }));
+// Business profiles 1B: an UNSET seller — this suite pins today's screen.
+jest.mock("@/lib/api/buyer-capabilities", () => ({
+  useBuyerSellerCapabilities: () => ({
+    data: { portalMethods: [], portalDefault: null, fleet: true },
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/lib/buyer-auth-context", () => ({
   ...jest.requireActual("@/lib/buyer-auth-context"),
   useBuyerAuth: () => ({
