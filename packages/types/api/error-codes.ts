@@ -392,13 +392,6 @@ export const API_ERROR_CODES = {
    */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
-  /**
-   * PLACEHOLDER until #3211's own entry lands (byte-align then). 409 from by-key or a re-POST: the sale was voided or
-   * cancelled after it was rung. FINAL for a till: unlock, drop the key, never retry or re-POST.
-   */
-  COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
-  /** PLACEHOLDER until #3211's own entry lands (byte-align then). 400 from by-key: `?method=` is not a counter payment method. */
-  COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
