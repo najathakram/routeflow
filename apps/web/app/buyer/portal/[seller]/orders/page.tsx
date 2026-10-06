@@ -53,6 +53,15 @@ function formatCurrency(amount?: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 }
 
+/** "N item(s)" from the order's real `lineItems` (GET /buyer/orders returns them; there is no
+ *  `itemCount`). Null when the order has no lines or the response carried none, so the caller
+ *  prints nothing / an em dash rather than a wrong number (B1130). */
+function itemsLabel(order: { lineItems?: unknown[] | null }): string | null {
+  const count = order.lineItems?.length ?? 0;
+  if (count === 0) return null;
+  return `${count} item${count !== 1 ? "s" : ""}`;
+}
+
 function orderLabel(order: { orderNumber?: string | null; id: string }): string {
   return order.orderNumber ?? order.id.slice(0, 8).toUpperCase();
 }
@@ -162,7 +171,7 @@ export default function BuyerOrdersPage() {
           {/* Card list — under 640px the 5-column table only scrolled sideways, so phones
               get one tappable card per order instead. */}
           <ul data-testid="buyer-orders-cards" className="space-y-3 sm:hidden">
-            {orders.map((order: any) => (
+            {orders.map((order) => (
               <li key={order.id}>
                 <Link
                   href={`/buyer/portal/${sellerSlug}/orders/${order.id}`}
@@ -180,11 +189,10 @@ export default function BuyerOrdersPage() {
                   <div className="mt-2 flex items-end justify-between gap-3">
                     <p className="text-xs text-navy/70">
                       {formatDate(order.createdAt)}
-                      {order.itemCount != null &&
-                        ` · ${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`}
+                      {itemsLabel(order) != null && ` · ${itemsLabel(order)}`}
                     </p>
                     <span className="text-sm font-semibold text-navy">
-                      {formatCurrency(Number(order.totalAmount ?? order.total))}
+                      {formatCurrency(Number(order.total))}
                     </span>
                   </div>
                 </Link>
@@ -220,7 +228,7 @@ export default function BuyerOrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {orders.map((order: any) => (
+                  {orders.map((order) => (
                     <tr
                       key={order.id}
                       onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${order.id}`)}
@@ -232,11 +240,7 @@ export default function BuyerOrdersPage() {
                       <td className="px-4 py-3 text-sm text-navy/70">
                         {formatDate(order.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-sm text-navy/70">
-                        {order.itemCount != null
-                          ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`
-                          : "—"}
-                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">{itemsLabel(order) ?? "—"}</td>
                       <td className="px-4 py-3">
                         <Badge
                           variant={getStatusVariant(order.status)}
@@ -244,7 +248,7 @@ export default function BuyerOrdersPage() {
                         />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
-                        {formatCurrency(Number(order.totalAmount ?? order.total))}
+                        {formatCurrency(Number(order.total))}
                       </td>
                     </tr>
                   ))}

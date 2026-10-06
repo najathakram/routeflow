@@ -1,5 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
+import type { BuyerOrderListItem } from "@routeflow/types";
+import { orderLine, orderListItem } from "@/test-utils/buyer-order-fixtures";
 import BuyerOrdersPage from "./page";
 
 /**
@@ -16,7 +18,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-let mockOrders: unknown[] = [];
+let mockOrders: BuyerOrderListItem[] = [];
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerOrders: () => ({
     data: {
@@ -39,23 +41,26 @@ jest.mock("@/lib/buyer-auth-context", () => ({
   }),
 }));
 
-const orders = [
-  {
+// B1130: rows have the shape GET /buyer/orders really returns — `lineItems` and `total`, no
+// `itemCount`/`totalAmount` (the fixtures are typed by @routeflow/types, so an invented field
+// fails type-check instead of quietly passing).
+const orders: BuyerOrderListItem[] = [
+  orderListItem({
     id: "11111111-aaaa",
     orderNumber: "ORD-00001",
     createdAt: "2026-09-10T12:00:00Z",
-    itemCount: 3,
     status: "OUT_FOR_DELIVERY",
-    totalAmount: 645,
-  },
-  {
+    total: 645,
+    lineItems: [orderLine({ id: "l1" }), orderLine({ id: "l2" }), orderLine({ id: "l3" })],
+  }),
+  orderListItem({
     id: "22222222-bbbb",
     orderNumber: null,
     createdAt: "2026-09-11T12:00:00Z",
-    itemCount: 1,
     status: "DELIVERED",
     total: 52.5,
-  },
+    lineItems: [orderLine({ id: "l4" })],
+  }),
 ];
 
 describe("BuyerOrdersPage — responsive list", () => {
@@ -76,7 +81,7 @@ describe("BuyerOrdersPage — responsive list", () => {
     expect(within(links[0]).getByText("Out For Delivery")).toBeInTheDocument();
     expect(within(links[0]).getByText(/3 items/)).toBeInTheDocument();
     expect(within(links[0]).getByText("$645.00")).toBeInTheDocument();
-    // singular item count + the id-derived label when there is no order number + `total` fallback
+    // singular item count + the id-derived label when there is no order number
     expect(within(links[1]).getByText("22222222")).toBeInTheDocument();
     expect(within(links[1]).getByText(/1 item(?!s)/)).toBeInTheDocument();
     expect(within(links[1]).getByText("$52.50")).toBeInTheDocument();
@@ -103,6 +108,32 @@ describe("BuyerOrdersPage — responsive list", () => {
     const wrapper = screen.getByTestId("buyer-orders-table");
     within(wrapper).getByText("ORD-00001").click();
     expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/11111111-aaaa");
+  });
+
+  it("B1130: the Items column counts the order's real line items, per row", () => {
+    renderWithProviders(<BuyerOrdersPage />);
+    const rows = within(screen.getByTestId("buyer-orders-table")).getAllByRole("row");
+    // rows[0] is the header; the cells are Order #, Date, Items, Status, Total.
+    expect(within(rows[1]).getByText("3 items")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("1 item")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText("—")).toBeNull();
+    expect(within(rows[2]).queryByText("—")).toBeNull();
+  });
+
+  it("B1130: shows the em dash only when the order has no lines or the API sent none", () => {
+    mockOrders = [
+      orderListItem({ id: "33333333-cccc", orderNumber: "ORD-00003", lineItems: [] }),
+      // A response that omits `lineItems` entirely is "unknown", not "0 items" and not a crash.
+      { ...orderListItem({ id: "44444444-dddd", orderNumber: "ORD-00004" }), lineItems: undefined },
+    ] as unknown as BuyerOrderListItem[];
+    renderWithProviders(<BuyerOrdersPage />);
+    const rows = within(screen.getByTestId("buyer-orders-table")).getAllByRole("row");
+    expect(within(rows[1]).getByText("—")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("—")).toBeInTheDocument();
+    // the phone card prints no count at all rather than a wrong one
+    const cards = within(screen.getByTestId("buyer-orders-cards")).getAllByRole("link");
+    expect(within(cards[0]).queryByText(/item/)).toBeNull();
+    expect(within(cards[1]).queryByText(/item/)).toBeNull();
   });
 
   it("shows the empty state, not an empty card list, when there are no orders", () => {

@@ -4,26 +4,18 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
+import type { BuyerInvoiceListItem } from "@routeflow/types";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Invoice {
-  id: string;
-  invoiceNumber?: string;
-  createdAt: string;
-  dueDate?: string;
-  status: string;
-  totalAmount?: number;
-  amount?: number;
-  balanceDue?: number;
-  balance?: number;
-}
-
+// The row is the shared `BuyerInvoiceListItem` (GET /buyer/invoices): the amount is `total` and
+// the balance is the server-derived `balanceDue` — there is no `totalAmount`/`amount`/`balance`
+// (B1122: reading those printed "N/A" on every row).
 interface PaginatedResponse {
-  data: Invoice[];
+  data: BuyerInvoiceListItem[];
   meta: {
     total: number;
     page: number;
@@ -58,9 +50,13 @@ function formatStatus(status: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatCurrency(amount?: number): string {
-  if (amount === undefined || amount === null) return "N/A";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
+/** A money column arrives as a Decimal string today (`DecimalWire`), so coerce before formatting.
+ *  "N/A" only when the API sent no amount at all. */
+function formatCurrency(amount?: number | string | null): string {
+  if (amount === undefined || amount === null || amount === "") return "N/A";
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "N/A";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -71,7 +67,7 @@ export default function BuyerInvoicesPage() {
   const { activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
-  const [invoices, setInvoices] = React.useState<Invoice[]>([]);
+  const [invoices, setInvoices] = React.useState<BuyerInvoiceListItem[]>([]);
   const [meta, setMeta] = React.useState<PaginatedResponse["meta"] | null>(null);
   const [page, setPage] = React.useState(1);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -201,10 +197,10 @@ export default function BuyerInvoicesPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
-                        {formatCurrency(invoice.totalAmount ?? invoice.amount)}
+                        {formatCurrency(invoice.total)}
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {formatCurrency(invoice.balanceDue ?? invoice.balance)}
+                        {formatCurrency(invoice.balanceDue)}
                       </td>
                     </tr>
                   ))}
