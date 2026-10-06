@@ -32,6 +32,7 @@ import {
 import {
   allocateOldestFirst,
   assertPaymentShape,
+  type CounterPaymentMethod,
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
@@ -255,7 +256,7 @@ export class CounterSaleService {
    * stored (a tender exists, or nothing is owing): an ON_ACCOUNT sale therefore reads `false` here, which the
    * till (it knows it rang ON_ACCOUNT) interprets. Nothing stored for the key is a definitive 404.
    */
-  async byKey(key: string): Promise<CounterSaleResponse> {
+  async byKey(key: string, method?: CounterPaymentMethod): Promise<CounterSaleResponse> {
     // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
     if (!this.prisma.getTenantId()) {
       throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
@@ -270,7 +271,13 @@ export class CounterSaleService {
       });
     }
     const invoices = await this.readInvoices(order.id);
-    return buildCounterSaleResponse({ order, invoices, replayed: true });
+    // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
+    return buildCounterSaleResponse({
+      payment: method ? { method } : undefined,
+      order,
+      invoices,
+      replayed: true,
+    });
   }
 
   private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
