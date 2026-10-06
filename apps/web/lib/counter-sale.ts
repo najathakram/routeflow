@@ -123,7 +123,7 @@ export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
   ];
 }
 
-export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_NO_ACCOUNT";
+export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
 
 export function validatePayment(input: {
   method: CounterSalePaymentMethod;
@@ -132,7 +132,7 @@ export function validatePayment(input: {
   reference?: string;
   isWalkIn: boolean;
 }): PaymentProblem | null {
-  if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_NO_ACCOUNT";
+  if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_ON_ACCOUNT";
   if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total))
     return "TENDER_SHORT";
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";
@@ -142,7 +142,7 @@ export function validatePayment(input: {
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
   TENDER_SHORT: "The amount tendered is less than the total.",
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
-  WALK_IN_NO_ACCOUNT:
+  WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
 

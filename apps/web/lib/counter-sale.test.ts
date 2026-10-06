@@ -143,7 +143,7 @@ describe("payment method chips", () => {
       validatePayment({ method: "CHECK", total: 10, reference: "1042", isWalkIn: true }),
     ).toBeNull();
     expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: true })).toBe(
-      "WALK_IN_NO_ACCOUNT",
+      "WALK_IN_ON_ACCOUNT",
     );
     expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: false })).toBeNull();
     expect(validatePayment({ method: "CARD", total: 10, isWalkIn: true })).toBeNull();

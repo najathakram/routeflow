@@ -12,6 +12,7 @@ import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
 } from "@routeflow/types";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useCustomers } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
@@ -363,7 +364,10 @@ export function CounterSaleScreen() {
         paymentRecorded: verdict.recorded,
         ...(verdict.recorded
           ? { paymentErrorCode: undefined }
-          : { paymentErrorCode: res.paymentErrorCode ?? "COUNTER_PAYMENT_NOT_RECORDED" }),
+          : {
+              paymentErrorCode:
+                res.paymentErrorCode ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,
+            }),
       };
       setEnteredTender(sentMethod === "CASH" && amount != null && verdict.recorded ? amount : null);
       finishSale(judged, attempt.next);
