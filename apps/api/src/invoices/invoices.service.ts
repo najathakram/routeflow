@@ -5853,6 +5853,7 @@ export class InvoicesService {
           categoriesById,
           unitsPerBoxByProduct,
           isTaxExempt,
+          invoiceStatus: live.status,
         });
         assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {
