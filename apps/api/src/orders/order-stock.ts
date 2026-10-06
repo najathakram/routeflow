@@ -371,10 +371,12 @@ function effectiveDeltaParts(terms: BookedTerm[]): BookedParts | null {
  *   - a product whose requested qty EXCEEDS its held qty needs the increase
  *     validated against currentStock (same guard as before), then that
  *     increase decremented;
- *   - a product whose requested qty is LESS than held (line reduced,
- *     removed, or zeroed) returns the difference to currentStock, CLAMPED
- *     to the undelivered remainder (`held − deliveredQty`) — delivered
- *     goods are gone and never come back via an edit. This is new; the
+ *   - a product whose booked qty FALLS (line reduced, removed, or zeroed)
+ *     returns the difference to currentStock. Booked qty is per line
+ *     `max(qty, deliveredQty)` (B1050 / SA-703, see `bookedTerms`): delivered
+ *     goods are gone and never come back via an edit, and an edit below
+ *     delivered neither credits nor, on the way back up, decrements them a
+ *     second time. There is no pooled per-product cap. This is new; the
  *     pre-refactor version only validated increases, it never wrote
  *     anything.
  * Held/requested are compared over the UNION of product ids on both sides
@@ -392,7 +394,7 @@ function effectiveDeltaParts(terms: BookedTerm[]): BookedParts | null {
  * B703 (SA-136b): every quantity — held, delivered, requested — is converted to
  * PIECES per line (`linePieceQty`, the line's own pack snapshot first, the
  * product's live pack as the fallback) before anything is summed, so the delta,
- * the undelivered cap, the counter write and the SALE row are all in the unit
+ * the booked qty, the counter write and the SALE row are all in the unit
  * `currentStock` counts. (It used to compare each line's stored unit — boxes for
  * a box-unaware line — against a piece counter.)
  *
@@ -454,14 +456,13 @@ export async function settleStockForEdit(
   // deltas, so a reduction anywhere wins a mix. Checked before any lock or write.
   const unlistedDeltas = opts?.blockCredits ? unlistedLineDeltas(heldItems, finalActiveItems) : [];
 
-  // Qty the order already holds per product (pre-edit, non-cancelled lines),
-  // plus — over the SAME line set — how much of it has already gone out the
-  // door. Delivered goods are physically gone: an edit that shrinks or drops
-  // a delivered line must NOT put them back on the shelf. This mirrors the
-  // at-door precedent, where a CHANGE_QTY/REMOVE_ITEM request against a line
-  // with deliveredQty > 0 is refused outright (LINE_ALREADY_DELIVERED,
-  // ~:4205) — the operator edit path allows the edit but credits back only
-  // the UNDELIVERED remainder.
+  // Qty the order already holds per product (pre-edit, non-cancelled lines), as RAW parts (what the
+  // carrier refusal reads); the counter itself moves by the BOOKED delta (`bookedTerms`, B1050): each
+  // line books max(qty, deliveredQty). Delivered goods are physically gone: an edit that shrinks or
+  // drops a delivered line must NOT put them back on the shelf. This mirrors the at-door precedent, where
+  // a CHANGE_QTY/REMOVE_ITEM request against a line with deliveredQty > 0 is refused outright
+  // (LINE_ALREADY_DELIVERED, ~:4205) — the operator edit path allows the edit but credits back only
+  // what the line's delivered floor frees.
   //
   // B703 (SA-136b): all three sums end up in PIECES. Per product each is `fixed` (lines sized without
   // the live pack: box-split, Units, or their own pack snapshot) plus `perPack` (the raw
@@ -633,15 +634,12 @@ export async function settleStockForEdit(
     }
   }
 
-  // Apply: an increase decrements currentStock by the delta; a
-  // decrease/removal increments back only the UNDELIVERED portion of what
-  // the order held. Delivered goods never come back through an edit — the
-  // at-door path makes the same call by refusing the change outright
-  // (LINE_ALREADY_DELIVERED, ~:4205); crediting a delivered line's full qty
-  // would invent inventory that physically left the warehouse. Cap =
-  // max(0, held − deliveredHeld); a fully-delivered line's cap is 0, so it
-  // is skipped entirely (no write at all). B562 PR-2: every write appends its
-  // SALE movement (−increase / +credit), `stockAfter` from the update's own row.
+  // Apply the BOOKED delta (B1050): a rise decrements currentStock by it; a fall increments back what
+  // the per-line `max(qty, deliveredQty)` floor frees. Delivered goods never come back through an edit —
+  // the at-door path makes the same call by refusing the change outright (LINE_ALREADY_DELIVERED,
+  // ~:4205); crediting a delivered line's full qty would invent inventory that physically left. No
+  // pooled cap: the floor is already inside the delta. B562 PR-2: every write appends its SALE
+  // movement (−increase / +credit), `stockAfter` from the update's own row.
   const saleRow = (productId: string, quantity: number, updated: { currentStock: any }) =>
     recordSaleMovement(db, {
       productId,
