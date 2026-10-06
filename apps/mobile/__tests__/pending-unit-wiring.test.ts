@@ -51,13 +51,13 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     expect(body(src, "const setLinePrice = ")).toMatch(/refusesLineEdit\(prev, "price"\)/); // H1
   });
 
-  it("H2/M3 + F3: addOne is the pure applyAddToItems (decided on the ref, re-applied on the latest lines) and returns false on a refusal", () => {
+  it("H2/M3 + F3: addOne reserves via reserveAdd/applyAddToItems (decided on the ref which moves forward, re-applied on the latest lines) and returns false on a refusal", () => {
     const add = body(screen(), "const addOne = ", 3500);
     expect(add).toMatch(
       /const input = \{ id, level, dflt, viaRow, code, role: userRole, upb, prefill \};/,
     );
     expect(add).toMatch(
-      /if \(applyAddToItems\(itemsRef\.current, input\) === itemsRef\.current\) return false;/,
+      /if \(!reserveAdd\(itemsRef, input\)\) return false;/, // B992: decided on the ref AND the ref moves forward
     );
     expect(add).toMatch(/setItems\(\(m\) => applyAddToItems\(m, input\)\)/);
     expect(screen()).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true, true\)/); // M3: the row "+"

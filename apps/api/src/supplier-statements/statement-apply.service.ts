@@ -3,6 +3,7 @@ import { lockBillRows } from "../vendor-bills/bill-locks";
 import { randomUUID } from "crypto";
 import { PaymentMethod } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { roundMoney } from "@routeflow/pricing";
 import { matchStatementLines, type StatementLineMatch } from "./statement-matcher";
 import { fetchMatchableBills } from "./matchable-bills";
@@ -16,6 +17,14 @@ const BALANCE_EPSILON = 0.001;
  * review screen showed the operator, rather than drifting from it.
  */
 const LINE_AMOUNT_EPSILON = 0.005;
+
+/**
+ * B987-E1 (a), SA-634: a bill-specific refusal of an apply carries a CODE and the structured fields the web formats into fixed
+ * copy. The status (400), the `message` and the point of the throw are exactly what they were; the numbers are the same rounded
+ * values the message interpolates (no new money math).
+ */
+const refuse = (code: string, message: string, fields: Record<string, unknown> = {}) =>
+  new BadRequestException({ code, message, ...fields });
 
 /** One bill the operator confirmed paying off this statement, and how much. */
 export interface ApplyStatementConfirmedLine {
@@ -145,10 +154,16 @@ export class StatementApplyService {
       return this.alreadyAppliedResult(scan.appliedPaymentGroupId);
     }
     if (scan.status === "DISCARDED") {
-      throw new BadRequestException("This statement was discarded and cannot be applied.");
+      throw refuse(
+        API_ERROR_CODES.STATEMENT_APPLY_DISCARDED,
+        "This statement was discarded and cannot be applied.",
+      );
     }
     if (!scan.supplierId) {
-      throw new BadRequestException("This statement has not been matched to a supplier yet.");
+      throw refuse(
+        API_ERROR_CODES.STATEMENT_APPLY_NOT_MATCHED,
+        "This statement has not been matched to a supplier yet.",
+      );
     }
 
     const confirmed = (dto.confirmed ?? []).filter(
@@ -156,15 +171,19 @@ export class StatementApplyService {
     );
     const impliedPaidIds = Array.from(new Set(dto.impliedPaid?.billIds ?? []));
     if (confirmed.length === 0 && impliedPaidIds.length === 0) {
-      throw new BadRequestException("Nothing to apply.");
+      throw refuse(API_ERROR_CODES.STATEMENT_APPLY_NOTHING, "Nothing to apply.");
     }
     // One bill, one line — the plan's rule (AC 4), enforced here rather than
     // discovered halfway through the loop as a confusing balance error.
     const seenBillIds = new Set<string>();
     for (const c of confirmed) {
       if (seenBillIds.has(c.billId)) {
-        throw new BadRequestException(
+        // REQUEST ECHO (SA-634 exception): `billId` here is the id the caller sent, echoed back so the web can name the line; it
+        // is not read from a row, so it can never leak another tenant's data.
+        throw refuse(
+          API_ERROR_CODES.STATEMENT_APPLY_DUPLICATE_BILL,
           "The same bill was confirmed on more than one statement line — a bill can only be settled once per apply.",
+          { billId: c.billId },
         );
       }
       seenBillIds.add(c.billId);
@@ -214,15 +233,21 @@ export class StatementApplyService {
         // must never land on another supplier's bill. Mirrors
         // recordSupplierPayment's cross-supplier check.
         if (bill.supplierId !== supplierId) {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_WRONG_SUPPLIER,
             `Bill ${bill.billNumber} does not belong to this statement's supplier.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "CONFIRMED" },
           );
         }
         // VOID is the one status this method compares against (landmine 1 in
         // recordSupplierPayment): a voided bill keeps its totalOwed and would
         // be resurrected into AP by the status recompute below.
         if (bill.status === "VOID") {
-          throw new BadRequestException(`Bill ${bill.billNumber} is void and cannot be paid.`);
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_BILL_VOID,
+            `Bill ${bill.billNumber} is void and cannot be paid.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "CONFIRMED" },
+          );
         }
         // DRAFT is refused here for exactly the reason the implied-paid loop
         // below refuses it: a draft has not been received, so there is no
@@ -236,22 +261,28 @@ export class StatementApplyService {
         // arrives pre-checked. The review screen keeps drafts unchecked and
         // blocks them; reject any that still arrive.
         if (bill.status === "DRAFT") {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_BILL_DRAFT,
             `Bill ${bill.billNumber} is still a draft — receive it before settling it off a statement.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "CONFIRMED" },
           );
         }
 
         const match = this.resolveBackingLine(matches, bill.id, line.lineIndex);
         if (!match) {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_NO_BACKING_LINE,
             `No line on this statement backs the confirmed amount for bill ${bill.billNumber}.`,
+            { billId: bill.id, billNumber: bill.billNumber },
           );
         }
         const capAmount = roundMoney(Number(match.line.amount) || 0);
         if (amount > capAmount + LINE_AMOUNT_EPSILON) {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_OVER_LINE,
             `Confirmed amount ${amount.toFixed(2)} for bill ${bill.billNumber} exceeds the ` +
               `statement's own line of ${capAmount.toFixed(2)}.`,
+            { billId: bill.id, billNumber: bill.billNumber, amount, lineAmount: capAmount },
           );
         }
 
@@ -262,9 +293,11 @@ export class StatementApplyService {
         );
         const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
         if (amount > remaining + BALANCE_EPSILON) {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_OVER_BALANCE,
             `Confirmed amount ${amount.toFixed(2)} for bill ${bill.billNumber} exceeds its ` +
               `remaining balance of ${remaining.toFixed(2)}.`,
+            { billId: bill.id, billNumber: bill.billNumber, amount, remaining },
           );
         }
 
@@ -312,13 +345,17 @@ export class StatementApplyService {
         });
         if (!bill) throw new NotFoundException(`Bill ${billId} not found`);
         if (bill.supplierId !== supplierId) {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_WRONG_SUPPLIER,
             `Bill ${bill.billNumber} does not belong to this statement's supplier.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "IMPLIED_PAID" },
           );
         }
         if (bill.status === "VOID") {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_BILL_VOID,
             `Bill ${bill.billNumber} is void and cannot be marked paid.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "IMPLIED_PAID" },
           );
         }
         // DRAFT is the other status this loop must refuse. A draft has not
@@ -329,8 +366,10 @@ export class StatementApplyService {
         // The review screen keeps drafts out of the proposal; reject any that
         // still arrive rather than silently locking them.
         if (bill.status === "DRAFT") {
-          throw new BadRequestException(
+          throw refuse(
+            API_ERROR_CODES.STATEMENT_APPLY_BILL_DRAFT,
             `Bill ${bill.billNumber} is still a draft and cannot be marked paid.`,
+            { billId: bill.id, billNumber: bill.billNumber, line: "IMPLIED_PAID" },
           );
         }
 

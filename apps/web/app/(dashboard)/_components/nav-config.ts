@@ -103,7 +103,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-/** Customer nav — orders, invoices, returns, settings only */
+/** Customer nav — orders, invoices, returns and their own account only */
 export const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
@@ -116,11 +116,11 @@ export const CUSTOMER_NAV: NavEntry[] = [
     ],
   },
   { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
-  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
+  { kind: "leaf", label: "My account", href: "/settings", icon: Settings },
 ];
 
 /**
- * Driver nav — routes and settings only. PHASE 1a (web driver mode): "Today's
+ * Driver nav — routes and their own account only. PHASE 1a (web driver mode): "Today's
  * route" is the landing item, pointing at the DRIVER-only my-runs view — see
  * getNavForRole's filter below, which drops it (and "My Routes") together
  * when neither routes addon is enabled.
@@ -129,7 +129,7 @@ export const DRIVER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Today's route", href: "/routes/my-runs", icon: Truck },
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
-  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
+  { kind: "leaf", label: "My account", href: "/settings", icon: Settings },
 ];
 
 /**

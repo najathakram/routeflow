@@ -1047,6 +1047,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
           canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
           isSpecialTierFor={isSpecialFor}
+          priceFor={isDriver ? undefined : tierPriceFor}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen

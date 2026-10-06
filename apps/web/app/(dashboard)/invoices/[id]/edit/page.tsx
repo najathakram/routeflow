@@ -24,10 +24,11 @@ import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import {
   isSpecialTier,
-  computeLineSubtotal,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   normalizeBoxesPieces,
   packFromOwnSplit,
-  roundMoney,
   getTierPrice,
   isNsfLine,
 } from "@routeflow/pricing";
@@ -327,10 +328,10 @@ function lineFreeUnits(it: LineItemState): number {
   return Math.min(stored, earned, units - 1);
 }
 
-/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
-function lineTotal(it: LineItemState): number {
+/** The pricing-helper view of a line: boxed split, BUY_N_GET_M free units, discount, tax rate. */
+function toTotalsLine(it: LineItemState): InvoiceTotalsLine {
   const { boxes, pieces } = lineSplit(it);
-  const beforeDiscount = computeLineSubtotal({
+  return {
     unitPrice: Number(it.unitPrice),
     qty: Number(it.qty),
     boxes,
@@ -338,8 +339,14 @@ function lineTotal(it: LineItemState): number {
     unitsPerBox: it.unitsPerBox ?? null,
     // BUY_N_GET_M: free whole units come off before pricing, exactly like the server.
     freeUnits: lineFreeUnits(it),
-  });
-  return roundMoney(beforeDiscount - Number(it.discount));
+    discount: Number(it.discount),
+    taxRate: Number(it.taxRate),
+  };
+}
+
+/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
+function lineTotal(it: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(it));
 }
 
 function createEmptyItem(): LineItemState {
@@ -519,13 +526,16 @@ export default function EditInvoicePage() {
 
   // ── Calculations ─────────────────────────────────────────────────────────────
 
-  // Boxed lines prorate via computeLineSubtotal (unitPrice is the BOX price); a
+  // Boxed lines prorate via the pricing helpers (unitPrice is the BOX price); a
   // plain qty*unitPrice would over-charge by unitsPerBox. Matches server pricing.
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const taxTotal = items.reduce((s, it) => s + lineTotal(it) * Number(it.taxRate), 0);
   const invDiscount = parseFloat(discount) || 0;
   const shipping = parseFloat(shippingFee) || 0;
-  const total = subtotal - invDiscount + shipping + taxTotal;
+  // One rounded footer, the same arithmetic the server stores (subtotal, tax rounded once, total).
+  const {
+    subtotal,
+    tax: taxTotal,
+    total,
+  } = computeInvoiceTotals(items.map(toTotalsLine), { discount: invDiscount, shipping });
 
   // ── Item helpers ──────────────────────────────────────────────────────────────
 
@@ -562,6 +572,12 @@ export default function EditInvoicePage() {
       }
       if (Number(it.qty) <= 0) {
         errs.items = "All quantities must be greater than 0.";
+        break;
+      }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
         break;
       }
     }

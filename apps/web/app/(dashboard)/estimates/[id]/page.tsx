@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/estimates";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
+import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -390,7 +391,7 @@ export default function EstimateDetailPage() {
                         {/* Stored line subtotal is authoritative (boxed-aware, rounded via
                             pricing.ts). NEVER re-derive qty*unitPrice — it over-charges boxed
                             lines by unitsPerBox. */}
-                        {fmt(Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)))}
+                        {fmt(storedOrComputedLineSubtotal(item))}
                       </td>
                     </tr>
                   ))}
