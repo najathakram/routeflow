@@ -29,6 +29,7 @@ import {
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { billableAddonWhere } from "./addon-row";
 import { lockTenantForLedger } from "./addon-ledger";
 import { retryOnTxConflict } from "../common/tx-retry";
 import {
@@ -392,11 +393,12 @@ export class BillingService {
   /**
    * SA-690: the catalog names of the tenant's ACTIVE self-serve add-ons that no Stripe subscription
    * item bills (`stripeItemId` null), oldest first, once per SKU. Admin-granted SKUs are always
-   * unbilled by design and never count. A SKU the published catalog no longer names falls back to its code.
+   * unbilled by design and never count, and neither does a comp row (`isComp`, SA-693). A SKU the published catalog no longer names falls back to its code.
    */
   private async unbilledSelfServeAddonNames(tenantId: string): Promise<string[]> {
     const rows = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, active: true, stripeItemId: null },
+      // SA-693: a comp is a platform grant, never billed, so it never blocks a checkout.
+      where: billableAddonWhere({ tenantId, active: true, stripeItemId: null }),
       orderBy: { createdAt: "asc" },
       select: { addonKey: true, sku: true },
     });

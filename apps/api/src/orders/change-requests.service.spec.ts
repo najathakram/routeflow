@@ -16,6 +16,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { ChangeRequestResolveAction } from "./dto/resolve-change-request.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const customerUser: JwtPayload = {
   sub: "user-cust",
@@ -234,6 +235,107 @@ describe("ChangeRequestsService", () => {
         response: expect.objectContaining({ code: "CHANGE_WINDOW_CLOSED" }),
       });
       expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+    });
+
+    // B1135 / SA-696: a SHIP (carrier) order has no route run, so the G7 inverse gate answered
+    // EDIT_WINDOW_OPEN ("use PATCH /orders/:id/items") while that PATCH sent the buyer back here. A
+    // with-carrier order's lines are frozen, so a change request on it gets its own coded refusal.
+    describe("B1135: an order with the carrier (SHIP, no route run)", () => {
+      const SHIPPED_MESSAGE = "This order has already shipped. Contact the seller for changes.";
+      const withCarrier = {
+        ...dispatchedOrder,
+        tenantId: "test-tenant",
+        fulfillPath: "SHIP" as const,
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        routeRunId: null,
+        routeRunStopId: null,
+        routeRun: null,
+      };
+      const shipBillingTenant = (mode: string) => {
+        (ordersService as any).featureConfig = {
+          getEffectiveMode: jest.fn().mockResolvedValue(mode),
+        };
+      };
+
+      it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+        "a %s order with the carrier: 409 with the new code and message, nothing filed",
+        async (status) => {
+          shipBillingTenant("ship");
+          prisma.order.findUnique.mockResolvedValue({ ...withCarrier, status });
+          prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+
+          const attempt = service.create(
+            "ord-1",
+            { type: "NOTE" as any, note: "add a case please" },
+            customerUser,
+          );
+
+          await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+          await expect(attempt).rejects.toMatchObject({
+            response: {
+              code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
+              message: SHIPPED_MESSAGE,
+            },
+          });
+          expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+          expect(messaging.notifyEvent).not.toHaveBeenCalled();
+        },
+      );
+
+      it("the staff caller gets the same answer (the order, not the role, decides)", async () => {
+        shipBillingTenant("both");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST },
+        });
+      });
+
+      it("a CUSTOMER who does not own the order still meets the bare 403, never the shipped message", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER" });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, customerUser),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it("a route-run order is unchanged: an IN_PROGRESS run still files the request", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({ ...dispatchedOrder, fulfillPath: "ROUTE" });
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
+
+        await service.create("ord-1", { type: "NOTE" as any, note: "leave at back" }, customerUser);
+
+        expect(prisma.changeRequest.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("a route-run order is unchanged: a SCHEDULED run still answers EDIT_WINDOW_OPEN", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({
+          ...dispatchedOrder,
+          fulfillPath: "ROUTE",
+          status: "CONFIRMED",
+          routeRun: { status: "SCHEDULED" },
+        });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
+
+      it("a business that does not bill at shipment keeps today's EDIT_WINDOW_OPEN (the guard is gated on it)", async () => {
+        shipBillingTenant("pickup");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
     });
 
     it("forbids a CUSTOMER filing against an order they do not own", async () => {

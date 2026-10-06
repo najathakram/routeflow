@@ -7,6 +7,7 @@ import type {
   CustomerPriceHistory,
   InlineReturnLinesRequest,
   LineComponentView,
+  OrderInvoicesNeedReview,
   PriceType,
   OrderCancelBlockedReason,
 } from "@routeflow/types";
@@ -110,6 +111,8 @@ export interface Order {
     editableUntil: string | null;
     closedReason: "DISPATCHED" | "STATUS" | null;
   };
+  /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
+  invoicesNeedReview?: OrderInvoicesNeedReview;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
   changeRequests?: ChangeRequest[];
   /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`

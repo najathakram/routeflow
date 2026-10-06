@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
@@ -48,9 +49,16 @@ const baseOrder = {
   lineItems: [],
 };
 
+type Role = "OPERATOR" | "CUSTOMER";
 const open = async (
-  saved: { shippingCarrier?: string | null; shippingTrackingNumber?: string | null } = {},
+  saved: {
+    shippingCarrier?: string | null;
+    shippingTrackingNumber?: string | null;
+    status?: string;
+  } = {},
+  role: Role = "OPERATOR",
 ) => {
+  seedSession(role);
   current = { ...baseOrder, ...saved };
   get.mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/orders/o1" ? current : [] }),
@@ -136,5 +144,41 @@ describe("order detail: Mark shipped on a carrier order (shipping-flow polish)",
     markShipped();
     expect((screen.getByLabelText("Carrier") as HTMLSelectElement).value).toBe("ups");
     expect((screen.getByLabelText("Tracking number") as HTMLInputElement).value).toBe("");
+  });
+});
+
+describe("order detail: a customer never gets the staff shipping controls", () => {
+  it("a customer on a CONFIRMED carrier order: no Mark shipped, no tracking dialog, no Add tracking", async () => {
+    await open({}, "CUSTOMER");
+    expect(screen.queryByRole("button", { name: "Mark shipped" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add tracking" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a customer on a shipped order sees the tracking details but cannot edit the shipment", async () => {
+    await open(
+      {
+        status: "OUT_FOR_DELIVERY",
+        shippingCarrier: "fedex",
+        shippingTrackingNumber: "794644790138",
+      },
+      "CUSTOMER",
+    );
+    expect(screen.getByText("794644790138")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit shipment" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark shipped" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("staff on the same shipped order still get Edit shipment", async () => {
+    await open(
+      {
+        status: "OUT_FOR_DELIVERY",
+        shippingCarrier: "fedex",
+        shippingTrackingNumber: "794644790138",
+      },
+      "OPERATOR",
+    );
+    expect(screen.getByRole("button", { name: "Edit shipment" })).toBeTruthy();
   });
 });
