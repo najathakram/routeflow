@@ -206,6 +206,13 @@
 - **Lesson:** **After landing two PRs that touch the same constructor, signature or shared type in one window, run `npm run check-types -w apps/api` (and the touched specs) on the COMBINED master before the next land; never infer the combination from each PR's own green. Cf. [[L-228]], [[L-247]].**
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
 
+### L-266 · 2026-10-06 · process · a close/reopen CI re-run can replay a cached merge commit: read "Merge X into Y" in the run log before landing (#3223)
+
+- **Symptom:** #3223's CI re-run after close/reopen went green, yet its checkout log read "Merge <head> into <an older master>": GitHub replayed its cached merge commit although `refs/pull/N/merge` already showed the new master as a parent.
+- **Root cause:** a close/reopen re-runs against the cached merge commit; a fresh one is built only when master moves or a branch is pushed. The green run therefore proved the PR against the older master, not the one the landing rule allows. Related: [[L-198]] (`gh run rerun` replays the original merge ref).
+- **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
+- **Guard:** the landing script's merge-base check.
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -669,13 +676,6 @@
   definition (`isUnlisted = !productId`).**
 - **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
   (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
-
-### L-260 · 2026-10-04 · domain · a missing stored money value is "not provable", never a fabricated 0 (B1030, #3135)
-
-- **Symptom:** an invoice edit could store a discount above the subtotal (a negative total). The first guard exempted "legacy" rows by comparing against stored totals, and a row with missing totals read as 0 and was exempted too.
-- **Root cause:** the not-worse legacy exemption coerced an absent subtotal or total to 0, so unknown old state looked like a provably insane one and the edit passed.
-- **Lesson:** **When a rule is relaxed by comparing to the stored value, a missing or non-numeric stored value returns "unknown" (undefined) and the check runs strictly; coercing it to 0 turns the relaxation into a bypass. An absent optional amount (discount) may default to 0; an absent required one may not.**
-- **Guard:** `storedInvoiceTotals` returns undefined for missing or non-finite totals; pinned by the money-invariants util spec and the invoices update specs (#3135).
 
 ## security
 

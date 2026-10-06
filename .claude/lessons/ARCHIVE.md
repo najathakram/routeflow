@@ -3487,3 +3487,11 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **In `apps/api` use `import type` from `@routeflow/types` only. A constant the API needs at runtime is its own literal in `apps/api/src`, set-equal-pinned to the shared one by a parity spec (`FLEET_KEYS` against `FLEET_MODULE_KEYS`); a new shared constant ships with its parity spec or not at all.**
 - **Guard:** `apps/api/src/common/no-runtime-workspace-imports.spec.ts` (fails on any value import, require or dynamic import of the package) and `apps/api/src/billing/fleet-keys-parity.spec.ts`.
   (Archived 2026-10-06 whole and verbatim to make room at cap: L-261 is guarded by apps/api/src/common/no-runtime-workspace-imports.spec.ts and apps/api/src/billing/fleet-keys-parity.spec.ts, with no citation outside the code-map bookkeeping.)
+
+### L-260 · 2026-10-04 · domain · a missing stored money value is "not provable", never a fabricated 0 (B1030, #3135)
+
+- **Symptom:** an invoice edit could store a discount above the subtotal (a negative total). The first guard exempted "legacy" rows by comparing against stored totals, and a row with missing totals read as 0 and was exempted too.
+- **Root cause:** the not-worse legacy exemption coerced an absent subtotal or total to 0, so unknown old state looked like a provably insane one and the edit passed.
+- **Lesson:** **When a rule is relaxed by comparing to the stored value, a missing or non-numeric stored value returns "unknown" (undefined) and the check runs strictly; coercing it to 0 turns the relaxation into a bypass. An absent optional amount (discount) may default to 0; an absent required one may not.**
+- **Guard:** `storedInvoiceTotals` returns undefined for missing or non-finite totals; pinned by the money-invariants util spec and the invoices update specs (#3135).
+  (Archived 2026-10-06 whole and verbatim to make room at cap: L-260 is guarded by apps/api/src/common/money-invariants.util.spec.ts (storedInvoiceTotals) and the invoices update specs, with no citation outside the code-map bookkeeping.)
