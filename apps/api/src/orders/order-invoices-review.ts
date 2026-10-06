@@ -36,6 +36,9 @@ import {
  */
 export const ORDER_INVOICES_NEED_REVIEW_AUDIT_ACTION = API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW;
 
+/** `meta.context` of the row the driver stop-completion path writes (invoices/delivered-reconcile.ts). */
+export const STOP_COMPLETION_CONTEXT = "stop-completion";
+
 const logger = new Logger("OrderInvoicesReview");
 
 /** The office roles that see the field. Fails closed: the buyer principal never does, whatever its role. */
@@ -49,10 +52,10 @@ export function seesInvoicesNeedReview(user: Pick<JwtPayload, "role" | "type">):
 interface AuditUserReader {
   auditLog: {
     findFirst(args: {
-      where: { tenantId: string; action: string; entityType: { in: string[] }; entityId: string };
+      where: { tenantId: string; action: string; entityType: string; entityId: string };
       orderBy: { createdAt: "desc" };
-      select: { userId: true; createdAt: true };
-    }): Promise<{ userId: string | null; createdAt: Date } | null>;
+      select: { userId: true; createdAt: true; meta: true };
+    }): Promise<{ userId: string | null; createdAt: Date; meta: unknown } | null>;
   };
   user: {
     findFirst(args: {
@@ -74,13 +77,16 @@ async function flaggedAtStop(
       where: {
         tenantId: order.tenantId,
         action: ORDER_INVOICES_NEED_REVIEW_AUDIT_ACTION,
-        entityType: { in: ["order", "Order"] },
+        entityType: "order",
         entityId: order.id,
       },
       orderBy: { createdAt: "desc" },
-      select: { userId: true, createdAt: true },
+      select: { userId: true, createdAt: true, meta: true },
     });
-    if (!row?.userId) return undefined;
+    // Only the stop-completion writer's row says "at a stop": the newest row decides, and any other
+    // context (or none) shows no stop line. No name is resolved for a row that will not be shown.
+    const context = (row?.meta as { context?: unknown } | null | undefined)?.context;
+    if (!row?.userId || context !== STOP_COMPLETION_CONTEXT) return undefined;
     const who = await db.user.findFirst({
       where: { id: row.userId, tenantId: order.tenantId },
       select: { username: true, driver: { select: { contactName: true } } },

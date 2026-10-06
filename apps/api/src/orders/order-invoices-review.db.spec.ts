@@ -7,8 +7,9 @@
  *   - an order whose invoice carries an orphaned product line beside a live remainder -> flagged;
  *   - an order whose invoices are in step, a VOID-only order, and an order with no invoice -> not;
  *   - a counter that disagrees with what the invoices bill, with nothing left to bill -> flagged;
- *   - a DRIVER-written ORDER_INVOICES_NEED_REVIEW audit row names the driver; a NEWER row for the
- *     same entity id in ANOTHER tenant never does; and an audit row alone never flags an order;
+ *   - a stop-completion ORDER_INVOICES_NEED_REVIEW audit row names the driver; a NEWER row for the
+ *     same entity id in ANOTHER tenant never does, nor a newer row of another context; and an audit
+ *     row alone never flags an order;
  *   - a buyer (CUSTOMER) read of a flagged order carries no field and never calls the predicate;
  *   - the other tenant's flagged order is simply not found from this tenant.
  *
@@ -177,16 +178,16 @@ describeDb("staff order detail: invoicesNeedReview over real rows (B1116)", () =
       userId: string | null,
       at: string,
       forTenantId = tenant.id,
-      entityType = "order",
+      context = "stop-completion",
     ) =>
       prisma.auditLog.create({
         data: {
           tenantId: forTenantId,
           userId,
           action: "ORDER_INVOICES_NEED_REVIEW",
-          entityType,
+          entityType: "order",
           entityId: orderId,
-          meta: { context: "stop_completion" },
+          meta: { context },
           createdAt: new Date(at),
         },
       });
@@ -224,6 +225,21 @@ describeDb("staff order detail: invoicesNeedReview over real rows (B1116)", () =
     // The read still returns the whole order detail around the new field.
     expect(out.id).toBe(o.orderId);
     expect(out.lineItems).toHaveLength(1);
+  });
+
+  it("shows no stop line when the newest audit row is not a stop-completion row", async () => {
+    const a = await seedTenant();
+    const o = await a.order(0);
+    await a.invoice(o.orderId, { orderItemId: null, qty: 10 });
+    await a.audit(o.orderId, a.driverUserId, "2026-10-05T10:00:00Z"); // a stop-completion row...
+    await a.audit(o.orderId, a.driverUserId, "2026-10-06T10:00:00Z", a.tenantId, "office-recovery");
+
+    const out = await read(a.tenantId, o.orderId, staff(a.tenantId));
+
+    expect(out.invoicesNeedReview).toEqual({
+      flagged: true,
+      reason: ORDER_INVOICES_NEED_REVIEW_MESSAGE,
+    });
   });
 
   it("flags with no audit row at all — the flag is the predicate, never the row — and for a tenant admin too", async () => {

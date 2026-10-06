@@ -173,7 +173,7 @@ describe("OrdersService.findOne — invoicesNeedReview (B1116)", () => {
       entityId: "o-1",
       userId: "drv-1",
       createdAt: new Date("2026-10-05T10:00:00Z"),
-      meta: { context: "stop_completion" },
+      meta: { context: "stop-completion" },
       ...over,
     });
 
@@ -210,6 +210,46 @@ describe("OrdersService.findOne — invoicesNeedReview (B1116)", () => {
       });
       const out = (await service.findOne("o-1", user("OPERATOR"))) as unknown as Detail;
       expect(out.invoicesNeedReview?.flaggedAtStop?.by).toBe("d1");
+    });
+
+    it.each([
+      ["another context", { context: "office-recovery" }],
+      ["the underscore spelling", { context: "stop_completion" }],
+      ["no context key", { note: "x" }],
+      ["no meta at all", null],
+    ])("shows no stop line for a row with %s (the flag is unchanged)", async (_name, meta) => {
+      predicate.mockResolvedValue(true);
+      const { service, userFindFirst } = harness({
+        audit: [row({ meta })],
+        users: [
+          { id: "drv-1", tenantId: "t-A", username: "d1", driver: { contactName: "Dana Driver" } },
+        ],
+      });
+      const out = (await service.findOne("o-1", user("OPERATOR"))) as unknown as Detail;
+      expect(out.invoicesNeedReview).toEqual({
+        flagged: true,
+        reason: ORDER_INVOICES_NEED_REVIEW_MESSAGE,
+      });
+      expect(userFindFirst).not.toHaveBeenCalled(); // never even resolves a name for it
+    });
+
+    it("judges the NEWEST row's context, not an older stop row beneath a newer non-stop row", async () => {
+      predicate.mockResolvedValue(true);
+      const { service } = harness({
+        audit: [
+          row({ userId: "drv-1", createdAt: new Date("2026-10-04T09:00:00Z") }),
+          row({
+            userId: "drv-1",
+            createdAt: new Date("2026-10-05T09:00:00Z"),
+            meta: { context: "office-recovery" },
+          }),
+        ],
+        users: [
+          { id: "drv-1", tenantId: "t-A", username: "d1", driver: { contactName: "Dana Driver" } },
+        ],
+      });
+      const out = (await service.findOne("o-1", user("OPERATOR"))) as unknown as Detail;
+      expect(out.invoicesNeedReview).not.toHaveProperty("flaggedAtStop");
     });
 
     it("omits flaggedAtStop for a row with no user, and for an unresolvable user", async () => {
