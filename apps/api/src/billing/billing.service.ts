@@ -1520,10 +1520,12 @@ export class BillingService {
       );
     }
 
-    // SA-690 option A, booked AFTER the activation crossing above: the crossing prices the base
-    // plan and every active add-on at its STORED snapshot (0 for a trial's unbilled add-on), then the
-    // adoption books each add-on's one stored → actual delta. Reversed, the crossing would price
-    // the adopted snapshot a second time.
+    // SA-690 option A, booked AFTER the activation crossing above. The crossing prices the base plan
+    // and every active BILLABLE add-on (a comp is never revenue) at its STORED snapshot: 0 for a trial's
+    // unbilled add-on, the old price for a row whose pointer is still on a dead subscription's item.
+    // Adoption then books each add-on's one stored → actual delta (and swaps a stale pointer), so the
+    // two sum to what Stripe bills. Reversed, the crossing would price the adopted snapshot a second
+    // time.
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
