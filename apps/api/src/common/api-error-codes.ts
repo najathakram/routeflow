@@ -194,6 +194,38 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_WRONG_SUPPLIER: "SUPPLIER_ALLOCATION_WRONG_SUPPLIER",
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
+  COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
+  WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
+  WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
+  COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+  COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  /**
+   * 409 on a createSale replay whose order was changed (e.g. cancelled) after the first attempt. The sale
+   * EXISTS — the client must treat it as an UNKNOWN outcome: never as "nothing was charged", never drop the
+   * Idempotency-Key and re-ring (that would double-sell). Open the order from the orders list instead.
+   */
+  COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
+  /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
+  WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
+  /**
+   * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
+   * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
+   */
+  COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
+   * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_OTHER_ORDER: "IDEMPOTENCY_KEY_OTHER_ORDER",
+  /**
+   * 409 from create(): this Idempotency-Key already created an order with a DIFFERENT cart. The order EXISTS:
+   * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
+   */
+  IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

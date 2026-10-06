@@ -1,0 +1,1015 @@
+// OrdersService / InvoicesService pull ESM-only modules (@react-pdf/renderer, expo-server-sdk)
+// Jest's CommonJS parser cannot load; this spec drives them through mocks at the module boundary.
+jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} }));
+jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
+
+// The shared Postgres advisory lock is replaced by a per-key in-process mutex with the same contract
+// (fn never runs without the lock; same key serialises, different keys do not), so a spec can
+// interleave two calls and prove the section is actually serialised.
+const mockLocks = new Map<string, Promise<unknown>>();
+const mockLockCalls: Array<{ family: string; key: string; mode: string }> = [];
+const mockLockFailure: { error: Error | null } = { error: null };
+jest.mock("../../common/db-locks", () => ({
+  ...jest.requireActual("../../common/db-locks"),
+  withAdvisoryLock: async (opts: any, fn: () => Promise<unknown>) => {
+    mockLockCalls.push({ family: opts.family, key: opts.key, mode: opts.mode });
+    if (mockLockFailure.error) throw mockLockFailure.error;
+    const prev = mockLocks.get(opts.key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    mockLocks.set(
+      opts.key,
+      prev.then(() => mine),
+    );
+    await prev;
+    try {
+      return { acquired: true, value: await fn() };
+    } finally {
+      release();
+    }
+  },
+}));
+
+import { ConflictException, BadRequestException } from "@nestjs/common";
+import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
+import { Test } from "@nestjs/testing";
+import { CounterSaleService } from "./counter-sale.service";
+import { WalkInCustomerService } from "./walk-in-customer";
+import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
+import type { FulfilmentCapability } from "@routeflow/types";
+import { OrdersService } from "../orders.service";
+import { InvoicesService } from "../../invoices/invoices.service";
+import { PrismaService } from "../../prisma/prisma.service";
+import { createMockPrisma } from "../../testing/prisma-mock";
+
+/**
+ * POST /orders/counter-sale orchestration (SA-655, item C step 2). Every collaborator is a mock:
+ * `createSale` (the prod-proven create -> DELIVERED -> invoice -> send) and `recordPayment` are
+ * spies, so the spec proves WHAT the counter-sale layer hands them and in what order. The money
+ * itself (line math, tax, totals) stays in create()/@routeflow/pricing; no number is derived here
+ * except the payment split and the change.
+ *
+ * (f) Staff oversell is allowed by policy (oversell-policy.ts: resolveOversellAllowed is true for
+ * OPERATOR/TENANT_ADMIN), so there is deliberately NO staff stock-refusal case: the stock is
+ * decremented once, inside create(), and this layer touches no stock.
+ */
+
+// The exact #3188 deriveFulfilmentCapability shape.
+const cap = (counter: "always" | "optional" | "off", over: Partial<FulfilmentCapability> = {}) =>
+  ({
+    methods: counter === "always" ? ["PICKUP", "SHIP"] : ["ROUTE", "SHIP"],
+    staffDefault: counter === "always" ? "PICKUP" : "ROUTE",
+    staffOpensAs: counter === "always" ? "counter" : "order",
+    portalMethods: [],
+    portalDefault: null,
+    counter,
+    fleet: true,
+    consistent: true,
+    ...over,
+  }) as FulfilmentCapability;
+
+const staff = { sub: "op-1", role: "OPERATOR", tenantId: "t-1" } as never;
+const item = { productId: "p1", qty: 2, unitPrice: 5 };
+
+type Inv = { id: string; total: number; status: string; createdAt: Date; payments: any[] };
+
+describe("CounterSaleService.ring", () => {
+  let service: CounterSaleService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let createSale: jest.Mock;
+  let findReplayCandidateByKey: jest.Mock;
+  let recordPayment: jest.Mock;
+  let walkIn: { getOrCreateWalkIn: jest.Mock };
+  let reader: { get: jest.Mock };
+  let invoices: Inv[];
+  let replay: boolean;
+
+  const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
+    id,
+    total,
+    status: "SENT",
+    createdAt: new Date(2026, 9, 4, 12, 0, at),
+    payments,
+  });
+  const errorOf = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return e as any;
+    }
+    throw new Error("expected a rejection");
+  };
+  const codeOf = async (p: Promise<unknown>) => (await errorOf(p)).getResponse().code;
+
+  beforeEach(async () => {
+    mockLocks.clear();
+    mockLockCalls.length = 0;
+    mockLockFailure.error = null;
+    prisma = createMockPrisma();
+    invoices = [inv("inv-1", 37.25)];
+    replay = false;
+    createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
+      if (replay) sale?.onReplay?.();
+      return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+    });
+    findReplayCandidateByKey = jest.fn(async () => null);
+    recordPayment = jest.fn(async (invoiceId: string, dto: any) => {
+      const target = invoices.find((i) => i.id === invoiceId)!;
+      if (target.payments.some((p) => p.status !== "VOID" && p.method !== "CREDIT_NOTE"))
+        throw new BadRequestException("Invoice is already fully paid");
+      target.payments.push({
+        id: `pay-${invoiceId}`,
+        amount: dto.amount,
+        method: dto.method,
+        status: "PAID",
+      });
+      return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+    });
+    walkIn = { getOrCreateWalkIn: jest.fn().mockResolvedValue("cust-walkin") };
+    reader = { get: jest.fn().mockResolvedValue(cap("optional")) };
+
+    prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
+    prisma.creditNote.findMany.mockResolvedValue([]);
+    // SA-436: the tenant's send-time sweep switch. ON here so the open-credit guard specs mean something;
+    // the OFF case is pinned on its own below.
+    prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
+    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+    prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
+      invoices
+        .filter((i) => !where?.status?.notIn?.includes(i.status))
+        .map((i) => ({ ...i, payments: [...i.payments], invoiceNumber: `N-${i.id}` })),
+    );
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        CounterSaleService,
+        { provide: OrdersService, useValue: { createSale, findReplayCandidateByKey } },
+        { provide: InvoicesService, useValue: { recordPayment } },
+        { provide: WalkInCustomerService, useValue: walkIn },
+        { provide: PrismaService, useValue: prisma },
+        { provide: FULFILMENT_CAPABILITY_READER, useValue: reader },
+      ],
+    }).compile();
+    service = mod.get(CounterSaleService);
+  });
+
+  const named = (payment: any, extra: any = {}) => ({
+    customerId: "cust-1",
+    items: [item],
+    payment,
+    ...extra,
+  });
+
+  // ── 1. gate ───────────────────────────────────────────────────────────────
+  describe("gate", () => {
+    it("counter off: 403 COUNTER_SALES_DISABLED and NOTHING is written or called", async () => {
+      reader.get.mockResolvedValue(cap("off"));
+      const e = await errorOf(service.ring(named({ method: "CASH" }) as never, staff));
+      expect(e.getStatus()).toBe(403);
+      expect(e.getResponse().code).toBe("COUNTER_SALES_DISABLED");
+      // Approved copy: the switch is back-office controlled, so it never points users to settings.
+      expect(e.getResponse().message).toBe("Counter sales are not turned on for this business.");
+      expect(createSale).not.toHaveBeenCalled();
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+    });
+
+    it("walk-in sale on a tenant with the counter off creates no walk-in customer", async () => {
+      reader.get.mockResolvedValue(cap("off"));
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+    });
+
+    it.each(["always", "optional"] as const)("counter %s is allowed", async (counter) => {
+      reader.get.mockResolvedValue(cap(counter));
+      await expect(service.ring(named({ method: "CASH" }) as never, staff)).resolves.toBeDefined();
+      expect(reader.get).toHaveBeenCalledWith("test-tenant");
+    });
+
+    it("a carrier tenant (no fleet, counter optional) still rings PICKUP counter sales", async () => {
+      reader.get.mockResolvedValue(cap("optional", { fleet: false, methods: ["SHIP"] }));
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale).toHaveBeenCalledWith(
+        expect.anything(),
+        staff,
+        expect.objectContaining({ fulfillPath: "PICKUP" }),
+      );
+    });
+  });
+
+  // ── 2/3. selection, tenant scope, walk-in ──────────────────────────────────
+  describe("customer selection", () => {
+    it("customerId together with walkIn is 400 WALK_IN_WITH_CUSTOMER; neither is a 400", async () => {
+      expect(
+        await codeOf(service.ring(named({ method: "CASH" }, { walkIn: true }) as never, staff)),
+      ).toBe("WALK_IN_WITH_CUSTOMER");
+      await expect(
+        service.ring({ items: [item], payment: { method: "CASH" } } as never, staff),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("walk-in + ON_ACCOUNT is 400 WALK_IN_NO_ACCOUNT and writes nothing (no walk-in row either)", async () => {
+      const p = service.ring(
+        { walkIn: true, items: [item], payment: { method: "ON_ACCOUNT" } } as never,
+        staff,
+      );
+      expect(await codeOf(p)).toBe("WALK_IN_NO_ACCOUNT");
+      expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("another tenant's customer id is a 404 (tenant-scoped lookup) before anything is created", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      await expect(service.ring(named({ method: "CASH" }) as never, staff)).rejects.toMatchObject({
+        status: 404,
+      });
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("another tenant's / unknown product id is a 404 before anything is created", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      await expect(service.ring(named({ method: "CASH" }) as never, staff)).rejects.toMatchObject({
+        status: 404,
+      });
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("a walk-in sale sells to the tenant's walk-in customer and suppresses the INVOICE_SENT email", async () => {
+      await service.ring(
+        { walkIn: true, items: [item], payment: { method: "CASH" } } as never,
+        staff,
+      );
+      expect(walkIn.getOrCreateWalkIn).toHaveBeenCalledTimes(1);
+      expect(createSale.mock.calls[0][0].customerId).toBe("cust-walkin");
+      expect(createSale.mock.calls[0][2].suppressInvoiceNotify).toBe(true);
+    });
+
+    it("a named customer's sale does NOT suppress the invoice email", async () => {
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale.mock.calls[0][2].suppressInvoiceNotify).toBeFalsy();
+    });
+
+    it("a walk-in holding open credit is refused 409 WALK_IN_OPEN_CREDIT BEFORE create (send would auto-apply it)", async () => {
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 4 }]);
+      const e = await errorOf(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    // The guard must ask the SAME question as markSent's auto-apply (credit-notes/auto-apply-candidates):
+    // not just ISSUED. This evaluates the where the guard sends over a table of notes in each state.
+    it.each([
+      ["an ISSUED note with balance", { status: "ISSUED", expiresAt: null }],
+      ["an APPLIED-status note that still holds balance", { status: "APPLIED", expiresAt: null }],
+      [
+        "an ISSUED note that expires in the future",
+        { status: "ISSUED", expiresAt: new Date("2999-01-01") },
+      ],
+    ])("refuses the walk-in for %s (auto-apply would take it)", async (_n, state) => {
+      const table = [{ amount: 10, amountUsed: 4, autoApplyExcluded: false, ...state }];
+      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (n: any) =>
+            (where.status === undefined ||
+              (where.status.not !== undefined
+                ? n.status !== where.status.not
+                : n.status === where.status)) &&
+            (where.autoApplyExcluded === undefined ||
+              n.autoApplyExcluded === where.autoApplyExcluded) &&
+            (where.OR === undefined ||
+              where.OR.some((c: any) =>
+                "expiresAt" in c && c.expiresAt === null
+                  ? n.expiresAt === null
+                  : c.expiresAt?.gt && n.expiresAt && n.expiresAt > c.expiresAt.gt,
+              )),
+        ),
+      );
+      const e = await errorOf(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("does not refuse for a VOID note, an operator-excluded note or an expired one (auto-apply skips them)", async () => {
+      const table = [
+        { amount: 10, amountUsed: 0, status: "VOID", expiresAt: null, autoApplyExcluded: false },
+        { amount: 10, amountUsed: 0, status: "ISSUED", expiresAt: null, autoApplyExcluded: true },
+        {
+          amount: 10,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: new Date("2000-01-01"),
+          autoApplyExcluded: false,
+        },
+      ];
+      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (n: any) =>
+            n.status !== where.status.not &&
+            n.autoApplyExcluded === where.autoApplyExcluded &&
+            where.OR.some((c: any) =>
+              c.expiresAt === null
+                ? n.expiresAt === null
+                : n.expiresAt && n.expiresAt > c.expiresAt.gt,
+            ),
+        ),
+      );
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+    });
+
+    it("creditAutoApplyOnSend OFF (the default): open credit does NOT block the walk-in (send() would not apply it)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: false });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+      expect(createSale).toHaveBeenCalled();
+    });
+
+    it("no tenant config row reads as OFF: open credit does not block the walk-in", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+    });
+
+    it("creditAutoApplyOnSend ON: open credit blocks the walk-in (409 WALK_IN_OPEN_CREDIT)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
+      expect(
+        await codeOf(
+          service.ring(
+            { walkIn: true, items: [item], payment: { method: "CASH" } } as never,
+            staff,
+          ),
+        ),
+      ).toBe("WALK_IN_OPEN_CREDIT");
+    });
+
+    it("a fully consumed credit note does not block the walk-in", async () => {
+      prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 10 }]);
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  // ── 4. lines + 5. sequence ─────────────────────────────────────────────────
+  describe("lines and sequence", () => {
+    it("hands create() (via createSale) the lines as the writer stores them (qty always set); priceReason becomes overrideReason", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 4 }]);
+      await service.ring(
+        named(
+          { method: "CASH" },
+          {
+            notes: "front desk",
+            items: [
+              { productId: "p1", boxes: 1, pieces: 3, unitPrice: 4.5, priceReason: "damaged box" },
+              { productId: "p1", qty: 2 },
+            ],
+          },
+        ) as never,
+        staff,
+        "key-1",
+      );
+      const dto = createSale.mock.calls[0][0];
+      expect(dto).toMatchObject({
+        customerId: "cust-1",
+        notes: "front desk",
+        deliveredNow: true,
+        idempotencyKey: "key-1",
+      });
+      expect(dto.items).toEqual([
+        {
+          productId: "p1",
+          qty: 7, // 1 box of 4 + 3 pieces: the integer the writer stores, so a same-key replay matches
+          boxes: 1,
+          pieces: 3,
+          unitPrice: 4.5,
+          overrideReason: "damaged box",
+        },
+        { productId: "p1", qty: 2 },
+      ]);
+    });
+
+    it("create()'s existing 400 for an unreasoned price override surfaces untouched", async () => {
+      const boom = new BadRequestException("A reason is required to change Widget");
+      createSale.mockRejectedValue(boom);
+      await expect(
+        service.ring(
+          named({ method: "CASH" }, { items: [{ ...item, unitPrice: 1 }] }) as never,
+          staff,
+        ),
+      ).rejects.toBe(boom);
+      expect(recordPayment).not.toHaveBeenCalled();
+    });
+
+    it("createSale is called as a PICKUP counter sale, THEN recordPayment runs; ON_ACCOUNT records none", async () => {
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale).toHaveBeenCalledWith(
+        expect.objectContaining({ deliveredNow: true }),
+        staff,
+        expect.objectContaining({ fulfillPath: "PICKUP" }),
+      );
+      expect(createSale.mock.invocationCallOrder[0]).toBeLessThan(
+        recordPayment.mock.invocationCallOrder[0],
+      );
+
+      recordPayment.mockClear();
+      invoices = [inv("inv-1", 37.25)];
+      const r = await service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({
+        total: 37.25,
+        paid: 0,
+        balanceDue: 37.25,
+        paymentRecorded: true,
+      });
+      expect(r.paymentId).toBeUndefined();
+    });
+
+    it("never touches stock itself: the only decrement is create()'s own (no inventory collaborator)", () => {
+      expect(Object.keys(service as object).filter((k) => /stock|inventory/i.test(k))).toEqual([]);
+    });
+  });
+
+  // ── 7. money ───────────────────────────────────────────────────────────────
+  describe("money", () => {
+    it("a VOID sibling invoice of the order is not read back: not the invoice id, not the total, not the balance", async () => {
+      const voided = { ...inv("inv-void", 10, [], 0), status: "VOID" };
+      invoices = [voided, inv("inv-1", 37.25, [], 1)];
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.objectContaining({ amount: 37.25 }),
+      );
+      expect(r).toMatchObject({
+        invoiceId: "inv-1",
+        total: 37.25,
+        paid: 37.25,
+        balanceDue: 0,
+        change: 12.75,
+      });
+    });
+
+    it("a WRITTEN_OFF sibling is excluded too (recordPayment refuses both statuses)", async () => {
+      invoices = [
+        { ...inv("inv-wo", 10, [], 0), status: "WRITTEN_OFF" },
+        inv("inv-1", 37.25, [], 1),
+      ];
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(r).toMatchObject({ invoiceId: "inv-1", total: 37.25, balanceDue: 0 });
+    });
+
+    it("CASH 50 on 37.25: pays 37.25, change 12.75, balance 0", async () => {
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
+        amount: 37.25,
+        method: "CASH",
+        reference: undefined,
+      });
+      expect(r).toEqual({
+        orderId: "ord-1",
+        orderNumber: "ORD-1",
+        invoiceId: "inv-1",
+        invoiceNumber: "N-inv-1",
+        total: 37.25,
+        paid: 37.25,
+        balanceDue: 0,
+        change: 12.75,
+        paymentId: "pay-inv-1",
+        method: "CASH",
+        paymentRecorded: true,
+      });
+    });
+
+    it("CARD exact: recorded as CREDIT_CARD with the reference; no change", async () => {
+      const r = await service.ring(named({ method: "CARD", reference: "auth-77" }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
+        amount: 37.25,
+        method: "CREDIT_CARD",
+        reference: "auth-77",
+      });
+      expect(r.change).toBeUndefined();
+      expect(r.balanceDue).toBe(0);
+    });
+
+    it("CHECK without a number is 400 COUNTER_CHECK_NUMBER_REQUIRED BEFORE the sale is created", async () => {
+      expect(await codeOf(service.ring(named({ method: "CHECK" }) as never, staff))).toBe(
+        "COUNTER_CHECK_NUMBER_REQUIRED",
+      );
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
+      const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
+        amount: 20,
+        method: "CASH",
+        reference: undefined,
+      });
+      expect(r).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        paymentRecorded: true,
+        paymentId: "pay-inv-1",
+      });
+      expect(r.change).toBeUndefined();
+      expect(r.paymentErrorCode).toBeUndefined();
+    });
+
+    it("a zero CASH tender: the sale stands (open invoice), 201 paymentRecorded:false TENDER_SHORT, no payment", async () => {
+      const r = await service.ring(named({ method: "CASH", amount: 0 }) as never, staff);
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_TENDER_SHORT",
+        paid: 0,
+        balanceDue: 37.25,
+      });
+    });
+
+    it("CARD above the total is COUNTER_PAYMENT_EXCEEDS_TOTAL, nothing recorded", async () => {
+      const r = await service.ring(named({ method: "CARD", amount: 99 }) as never, staff);
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+      });
+    });
+
+    it("the tender is judged against the POST-send balance (credit already applied by send)", async () => {
+      invoices = [
+        inv("inv-1", 40, [{ id: "cn-pay", amount: 10, method: "CREDIT_NOTE", status: "PAID" }]),
+      ];
+      const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }));
+      expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
+      expect(r.change).toBeUndefined();
+    });
+
+    it("mixed regulated order: sibling invoices are paid oldest-first from one tender", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 7.25, [], 2)];
+      const r = await service.ring(named({ method: "CASH", amount: 40 }) as never, staff);
+      expect(recordPayment.mock.calls.map((c) => [c[0], c[1].amount])).toEqual([
+        ["inv-1", 30],
+        ["inv-2", 7.25],
+      ]);
+      expect(r).toMatchObject({ total: 37.25, paid: 37.25, balanceDue: 0, change: 2.75 });
+    });
+  });
+
+  // ── 8. refusals ────────────────────────────────────────────────────────────
+  describe("refusals and partial failure", () => {
+    it.each(["CREDIT_LIMIT_EXCEEDED", "REGULATED_AUTH_REQUIRED", "SELLING_RESTRICTED"])(
+      "create()'s %s 409 propagates unchanged and no payment is attempted",
+      async (code) => {
+        const boom = new ConflictException({ code, message: "refused" });
+        createSale.mockRejectedValue(boom);
+        await expect(service.ring(named({ method: "CASH" }) as never, staff)).rejects.toBe(boom);
+        expect(recordPayment).not.toHaveBeenCalled();
+      },
+    );
+
+    it("recordPayment failing AFTER the sale committed: 201, paymentRecorded:false, the invoice stays open", async () => {
+      recordPayment.mockRejectedValue(new Error("db went away"));
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(r).toMatchObject({
+        invoiceId: "inv-1",
+        total: 37.25,
+        paid: 0,
+        balanceDue: 37.25,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+      expect(r.change).toBeUndefined(); // no money moved, so no change is owed
+    });
+  });
+
+  // ── 9. idempotency ─────────────────────────────────────────────────────────
+  describe("Idempotency-Key", () => {
+    it("the same key twice: createSale replays, exactly ONE payment, identical response + replayed:true", async () => {
+      const first = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      replay = true;
+      const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(second).toEqual({ ...first, replayed: true });
+      expect(first.replayed).toBeUndefined();
+    });
+
+    it("a replay after a refused (zero) tender finishes the sale when retried with a corrected payment", async () => {
+      await service.ring(named({ method: "CASH", amount: 0 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      replay = true;
+      const retry = await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(retry).toMatchObject({ paymentRecorded: true, paid: 37.25, replayed: true });
+    });
+
+    it("a replay after a PARTIAL payment records nothing more and reports what is stored", async () => {
+      await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      replay = true;
+      const again = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(again).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        paymentRecorded: true,
+        replayed: true,
+      });
+    });
+
+    it("paymentRecorded on a replay comes from what is STORED, not from this call", async () => {
+      invoices = [
+        inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: "CASH", status: "PAID" }]),
+      ];
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paymentRecorded: true, paid: 37.25, paymentId: "p0" });
+    });
+
+    it("a VOID payment does not count: the replay records a fresh one", async () => {
+      invoices = [
+        inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: "CASH", status: "VOID" }]),
+      ];
+      replay = true;
+      await service.ring(named({ method: "CASH" }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+    });
+
+    it("a concurrent double submit: the loser's payment is refused by the invoice lock, the stored payment makes it paymentRecorded:true, one payment exists", async () => {
+      // Both requests read the invoice before either paid (the stale first read of the loser).
+      const stale = invoices.map((i) => ({
+        ...i,
+        payments: [] as any[],
+        invoiceNumber: "N-inv-1",
+      }));
+      await service.ring(named({ method: "CASH" }) as never, staff, "k");
+      replay = true;
+      prisma.invoice.findMany.mockResolvedValueOnce(stale);
+      const loser = await service.ring(named({ method: "CASH" }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(2); // the loser tried; the invoice row lock said no
+      expect(invoices[0].payments).toHaveLength(1);
+      expect(loser).toMatchObject({ paymentRecorded: true, replayed: true, paid: 37.25 });
+    });
+  });
+
+  describe("serialised tender (SA-672 M1) and a failing sibling allocation (M2)", () => {
+    const tick = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+
+    it("the payment step runs inside the shared counter-tender advisory lock keyed on the order", async () => {
+      await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(mockLockCalls).toEqual([{ family: "counter-tender", key: "ord-1", mode: "wait" }]);
+    });
+
+    it("two concurrent same-key SHORT tenders record exactly ONE payment", async () => {
+      // A slow recordPayment holds the race window open: without the lock both calls read 'no tender yet'.
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        await tick();
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const [a, b] = await Promise.all([
+        service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
+        service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
+      ]);
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(invoices[0].payments).toHaveLength(1);
+      expect(a).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
+      expect(b).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
+    });
+
+    it.each([
+      ["a lock timeout", () => new LockTimeoutError("counter-tender", "ord-1", 20000)],
+      ["an unavailable lock connection", () => new LockUnavailableError(new Error("pool"))],
+    ])(
+      "%s AFTER the sale committed => 201 paymentRecorded:false + a code, never a 500",
+      async (_n, mk) => {
+        mockLockFailure.error = mk();
+        const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(r).toMatchObject({
+          orderId: "ord-1",
+          invoiceId: "inv-1",
+          total: 37.25,
+          paid: 0,
+          balanceDue: 37.25,
+          paymentRecorded: false,
+          paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        });
+        expect(r.change).toBeUndefined();
+      },
+    );
+
+    it("a non-lock failure inside the locked section still propagates (only the lock errors are mapped)", async () => {
+      mockLockFailure.error = new Error("boom");
+      await expect(
+        service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k"),
+      ).rejects.toThrow("boom");
+    });
+
+    it("a replay after a failed sibling allocation RESUMES: only the missing part is recorded, paid = total", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      let failSibling = true;
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2" && failSibling)
+          throw new BadRequestException("regulated refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const first = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(first).toMatchObject({ paid: 30, balanceDue: 20, paymentRecorded: false });
+
+      failSibling = false;
+      replay = true;
+      recordPayment.mockClear();
+      const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }));
+      expect(second).toMatchObject({
+        total: 50,
+        paid: 50,
+        balanceDue: 0,
+        paymentRecorded: true,
+        replayed: true,
+      });
+      expect(invoices[0].payments).toHaveLength(1); // sibling 1 is never charged twice
+    });
+
+    it("a replay whose planned allocation is already fully stored records nothing", async () => {
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 30, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [{ id: "p2", amount: 20, method: "CASH", status: "PAID" }], 2),
+      ];
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paid: 50, paymentRecorded: true });
+    });
+
+    it("a resume never over-collects: a tender above the plan on one invoice is not topped up elsewhere", async () => {
+      // 20 tendered, sibling 1 already holds 20 (its whole planned share): nothing more is due.
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 20, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [], 2),
+      ];
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paid: 20, balanceDue: 30, paymentRecorded: true });
+    });
+
+    it("a replay whose resume still cannot record: paymentRecorded:false, NO change, balanceDue stays 20", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2") throw new BadRequestException("regulated refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      replay = true;
+      const again = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(again).toMatchObject({
+        paid: 30,
+        balanceDue: 20,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+      expect(again.change).toBeUndefined();
+    });
+
+    it("change comes ONLY from a fully covered STORED balance, never from this call's tender against stored cash", async () => {
+      // Sibling 1 holds its 30 of cash; sibling 2's recordPayment answers OK but nothing is stored for it
+      // (the stored balance is still 20). This call's tender (50) minus the stored cash (30) is 20, which
+      // is money still OWED, not change to hand back.
+      invoices = [
+        inv("inv-1", 30, [{ id: "p1", amount: 30, method: "CASH", status: "PAID" }], 1),
+        inv("inv-2", 20, [], 2),
+      ];
+      recordPayment.mockResolvedValue({ id: "inv-2", createdPaymentId: "x" });
+      replay = true;
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r.balanceDue).toBe(20);
+      expect(r.change).toBeUndefined();
+    });
+
+    it("a fully covered stored balance returns change from the tender (CASH 60 on a 50 sale = 10)", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      const r = await service.ring(named({ method: "CASH", amount: 60 }) as never, staff, "k");
+      expect(r).toMatchObject({ paid: 50, balanceDue: 0, change: 10, paymentRecorded: true });
+    });
+
+    it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {
+      invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
+      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
+        if (invoiceId === "inv-2") throw new BadRequestException("regulated line refused");
+        invoices
+          .find((i) => i.id === invoiceId)!
+          .payments.push({
+            id: `pay-${invoiceId}`,
+            amount: dto.amount,
+            method: dto.method,
+            status: "PAID",
+          });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      });
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
+      expect(r).toMatchObject({
+        total: 50,
+        paid: 30,
+        balanceDue: 20,
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+      expect(r.change).toBeUndefined();
+    });
+  });
+
+  describe("byKey (GET /orders/counter-sale/by-key/:key): a definitive answer about a key", () => {
+    // No durable counter marker exists on Order, so a counter sale is recognised by its SHAPE: a PICKUP order
+    // created with skipAutoMerge (only the counter writes both; a buyer's pickup order never skips the merge).
+    const sale = {
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      fulfillPath: "PICKUP",
+      skipAutoMerge: true,
+      customerId: "cust-1",
+    };
+
+    it("found: the same body a replay would return, read back from storage, replayed:true, nothing written", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [
+        inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: "CASH", status: "PAID" }]),
+      ];
+      const r = await service.byKey("k1");
+      expect(r).toEqual({
+        orderId: "ord-1",
+        orderNumber: "ORD-1",
+        invoiceId: "inv-1",
+        invoiceNumber: "N-inv-1",
+        total: 37.25,
+        paid: 37.25,
+        balanceDue: 0,
+        paymentId: "p0",
+        method: "CASH",
+        paymentRecorded: true,
+        replayed: true,
+      });
+      expect(findReplayCandidateByKey).toHaveBeenCalledWith("k1", expect.any(String));
+      expect(createSale).not.toHaveBeenCalled();
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+    });
+
+    it("matches what the POST replay returns for the same stored sale (modulo change, which needs the tender)", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      const first = await service.ring(
+        named({ method: "CASH", amount: 37.25 }) as never,
+        staff,
+        "k",
+      );
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      const { change: _c, ...expected } = { ...first, replayed: true } as any;
+      expect(await service.byKey("k")).toEqual(expected);
+    });
+
+    it("a PARTIAL stored tender (balance still owing) is NOT paymentRecorded: storage cannot tell an intended partial from an interrupted allocation, so the till must see money is owed", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [inv("inv-1", 37.25, [{ id: "p0", amount: 20, method: "CASH", status: "PAID" }])];
+      expect(await service.byKey("k1")).toMatchObject({
+        paid: 20,
+        balanceDue: 17.25,
+        method: "CASH",
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      });
+    });
+
+    it("recovered ON ACCOUNT: no tender, balance owing => method ON_ACCOUNT, recorded, no error (on account, not 'payment not recorded')", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      const r = await service.byKey("k1");
+      expect(r).toMatchObject({
+        paid: 0,
+        balanceDue: 37.25,
+        method: "ON_ACCOUNT",
+        paymentRecorded: true,
+      });
+      expect(r.paymentErrorCode).toBeUndefined();
+      expect(r.change).toBeUndefined();
+    });
+
+    // L-167: ONE read-back builds both bodies, so a recovered sale reads exactly like the POST that rang it.
+    describe.each([
+      ["ON_ACCOUNT", { method: "ON_ACCOUNT" }, undefined],
+      ["CASH", { method: "CASH", amount: 37.25 }, undefined],
+      ["CARD", { method: "CARD" }, "CREDIT_CARD"],
+      ["CHECK", { method: "CHECK", reference: "1042" }, "CHECK"],
+    ])("a recovered %s sale", (label, payment, _prisma) => {
+      it("byKey body equals the POST body (except replayed:true and the cash-only change)", async () => {
+        invoices = [inv("inv-1", 37.25)];
+        const posted = await service.ring(
+          { customerId: "cust-1", items: [item], payment } as never,
+          staff,
+          `k-${label}`,
+        );
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        const { change: _c, replayed: _r, ...expected } = posted as any;
+        const recovered = await service.byKey(`k-${label}`);
+        expect(recovered).toEqual({ ...expected, replayed: true });
+        expect(recovered.method).toBe(label);
+      });
+    });
+
+    it("the tender method maps Prisma CREDIT_CARD back to CARD", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [
+        inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: "CREDIT_CARD", status: "PAID" }]),
+      ];
+      expect((await service.byKey("k1")).method).toBe("CARD");
+    });
+
+    it("a PICKUP order that is not a counter sale (no skipAutoMerge: a buyer's pickup order) is a 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, skipAutoMerge: false });
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("an invoice-less order is not a finished sale: refused as an unknown outcome, never a guess", async () => {
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      invoices = [];
+      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 500 });
+    });
+
+    it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
+      const e = await service.byKey("nope").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(404);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("an order that is not a counter (PICKUP) sale is not a sale for this key: 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "ROUTE" });
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("is NOT gated by the counter capability: it answers even when the counter is off", async () => {
+      reader.get.mockResolvedValue(cap("off"));
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      await expect(service.byKey("k1")).resolves.toMatchObject({ orderId: "ord-1" });
+      expect(reader.get).not.toHaveBeenCalled();
+    });
+
+    it("a caller with no tenant scope is refused (the lookup would otherwise span every tenant)", async () => {
+      prisma.getTenantId.mockReturnValue(null);
+      findReplayCandidateByKey.mockResolvedValue(sale);
+      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 403 });
+      expect(findReplayCandidateByKey).not.toHaveBeenCalled();
+    });
+  });
+});

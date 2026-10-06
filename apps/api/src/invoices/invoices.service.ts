@@ -3462,7 +3462,7 @@ export class InvoicesService {
     }
   }
 
-  async send(id: string, opts?: { allowPreDelivery?: boolean }) {
+  async send(id: string, opts?: { allowPreDelivery?: boolean; suppressNotify?: boolean }) {
     const inv = await this.findOneOrThrow(id);
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
@@ -3479,7 +3479,8 @@ export class InvoicesService {
     });
     // P6-5: INVOICE_SENT (EMAIL/PORTAL only — G12 blocks WA/SMS in the engine).
     // Once, on the DRAFT→SENT flip; a re-send doesn't re-notify. System sender.
-    if (inv.status === InvoiceStatus.DRAFT) {
+    // SA-655: `suppressNotify` = the counter sale's walk-in customer, who has no mailbox to tell.
+    if (inv.status === InvoiceStatus.DRAFT && !opts?.suppressNotify) {
       this.messaging
         .notifyEvent(NotificationEvent.INVOICE_SENT, {
           customerId: updated.customerId,

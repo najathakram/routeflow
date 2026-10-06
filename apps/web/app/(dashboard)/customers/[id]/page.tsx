@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { AccountStatusControls, type CustomerStatus } from "../_components/walk-in-protection";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -1917,9 +1918,6 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
-type CustomerStatus = (typeof STATUS_CYCLE)[number];
-
 /** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
@@ -3059,50 +3057,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-navy/70">Current status</p>
-                        <Badge status={currentStatus} />
-                      </div>
-                      <div className="space-y-2">
-                        {STATUS_CYCLE.map((s) => (
-                          <button
-                            key={s}
-                            onClick={() => handleStatusChange(s)}
-                            disabled={updateStatus.isPending}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                              currentStatus === s
-                                ? "border-brand-500 bg-brand-50 text-brand-700"
-                                : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                s === "ACTIVE"
-                                  ? "bg-success"
-                                  : s === "INACTIVE"
-                                    ? "bg-navy/30"
-                                    : "bg-danger",
-                              )}
-                            />
-                            {s.charAt(0) + s.slice(1).toLowerCase()}
-                          </button>
-                        ))}
-                      </div>
-                      {currentStatus === "SUSPENDED" && (
-                        <div className="border-t border-surface-border pt-4">
-                          <button
-                            onClick={() => setIsDeleteOpen(true)}
-                            className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Remove customer
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AccountStatusControls
+                      isWalkIn={customer.isWalkIn}
+                      currentStatus={currentStatus}
+                      pending={updateStatus.isPending}
+                      onChange={handleStatusChange}
+                      onRemove={() => setIsDeleteOpen(true)}
+                    />
                   )}
                 </Card>
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
@@ -12,6 +13,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { formFulfillPath, writableFulfillPath } from "@/lib/customer-fulfill-path";
 import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
@@ -25,7 +27,7 @@ const customerSchema = z
     // Default fulfillment for orders created for this customer — ROUTE (delivery
     // route) vs SHIP (supplier/carrier-shipped, excluded from trip/route dispatch).
     // Orders still get their own per-order override in CreateOrderModal.
-    fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
+    fulfillPath: z.enum(FULFILL_PATH_VALUES).optional(),
     // Business-specific
     businessName: z.string().optional().or(z.literal("")),
     contactName: z.string().optional().or(z.literal("")),
@@ -108,7 +110,7 @@ export interface CustomerFormModalProps {
     isTaxExempt?: boolean;
     creditLimit?: number;
     currency?: string;
-    /** ROUTE (default) or SHIP — this customer's own fulfillment default. */
+    /** ROUTE (default), SHIP or PICKUP — this customer's own fulfillment default. */
     fulfillPath?: string;
     user?: { email?: string };
     notes?: string;
@@ -153,7 +155,7 @@ function buildDefaultValues(
   }
   return {
     customerType: (initialData.customerType as "BUSINESS" | "INDIVIDUAL") ?? "BUSINESS",
-    fulfillPath: initialData.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
+    fulfillPath: formFulfillPath(initialData.fulfillPath),
     businessName: initialData.businessName ?? "",
     contactName: initialData.contactName ?? "",
     salutation: initialData.salutation ?? "",
@@ -307,7 +309,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: data.fulfillPath || "ROUTE",
+          fulfillPath: writableFulfillPath(data.fulfillPath),
           notes: data.notes,
           addresses: [
             {
@@ -355,7 +357,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: data.fulfillPath || "ROUTE",
+          fulfillPath: writableFulfillPath(data.fulfillPath),
           notes: data.notes,
         },
         {
@@ -597,6 +599,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 options={[
                   { value: "ROUTE", label: "Delivery route" },
                   { value: "SHIP", label: "Ship via carrier" },
+                  // Shown only for a customer that already has it: the API does not let a form set PICKUP.
+                  ...(watch("fulfillPath") === "PICKUP"
+                    ? [{ value: "PICKUP", label: "Pickup (counter)" }]
+                    : []),
                 ]}
                 register={register("fulfillPath")}
               />

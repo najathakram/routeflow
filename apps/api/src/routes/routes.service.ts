@@ -622,6 +622,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { in: ["PENDING", "CONFIRMED"] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655: a counter sale is never loaded on a route
           },
           include: {
             customer: { select: { id: true, businessName: true } },
@@ -1293,12 +1294,12 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
           },
-          // B305 round 5: same drift as the main stops query above — this
-          // legacy fallback had its own hand-rolled select, missing the same
-          // money fields. `RUN_STOP_INCLUDE.orders.select` already carries
-          // exactly what an order needs here (incl. lineItems); `customerId`
-          // is the one extra field this fallback needs to group by.
+          // B305 round 5: same drift as the main stops query above — this legacy fallback
+          // had its own hand-rolled select, missing the same money fields.
+          // `RUN_STOP_INCLUDE.orders.select` already carries what an order needs here (incl.
+          // lineItems); `customerId` is the one extra field this fallback groups by.
           select: { ...RUN_STOP_INCLUDE.orders.select, customerId: true },
         });
         const ordersWithBalances = await withPayableInvoicesFlat(this.prisma.forTenant(), orders);
@@ -2730,6 +2731,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
           },
           include: {
             lineItems: {
