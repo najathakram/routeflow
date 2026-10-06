@@ -1270,16 +1270,17 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
-      it("flag OFF: none of the flag-ON guards read anything — no APPLIED lookup, no snapshot lookup, no tenant read; the one audit read is the sticky duplicate decision", async () => {
+      it("flag OFF: none of the flag-ON guards read anything — no snapshot lookup, no tenant read; the only audit reads are the sticky duplicate decision and the session's APPLIED marker (both read for every flag state, S2)", async () => {
         const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
         planTransition.isEnabled.mockResolvedValue(false);
 
         await (svc as any).onCheckoutCompleted(withId("cs_off", { created: 1 }));
 
-        // X1: the only audit lookup is the session's sticky DUPLICATE decision (read for every flag state)
+        // X1 + S2: the only audit lookups are the session's sticky DUPLICATE decision and its APPLIED marker (a
+        // session that was already applied is never judged a duplicate), read for every flag state
         expect(
-          prisma.auditLog.findFirst.mock.calls.every(
-            (c: any[]) => c[0].where.action === "STRIPE_CHECKOUT_DUPLICATE",
+          prisma.auditLog.findFirst.mock.calls.every((c: any[]) =>
+            ["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_CHECKOUT_APPLIED"].includes(c[0].where.action),
           ),
         ).toBe(true);
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();

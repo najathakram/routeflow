@@ -881,6 +881,47 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
+    it.each([false, true])(
+      "S2 (flag on=%s): A applied, sub_A cancelled, B applied, then a LATE retry of A — no verdict, no cancel, no refund notice, stored sub stays B",
+      async (flagOn) => {
+        const r = await twoSessions(flagOn);
+        await r.completed(); // session A applied (stored = sub_qa)
+        r.subs.sub_qa.status = "canceled"; // the customer cancelled A
+        await r.deleted("sub_qa");
+        await r.deliver(dupSession(r)); // session B (sub_dup): the stored sub is dead, so it applies
+        expect((await sub(r)).stripeSubId).toBe("sub_dup");
+        const ledger = await r.ledger();
+        const before = await prisma.auditLog.count({ where: { tenantId: r.tenantId } });
+
+        await r.completed(); // A's webhook retried, late
+        await r.completed();
+
+        expect((await sub(r)).stripeSubId).toBe("sub_dup"); // never pointed back at the dead sub_A
+        expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+        expect(r.stripe.voidInvoice).not.toHaveBeenCalled();
+        expect(await decisions(r)).toHaveLength(0);
+        expect(await notices(r)).toHaveLength(0); // no false "refund it in Stripe"
+        expect(await prisma.auditLog.count({ where: { tenantId: r.tenantId } })).toBe(before);
+        expect(await r.ledger()).toEqual(ledger);
+      },
+    );
+
+    it("S2: a session that already has its APPLIED row is an idempotent redelivery even when a different live subscription is stored now", async () => {
+      const r = await twoSessions(true);
+      await r.completed(); // A applied (APPLIED row written)
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeSubId: "sub_dup" }, // a different, live subscription is stored NOW
+      });
+
+      await r.completed(); // A redelivered, its own subscription still active
+
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(await decisions(r)).toHaveLength(0);
+      expect(await notices(r)).toHaveLength(0);
+      expect((await sub(r)).stripeSubId).toBe("sub_dup");
+    });
+
     it("3: a REDELIVERY of the duplicate session — no second cancel, no second notice, no second decision row", async () => {
       const r = await twoSessions();
       await r.completed();

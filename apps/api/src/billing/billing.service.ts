@@ -807,6 +807,20 @@ export class BillingService {
     else await written.catch(() => undefined);
   }
 
+  /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
+  private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
+    const row = await this.prisma.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: STRIPE_CHECKOUT_ENTITY,
+        entityId: sessionId,
+        action: STRIPE_CHECKOUT_APPLIED_ACTION,
+      },
+      select: { id: true },
+    });
+    return row != null;
+  }
+
   /** Has this checkout session already been decided to be a duplicate? (the sticky decision row) */
   private async hasDuplicateDecision(sessionKey: string): Promise<boolean> {
     const row = await this.prisma.auditLog.findFirst({
@@ -1188,6 +1202,27 @@ export class BillingService {
       await this.finishDuplicate(session, stripeSub);
       return;
     }
+    // S2 — a session that is not a FRESH completion is never judged a duplicate, and never raises a refund
+    // notice: the duplicate verdict compares it with whatever is stored NOW, and a LATE retry of a session that
+    // was long since handled (A applied, sub_A then cancelled, B applied, A's webhook retried) would read
+    // as "a different live subscription is stored" and tell an operator to refund a legitimate charge.
+    //  - its own subscription is already cancelled: nothing to apply or adopt (writing it would point the
+    //    tenant at a dead subscription over the live one) and nothing to refund through this path;
+    //  - it already has its APPLIED row: an idempotent redelivery (adopt, never re-judge).
+    if (stripeSub?.status === "canceled") {
+      this.logger.warn(
+        `checkout.session.completed ${session.id ?? "?"} for tenant ${tenantId}: its subscription ${subscriptionId} is already cancelled — nothing applied`,
+      );
+      return;
+    }
+    if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) {
+      this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
+      // SA-690: the add-on adoption is idempotent (a row that already holds its item books nothing) and runs
+      // on a redelivery too — an earlier attempt may have applied the plan and then failed on Stripe before
+      // adopting, and a retry that skipped it would leave the customer billed for an item no row owns.
+      await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+      return;
+    }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
     // The stored subscription's liveness is read at Stripe HERE, outside any transaction (never a
     // Stripe call under the tenant lock); the transactions below re-read the stored id under the lock
@@ -1262,28 +1297,6 @@ export class BillingService {
           ...this.checkoutCustomerTrail(session, existingOverride, stripeSub),
         });
         return;
-      }
-      if (session.id) {
-        // A redelivery of a session we already applied does nothing: a late redelivery must never
-        // re-run an old plan change over whatever the tenant chose since.
-        const processed = await this.prisma.auditLog.findFirst({
-          where: {
-            tenantId,
-            entityType: STRIPE_CHECKOUT_ENTITY,
-            entityId: session.id,
-            action: STRIPE_CHECKOUT_APPLIED_ACTION,
-          },
-          select: { id: true },
-        });
-        if (processed) {
-          this.logger.log(`checkout.session.completed ${session.id} already applied — ignoring`);
-          // SA-690: the add-on adoption is idempotent (a row that already holds its item books
-          // nothing) and runs on a redelivery too — an earlier attempt may have applied the plan
-          // and then failed on Stripe before adopting, and a retry that skipped it would leave the
-          // customer billed for an item no row owns.
-          await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
-          return;
-        }
       }
       if (typeof session.created === "number") {
         // A downgrade that committed AFTER this session was created is the tenant's (or an admin's)

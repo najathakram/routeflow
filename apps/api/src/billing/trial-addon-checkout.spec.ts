@@ -1772,6 +1772,75 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
     expect((h.client as any).refunds).toBeUndefined(); // and no automatic refund exists to call
   };
 
+  describe("S2: a session that is not a fresh completion is NEVER judged a duplicate and never raises a refund notice", () => {
+    it("its OWN subscription is already cancelled (a late retry after a newer subscription was stored): no verdict, no cancel, no notice, nothing written", async () => {
+      const h = make({
+        storedSubId: "sub_B", // the newer subscription, live
+        subStatus: "canceled", // the session's own (A) is long cancelled
+        rows: rows(),
+        items: items(),
+      });
+
+      await expect(h.completed()).resolves.toBeUndefined();
+
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(h.stripe.getInvoice).not.toHaveBeenCalled();
+      expect(decisionRows(h)).toEqual([]);
+      expect(noticeRows(h)).toEqual([]);
+      expect(h.audits).toEqual([]);
+      expect(h.sub.stripeSubId).toBe("sub_B"); // never pointed back at the dead subscription
+      expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+      for (const fn of ["create", "update", "del", "list"] as const) {
+        expect(h.client.subscriptionItems[fn]).not.toHaveBeenCalled();
+      }
+      expect(h.ledger()).toEqual([]);
+    });
+
+    it("the session already has its APPLIED row (flag on): an idempotent redelivery — adopted, never re-judged, no notice, no cancel, no plan write", async () => {
+      const h = make({
+        flagOn: true,
+        alreadyApplied: true,
+        storedSubId: "sub_B", // a different live subscription is stored NOW
+        status: "ACTIVE",
+        rows: rows(),
+        items: items(),
+      });
+
+      await expect(h.completed()).resolves.toBeUndefined();
+
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(decisionRows(h)).toEqual([]);
+      expect(noticeRows(h)).toEqual([]);
+      expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(h.sub.stripeSubId).toBe("sub_B");
+      // the adoption still ran (it is idempotent and heals an earlier Stripe failure)
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_pack" });
+    });
+
+    it("APPLIED wins even when the flag is OFF now (it was ON when the session applied)", async () => {
+      const h = make({
+        flagOn: false,
+        alreadyApplied: true,
+        storedSubId: "sub_B",
+        status: "ACTIVE",
+        rows: rows(),
+        items: items(),
+      });
+      await h.completed();
+      expect(decisionRows(h)).toEqual([]);
+      expect(noticeRows(h)).toEqual([]);
+      expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+      expect(h.sub.stripeSubId).toBe("sub_B");
+    });
+
+    it("control: a fresh live duplicate (own subscription active, no APPLIED row) is still judged and cancelled", async () => {
+      const h = make({ storedSubId: "sub_B", rows: rows(), items: items() });
+      await h.completed(dup(h));
+      expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+      expect(noticeRows(h)).toHaveLength(1);
+    });
+  });
+
   it("(b) the tenant already stores a DIFFERENT live subscription: recorded, cancelled once (prorate false, keyed), one notice, nothing else written", async () => {
     const h = make({ storedSubId: "sub_first", rows: rows(), items: items() });
 
