@@ -1041,7 +1041,8 @@ export class BillingService {
         "The superseded subscription became live while this checkout was being applied — the checkout is retried.",
       );
     }
-    if (fresh.status === null || isTerminalStripeSubscriptionStatus(fresh.status)) return;
+    // A bank payment in flight parks the checkout even when the status already reads terminal: the payment
+    // may still settle, so nothing is applied or cancelled until it resolves.
     if (fresh.paymentProcessing) {
       await this.parkCheckoutForProcessingPayment(
         session,
@@ -1052,6 +1053,7 @@ export class BillingService {
       );
       throw new SupersededPaymentProcessingError();
     }
+    if (fresh.status === null || isTerminalStripeSubscriptionStatus(fresh.status)) return;
     await this.cancelSupersededSubscription(storedSubId, fresh.status);
   }
 
@@ -1113,30 +1115,31 @@ export class BillingService {
   @LeaderCron("0 * * * *", "billing.reconcileParkedCheckouts")
   async reconcileParkedCheckouts(): Promise<void> {
     if (!this.stripe.isConfigured) return;
-    const parked = await this.prisma.auditLog.findMany({
-      where: {
-        entityType: STRIPE_CHECKOUT_ENTITY,
-        action: STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
-      },
-      orderBy: { createdAt: "asc" },
-      select: { entityId: true, tenantId: true, createdAt: true },
-    });
-    const ids = parked.map((r) => r.entityId).filter((id): id is string => !!id);
-    if (ids.length === 0) return;
-    const done = new Set(
-      (
-        await this.prisma.auditLog.findMany({
-          where: {
-            entityType: STRIPE_CHECKOUT_ENTITY,
-            action: STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
-            entityId: { in: ids },
-          },
-          select: { entityId: true },
-        })
-      ).map((r) => r.entityId),
-    );
+    // Open parks only: NOT EXISTS a resolution row for the same entity, in the query itself (Prisma cannot
+    // express a NOT EXISTS across rows of one table). `escalated` = an ESCALATED row exists for the entity.
+    const parked = await this.prisma.$queryRaw<
+      { entityId: string; tenantId: string | null; createdAt: Date; escalated: boolean }[]
+    >`
+      SELECT a."entityId", a."tenantId", a."createdAt",
+        EXISTS (
+          SELECT 1 FROM "AuditLog" e
+          WHERE e."entityType" = a."entityType" AND e."entityId" = a."entityId"
+            AND e."action" = ${STRIPE_CHECKOUT_PARK_ESCALATED_ACTION}
+        ) AS "escalated"
+      FROM "AuditLog" a
+      WHERE a."entityType" = ${STRIPE_CHECKOUT_ENTITY}
+        AND a."action" = ${STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION}
+        AND a."entityId" IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "AuditLog" r
+          WHERE r."entityType" = a."entityType" AND r."entityId" = a."entityId"
+            AND r."action" = ${STRIPE_CHECKOUT_PARK_RESOLVED_ACTION}
+        )
+      ORDER BY a."createdAt" ASC`;
+    // An escalated park already told the platform; re-run it once a day (the UTC-midnight run), not hourly.
+    const dailyRun = new Date(Date.now()).getUTCHours() === 0;
     for (const row of parked) {
-      if (!row.entityId || done.has(row.entityId)) continue;
+      if (row.escalated && !dailyRun) continue;
       try {
         await this.reconcileParkedCheckout(row.entityId, row.createdAt);
       } catch (err) {
@@ -1144,6 +1147,7 @@ export class BillingService {
           `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
         );
         // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
+        // Passes a partial `{ id }` session: escalateParkedCheckout reads only `session.id`.
         if (
           row.tenantId &&
           Date.now() - row.createdAt.getTime() >

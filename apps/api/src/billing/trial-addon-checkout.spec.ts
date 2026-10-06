@@ -489,6 +489,36 @@ function make(opts: Opts = {}) {
       ),
       create: jest.fn().mockResolvedValue({}),
     },
+    // B1158 sweep: the open parked rows come from ONE tagged $queryRaw (NOT EXISTS a resolved row for the same
+    // entity). Values are [escalatedAction, entityType, parkedAction, resolvedAction], in the SQL's order.
+    $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...v: any[]) => {
+      const [escalatedAction, entityType, parkedAction, resolvedAction] = v;
+      return audits
+        .filter(
+          (a) => a.entityType === entityType && a.action === parkedAction && a.entityId != null,
+        )
+        .filter(
+          (a) =>
+            !audits.some(
+              (r) =>
+                r.entityType === a.entityType &&
+                r.entityId === a.entityId &&
+                r.action === resolvedAction,
+            ),
+        )
+        .sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime())
+        .map((a) => ({
+          entityId: a.entityId,
+          tenantId: a.tenantId ?? null,
+          createdAt: a.createdAt,
+          escalated: audits.some(
+            (r) =>
+              r.entityType === a.entityType &&
+              r.entityId === a.entityId &&
+              r.action === escalatedAction,
+          ),
+        }));
+    }),
     tenantFeatureConfigSnapshot: {
       findFirst: jest.fn().mockResolvedValue(opts.newerDowngrade ? { id: "snap-newer" } : null),
     },
@@ -4179,6 +4209,29 @@ describe("B1158: a superseded subscription whose payment is still PROCESSING is 
     nothingApplied(h, "sub_old");
   });
 
+  it("a TERMINAL status WITH a payment still processing parks: no apply, no cancel, one row + one notice", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValue({
+      status: "incomplete_expired",
+      paymentProcessing: true,
+    });
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toHaveLength(1);
+    expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+    nothingApplied(h, "sub_old");
+  });
+
+  it("a LIVE status still wins over a processing payment (live check stays first)", async () => {
+    const h = make(base());
+    h.stripe.getSubscriptionPaymentState.mockResolvedValue({
+      status: "active",
+      paymentProcessing: true,
+    });
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(parked(h)).toEqual([]);
+  });
+
   it("the re-read shows it TERMINAL: the cancel is skipped and the checkout applies", async () => {
     const h = make(base());
     h.stripe.getSubscriptionPaymentState.mockResolvedValueOnce({
@@ -4217,6 +4270,72 @@ describe("B1158: a superseded subscription whose payment is still PROCESSING is 
       await sweep(h); // idempotent: resolved rows are not re-run
       expect(resolved(h)).toHaveLength(1);
       expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    });
+
+    it("open parked rows come from ONE parameterised NOT EXISTS query; a resolved row is never re-run", async () => {
+      const { h, o } = await parkedHarness();
+      o.storedSubStatus = "incomplete_expired";
+      o.storedPaymentProcessing = false;
+      await sweep(h);
+      expect(resolved(h)).toHaveLength(1);
+      h.stripe.getCheckoutSession.mockClear();
+      h.prisma.auditLog.findMany.mockClear();
+      h.prisma.$queryRaw.mockClear();
+
+      await sweep(h);
+
+      expect(h.prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const sqlText = (h.prisma.$queryRaw.mock.calls[0][0] as string[]).join("?");
+      expect(sqlText).toMatch(/NOT EXISTS/);
+      expect(sqlText).toContain('"AuditLog"');
+      expect(h.prisma.auditLog.findMany).not.toHaveBeenCalled(); // no in-memory filter pass
+      expect(h.stripe.getCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    describe("an ESCALATED park is re-run once a day (UTC hour 0), un-escalated rows hourly", () => {
+      /** The next instant at the given UTC hour, within 24 h ahead of now (so the park stays < 10 days old). */
+      const atUtcHour = (hour: number) => {
+        const d = new Date();
+        d.setUTCHours(hour, 5, 0, 0);
+        if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1);
+        return d.getTime();
+      };
+      const escalate = (h: any) =>
+        h.audits.push({
+          tenantId: "t1",
+          action: "STRIPE_CHECKOUT_PARK_ESCALATED",
+          entityType: "stripe_checkout_session",
+          entityId: "cs_1",
+          meta: { reason: "superseded_payment_processing_escalated" },
+          createdAt: new Date(),
+        });
+      afterEach(() => jest.restoreAllMocks());
+
+      it("escalated + non-matching hour: skipped (getCheckoutSession not called)", async () => {
+        const { h } = await parkedHarness();
+        escalate(h);
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(5));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).not.toHaveBeenCalled();
+      });
+
+      it("escalated + UTC hour 0: re-run", async () => {
+        const { h } = await parkedHarness();
+        escalate(h);
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(0));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).toHaveBeenCalledWith("cs_1");
+      });
+
+      it("un-escalated row at a non-matching hour: still re-run", async () => {
+        const { h } = await parkedHarness();
+        h.stripe.getCheckoutSession.mockClear();
+        jest.spyOn(Date, "now").mockReturnValue(atUtcHour(5));
+        await sweep(h);
+        expect(h.stripe.getCheckoutSession).toHaveBeenCalledWith("cs_1");
+      });
     });
 
     it("the payment FAILED (stored sub terminal): the new checkout is applied and the park resolved", async () => {

@@ -111,7 +111,8 @@ export class StripeService implements OnModuleInit {
     let sub: any;
     try {
       sub = await this.client.subscriptions.retrieve(subId, {
-        expand: ["latest_invoice.payments"],
+        // 4 levels is Stripe's expand limit: the PaymentIntent object comes back in the same call.
+        expand: ["latest_invoice.payments.data.payment.payment_intent"],
       });
     } catch (err) {
       const e = err as { code?: string; statusCode?: number } | undefined;

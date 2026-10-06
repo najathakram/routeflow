@@ -43,15 +43,27 @@ describe("B1158 StripeService.getSubscriptionPaymentState (dahlia shape)", () =>
     return { svc, subRetrieve, piRetrieve };
   }
 
-  it("expands latest_invoice.payments and reads the PaymentIntent by id: processing -> true", async () => {
-    const { svc, subRetrieve, piRetrieve } = make(sub("incomplete", [piPayment("pi_1")]), {
-      pi_1: "processing",
-    });
+  it("expands the PaymentIntent in the same retrieve: processing -> true, no second call", async () => {
+    const { svc, subRetrieve, piRetrieve } = make(
+      sub("incomplete", [piPayment({ id: "pi_1", status: "processing" })]),
+    );
     await expect(svc.getSubscriptionPaymentState("sub_old")).resolves.toEqual({
       status: "incomplete",
       paymentProcessing: true,
     });
-    expect(subRetrieve).toHaveBeenCalledWith("sub_old", { expand: ["latest_invoice.payments"] });
+    expect(subRetrieve).toHaveBeenCalledWith("sub_old", {
+      expand: ["latest_invoice.payments.data.payment.payment_intent"],
+    });
+    expect(piRetrieve).not.toHaveBeenCalled();
+  });
+
+  it("a PaymentIntent that comes back as a string id falls back to one retrieve", async () => {
+    const { svc, piRetrieve } = make(sub("incomplete", [piPayment("pi_1")]), {
+      pi_1: "processing",
+    });
+    await expect(svc.getSubscriptionPaymentState("sub_old")).resolves.toMatchObject({
+      paymentProcessing: true,
+    });
     expect(piRetrieve).toHaveBeenCalledWith("pi_1");
   });
 
