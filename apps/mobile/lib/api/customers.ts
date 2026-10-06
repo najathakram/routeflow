@@ -572,7 +572,12 @@ export function useAddContactPerson(customerId: string) {
 
 export function useUpdateContactPerson(customerId: string) {
   const qc = useQueryClient();
-  return useMutation<ContactPerson, Error, { contactId: string } & Partial<ContactPersonInput>>({
+  // An optional field may be null on edit: that CLEARS it (contact-person-payload.ts).
+  return useMutation<
+    ContactPerson,
+    Error,
+    { contactId: string } & { [K in keyof ContactPersonInput]?: ContactPersonInput[K] | null }
+  >({
     mutationFn: ({ contactId, ...dto }) =>
       apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),

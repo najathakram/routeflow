@@ -16,6 +16,7 @@ import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
 import { AgentFormModal } from "../../sales-agents/_components/AgentFormModal";
+import { clearableField } from "@/lib/contact-person-payload";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -348,9 +349,11 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           mobile: data.mobile || undefined,
           customerType: data.customerType,
           displayName: resolvedDisplayName,
-          salutation: data.salutation || undefined,
-          firstName: data.firstName || undefined,
-          lastName: data.lastName || undefined,
+          // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
+          // that was already empty is left out (contact-person-payload.ts).
+          salutation: clearableField(data.salutation, initialData.salutation),
+          firstName: clearableField(data.firstName, initialData.firstName),
+          lastName: clearableField(data.lastName, initialData.lastName),
           taxId: data.taxId || undefined,
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
