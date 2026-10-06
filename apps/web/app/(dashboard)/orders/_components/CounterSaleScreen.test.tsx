@@ -1,7 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
-import { CounterSaleScreen, toSaleItem } from "./CounterSaleScreen";
+import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
 
 /**
  * Counter sale (walk-in pickup): the one screen. The API is mocked at the module boundary. Pins: Walk-in default, On account
@@ -992,6 +992,49 @@ describe("CounterSaleScreen: API contract wiring", () => {
         { productId: "p-one", qty: 1 },
         { productId: "p-water", boxes: 1, pieces: 0, qty: 12 },
       ]);
+    });
+  });
+
+  describe("line quantities read right on the cart and the receipt (N1, N2)", () => {
+    const completeAndReceipt = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+      return screen.findByTestId("counter-sale-receipt");
+    };
+
+    it("N1: a pack-of-1 line shows pieces, never '1 box', in the cart and on the receipt", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("ONE");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$1.00"));
+      const cart = screen.getByRole("list", { name: "Items" });
+      expect(cart).toHaveTextContent("Single · × 1");
+      expect(cart.textContent).not.toMatch(/box/i);
+      const receipt = await completeAndReceipt();
+      expect(receipt).toHaveTextContent("Single × 1");
+      expect(receipt.textContent).not.toMatch(/box/i);
+    });
+
+    it("N2: ONE label serves the cart and the receipt: boxes, then loose pieces (1 box + 5 pcs)", () => {
+      const line = (over: Record<string, unknown>) =>
+        ({ tempId: "t", productId: "p", name: "Water", unitPrice: 1, qty: 1, ...over }) as never;
+      expect(lineQtyLabel(line({ unitsPerBox: 12, boxes: 1, pieces: 5, qty: 17 }))).toBe(
+        "1 box + 5 pcs",
+      );
+      expect(lineQtyLabel(line({ unitsPerBox: 12, boxes: 2, pieces: 0, qty: 24 }))).toBe("2 boxes");
+      expect(lineQtyLabel(line({ unitsPerBox: 12, boxes: 0, pieces: 5, qty: 5 }))).toBe(
+        "0 boxes + 5 pcs",
+      );
+      expect(lineQtyLabel(line({ unitsPerBox: 1, boxes: 1, pieces: 0, qty: 1 }))).toBe("× 1");
+      expect(lineQtyLabel(line({ qty: 3 }))).toBe("× 3");
+    });
+
+    it("N2: a boxed line reads the same on the receipt as in the cart", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("WATER");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$12.00"));
+      expect(screen.getByRole("list", { name: "Items" })).toHaveTextContent("Water · 1 box");
+      const receipt = await completeAndReceipt();
+      expect(receipt).toHaveTextContent("Water × 1 box");
     });
   });
 

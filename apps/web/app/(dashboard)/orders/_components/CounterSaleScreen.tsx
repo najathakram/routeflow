@@ -62,6 +62,15 @@ interface PickedCustomer {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
+/** A pack of 1 (or no pack) has no box/piece split: it reads in pieces. Only unitsPerBox > 1 is a boxed line. */
+const isBoxedLine = (l: SaleLine) => (l.unitsPerBox ?? 0) > 1;
+
+/** ONE quantity label for the cart and the receipt: whole boxes, then loose pieces; a plain line reads "× qty". */
+export const lineQtyLabel = (l: SaleLine): string =>
+  isBoxedLine(l)
+    ? `${l.boxes ?? 0} box${(l.boxes ?? 0) === 1 ? "" : "es"}${l.pieces ? ` + ${l.pieces} pcs` : ""}`
+    : `× ${l.qty}`;
+
 /**
  * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product
  * (unitsPerBox > 1) sends `{boxes, pieces, qty}` with `qty` the integer piece count; anything else (no pack, or a pack of 1,
@@ -395,8 +404,8 @@ export function CounterSaleScreen() {
           {lines.map((l) => (
             <li key={l.tempId} className="flex justify-between py-1">
               <span>
-                {l.name} ×{" "}
-                {l.unitsPerBox ? `${l.boxes ?? 0} box${(l.boxes ?? 0) === 1 ? "" : "es"}` : l.qty}
+                {l.name} {isBoxedLine(l) ? "× " : ""}
+                {lineQtyLabel(l)}
               </span>
             </li>
           ))}
@@ -568,10 +577,7 @@ export function CounterSaleScreen() {
         {lines.map((l) => (
           <li key={l.tempId} className="flex items-center justify-between gap-2 p-3 text-sm">
             <span>
-              {l.name} ·{" "}
-              {l.unitsPerBox
-                ? `${l.boxes ?? 0} box${(l.boxes ?? 0) === 1 ? "" : "es"}${l.pieces ? ` + ${l.pieces} pcs` : ""}`
-                : `× ${l.qty}`}
+              {l.name} · {lineQtyLabel(l)}
             </span>
             <span className="flex items-center gap-3">
               <span>{money(cartTotals([l], 0).subtotal)}</span>
