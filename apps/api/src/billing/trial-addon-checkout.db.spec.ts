@@ -81,6 +81,10 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   afterAll(async () => {
     if (tenantIds.length) {
       await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } });
+      // refusal trail rows of a session with no tenant row to point at carry a NULL tenantId
+      await prisma.auditLog.deleteMany({
+        where: { entityType: "stripe_checkout_session", entityId: { startsWith: `cs_qa_${run}_` } },
+      });
       await prisma.billingEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantAddon.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantSubscription.deleteMany({ where: { tenantId: { in: tenantIds } } });
@@ -358,6 +362,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   }
 
   const base = () => stripeItem("si_base", { cents: 9900, quantity: 1 });
+  const tenantStatusOf = async (tenantId: string) =>
+    (await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status;
 
   it("adopts each checkout item once; the crossing books the base FIRST, then one stored→actual delta per add-on", async () => {
     const r = await rig({
@@ -1479,6 +1485,96 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         { type: BILLING_EVENTS.ADDON_ENABLED, delta: 24, sku: "CUSTOMER_PACK_100" },
       ]);
       expect(await r.ledgerSum()).toBe(99 + 24); // never + 19
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // SHOULD-3 — a PAID completion refused for no stored customer / no subscription row raises a notice.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("SHOULD-3: a paid completion with no customer on file / no subscription row is refused AND announced once (real Postgres)", () => {
+    const paidNotices = (tenantId: string) =>
+      prisma.auditLog.findMany({
+        where: { tenantId, action: "STRIPE_PAID_CHECKOUT_NOT_APPLIED" },
+      });
+    const trail = (r: Rig) =>
+      prisma.auditLog.findMany({
+        where: {
+          entityType: "stripe_checkout_session",
+          entityId: r.sessionId,
+          action: "STRIPE_CHECKOUT_REFUSED",
+        },
+      });
+    const paidRig = () =>
+      rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+
+    it("no customer on file: nothing applied, ONE trail row, ONE notice (however often it is redelivered)", async () => {
+      const r = await paidRig();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeCustomerId: null },
+      });
+
+      await r.deliver({ payment_status: "paid" });
+      await r.deliver({ payment_status: "paid" });
+      await r.deliver({ payment_status: "paid" });
+
+      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.TRIAL);
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+      expect(await r.ledger()).toEqual([]);
+      expect(await trail(r)).toHaveLength(1);
+      const told = await paidNotices(r.tenantId);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ entityType: "tenant", entityId: r.tenantId });
+      expect(told[0].meta).toMatchObject({
+        reason: "customer_not_on_file",
+        subscriptionId: "sub_qa",
+        subscriptionStatus: "active",
+        chargedButNotRecorded: true,
+        checkoutSessionId: r.sessionId,
+        message: expect.stringContaining("was NOT applied: no Stripe customer is on file"),
+      });
+    });
+
+    it("no subscription row at all: the same refusal and notice", async () => {
+      const r = await paidRig();
+      await prisma.tenantSubscription.delete({ where: { tenantId: r.tenantId } });
+
+      await r.deliver({ payment_status: "paid" });
+
+      expect(await paidNotices(r.tenantId)).toHaveLength(1);
+      expect(await trail(r)).toHaveLength(1);
+      expect(await r.ledger()).toEqual([]);
+    });
+
+    it("not charged (an incomplete subscription, an unpaid session): the trail row only", async () => {
+      const r = await paidRig();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeCustomerId: null },
+      });
+      r.subs.sub_qa.status = "incomplete";
+
+      await r.deliver({ payment_status: "unpaid" });
+
+      expect(await trail(r)).toHaveLength(1);
+      expect(await paidNotices(r.tenantId)).toHaveLength(0);
+    });
+
+    it("a customer MISMATCH keeps the trail only (unchanged)", async () => {
+      const r = await rig({
+        sessionCustomer: "cus_attacker",
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [base()],
+      });
+      await r.deliver({ payment_status: "paid" });
+      expect(await trail(r)).toHaveLength(1);
+      expect(await paidNotices(r.tenantId)).toHaveLength(0);
     });
   });
 });

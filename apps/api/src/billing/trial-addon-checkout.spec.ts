@@ -1345,7 +1345,12 @@ describe("SA-690 completion — the customer must be the tenant's, flag on or of
     await expect(h.completed(h.session({ ...sessionExtra }))).resolves.toBeUndefined();
     expectUntouched(h);
     expect(errorLog).toHaveBeenCalled();
-    expect(h.tx.auditLog.create).toHaveBeenCalledTimes(1);
+    // ONE trail row (SHOULD-3 adds a platform notice beside it only for a PAID checkout with no customer on file)
+    expect(
+      h.tx.auditLog.create.mock.calls.filter(
+        (c: any[]) => c[0].data.action === "STRIPE_CHECKOUT_REFUSED",
+      ),
+    ).toHaveLength(1);
   });
 
   it("the plan write is refused too (a forged session never re-points the tenant's subscription)", async () => {
@@ -1464,6 +1469,97 @@ describe("SA-690 completion — the customer must be the tenant's, flag on or of
       expect(errorLog.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
         charged ? "CHARGED but not recorded" : "not charged",
       );
+    });
+
+    describe("SHOULD-3: a PAID completion refused for no stored customer / no subscription row raises the admin notice", () => {
+      const paidNotices = (h: ReturnType<typeof make>) =>
+        h.audits.filter((a: any) => a.action === "STRIPE_PAID_CHECKOUT_NOT_APPLIED");
+      const paid = (h: ReturnType<typeof make>) => h.session({ payment_status: "paid" });
+
+      it("no customer on file, session paid: ONE notice naming the tenant, the subscription, its invoice state and the action to take", async () => {
+        const h = make({ rows: rowsOf(), items: itemsOf(), storedCustomer: null });
+
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+
+        expectUntouched(h); // still nothing applied
+        const told = paidNotices(h);
+        expect(told).toHaveLength(1);
+        expect(told[0]).toMatchObject({ tenantId: "t1", entityType: "tenant", entityId: "t1" });
+        expect(told[0].meta).toMatchObject({
+          platformAdmin: true,
+          reason: "customer_not_on_file",
+          subscriptionId: "sub_1",
+          subscriptionStatus: "active",
+          chargedButNotRecorded: true,
+          checkoutSessionId: "cs_1",
+          sessionCustomer: "cus_1",
+        });
+        expect(told[0].meta.message).toBe(
+          "Paid checkout for Acme was NOT applied: no Stripe customer is on file for this tenant, so the session's customer cus_1 could not be verified. Subscription sub_1 is active and was charged — attach the customer and replay the event, or refund it in Stripe.",
+        );
+      });
+
+      it("no subscription row at all: the same notice (the tenant exists, the session names it)", async () => {
+        const h = make({ rows: rowsOf(), items: itemsOf() });
+        h.prisma.tenantSubscription.findUnique.mockResolvedValueOnce(null);
+
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+
+        expect(paidNotices(h)).toHaveLength(1);
+        expect(paidNotices(h)[0].meta.reason).toBe("customer_not_on_file");
+        expect(h.sub.stripeSubId).toBeNull();
+      });
+
+      it("a REDELIVERY writes no second notice (one trail row, one notice, per session)", async () => {
+        const h = make({ rows: rowsOf(), items: itemsOf(), storedCustomer: null });
+        await h.completed(paid(h));
+        // the second delivery finds the first's committed trail row, exactly as in production
+        h.tx.auditLog.findFirst.mockResolvedValueOnce({ id: "already" });
+
+        await h.completed(paid(h));
+
+        expect(paidNotices(h)).toHaveLength(1);
+      });
+
+      it("not charged (an incomplete subscription, an unpaid session): the trail row only, no notice", async () => {
+        const h = make({
+          rows: rowsOf(),
+          items: itemsOf(),
+          storedCustomer: null,
+          subStatus: "incomplete",
+        });
+        await h.completed(h.session({ payment_status: "unpaid" }));
+        expect(paidNotices(h)).toEqual([]);
+        expect(h.audits.filter((a: any) => a.action === "STRIPE_CHECKOUT_REFUSED")).toHaveLength(1);
+      });
+
+      it("a PAID session whose subscription is not yet active still raises it (payment_status says money moved)", async () => {
+        const h = make({
+          rows: rowsOf(),
+          items: itemsOf(),
+          storedCustomer: null,
+          subStatus: "incomplete",
+        });
+        await h.completed(paid(h));
+        expect(paidNotices(h)).toHaveLength(1);
+      });
+
+      it("a customer MISMATCH is unchanged (trail + log only); so is an unknown tenant — no notice, no throw", async () => {
+        const mismatch = make({ rows: rowsOf(), items: itemsOf(), subCustomer: "cus_2" });
+        await expect(mismatch.completed(paid(mismatch))).resolves.toBeUndefined();
+        expect(paidNotices(mismatch)).toEqual([]);
+
+        const noTenant = make({ rows: rowsOf(), items: itemsOf(), storedCustomer: null });
+        noTenant.prisma.tenant.findUnique.mockResolvedValue(null);
+        await expect(noTenant.completed(paid(noTenant))).resolves.toBeUndefined();
+        expect(paidNotices(noTenant)).toEqual([]);
+      });
+
+      it("the notice is written with the trail row (one transaction) and never changes the 200: a failing write is swallowed", async () => {
+        const h = make({ rows: rowsOf(), items: itemsOf(), storedCustomer: null });
+        h.tx.auditLog.create.mockRejectedValueOnce(new Error("db down"));
+        await expect(h.completed(paid(h))).resolves.toBeUndefined();
+      });
     });
 
     it("the flag-ON refusals carry it too (unknown tenant)", async () => {

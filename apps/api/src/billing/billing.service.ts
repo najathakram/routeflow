@@ -996,10 +996,48 @@ export class BillingService {
         `${trail.chargedButNotRecorded ? "CHARGED but not recorded: refund or reconcile" : "not charged"}, ` +
         `add-on items ${trail.addonItemIds.join(",") || "none"})`,
     );
-    await this.recordCheckoutRefusal(session, stored ? tenantId : null, {
-      reason: storedCustomer ? "customer_mismatch" : "customer_not_on_file",
-      ...trail,
-    });
+    // SHOULD-3: money moved (the session says paid, or the subscription is active/trialing) for a tenant that
+    // has no customer on file — or no subscription row at all — so there is nothing here to verify it against and
+    // NOTHING was applied. Someone has to attach the customer and replay it, or refund it: tell the platform, in the
+    // same transaction as the (once-per-session) trail row. A customer MISMATCH keeps the trail + log only.
+    const charged = session.payment_status === "paid" || trail.chargedButNotRecorded;
+    let notice: ((tx: Prisma.TransactionClient) => Promise<void>) | undefined;
+    if (!storedCustomer && charged) {
+      const known = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { name: true, slug: true },
+      });
+      if (known) {
+        const label = known.name ?? known.slug ?? tenantId;
+        const message =
+          `Paid checkout for ${label} was NOT applied: no Stripe customer is on file for this tenant, so the ` +
+          `session's customer ${trail.sessionCustomer ?? "(none)"} could not be verified. Subscription ` +
+          `${trail.subscriptionId ?? "(unknown)"} is ${trail.subscriptionStatus ?? "in an unknown state"} and ` +
+          `${trail.chargedButNotRecorded ? "was charged" : "may have been charged"} — attach the customer and ` +
+          `replay the event, or refund it in Stripe.`;
+        notice = (tx) =>
+          writeAdminNotice(tx, {
+            tenantId,
+            action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+            message,
+            meta: {
+              reason: "customer_not_on_file",
+              checkoutSessionId: session.id ?? null,
+              sessionPaymentStatus: session.payment_status ?? null,
+              ...trail,
+            },
+          });
+      }
+    }
+    await this.recordCheckoutRefusal(
+      session,
+      stored ? tenantId : null,
+      {
+        reason: storedCustomer ? "customer_mismatch" : "customer_not_on_file",
+        ...trail,
+      },
+      notice ? { alsoWrite: notice } : {},
+    );
     return false;
   }
 
