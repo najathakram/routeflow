@@ -179,7 +179,7 @@ describeDb("B1050 delivered-qty edits — real Postgres", () => {
     await inTx(w, async (tx) => {
       const heldItems = await tx.orderItem.findMany({
         where: { orderId: w.orderId },
-        select: { id: true, ...STOCK_SETTLE_SELECT },
+        select: STOCK_SETTLE_SELECT,
       });
       const final = finals.map((f) => ({ ...f, productId: w.productId }));
       await settleStockForEdit(
@@ -240,7 +240,7 @@ describeDb("B1050 delivered-qty edits — real Postgres", () => {
     const held: any[] = await inTx(w, (tx) =>
       tx.orderItem.findMany({
         where: { orderId: w.orderId },
-        select: { id: true, ...STOCK_SETTLE_SELECT },
+        select: STOCK_SETTLE_SELECT,
       }),
     );
     await inTx(w, (tx) =>
