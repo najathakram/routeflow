@@ -219,6 +219,20 @@ describe("buildPriceAdjustmentUpdates: the no-derivable-pack fallback round trip
     expect(build([legacy(3.01, 1.26)], { l1: 5.01 })[0].data.subtotal).toBe(2.1);
   });
 
+  it("re-applying the SAME price on the fallback line is exactly the identity, executed over every cent price from 0.01 to 30.00", () => {
+    const moved: number[] = [];
+    for (let cents = 1; cents <= 3000; cents++) {
+      const price = cents / 100;
+      const start = roundMoney((price * 5) / 12);
+      for (const discount of [0, 0.5]) {
+        const row = { ...legacy(price, start), discount };
+        const [u] = build([row], { l1: price });
+        if (u.data.subtotal !== start || u.data.unitPrice !== price) moved.push(price);
+      }
+    }
+    expect(moved).toEqual([]);
+  });
+
   it("one round trip moves the total by at most 1/2 cent x A/B + 1/2 cent, and by at most 1 cent when B is at least half of A (executed sweep)", () => {
     let worstWithinRatio = 0;
     let checked = 0;

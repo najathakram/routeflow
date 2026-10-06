@@ -98,7 +98,11 @@ export async function syncLedgerAfterPriceChange(
  * from the live product (which may have been repacked since). A line that HAS a box split but whose pack
  * neither source yields (a legacy `boxes: 0, pieces: N` line with no snapshot) cannot be priced from its
  * fields: reading the split as loose pieces would bill the BOX price per piece, so that one shape keeps the
- * proportional recovery (a re-price to the same price is then the identity, and it is never a 12x overcharge).
+ * proportional recovery, and it is never a 12x overcharge. That recovery divides an ALREADY-ROUNDED stored
+ * subtotal, so it re-bases the total a little on each re-price: re-applying the SAME price is exactly the
+ * identity, but a round trip A -> B -> A can land up to (1/2 cent) x A / B + 1/2 cent away from where it began,
+ * which is at most 1 cent whenever B is at least half of A (pinned by an executed sweep and a real-rows case in
+ * the B1120 specs). Only a legacy row can carry this shape; every other line prices from its own fields.
  */
 function repricedLineTotal(line: any, newPrice: number, discount: number): number {
   const qty = Number(line.qty);
