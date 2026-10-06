@@ -90,3 +90,58 @@ export interface LineComponentView {
   displayUnitPrice4: number | null;
   position: number;
 }
+
+// ─── Batch ship + packing slips (#3168) ────────────────────────────────────────────────────────
+// "Mark shipped" for several carrier (fulfillPath SHIP) orders in one action, and one printable
+// packing slip per order. The api keeps a literal copy of BATCH_SHIP_OUTCOMES (it cannot value-import
+// this raw-TS package, L-072); apps/api/src/orders/order-batch-ship.parity.spec.ts pins the two equal.
+
+/** The per-order result of a batch ship. Refusals (everything but SHIPPED*) write nothing. */
+export const BATCH_SHIP_OUTCOMES = [
+  "SHIPPED",
+  "SHIPPED_INVOICE_PENDING",
+  "NOT_CARRIER_ORDER",
+  "ALREADY_SHIPPED",
+  "NOT_CONFIRMED",
+  "CREDIT_HOLD",
+  "CONCURRENT_UPDATE",
+  "INVALID_TRACKING",
+  "NOT_FOUND",
+  "FAILED",
+] as const;
+export type BatchShipOutcome = (typeof BATCH_SHIP_OUTCOMES)[number];
+
+/** Most orders one batch ship / packing-slip request may carry. */
+export const BATCH_SHIP_MAX_ORDERS = 50;
+
+export interface BatchShipOrderInput {
+  orderId: string;
+  carrier?: string;
+  trackingNumber?: string;
+}
+
+export interface BatchShipRequest {
+  orders: BatchShipOrderInput[];
+}
+
+export interface BatchShipResultRow {
+  orderId: string;
+  orderNumber: string | null;
+  outcome: BatchShipOutcome;
+  message: string;
+}
+
+export interface BatchShipResult {
+  results: BatchShipResultRow[];
+}
+
+export interface PackingSlipsRequest {
+  orderIds: string[];
+}
+
+export interface PackingSlipsResult {
+  /** Signed URL of ONE pdf with a page per included order. Null when nothing could be included. */
+  url: string | null;
+  included: string[];
+  skipped: { orderId: string; outcome: BatchShipOutcome }[];
+}

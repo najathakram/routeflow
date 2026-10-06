@@ -44,6 +44,9 @@ import {
   mapLockError,
 } from "./merge-contention";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BatchShipDto, PackingSlipsDto } from "./dto/batch-ship.dto";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -53,6 +56,8 @@ export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
+    private readonly batchShipService: OrderBatchShipService,
+    private readonly packingSlipService: PackingSlipService,
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
@@ -402,6 +407,29 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR)
   sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
     return this.ordersService.createSale(dto, user);
+  }
+
+  /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
+  @Post("batch-ship")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  batchShip(@Body() dto: BatchShipDto, @CurrentUser() user: JwtPayload) {
+    return this.batchShipService.batchShip(
+      dto.orders.map((o) => ({
+        orderId: o.orderId,
+        carrier: o.carrier,
+        trackingNumber: o.trackingNumber,
+      })),
+      user,
+    );
+  }
+
+  /** #3168: one PDF with a packing slip page per carrier order (no prices). */
+  @Post("packing-slips")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  packingSlips(@Body() dto: PackingSlipsDto) {
+    return this.packingSlipService.generate(dto.orderIds);
   }
 
   /**
