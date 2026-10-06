@@ -22,7 +22,7 @@
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus, ItemStatus, OrderStatus, Prisma } from "@prisma/client";
 import { lockRowsNoWait } from "../common/db-locks";
-import { mergeInProgress } from "./merge-contention";
+import { isTargetGone, mergeInProgress } from "./merge-contention";
 import { sameFulfilPathAsWinner, unshipped } from "./merge-candidates";
 import * as unitAware from "./unit-aware-guard";
 
@@ -174,8 +174,19 @@ export async function lockAndRecheckMergeInputs(
   }
 }
 
-/** Delete one loser by id AND its eligibility predicate; anything but exactly one row aborts the fold. */
+/**
+ * Delete one loser (its lines, then the order) by id AND its eligibility predicate; anything but exactly
+ * one row aborts the fold. Narrow wrap: P2025 / P2003 raised by THESE statements mean a lock-free writer
+ * (deleteOrder) removed the target under us, which is contention. The winner needs no such wrap: its row
+ * is held FOR UPDATE for the whole tx. Nothing else in the tx is reclassified.
+ */
 export async function deleteLoserGuarded(tx: any, loserId: string, kind: MergeKind) {
-  const r = await tx.order.deleteMany({ where: { id: loserId, ...loserDeleteWhere(kind) } });
-  if (r.count !== 1) throw mergeInProgress();
+  try {
+    await tx.orderItem.deleteMany({ where: { orderId: loserId } });
+    const r = await tx.order.deleteMany({ where: { id: loserId, ...loserDeleteWhere(kind) } });
+    if (r.count !== 1) throw mergeInProgress();
+  } catch (e) {
+    if (isTargetGone(e)) throw mergeInProgress();
+    throw e;
+  }
 }

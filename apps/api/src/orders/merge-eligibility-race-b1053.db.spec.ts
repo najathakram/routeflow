@@ -128,14 +128,21 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
 
   const mergeAuto = () => inTenant(() => orders.mergeAllPendingForCustomer(customerId, {}));
   const mergeForce = () => inTenant(() => orders.forceConsolidateCustomer(customerId));
-  /** Run `race` after the merge's eligibility read, before its transaction. */
+  /** Errors thrown by a race callback (it runs inside the merge's getTaxRate, so a throw would abort the merge). */
+  let raceErrors: unknown[] = [];
+  /** Run `race` after the merge's eligibility read, before its transaction; a throw is RECORDED, never swallowed. */
   const raceBeforeTx = (race: () => Promise<void>) => {
     const orig = (OrdersService.prototype as any).getTaxRate;
     return jest.spyOn(orders, "getTaxRate").mockImplementationOnce(async () => {
-      await race();
+      try {
+        await race();
+      } catch (e) {
+        raceErrors.push(e);
+      }
       return orig.call(orders);
     });
   };
+  const expectRaceClean = () => expect(raceErrors).toEqual([]);
 
   const qtyOf = async (orderId: string) =>
     (await raw.orderItem.findMany({ where: { orderId, status: { not: "CANCELLED" } } })).reduce(
@@ -233,6 +240,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       },
       creditNotes: {
         settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }),
+        previewOrderCreditRelease: async () => [], // changeStatus -> cancelImpact reads it
         releaseOrderCreditsInTx: async () => undefined,
       },
       logger: new Logger(OrdersService.name),
@@ -279,6 +287,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
 
   beforeEach(async () => {
     jest.restoreAllMocks();
+    raceErrors = [];
     await wipe();
     await raw.product.update({ where: { id: productId }, data: { currentStock: INITIAL_STOCK } });
   });
@@ -328,6 +337,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       invoiceId = await insertInvoice(loser, "DRAFT");
     });
     const out = await settle(mergeAuto());
+    expectRaceClean();
     const invoice = await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     expect(invoice.orderId).toBe(loser);
     expect(await exists(loser)).toBe(true);
@@ -341,9 +351,11 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       await inTenant(() => orders.changeStatus(loser, { status: "CANCELLED" }, operator()));
     });
     await settle(mergeAuto());
+    expectRaceClean();
     // the winner holds only its own qty, and stock equals what live lines hold (the cancel restored its part)
     expect(await qtyOf(winner)).toBe(WQ);
     expect(await stockNow()).toBe(INITIAL_STOCK - WQ);
+    expect((await raw.order.findUniqueOrThrow({ where: { id: loser } })).status).toBe("CANCELLED");
   }, 120_000);
 
   it("REG-B1053-ROUTE: a loser assigned to a route run mid-merge survives the merge", async () => {
@@ -365,6 +377,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       });
     });
     await settle(mergeAuto());
+    expectRaceClean();
     expect(await exists(loser)).toBe(true);
     expect((await raw.order.findUniqueOrThrow({ where: { id: loser } })).routeRunId).not.toBeNull();
   }, 120_000);
@@ -376,6 +389,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       invoiceId = await insertInvoice(loser, "SENT");
     });
     const out = await settle(mergeForce());
+    expectRaceClean();
     const invoice = await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     expect(invoice.orderId).toBe(loser);
     expect(await exists(loser)).toBe(true);
@@ -424,10 +438,11 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     expect(await qtyOf(winner)).toBe(WQ);
   }, 120_000);
 
-  it("REG-B1053-DELETE-ORDER: deleteOrder interleaved on a second client -> the merge defers (no raw 40P01)", async () => {
+  it("REG-B1053-DELETE-ORDER: deleteOrder interleaved on a second client -> the merge defers (a 409), never a raw error", async () => {
     const { loser, winner } = await pair();
     const holder = await pgClient();
     const watcher = await pgClient();
+    let holderError: any;
     try {
       // deleteOrder's lock-free shape: items first, no Order row lock, order row after.
       await holder.query("BEGIN");
@@ -435,12 +450,34 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       let done = false;
       const merged = settle(mergeAuto()).then((r) => ((done = true), r));
       await pollUntil(watcher, () => done);
-      await holder.query(`DELETE FROM "Order" WHERE id = $1`, [loser]).catch(() => undefined);
-      await holder.query("COMMIT").catch(() => undefined);
+      try {
+        await holder.query(`DELETE FROM "Order" WHERE id = $1`, [loser]);
+        await holder.query("COMMIT");
+      } catch (e) {
+        holderError = e;
+        await holder.query("ROLLBACK").catch(() => undefined);
+      }
       const out = await merged;
-      expect((out.error as any)?.meta?.code).not.toBe("40P01");
-      if (out.error) expect(isMergeContention(out.error)).toBe(true);
-      expect(await qtyOf(winner)).toBe(WQ);
+      // diagnostic for the PR: the merge's own error shape and the holder's
+      // eslint-disable-next-line no-console
+      console.log("B1053 DELETE-ORDER observed", {
+        merge: out.error && {
+          name: out.error.constructor?.name,
+          code: out.error.code,
+          metaCode: out.error.meta?.code,
+          message: String(out.error.message).slice(0, 200),
+        },
+        holder: holderError?.code,
+      });
+      if (holderError) {
+        // the holder was the deadlock victim: the merge folded the loser normally
+        expect(holderError.code).toBe("40P01");
+        expect(out.error).toBeUndefined();
+      } else {
+        // the merge lost: a coded contention, and nothing was folded into the winner
+        expect(isMergeContention(out.error)).toBe(true);
+        expect(await qtyOf(winner)).toBe(WQ);
+      }
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       await holder.end();
@@ -472,6 +509,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       await commitedWrite(`UPDATE "OrderItem" SET qty = qty + 5 WHERE "orderId" = $1`, [loser]);
     });
     const out = await settle(mergeAuto());
+    expectRaceClean();
     expect(await qtyOf(winner)).toBe(WQ);
     expect(await exists(loser)).toBe(true);
     expect(isMergeContention(out.error)).toBe(true);

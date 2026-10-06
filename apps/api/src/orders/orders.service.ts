@@ -899,8 +899,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: loser.id },
                 data: { orderId: winner.id },
               });
-              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await deleteLoserGuarded(tx, loser.id, "auto");
+              await deleteLoserGuarded(tx, loser.id, "auto"); // items + the guarded order delete
             }
 
             // 4. Recompute winner totals.
@@ -1133,8 +1132,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: loser.id },
                 data: { orderId: winner.id },
               });
-              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await deleteLoserGuarded(tx, loser.id, "force");
+              await deleteLoserGuarded(tx, loser.id, "force"); // items + the guarded order delete
             }
             await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({

@@ -11,6 +11,9 @@ export function pass() {
   return {
     ...actual,
     lockAndRecheckMergeInputs: jest.fn(async () => undefined),
-    deleteLoserGuarded: jest.fn(async (tx: any, id: string) => tx.order.delete({ where: { id } })),
+    deleteLoserGuarded: jest.fn(async (tx: any, id: string) => {
+      await tx.orderItem.deleteMany({ where: { orderId: id } });
+      await tx.order.delete({ where: { id } });
+    }),
   };
 }

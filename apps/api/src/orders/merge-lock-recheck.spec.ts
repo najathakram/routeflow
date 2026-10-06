@@ -54,6 +54,7 @@ function fakeTx(rereadRows: any[]) {
       }),
       deleteMany: jest.fn(async () => ({ count: 1 })),
     },
+    orderItem: { deleteMany: jest.fn(async () => ({ count: 1 })) },
   };
   return tx;
 }
@@ -211,7 +212,7 @@ const safeMap = (e: unknown) => {
 };
 
 describe("contention mapping + caller wiring", () => {
-  it.each(["55P03", "40P01", "40001"])(
+  it.each(["55P03", "40P01", "40001", "P2034"])(
     "a raw %s inside the merge tx maps to MERGE_IN_PROGRESS (D)",
     (code) => {
       let err: any;
@@ -223,6 +224,21 @@ describe("contention mapping + caller wiring", () => {
       expect(isMergeContention(err)).toBe(true);
     },
   );
+  it("a message that merely contains P2034 / P2025, with no code, is NOT contention", () => {
+    expect(isMergeContention(safeMap(new Error("P2034 something")))).toBe(false);
+  });
+  it("P2025 / P2003 from the loser delete defer; the same code from elsewhere does not", async () => {
+    for (const code of ["P2025", "P2003"]) {
+      const tx = fakeTx([]);
+      tx.order.deleteMany.mockRejectedValueOnce(Object.assign(new Error("gone"), { code }));
+      expect(isMergeContention(await deleteLoserGuarded(tx, "l", "auto").catch((e) => e))).toBe(
+        true,
+      );
+    }
+    expect(isMergeContention(safeMap(Object.assign(new Error("gone"), { code: "P2025" })))).toBe(
+      false,
+    );
+  });
   it("a message that merely contains a code, with no code field, is NOT contention", () => {
     for (const c of ["40001", "55P03", "40P01"]) {
       expect(isMergeContention(safeMap(new Error(`value ${c} out of range`)))).toBe(false);
