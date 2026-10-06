@@ -167,6 +167,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       active?: boolean;
       isComp?: boolean;
       priceSnapshot?: number;
+      stripeItemId?: string;
     }>;
     items: any[];
     /** The entitlements.configSnapshot flag (default off). */
@@ -193,6 +194,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           active: r.active ?? true,
           isComp: r.isComp ?? false,
           priceSnapshot: r.priceSnapshot ?? 0,
+          stripeItemId: r.stripeItemId ?? null,
         },
       });
     }
@@ -1575,6 +1577,116 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       await r.deliver({ payment_status: "paid" });
       expect(await trail(r)).toHaveLength(1);
       expect(await paidNotices(r.tenantId)).toHaveLength(0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // S2 fold — with no live subscription at checkout, a pointer that is not on the CURRENT subscription is stale.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("S2 fold: a stripeItemId that is not on the current subscription is stale (real Postgres)", () => {
+    it("checkout lines: a row pointing at a dead subscription's item is billed on the new checkout (one line per SKU); an annual checkout is refused", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 2, stripeItemId: "si_dead", priceSnapshot: 40 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [base()],
+      });
+
+      const lines = await r.mutations.checkoutAddonLines(r.tenantId, "month");
+
+      expect(lines.skus).toEqual(["CUSTOMER_PACK_100", "FORECASTING"]);
+      expect(lines.lineItems.map((l: any) => l.quantity)).toEqual([2, 1]);
+      await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).rejects.toMatchObject({
+        response: { code: "ADDON_ANNUAL_NOT_SUPPORTED" },
+      });
+    });
+
+    it.each([false, true])(
+      "(flag on=%s) the dead pointer is replaced by the checkout's new item (adopted, never deleted); stored -> actual is booked once",
+      async (flagOn) => {
+        const r = await rig({
+          flagOn,
+          rows: [
+            { sku: "CUSTOMER_PACK_100", quantity: 2, stripeItemId: "si_dead", priceSnapshot: 40 },
+          ],
+          items: [
+            base(),
+            stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+          ],
+        });
+
+        await r.completed();
+        await r.completed(); // and its redelivery
+
+        expect((await r.rows())[0]).toMatchObject({ stripeItemId: "si_pack", quantity: 2 });
+        expect(Number((await r.rows())[0].priceSnapshot)).toBe(50);
+        expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(r.items.map((i: any) => i.id)).toEqual(["si_base", "si_pack"]);
+        // the crossing priced the STORED 40 x 2, adoption nets it to 50 x 2: the base + 100, each once
+        expect(await r.ledgerSum()).toBe(99 + 100);
+        expect((await r.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100")).toEqual([
+          { type: BILLING_EVENTS.ADDON_ENABLED, delta: 20, sku: "CUSTOMER_PACK_100" },
+        ]);
+      },
+    );
+
+    it("the pointer is swapped by compare-and-swap ON THAT VALUE: re-pointed by another writer meanwhile -> nothing adopted, the webhook fails", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 3, stripeItemId: "si_dead", priceSnapshot: 40 },
+        ],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+      r.stripeClient.subscriptionItems.update.mockImplementationOnce(
+        async (id: string, args: any) => {
+          await prisma.tenantAddon.updateMany({
+            where: { tenantId: r.tenantId },
+            data: { stripeItemId: "si_other" },
+          });
+          const i = r.items.find((x: any) => x.id === id);
+          if (i) i.quantity = args.quantity;
+          return { id };
+        },
+      );
+
+      await expect(r.completed()).rejects.toBeInstanceOf(ConflictException);
+
+      expect((await r.rows())[0].stripeItemId).toBe("si_other");
+      expect((await r.ledger()).filter((e) => e.sku === "CUSTOMER_PACK_100")).toEqual([]);
+    });
+
+    it("a stale pointer and NO checkout item: path (c) creates ONE item on the new subscription and swaps the pointer", async () => {
+      const r = await rig({
+        rows: [{ sku: "FORECASTING", quantity: 1, stripeItemId: "si_dead", priceSnapshot: 19 }],
+        items: [base()],
+      });
+
+      await r.completed();
+
+      expect(r.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      const row = (await r.rows())[0];
+      expect(row.stripeItemId).toBeTruthy();
+      expect(row.stripeItemId).not.toBe("si_dead");
+      expect(r.items.filter((i: any) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
+    });
+
+    it("a pointer that IS on the current subscription (an in-app enable item) and no checkout item: untouched", async () => {
+      const inApp: any = stripeItem("si_inapp", { cents: 1900, quantity: 1 });
+      const r = await rig({
+        rows: [{ sku: "FORECASTING", quantity: 1, stripeItemId: "si_inapp", priceSnapshot: 19 }],
+        items: [base(), inApp],
+      });
+      inApp.metadata = { tenantId: r.tenantId, sku: "FORECASTING" };
+
+      await r.completed();
+
+      expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+      expect((await r.rows())[0].stripeItemId).toBe("si_inapp");
     });
   });
 });

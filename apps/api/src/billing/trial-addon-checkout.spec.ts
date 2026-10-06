@@ -587,22 +587,24 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     });
   });
 
-  it("bills only what is active, self-serve, unbilled and not already bundled by the plan", async () => {
+  it("bills only what is active, self-serve and not already bundled by the plan — whatever pointer its row carries", async () => {
     const h = make({
       rows: [
-        addonRow("FORECASTING", { stripeItemId: "si_billed" }), // already on a Stripe item
+        // a pointer cannot be on a live subscription here (the checkout is refused for a tenant that has one):
+        // it is the remnant of a cancelled one, so the row is billed on the new subscription (S2 fold)
+        addonRow("FORECASTING", { stripeItemId: "si_old_sub" }),
         addonRow("CUSTOMER_PACK_100", { active: false }), // switched off
         addonRow("MSRP"), // admin-only SKU (ships dark) — never self-serve billed here
         addonRow("SEAT_EXTRA", { qty: 3 }), // seat plumbing, not a self-serve toggle
-        addonRow("CUSTOMER_PACK_100", { qty: 4, addonKey: "extra_pack" }), // the ONE billable row
+        addonRow("CUSTOMER_PACK_100", { qty: 4, addonKey: "extra_pack" }), // billable
       ],
     });
     await h.billing.createCheckoutSession("t1", "month");
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
-    expect(lines).toHaveLength(2); // the plan + the one billable add-on
-    expect(lines[1].quantity).toBe(4);
+    expect(lines).toHaveLength(3); // the plan + FORECASTING + the one CUSTOMER_PACK_100 line
+    expect(lines.map((l: any) => l.quantity)).toEqual([1, 4, 1]);
 
-    // never a SECOND line for a SKU that already holds an item through another active row
+    // never a SECOND line for a SKU held by two active rows (one carrying a pointer, one not): ONE line
     const dup = make({
       rows: [
         addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_billed" }),
@@ -610,7 +612,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       ],
     });
     await dup.billing.createCheckoutSession("t1", "month");
-    expect(dup.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    expect(dup.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2); // plan + ONE line
 
     // a SKU the plan already bundles is never sold again (F3), so it gets no line either
     const bundled = make({
@@ -647,7 +649,8 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     });
     expect(m).not.toHaveProperty("subscription_data");
 
-    const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_billed" })] });
+    // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then the plan line alone
+    const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { active: false })] });
     await annual.billing.createCheckoutSession("t1", "year");
     expect(annual.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
   });
@@ -2257,6 +2260,181 @@ describe("S4: only a TRANSIENT unreadable item is a coded refusal; a permanent u
       expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
       expect(unusableNotices(h)).toHaveLength(1);
+    });
+  });
+});
+
+describe("S2 fold: with no live subscription at checkout, a stripeItemId that is not on the CURRENT subscription is stale", () => {
+  const PACK_ITEM = () => checkoutItem("si_new", "CUSTOMER_PACK_100", 5000, 2);
+
+  describe("checkout lines: every active billable self-serve row is billed, whatever pointer it carries", () => {
+    it("a row pointing at an item of a dead subscription gets its line (it was invisible: `every row has no pointer`)", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_dead", priceSnapshot: 50 }),
+        ],
+      });
+
+      await h.billing.createCheckoutSession("t1", "month");
+
+      const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
+      expect(lines).toHaveLength(2);
+      expect(lines[1]).toMatchObject({ quantity: 2 });
+      expect(h.client.checkout.sessions.create.mock.calls[0][0].metadata.addonSkus).toBe(
+        "CUSTOMER_PACK_100",
+      );
+    });
+
+    it("pointer or not, still ONE line per SKU, a comp still none, an annual checkout still refused", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 3, stripeItemId: "si_dead" }),
+          addonRow("CUSTOMER_PACK_100", { addonKey: "dupe", qty: 1 }),
+          addonRow("FORECASTING", { isComp: true, stripeItemId: "si_comp" }),
+        ],
+      });
+      await h.billing.createCheckoutSession("t1", "month");
+      expect(h.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(2);
+
+      const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { stripeItemId: "si_dead" })] });
+      const err: any = await annual.billing.createCheckoutSession("t1", "year").catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED });
+    });
+  });
+
+  describe("adoption: a pointer that is not on the current subscription is replaced (compare-and-swap on that value)", () => {
+    it("the row holds a DEAD pointer and the checkout made a new item: the new item is ADOPTED (never deleted), the stale pointer replaced, stored -> actual booked once", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_dead", priceSnapshot: 40 }),
+        ],
+        items: [baseItem(), PACK_ITEM()],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_new", priceSnapshot: 50, quantity: 2 });
+      expect(h.stripeItems.map((i) => i.id)).toContain("si_new");
+      // the crossing booked the STORED 40 x 2 = 80, adoption nets it to 50 x 2 = 100: +20
+      expect(h.ledger().filter((e: any) => e.sku === "CUSTOMER_PACK_100")).toEqual([
+        { type: BILLING_EVENTS.ADDON_ENABLED, delta: 20, sku: "CUSTOMER_PACK_100" },
+      ]);
+
+      // a redelivery: the pointer is on the current subscription now — nothing happens
+      const before = h.ledger();
+      h.client.subscriptionItems.del.mockClear();
+      await h.completed();
+      expect(h.ledger()).toEqual(before);
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("the pointer CHANGED between the read and the write (another writer): nothing is adopted, the webhook fails, the other pointer is untouched", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3, stripeItemId: "si_dead" })],
+        items: [baseItem(), PACK_ITEM()], // item 2, row 3: Stripe is raised to 3 first
+      });
+      h.client.subscriptionItems.update.mockImplementationOnce(async (id: string, args: any) => {
+        h.rows[0].stripeItemId = "si_other"; // a concurrent writer re-pointed the row
+        const i = h.stripeItems.find((x) => x.id === id);
+        if (i) i.quantity = args.quantity;
+        return { id };
+      });
+
+      await expect(h.completed()).rejects.toBeInstanceOf(ConflictException);
+
+      expect(h.rows[0].stripeItemId).toBe("si_other"); // never overwritten by a stale compare
+      expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+    });
+
+    it("(b) keeps ONLY a current-subscription item: the row's pointer is on the subscription -> it stays and the new item goes (control)", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_live", priceSnapshot: 50 }),
+        ],
+        items: [
+          baseItem(),
+          {
+            ...checkoutItem("si_live", "X", 5000, 2),
+            price: { ...baseItem().price, product: { metadata: {} } },
+          },
+          PACK_ITEM(),
+        ],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_new", {
+        proration_behavior: "create_prorations",
+      });
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_live" });
+    });
+
+    it("a stale pointer and TWO checkout items for the SKU: the first is adopted, the extra is deleted — never two items", async () => {
+      const h = make({
+        rows: [
+          addonRow("CUSTOMER_PACK_100", { qty: 2, stripeItemId: "si_dead", priceSnapshot: 50 }),
+        ],
+        items: [baseItem(), PACK_ITEM(), checkoutItem("si_extra", "CUSTOMER_PACK_100", 5000, 1)],
+      });
+
+      await h.completed();
+
+      expect(h.rows[0].stripeItemId).toBe("si_new");
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_extra", {
+        proration_behavior: "create_prorations",
+      });
+    });
+
+    it("a stale pointer and NO checkout item for the SKU (the session predates the fix): path (c) bills it on the new subscription, CAS on the stale value", async () => {
+      const h = make({
+        rows: [addonRow("FORECASTING", { qty: 1, stripeItemId: "si_dead", priceSnapshot: 19 })],
+        items: [baseItem()],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+      expect(h.client.subscriptionItems.create.mock.calls[0][0]).toMatchObject({
+        subscription: "sub_1",
+        quantity: 1,
+        metadata: { tenantId: "t1", sku: "FORECASTING" },
+      });
+      expect(h.rows[0].stripeItemId).toBe("si_new1");
+      expect(h.stripeItems.filter((i) => i.metadata?.sku === "FORECASTING")).toHaveLength(1);
+    });
+
+    it("a pointer that IS on the current subscription and no checkout item (an in-app enable item): untouched — nothing created, nothing booked", async () => {
+      const inApp = {
+        id: "si_inapp",
+        metadata: { tenantId: "t1", sku: "FORECASTING" },
+        quantity: 1,
+        subscription: "sub_1",
+      };
+      const h = make({
+        rows: [addonRow("FORECASTING", { qty: 1, stripeItemId: "si_inapp", priceSnapshot: 19 })],
+        items: [baseItem(), inApp],
+      });
+
+      await h.completed();
+
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+      expect(h.client.subscriptionItems.del).not.toHaveBeenCalled();
+      expect(h.rows[0]).toMatchObject({ stripeItemId: "si_inapp" });
+      expect(h.ledger().filter((e: any) => ADDON_TYPES.includes(e.type))).toEqual([]);
+    });
+
+    it("a comp with a stale pointer is never adopted onto and never billed (control)", async () => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 2, isComp: true, stripeItemId: "si_dead" })],
+        items: [baseItem(), PACK_ITEM()],
+      });
+      await h.completed();
+      expect(h.rows[0].stripeItemId).toBe("si_dead");
+      expect(h.client.subscriptionItems.del).toHaveBeenCalledWith("si_new", {
+        proration_behavior: "create_prorations",
+      });
     });
   });
 });

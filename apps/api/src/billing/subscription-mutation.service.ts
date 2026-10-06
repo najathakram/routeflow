@@ -1708,8 +1708,11 @@ export class SubscriptionMutationService {
    * A trial's (or a pilot's) self-serve add-on is on at price 0 with no Stripe item. The card
    * checkout is where it starts to cost money, so each such SKU becomes ONE extra monthly line at the
    * CATALOG price and the row's quantity (never the stored 0 snapshot), tagged so the completion can
-   * adopt the item (see `adoptCheckoutAddons`). A SKU is unbilled only when NO active row of it holds
-   * an item — never a second line for a SKU already on one. Admin-granted SKUs, a SKU the plan
+   * adopt the item (see `adoptCheckoutAddons`). Every ACTIVE billable self-serve SKU gets its line,
+   * whatever `stripeItemId` its rows carry: the checkout is only ever created for a tenant with NO live
+   * Stripe subscription (createCheckoutSession refuses one that has), so a pointer cannot be on a live
+   * subscription — it is the stale remnant of a cancelled one, and the row must be billed on the new
+   * subscription (a SKU held by several rows is still ONE line). Admin-granted SKUs, a SKU the plan
    * already bundles (F3) and a SKU the catalog no longer prices get no line.
    *
    * An ANNUAL checkout that would bill an add-on is refused (the same coded 409 the enable path
@@ -1730,15 +1733,13 @@ export class SubscriptionMutationService {
       if (!code || !isSelfServiceAddon(code)) continue;
       bySku.set(code, [...(bySku.get(code) ?? []), row]);
     }
-    const unbilled = [...bySku.entries()]
-      .filter(([, rows]) => rows.every((r) => !r.stripeItemId))
-      .sort(([a], [b]) => (a < b ? -1 : 1));
-    if (unbilled.length === 0) return none;
+    const toBill = [...bySku.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+    if (toBill.length === 0) return none;
 
     const version = await this.catalog.getPublishedCatalog();
     const billable: Array<{ def: PlanVersionWithCatalog["addonSkus"][number]; quantity: number }> =
       [];
-    for (const [code, rows] of unbilled) {
+    for (const [code, rows] of toBill) {
       const def = version.addonSkus.find((s) => s.sku === code);
       if (!def) {
         this.logger.error(
@@ -1800,13 +1801,29 @@ export class SubscriptionMutationService {
     // has none (the product not expanded, an unrecognised shape) is an anomaly: its item may well exist and bill,
     // so it must NEVER fall into (c) below — that would create a SECOND item. It fails the webhook, loudly.
     const missing = (ctx.listedSkus ?? []).filter((sku) => !bySku.has(sku));
-    // (c): active self-serve rows nothing bills and this checkout had no line for.
-    const unbilled = await this.prisma.tenantAddon.findMany({
-      where: billableAddonWhere({ tenantId, active: true, stripeItemId: null }),
+    // Every item on the subscription this checkout made (the base plan's too): a row pointing at an item that
+    // is NOT among them points at a dead subscription — it is STALE (the checkout only ever runs for a tenant
+    // with no live subscription), whatever the row says.
+    const currentItemIds = new Set<string>(
+      ((stripeSub?.items?.data ?? []) as Array<{ id?: unknown }>)
+        .map((i) => i.id)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    // (c): active self-serve rows nothing bills on THIS subscription (no item, or a stale one) and this
+    // checkout had no line for.
+    const active = await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ tenantId, active: true }),
     });
-    for (const row of unbilled) {
+    for (const row of active) {
       const code = addonSkuCode(row);
-      if (code && isSelfServiceAddon(code) && !bySku.has(code) && !missing.includes(code)) {
+      const unbilled = !row.stripeItemId || !currentItemIds.has(row.stripeItemId);
+      if (
+        unbilled &&
+        code &&
+        isSelfServiceAddon(code) &&
+        !bySku.has(code) &&
+        !missing.includes(code)
+      ) {
         bySku.set(code, []);
       }
     }
@@ -1817,7 +1834,7 @@ export class SubscriptionMutationService {
     for (const sku of [...bySku.keys()].sort()) {
       try {
         const adopted = await this.runUnderAddonLock(tenantId, sku, () =>
-          this.adoptCheckoutSku(tenantId, sku, bySku.get(sku) ?? [], subId, ctx),
+          this.adoptCheckoutSku(tenantId, sku, bySku.get(sku) ?? [], subId, currentItemIds, ctx),
         );
         changed = changed || adopted;
       } catch (err) {
@@ -1934,6 +1951,7 @@ export class SubscriptionMutationService {
     sku: string,
     items: CheckoutAddonItem[],
     subId: string,
+    currentItemIds: ReadonlySet<string>,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     // SA-693: only a BILLABLE row (never a comp) can own an item. A SKU whose only rows are comps has
@@ -1942,9 +1960,13 @@ export class SubscriptionMutationService {
       where: billableAddonWhere(addonRowWhere(tenantId, sku)),
       orderBy: [{ active: "desc" }, { createdAt: "asc" }],
     });
+    // A pointer that is not on the current subscription is STALE: the row is as good as unbilled, and every
+    // write below swaps it by compare-and-swap on that very value (`pointer`).
+    const pointer: string | null = row?.stripeItemId ?? null;
+    const stale = pointer != null && !currentItemIds.has(pointer);
     if (items.length === 0) {
-      return row?.active && !row.stripeItemId
-        ? this.billUnbilledRow(tenantId, sku, row, subId, ctx)
+      return row?.active && (!pointer || stale)
+        ? this.billUnbilledRow(tenantId, sku, row, subId, pointer, ctx)
         : false;
     }
     if (!row?.active) {
@@ -1952,10 +1974,11 @@ export class SubscriptionMutationService {
       for (const i of items) await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
       return false;
     }
-    if (row.stripeItemId) {
-      // A redelivery (the row already holds this item) or (b) (it holds a DIFFERENT one): the row's
-      // item stays and every other item of the SKU goes — never two items per SKU.
-      for (const i of items.filter((x) => x.itemId !== row.stripeItemId)) {
+    if (pointer && !stale) {
+      // A redelivery (the row already holds this item) or (b) (it holds a DIFFERENT one that IS on the
+      // current subscription): the row's item stays and every other item of the SKU goes — never two
+      // items per SKU. A stale pointer never gets here: it is replaced by the adoption below.
+      for (const i of items.filter((x) => x.itemId !== pointer)) {
         await this.deleteOrphanItem(i.itemId, tenantId, sku, STRICT_PRORATED);
       }
       return false;
@@ -2015,6 +2038,7 @@ export class SubscriptionMutationService {
       price,
       keep.quantity,
       row.quantity,
+      pointer,
       ctx,
     );
     // The row changed under us (switched off / given another item / another quantity): fail so the
@@ -2073,8 +2097,8 @@ export class SubscriptionMutationService {
 
   /**
    * The adoption write: under the tenant row lock (house order), re-read the row and — only while it
-   * is still ACTIVE, still holds NO item and still has the quantity Stripe was just set to — set its
-   * item and price and book its ledger delta. Compare-and-swap, so a redelivery (or a racing writer)
+   * is still ACTIVE, still holds EXACTLY the pointer it was judged on (`expectedItemId`: none, or a stale
+   * one) and still has the quantity Stripe was just set to — set its item and price and book its ledger delta. Compare-and-swap, so a redelivery (or a racing writer)
    * books nothing twice. The row KEEPS its own quantity (`rowQuantity`); `itemQuantity` is what the
    * Stripe item carried when it was adopted:
    *  1. adoption: stored → actual (price × itemQuantity), then
@@ -2090,6 +2114,7 @@ export class SubscriptionMutationService {
     price: number,
     itemQuantity: number,
     rowQuantity: number,
+    expectedItemId: string | null,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
@@ -2097,7 +2122,7 @@ export class SubscriptionMutationService {
       const current = await tx.tenantAddon.findUnique({ where: { id: rowId } });
       if (
         !current?.active ||
-        current.stripeItemId ||
+        (current.stripeItemId ?? null) !== expectedItemId ||
         current.isComp ||
         current.quantity !== rowQuantity
       ) {
@@ -2107,7 +2132,7 @@ export class SubscriptionMutationService {
         where: billableAddonWhere({
           id: rowId,
           active: true,
-          stripeItemId: null,
+          stripeItemId: expectedItemId,
           quantity: rowQuantity,
         }),
         data: { stripeItemId: itemId, priceSnapshot: price },
@@ -2152,6 +2177,7 @@ export class SubscriptionMutationService {
     sku: string,
     row: { id: string; quantity: number },
     subId: string,
+    expectedItemId: string | null,
     ctx: { sessionId?: string | null },
   ): Promise<boolean> {
     const skuDef = (await this.catalog.getPublishedCatalog()).addonSkus.find((s) => s.sku === sku);
@@ -2180,6 +2206,7 @@ export class SubscriptionMutationService {
         fromCents(toCents(skuDef.monthlyPrice)),
         quantity,
         row.quantity,
+        expectedItemId,
         ctx,
       );
     } catch (err) {
