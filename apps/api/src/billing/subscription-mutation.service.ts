@@ -1736,12 +1736,22 @@ export class SubscriptionMutationService {
         );
         continue;
       }
-      if (await this.planIncludedRefusal(tenantId, def)) continue;
       // The row findAddonRow picks (oldest) decides the quantity — the same row the completion adopts onto.
       const oldest = [...rows].sort(
         (x, y) => Number(x.createdAt ?? 0) - Number(y.createdAt ?? 0),
       )[0];
-      billable.push({ def, quantity: Math.max(1, Math.trunc(Number(oldest.quantity) || 1)) });
+      const quantity = Math.trunc(Number(oldest.quantity));
+      if (!(quantity >= 1)) {
+        // NIT1: nothing to bill. A line for it would charge one unit now and have the completion delete the item
+        // and credit it straight back (a row below 1 is deleted Stripe-first) — and could refuse an annual
+        // checkout over an add-on that bills nothing.
+        this.logger.warn(
+          `Checkout for tenant ${tenantId}: add-on "${code}" has quantity ${String(oldest.quantity)} — no line`,
+        );
+        continue;
+      }
+      if (await this.planIncludedRefusal(tenantId, def)) continue;
+      billable.push({ def, quantity });
     }
     if (billable.length === 0) return none;
     if (interval === "year") {

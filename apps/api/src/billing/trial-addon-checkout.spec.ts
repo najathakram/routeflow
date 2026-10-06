@@ -643,6 +643,27 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     expect(bundled.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
   });
 
+  it("NIT1: a row with quantity 0 gets NO checkout line (no charge-then-credit), and never makes an annual checkout refuse", async () => {
+    const h = make({
+      rows: [
+        addonRow("CUSTOMER_PACK_100", { qty: 0 }), // the oldest row of its SKU decides, and it has nothing to bill
+        addonRow("FORECASTING", { qty: 1 }),
+      ],
+    });
+
+    await h.billing.createCheckoutSession("t1", "month");
+
+    const call = h.client.checkout.sessions.create.mock.calls[0][0];
+    expect(call.line_items).toHaveLength(2); // the plan + FORECASTING only
+    expect(call.line_items[1].price_data.product_data.metadata.addonSku).toBe("FORECASTING");
+    expect(call.metadata.addonSkus).toBe("FORECASTING");
+
+    // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is the plan line, not a refusal
+    const only = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
+    await only.billing.createCheckoutSession("t1", "year");
+    expect(only.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+  });
+
   it("NIT: the annual-checkout refusal NAMES the add-ons to switch off (sorted by SKU, comma-joined) and says what else to do", async () => {
     const h = make({
       rows: [

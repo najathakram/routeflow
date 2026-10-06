@@ -1824,6 +1824,29 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       });
     });
 
+    it("NIT1: a quantity-0 row gets no checkout line (no charge-then-credit) and never refuses an annual checkout", async () => {
+      const r = await rig({
+        rows: [
+          { sku: "CUSTOMER_PACK_100", quantity: 0 },
+          { sku: "FORECASTING", quantity: 1 },
+        ],
+        items: [base()],
+      });
+
+      const lines = await r.mutations.checkoutAddonLines(r.tenantId, "month");
+      expect(lines.skus).toEqual(["FORECASTING"]);
+      expect(lines.lineItems.map((l: any) => l.quantity)).toEqual([1]);
+
+      await prisma.tenantAddon.updateMany({
+        where: { tenantId: r.tenantId, sku: "FORECASTING" },
+        data: { active: false },
+      });
+      await expect(r.mutations.checkoutAddonLines(r.tenantId, "year")).resolves.toEqual({
+        lineItems: [],
+        skus: [],
+      });
+    });
+
     it.each([false, true])(
       "(flag on=%s) the dead pointer is replaced by the checkout's new item (adopted, never deleted); stored -> actual is booked once",
       async (flagOn) => {
