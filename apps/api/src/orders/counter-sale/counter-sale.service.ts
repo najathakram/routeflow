@@ -32,6 +32,7 @@ import {
 import {
   allocateOldestFirst,
   assertPaymentShape,
+  type CounterPaymentMethod,
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
@@ -246,16 +247,17 @@ export class CounterSaleService {
     return { invoices, planError };
   }
 
-  /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */
   /**
    * GET /orders/counter-sale/by-key/:key. The sale this key rang, from STORAGE: the same replay lookup
    * create() uses (`findReplayCandidateByKey`: key table first, then the Order column; tenant-scoped), then
    * the same read-back `ring` ends with, `replayed: true`. No writes, no payment, no capability gate.
    * Without the request's payment the body carries no `change`, and `paymentRecorded` is read from what is
-   * stored (a tender exists, or nothing is owing): an ON_ACCOUNT sale therefore reads `false` here, which the
-   * till (it knows it rang ON_ACCOUNT) interprets. Nothing stored for the key is a definitive 404.
+   * stored: an ON_ACCOUNT sale (no tender, nothing asked of the till) reads `paymentRecorded:true`, a stored
+   * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
+   * (a tender that failed completely reads `false`). A half-written sale (no live invoice) is a coded 409
+   * COUNTER_SALE_INCOMPLETE; nothing stored for the key is a definitive 404.
    */
-  async byKey(key: string): Promise<CounterSaleResponse> {
+  async byKey(key: string, method?: CounterPaymentMethod): Promise<CounterSaleResponse> {
     // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
     if (!this.prisma.getTenantId()) {
       throw new ForbiddenException("Idempotency-Key requires a tenant-scoped session");
@@ -270,9 +272,24 @@ export class CounterSaleService {
       });
     }
     const invoices = await this.readInvoices(order.id);
-    return buildCounterSaleResponse({ order, invoices, replayed: true });
+    // Half-written: the order exists but nothing was invoiced (or only VOID / WRITTEN_OFF remain). Its own
+    // coded answer, so the till re-POSTs with the SAME key to finish it instead of reading an uncoded 500.
+    if (invoices.length === 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_SALE_INCOMPLETE,
+        message: "This sale was not finished: re-POST with the same key to finish it",
+      });
+    }
+    // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
+    return buildCounterSaleResponse({
+      payment: method ? { method } : undefined,
+      order,
+      invoices,
+      replayed: true,
+    });
   }
 
+  /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */
   private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
     const unique = [...new Set(productIds)];
     const found: Array<LineUnitsProduct & { id: string }> = await this.prisma

@@ -61,4 +61,36 @@ describe("a counter sale line keys identically on the first call and on a same-k
     );
     expect(replayLineKey({ productId: "p1", boxes: 2 } as never, false)).not.toContain("NaN");
   });
+
+  // S1: with no pack to split by (a pack of 1, or no pack at all) the writer ignores boxes/pieces and reads
+  // `qty` alone, so a line sent as {pieces:5} / {boxes:n} must carry qty = boxes + pieces, never 0 (a 400).
+  describe("a pack of 1 or no pack: qty is boxes + pieces, never 0", () => {
+    it.each([
+      ["upb 1, pieces only", 1, { pieces: 5 }, 5],
+      ["upb 1, boxes only", 1, { boxes: 3 }, 3],
+      ["upb 1, boxes and pieces", 1, { boxes: 2, pieces: 3 }, 5],
+      ["null pack, pieces only", null, { pieces: 5 }, 5],
+      ["null pack, boxes only", null, { boxes: 4 }, 4],
+    ])("%s", (_n, upb, line, expected) => {
+      const item = toCounterOrderItem({ productId: "p1", ...line } as never, upb as number | null);
+      expect(item.qty).toBe(expected);
+      // the writer's own normaliser, which the real create() runs, agrees: it does not collapse to 0
+      const written = normalizeBoxesPieces({ ...line, qty: item.qty, unitsPerBox: upb ?? 0 });
+      expect(written.qty).toBe(expected);
+      expect(written.qty).toBeGreaterThan(0);
+    });
+
+    it("an explicit qty wins over boxes/pieces when there is no pack", () => {
+      expect(toCounterOrderItem({ productId: "p1", qty: 7, pieces: 2 } as never, 1).qty).toBe(7);
+    });
+
+    it("the replay key of such a line is stable and never NaN", () => {
+      const item = toCounterOrderItem({ productId: "p1", pieces: 5 } as never, 1);
+      expect(replayLineKey(item as never, false)).toBe("p1×5");
+    });
+
+    it("a boxed pack still derives the integer piece count (unchanged)", () => {
+      expect(toCounterOrderItem({ productId: "p1", boxes: 2 } as never, 4).qty).toBe(8);
+    });
+  });
 });

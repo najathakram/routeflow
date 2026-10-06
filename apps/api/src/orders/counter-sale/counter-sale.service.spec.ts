@@ -957,6 +957,82 @@ describe("CounterSaleService.ring", () => {
       });
     });
 
+    // S2: the till says which method it rang (?method=); POST's EXACT paymentRecorded rule then applies to it.
+    describe("byKey(key, method): the till's own method decides, by POST's rule", () => {
+      it.each(["CASH", "CARD", "CHECK"] as const)(
+        "a %s sale whose tender failed completely: paymentRecorded:false + COUNTER_PAYMENT_NOT_RECORDED, never ON_ACCOUNT/true",
+        async (method) => {
+          findReplayCandidateByKey.mockResolvedValue(sale);
+          invoices = [inv("inv-1", 37.25)];
+          const r = await service.byKey("k1", method);
+          expect(r).toMatchObject({
+            method,
+            paid: 0,
+            balanceDue: 37.25,
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+          });
+          expect(r.method).not.toBe("ON_ACCOUNT");
+        },
+      );
+
+      it("ON_ACCOUNT: recorded with the balance owing (nothing was asked of the till)", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [inv("inv-1", 37.25)];
+        expect(await service.byKey("k1", "ON_ACCOUNT")).toMatchObject({
+          method: "ON_ACCOUNT",
+          balanceDue: 37.25,
+          paymentRecorded: true,
+        });
+      });
+
+      it.each([
+        ["CASH", "CASH"],
+        ["CARD", "CREDIT_CARD"],
+        ["CHECK", "CHECK"],
+      ] as const)("a %s sale with its tender stored is recorded", async (method, stored) => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [
+          inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: stored, status: "PAID" }]),
+        ];
+        expect(await service.byKey("k1", method)).toMatchObject({
+          method,
+          paid: 37.25,
+          balanceDue: 0,
+          paymentRecorded: true,
+        });
+      });
+
+      it("the rule is POST's: a stored partial tender reads recorded when the till rang that method", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [
+          inv("inv-1", 37.25, [{ id: "p0", amount: 20, method: "CASH", status: "PAID" }]),
+        ];
+        expect(await service.byKey("k1", "CASH")).toMatchObject({
+          paid: 20,
+          balanceDue: 17.25,
+          paymentRecorded: true,
+        });
+      });
+
+      it("byKey with ?method equals the POST body that rang it (except replayed:true and change)", async () => {
+        invoices = [inv("inv-1", 37.25)];
+        const posted = await service.ring(named({ method: "CARD" }) as never, staff, "k-card");
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        const { replayed: _r, change: _c, ...expected } = posted as any;
+        expect(await service.byKey("k-card", "CARD")).toEqual({ ...expected, replayed: true });
+      });
+
+      it("without ?method today's behaviour is kept (derived from storage)", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [inv("inv-1", 37.25)];
+        expect(await service.byKey("k1")).toMatchObject({
+          method: "ON_ACCOUNT",
+          paymentRecorded: true,
+        });
+      });
+    });
+
     it("the tender method maps Prisma CREDIT_CARD back to CARD", async () => {
       findReplayCandidateByKey.mockResolvedValue(sale);
       invoices = [
@@ -974,11 +1050,31 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it("an invoice-less order is not a finished sale: refused as an unknown outcome, never a guess", async () => {
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      invoices = [];
-      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 500 });
-    });
+    it.each([
+      ["no invoice at all", () => []],
+      [
+        "only VOID / WRITTEN_OFF invoices (read back as none)",
+        () => [
+          { ...inv("inv-v", 10, [], 0), status: "VOID" },
+          { ...inv("inv-w", 10, [], 1), status: "WRITTEN_OFF" },
+        ],
+      ],
+    ])(
+      "a half-written sale (%s) is a coded 409 COUNTER_SALE_INCOMPLETE, not an uncoded 500",
+      async (_n, make) => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = make() as never;
+        const e = await service.byKey("k1").then(
+          () => null,
+          (err) => err,
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "COUNTER_SALE_INCOMPLETE",
+          message: expect.stringMatching(/re-POST with the same key/i),
+        });
+      },
+    );
 
     it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
       const e = await service.byKey("nope").then(
