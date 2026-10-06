@@ -349,6 +349,58 @@ describe("PickupCompleteService.complete", () => {
         nothingWritten();
       },
     );
+    // Nothing owed (the deposit covered it): the till takes no money, so there is nothing to refuse.
+    describe("balance already 0", () => {
+      const deposit = (amount: number) => pay("dep-1", amount, "CASH", T_DEPOSIT);
+      const walkIn = () => {
+        order = orderRow("CONFIRMED", { customer: { isWalkIn: true } });
+      };
+      it("a walk-in with nothing owed and no payment completes (was 400 WALK_IN_NO_ACCOUNT)", async () => {
+        walkIn();
+        invoices = [inv("inv-1", 37.25, "DRAFT", [deposit(37.25)])];
+        const res = await run({});
+        expect(changeStatus).toHaveBeenCalledTimes(1);
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(res).toMatchObject({
+          total: 37.25,
+          paid: 37.25,
+          balanceDue: 0,
+          paymentRecorded: true,
+        });
+        expect(res.paymentId).toBeUndefined();
+      });
+      it("a CASH payment sent while nothing is owed is ignored: no recordPayment", async () => {
+        invoices = [inv("inv-1", 37.25, "DRAFT", [deposit(37.25)])];
+        const res = await run(cash(50));
+        expect(changeStatus).toHaveBeenCalledTimes(1);
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(res).toMatchObject({ paid: 37.25, balanceDue: 0, paymentRecorded: true });
+      });
+      it("a VOID / WRITTEN_OFF invoice is not part of the balance", async () => {
+        walkIn();
+        invoices = [
+          inv("inv-1", 37.25, "DRAFT", [deposit(37.25)]),
+          inv("inv-void", 20, "VOID", [], 2),
+          inv("inv-wo", 15, "WRITTEN_OFF", [], 3),
+        ];
+        prisma.invoice.findMany.mockImplementation(async (args: any) => {
+          const out = args?.where?.status?.notIn ?? [];
+          return invoices
+            .filter((i) => !out.includes(i.status))
+            .map((i) => ({ ...i, payments: [...i.payments], invoiceNumber: `N-${i.id}` }));
+        });
+        const res = await run({});
+        expect(recordPayment).not.toHaveBeenCalled();
+        expect(res).toMatchObject({ total: 37.25, balanceDue: 0, paymentRecorded: true });
+      });
+      it("control: a walk-in who still owes money with no payment is refused as before", async () => {
+        walkIn();
+        invoices = [inv("inv-1", 37.25, "DRAFT", [deposit(10)])];
+        const e = await errorOf(run({}));
+        expect(e.getResponse().code).toBe("WALK_IN_NO_ACCOUNT");
+        nothingWritten();
+      });
+    });
     it("a check without its number is 400 before any write", async () => {
       const e = await errorOf(run({ payment: { method: "CHECK" } }));
       expect(e.getResponse().code).toBe("COUNTER_CHECK_NUMBER_REQUIRED");

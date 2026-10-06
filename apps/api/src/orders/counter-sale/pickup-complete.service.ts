@@ -93,8 +93,15 @@ export class PickupCompleteService {
       });
     }
     const walkIn = !!order.customer?.isWalkIn;
-    const payment: CounterPaymentInput = dto.payment ?? { method: "ON_ACCOUNT" };
-    assertPaymentShape(payment, walkIn);
+    let payment: CounterPaymentInput = dto.payment ?? { method: "ON_ACCOUNT" };
+    // Nothing owed (same invoice set and capacity rule as the tender below: VOID / WRITTEN_OFF excluded):
+    // the till takes no money, so there is nothing to refuse and no $0 payment row. A payment sent anyway
+    // is ignored (no row). Judged BEFORE the shape check so a walk-in with nothing owed is not a 400.
+    if (await this.nothingOwed(id, alreadyPickedUp ? order.deliveredAt : undefined)) {
+      payment = { method: "ON_ACCOUNT" };
+    } else {
+      assertPaymentShape(payment, walkIn);
+    }
 
     // 2. The hand-over: the existing status change (invoice + no stock). Its own refusals propagate,
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
@@ -213,6 +220,29 @@ export class PickupCompleteService {
       invoices = await this.readInvoices(orderId);
     }
     return { invoices, planError };
+  }
+
+  /**
+   * True when the order's non-void invoices exist and leave nothing to collect. Before the hand-over every
+   * stored payment is pre-existing; on a replay (`handedOverAt` given) this hand-over's own tender is left
+   * out, so the answer is the one the first call saw.
+   */
+  private async nothingOwed(orderId: string, handedOverAt?: Date | null): Promise<boolean> {
+    const rows = await this.readInvoices(orderId);
+    if (rows.length === 0) return false;
+    const mine = handedOverAt === undefined ? () => false : isHandOverTender(handedOverAt);
+    const balance = roundMoney(
+      rows.reduce(
+        (sum, i) =>
+          sum +
+          remainingCapacity(
+            Number(i.total),
+            (i.payments ?? []).filter((p) => !mine(p)),
+          ),
+        0,
+      ),
+    );
+    return balance <= 0;
   }
 
   private async readOrder(id: string): Promise<OrderRow | null> {
