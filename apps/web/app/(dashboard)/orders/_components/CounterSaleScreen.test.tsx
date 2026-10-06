@@ -570,6 +570,48 @@ describe("CounterSaleScreen: API contract wiring", () => {
         },
       );
 
+      describe("a by-key 409 COUNTER_SALE_INCOMPLETE (half-written): re-POST the SAME attempt once", () => {
+        const incomplete = {
+          response: { status: 409, data: { code: "COUNTER_SALE_INCOMPLETE" } },
+        };
+        it("re-sends the same key and body and shows the receipt", async () => {
+          await goUnknown({ response: { status: 503 } });
+          lookupAsync.mockRejectedValueOnce(incomplete);
+          check();
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+          expect(keyOfCall(1)).toBe(keyOfCall(0));
+          expect(mutateAsync.mock.calls[1][0].dto).toEqual(mutateAsync.mock.calls[0][0].dto);
+          expect(await screen.findByTestId("counter-sale-receipt")).toBeInTheDocument();
+          expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+          expect(lookupAsync).toHaveBeenCalledTimes(1);
+        });
+
+        it("then a 503 on the re-POST stays locked: banner, same key, no 'Nothing was charged'", async () => {
+          await goUnknown({ response: { status: 503 } });
+          lookupAsync.mockRejectedValueOnce(incomplete);
+          mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+          check();
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+          expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+          expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+          expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+          expect(keyOfCall(1)).toBe(keyOfCall(0));
+          expect(lookupAsync).toHaveBeenCalledTimes(1); // once, not a loop
+          expect(mutateAsync).toHaveBeenCalledTimes(2);
+        });
+
+        it("then a refusal on the re-POST (a 403) also stays locked", async () => {
+          await goUnknown({ response: { status: 503 } });
+          lookupAsync.mockRejectedValueOnce(incomplete);
+          mutateAsync.mockRejectedValueOnce({ response: { status: 403 } });
+          check();
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+          expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+          expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+          expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        });
+      });
+
       it("a 404 COUNTER_SALE_NOT_FOUND unlocks the cart, and the next submit uses a NEW key", async () => {
         await goUnknown({ response: { status: 503 } });
         lookupAsync.mockRejectedValueOnce({

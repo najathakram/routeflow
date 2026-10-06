@@ -30,6 +30,7 @@ import {
   cartTotals,
   changeDue,
   counterSaleErrorCopy,
+  isCounterSaleIncomplete,
   isCounterSaleNotFound,
   judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
@@ -331,20 +332,23 @@ export function CounterSaleScreen() {
   };
 
   // "Check sale status": ask the server whether a sale exists under the held key (with the method THIS attempt rang). A sale
-  // shows its receipt; a 404 COUNTER_SALE_NOT_FOUND unlocks the cart (the next submit then mints a new key); every other answer keeps the lock.
+  // shows its receipt; a 404 COUNTER_SALE_NOT_FOUND unlocks the cart (the next submit then mints a new key); a 409
+  // COUNTER_SALE_INCOMPLETE (half-written) re-sends the SAME attempt once, like "Try again"; every other answer keeps the lock.
   const checkSaleStatus = async () => {
     const attempt = attemptRef.current;
     if (!attempt || submittingRef.current) return;
     submittingRef.current = true;
     setLookupFailed(false);
+    let resend = false;
     try {
-      await lookupAndSettle(attempt);
+      resend = await lookupAndSettle(attempt);
     } finally {
       submittingRef.current = false;
     }
+    if (resend) await completeSale(false, true); // once, through the same path as "Try again"
   };
 
-  // One lookup, settled.
+  // One lookup. Resolves true when the sale is half-written (COUNTER_SALE_INCOMPLETE) and must be re-POSTed.
   const lookupAndSettle = async (
     attempt: NonNullable<typeof attemptRef.current>,
   ): Promise<boolean> => {
@@ -359,6 +363,8 @@ export function CounterSaleScreen() {
         attemptRef.current = null;
         setOutcomeUnknown(false);
         refocus();
+      } else if (isCounterSaleIncomplete(err)) {
+        return true; // finish the half-written sale: the SAME key, the SAME body
       } else {
         // Not an answer: the lock and banner stay, and the clerk is told the CHECK failed (fixed copy).
         setLookupFailed(true);

@@ -195,6 +195,14 @@ export function isCounterSaleNotFound(err: unknown): boolean {
   return res?.status === 404 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_NOT_FOUND;
 }
 
+/** The by-key lookup's 409 COUNTER_SALE_INCOMPLETE: the sale was half-written, so re-POST with the SAME key to finish it. */
+export function isCounterSaleIncomplete(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+  )?.response;
+  return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_INCOMPLETE;
+}
+
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.

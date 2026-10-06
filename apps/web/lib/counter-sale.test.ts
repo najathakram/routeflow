@@ -5,6 +5,7 @@ import {
   changeDue,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  isCounterSaleIncomplete,
   isCounterSaleNotFound,
   judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
@@ -250,6 +251,21 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
       null,
     ])
       expect(isCounterSaleNotFound(err)).toBe(false);
+  });
+  it("only a 409 COUNTER_SALE_INCOMPLETE is 'incomplete' (a half-written sale: re-POST the same key)", () => {
+    expect(
+      isCounterSaleIncomplete({
+        response: { status: 409, data: { code: "COUNTER_SALE_INCOMPLETE" } },
+      }),
+    ).toBe(true);
+    for (const err of [
+      { response: { status: 409 } },
+      { response: { status: 409, data: { code: "COUNTER_SALE_ORDER_CHANGED" } } },
+      { response: { status: 500, data: { code: "COUNTER_SALE_INCOMPLETE" } } },
+      new Error("Network Error"),
+      null,
+    ])
+      expect(isCounterSaleIncomplete(err)).toBe(false);
   });
   it("any OTHER 409 stays a definitive refusal", () => {
     for (const data of [undefined, {}, { code: "WALK_IN_OPEN_CREDIT" }]) {
