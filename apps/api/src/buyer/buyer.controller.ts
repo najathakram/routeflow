@@ -755,7 +755,11 @@ export class BuyerController {
       if (merged) {
         const mergedOrderId = merged.orderId;
         // B1094: a replayed submit already had its sweep when it first landed.
-        if (merged.replayed) return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        if (merged.replayed) {
+          return toCustomerOrder(
+            await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
+          );
+        }
         // Sweep any other PENDING orders for this customer into the winner. The
         // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
         // combined quantity qualifies for (split carts keep the promo).
