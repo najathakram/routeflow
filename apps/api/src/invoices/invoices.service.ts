@@ -2950,13 +2950,11 @@ export class InvoicesService {
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below —
-      // totalConfirmed sums three separately-computed floats (cash + credit +
-      // advance), so an invoice fully settled by a mix of methods can leave a
-      // sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...) doesn't
-      // catch, rendering a red "Balance Due $0.00" on an otherwise-settled
-      // invoice. fmt() rounds for DISPLAY but this raw value drives the color/
-      // isOverdue logic directly.
+      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below — totalConfirmed sums
+      // three separately-computed floats (cash + credit + advance), so an invoice fully settled by
+      // a mix of methods can leave a sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...)
+      // doesn't catch, rendering a red "Balance Due $0.00" on an otherwise-settled invoice. fmt()
+      // rounds for DISPLAY but this raw value drives the color/isOverdue logic directly.
       const balanceDue = isSettled
         ? 0
         : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
