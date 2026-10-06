@@ -638,6 +638,24 @@ describeDb(
       },
     );
 
+    it.each(["trial_expired", "trial_cancelled", "subscription_cancelled"])(
+      "SHOULD: a manual activation of a READ_ONLY tenant (%s) leaves it ACTIVE with NO stale readOnlyReason",
+      async (reason) => {
+        const tenantId = await makeTrialTenant(`sa668c-ro-${reason}`.slice(0, 40), "GROWTH");
+        await prisma.tenantSubscription.update({
+          where: { tenantId },
+          data: { basePriceSnapshot: starterPrice },
+        });
+        await lapse(tenantId, reason);
+
+        await activate(tenantId, `ref-ro-${reason}`);
+
+        const t = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+        expect(t.status).toBe(TenantStatus.ACTIVE);
+        expect(t.readOnlyReason).toBeNull(); // RO-1 ships this field to the client: it must not outlive the status
+      },
+    );
+
     it("MUST-A1: READ_ONLY after a cancelled PAID subscription is not a lapsed trial — manual activation prices nothing", async () => {
       const tenantId = await makeTrialTenant("sa668c-a1-paid", "GROWTH");
       await prisma.tenantSubscription.update({

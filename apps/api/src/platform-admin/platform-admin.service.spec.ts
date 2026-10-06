@@ -3013,6 +3013,17 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(select).toMatchObject({ status: true, readOnlyReason: true });
     });
 
+    it("SHOULD: the ACTIVE write clears a stale readOnlyReason (as every other ACTIVE write does)", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(prisma.tenant.update.mock.calls.at(-1)?.[0]).toMatchObject({
+        where: { id: TENANT_ID },
+        data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
+      });
+    });
+
     it("S4: the activation crossing reads only BILLABLE add-ons (a comp with a stale snapshot is never booked)", async () => {
       tenantBefore(); // a TRIAL: the crossing runs
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);

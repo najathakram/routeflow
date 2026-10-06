@@ -1076,7 +1076,9 @@ export class PlatformAdminService {
         const [updated] = await Promise.all([
           tx.tenant.update({
             where: { id },
-            data: { status: "ACTIVE", plan: dto.plan },
+            // readOnlyReason is cleared with the status (as every other ACTIVE write does): RO-1 ships it to
+            // the client, and a lapsed trial's "trial_expired" must not outlive the READ_ONLY it explained.
+            data: { status: "ACTIVE", plan: dto.plan, readOnlyReason: null },
             select: { id: true, slug: true, status: true, plan: true },
           }),
           tx.tenantSubscription.upsert({
