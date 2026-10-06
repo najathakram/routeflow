@@ -23,13 +23,18 @@ import { Logger } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import type { OrderInvoicesNeedReview } from "@routeflow/types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   ORDER_INVOICES_NEED_REVIEW_MESSAGE,
   invoicesNeedReview,
 } from "../invoices/invoice-partition";
 
-/** The audit action a driver's stop completion writes when it leaves an order's invoices for review. */
-export const ORDER_INVOICES_NEED_REVIEW_AUDIT_ACTION = "ORDER_INVOICES_NEED_REVIEW";
+/**
+ * The audit action a driver's stop completion writes when it leaves an order's invoices for review.
+ * It is spelled exactly like the 409 code, so it goes through the same named constant (the
+ * error-code parity spec forbids a bare literal of it anywhere in production source).
+ */
+export const ORDER_INVOICES_NEED_REVIEW_AUDIT_ACTION = API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW;
 
 const logger = new Logger("OrderInvoicesReview");
 
