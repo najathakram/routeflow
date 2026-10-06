@@ -47,7 +47,12 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
-import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-line-unit";
+import {
+  applyLineUnit,
+  sameProductUnit,
+  unitLabelPayload,
+  type PackBase,
+} from "@/lib/order-line-unit";
 import {
   applyUnitToLines,
   isPendingDefaultUnit,
@@ -89,6 +94,10 @@ import {
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { useOrderSuggestions } from "@/lib/api/order-suggestions";
+import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
+import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
+import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -448,6 +457,7 @@ export function CreateOrderModal({
     setLineItems([]);
     setLineItemsError("");
     setCustomFormOpen(false);
+    setSuggestionsMenuOpen(false);
     setCustomName("");
     setCustomPrice("");
     setCustomQty("1");
@@ -590,7 +600,11 @@ export function CreateOrderModal({
   const addLineItem = (
     product: any,
     level: SellLevel = "BOX",
-    opts?: { startOnDefaultUnit?: boolean },
+    opts?: {
+      startOnDefaultUnit?: boolean;
+      /** "Order again": add this quantity (in this unit) instead of one; priced today like any add. */
+      ordered?: OrderedAdd;
+    },
   ): { created: boolean; refused?: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
     // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
@@ -605,21 +619,28 @@ export function CreateOrderModal({
     // A merge is a qty edit that CONSUMES startOnDefaultUnit, EXCEPT a default-start add to a still-pending line:
     // two fast adds before the ladder loads stay "2 of the default unit" (SA-626d), never a pack.
     const merge = (li: LineItem): LineItem =>
-      // #2865 (SA-632 M2): a default-start tap on a still-pending line ONLY records one more tap. The line's own
-      // quantity (boxes/pieces) is never touched, so neither the row nor the totals ever show N cases while pending.
-      keepsDefaultStart(li, opts?.startOnDefaultUnit)
-        ? { ...li, pendingTaps: pendingCount(li) + 1 }
-        : {
-            ...(unitScan
-              ? mergePieceIntoLine(li, n)
-              : orderUiV2
-                ? mergeQtyIntoLine(li, n)
-                : scanV2
-                  ? stepLineUnit(li, 1)
-                  : { ...li, qty: li.qty + 1 }),
+      // Order again: the ordered quantity lands on the line (same product + unit) as a sum, never a "+1".
+      opts?.ordered
+        ? {
+            ...mergeOrderedIntoLine(li, opts.ordered.qty),
             startOnDefaultUnit: false,
             pendingTaps: undefined,
-          };
+          }
+        : // #2865 (SA-632 M2): a default-start tap on a still-pending line ONLY records one more tap. The line's own
+          // quantity (boxes/pieces) is never touched, so neither the row nor the totals ever show N cases while pending.
+          keepsDefaultStart(li, opts?.startOnDefaultUnit)
+          ? { ...li, pendingTaps: pendingCount(li) + 1 }
+          : {
+              ...(unitScan
+                ? mergePieceIntoLine(li, n)
+                : orderUiV2
+                  ? mergeQtyIntoLine(li, n)
+                  : scanV2
+                    ? stepLineUnit(li, 1)
+                    : { ...li, qty: li.qty + 1 }),
+              startOnDefaultUnit: false,
+              pendingTaps: undefined,
+            };
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -641,7 +662,9 @@ export function CreateOrderModal({
     const hasHistUpsell =
       priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
-    const newLine: LineItem = {
+    const orderedUnit =
+      opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
+    const baseLine: LineItem = {
       tempId: newTempId,
       productId: product.id,
       // Show the full "<Parent> - <Variant>" name on the order line so the
@@ -658,7 +681,7 @@ export function CreateOrderModal({
         : hasHistDiscount
           ? ("DISCOUNTED" as const)
           : priceType,
-      ...newLineQtyForLevel(upb, level, n),
+      ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
       startOnDefaultUnit: opts?.startOnDefaultUnit,
       pendingTaps: opts?.startOnDefaultUnit ? 1 : undefined,
@@ -673,6 +696,14 @@ export function CreateOrderModal({
         priceTier5: product.priceTier5,
       },
     };
+    // A past line that sold by a unit ("Carton") comes back as that unit: a plain count at the ladder's
+    // price for the customer's tier today (applyLineUnit drops any one-time price, as a manual switch does).
+    const newLine: LineItem = orderedUnit
+      ? {
+          ...applyLineUnit(baseLine, orderedUnit, { tier: effectiveTier }),
+          qty: opts!.ordered!.qty.qty,
+        }
+      : baseLine;
 
     // SA-090/Opus item 1: the add-vs-merge DECISION happens INSIDE the updater, against the true
     // latest `prev` React is about to commit — never against `lineItems` read from the render
@@ -690,7 +721,9 @@ export function CreateOrderModal({
     lastAddResultRef.current = null;
     flushSync(() => {
       setLineItems((prev) => {
-        const idx = prev.findIndex((li) => sameProductUnit(li, { productId: product.id }));
+        const idx = prev.findIndex((li) =>
+          sameProductUnit(li, { productId: product.id, unitLabel: orderedUnit?.value }),
+        );
         if (idx === -1) {
           lastAddResultRef.current = { created: true };
           return [...prev, newLine];
@@ -872,6 +905,19 @@ export function CreateOrderModal({
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
 
+  // "Usually buys" chips + "Order again": the customer's top products and last orders. Both add through
+  // addLineItem, so every line is priced today (see use-order-suggestion-actions).
+  const { data: orderSuggestions, isError: orderSuggestionsError } = useOrderSuggestions(
+    selectedCustomer?.id,
+  );
+  const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
+  const suggestionActions = useOrderSuggestionActions({
+    suggestions: orderSuggestions,
+    addLine: addLineItem,
+    tierFor: tierForProduct,
+    toast,
+  });
+
   /**
    * units_v1: sell a line by another unit (or back by the pack). A line switched to a unit the
    * product already has on this order folds into that line (product + unit is the line's identity).
@@ -1037,6 +1083,12 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // The "Order again" menu takes Escape first — it closes the menu, never the order.
+    if (suggestionsMenuOpen) {
+      event.preventDefault();
+      setSuggestionsMenuOpen(false);
+      return;
+    }
     // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
     if (editingLineId) {
       event.preventDefault();
@@ -1678,6 +1730,18 @@ export function CreateOrderModal({
                     </ul>
                   )}
               </div>
+            )}
+
+            {selectedCustomer && (
+              <OrderSuggestionsBar
+                suggestions={orderSuggestions}
+                hasLines={lineItems.length > 0}
+                onAddProduct={suggestionActions.addProduct}
+                onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                error={orderSuggestionsError}
+                menuOpen={suggestionsMenuOpen}
+                onMenuOpenChange={setSuggestionsMenuOpen}
+              />
             )}
           </section>
 

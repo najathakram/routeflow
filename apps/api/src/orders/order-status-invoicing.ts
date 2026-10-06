@@ -18,6 +18,11 @@ import { ConflictException, Logger } from "@nestjs/common";
 import type { OrderCancelBlockedReason } from "@routeflow/types";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  RECONCILE_PARTIALS,
+  invoicesNeedReview,
+  orderInvoicesNeedReviewError,
+} from "../invoices/invoice-partition";
 import { SHIP_STATE_REOPENED } from "./order-ship-state";
 import type { OrdersService } from "./orders.service";
 
@@ -94,10 +99,17 @@ export async function settleOrderInvoice(
     moment === "delivered" && alreadySettledAtShipment
       ? null
       : await self.invoicesService.findOpenOrderDraft(id);
+  let partials = false;
   if (draft) {
     try {
-      await self.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      return undefined;
+      // SA-681: "partials" = the draft is one of several invoices (or a lone partial) and was left
+      // untouched; fall through to bill only the un-invoiced remainder (qty - invoicedQty).
+      const res = await self.invoicesService.reconcileOrderDraftInvoice(id, {
+        basis: "order",
+        shortDraftIsPartial: true,
+      });
+      if (res !== RECONCILE_PARTIALS) return undefined;
+      partials = true;
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
@@ -106,6 +118,22 @@ export async function settleOrderInvoice(
           `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
       );
     }
+  }
+  // SA-687: the remainder create below trusts OrderItem.invoicedQty. After a replace-all edit (it
+  // resets it and orphans the invoices' lines) or a line cut under what is invoiced it cannot be
+  // trusted, so bill nothing and ask for a review. Runs on EVERY path that reaches the create, with
+  // or without an open draft (PARTIALLY_DELIVERED with the partials sent; DELIVERED after a
+  // shipment-time settle). Beside open partials the review also applies when nothing remains.
+  try {
+    if (await invoicesNeedReview(self.prisma.forTenant(), id, { onlyWhenRemainder: !partials })) {
+      return orderInvoicesNeedReviewError();
+    }
+  } catch (err: any) {
+    logger.error(`Failed to check invoices for order ${id}: ${err?.message ?? err}`);
+    return new ConflictException(
+      `The order was marked ${moment}, but its invoice could not be checked ` +
+        `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
+    );
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;

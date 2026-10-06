@@ -33,6 +33,7 @@ const B768_REPORTS = [
   "report-train4-damage.mjs",
   "sales-gap-analysis.js",
   "stock-ledger-gap.mjs", // B562 PR-2 (SA-136 §6.3) — born on the resolver
+  "report-addon-comp-candidates.mjs", // SA-693 — born on the resolver
 ];
 
 /**
@@ -47,6 +48,7 @@ const ALLOWED: Record<string, string> = {
   "t6-backfill-census.mjs": "--local mode only",
   "t6-null-census.mjs": "--local mode only",
   "t6-null-rows-report.mjs": "--local mode only",
+  "stamp-addon-comp.mjs": "--local mode only (writer: id-pinned, dry-run first)",
   // B294: a gated WRITER; production resolves with requireProxy, DATABASE_URL is --local only.
   "backfill-b294-order-line-taxrate.mjs": "--local mode only (writer: requireProxy otherwise)",
   // The drift gate and the production guard deliberately read the raw variable.

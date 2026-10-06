@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
+import { billableAddonWhere } from "./addon-row";
 
 /**
  * SA-140: the one place "is this tenant currently in MrrService's paying set" is defined.
@@ -176,10 +177,10 @@ export class MrrService {
         // Mirror `payingWhere`: only count add-ons whose tenant has a PAYING base plan
         // (planKey != null). Otherwise an add-on on a plan-less ACTIVE tenant (e.g. a
         // manual/external-payment activation) would book add-on MRR with no base behind it.
-        where: {
+        where: billableAddonWhere({
           active: true,
           tenant: { ...PAYING_TENANT_CONDITIONS, subscription: { planKey: { not: null } } },
-        },
+        }),
         select: { tenantId: true, priceSnapshot: true, quantity: true },
       }),
       this.prisma.tenant.count({
@@ -348,7 +349,7 @@ export class MrrService {
       return 0;
     }
     const addons = await db.tenantAddon.findMany({
-      where: { tenantId, active: true },
+      where: billableAddonWhere({ tenantId, active: true }),
       select: { priceSnapshot: true, quantity: true },
     });
     return this.priceSubscription(tenant.subscription!, addons);

@@ -42,11 +42,29 @@ export const priceHistoryKey = (
   customerId: string | null | undefined,
   productId: string | null | undefined,
   limit: number,
-) => ["customers", customerId, "products", productId, "price-history", limit] as const;
+  excludeOrderId?: string | null,
+) =>
+  [
+    "customers",
+    customerId,
+    "products",
+    productId,
+    "price-history",
+    limit,
+    excludeOrderId ?? null,
+  ] as const;
 
-const fetchPriceHistory = (customerId: string, productId: string, limit: number) =>
+/** `excludeOrderId`: the order being edited, so its own price is never shown as history (hunt2 F6). */
+const fetchPriceHistory = (
+  customerId: string,
+  productId: string,
+  limit: number,
+  excludeOrderId?: string | null,
+) =>
   apiClient
-    .get(`/customers/${customerId}/products/${productId}/price-history`, { params: { limit } })
+    .get(`/customers/${customerId}/products/${productId}/price-history`, {
+      params: { limit, ...(excludeOrderId ? { excludeOrderId } : {}) },
+    })
     .then((r) => r.data as PriceHistoryResponse);
 
 export function usePriceHistory(
@@ -54,10 +72,11 @@ export function usePriceHistory(
   productId: string | null | undefined,
   enabled: boolean,
   limit = 25,
+  excludeOrderId?: string | null,
 ) {
   return useQuery<PriceHistoryResponse>({
-    queryKey: priceHistoryKey(customerId, productId, limit),
-    queryFn: () => fetchPriceHistory(customerId!, productId!, limit),
+    queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId),
+    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, excludeOrderId),
     enabled: enabled && !!customerId && !!productId,
     staleTime: 30_000,
     retry: false,
@@ -105,14 +124,15 @@ export function usePrefetchPriceHistory(
   productId: string | null | undefined,
   limit = 25,
   enabled = true,
+  excludeOrderId?: string | null,
 ) {
   const qc = useQueryClient();
   React.useEffect(() => {
     if (!enabled || !customerId || !productId) return;
     void qc.prefetchQuery({
-      queryKey: priceHistoryKey(customerId, productId, limit),
-      queryFn: () => fetchPriceHistory(customerId, productId, limit),
+      queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId),
+      queryFn: () => fetchPriceHistory(customerId, productId, limit, excludeOrderId),
       staleTime: 30_000,
     });
-  }, [qc, customerId, productId, limit, enabled]);
+  }, [qc, customerId, productId, limit, enabled, excludeOrderId]);
 }

@@ -35,7 +35,7 @@ import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
 import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
-import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
+import { EnableAddonDto, DisableAddonDto, UncompAddonDto } from "../billing/dto/manage-addon.dto";
 import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
 import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
 import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
@@ -378,16 +378,51 @@ export class PlatformAdminController {
     @Body() dto: EnableAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
+    // SA-693: `comp` is read from the DTO only, never inferred from the absence of a price.
+    const comp = dto.comp === true;
     const result = await this.addonService.enableAddon(
       id,
       dto.addonKey,
       dto.stripePriceId,
       dto.acknowledgeUnmetRequires,
+      { comp },
     );
+    if (comp) {
+      // One audit row per action: a comp is ADDON_COMPED (actor = userId, plus the optional reason).
+      await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_COMPED, {
+        addonKey: dto.addonKey,
+        acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
+        ...(dto.reason ? { reason: dto.reason } : {}),
+      });
+      return result;
+    }
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_ENABLED, {
       addonKey: dto.addonKey,
       // B524: see the matching note on createFeatureOverride's audit payload.
       acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
+    });
+    return result;
+  }
+
+  @Post("tenants/:id/addons/uncomp")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Turn a comp add-on back into a normal one. Never silently bills: flag-only without a Stripe " +
+      "subscription; with one, goes through the billed enable (stripePriceId required)",
+  })
+  async uncompAddon(
+    @Param("id") id: string,
+    @Body() dto: UncompAddonDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.addonService.uncompAddon(id, dto.addonKey, dto.stripePriceId);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_UNCOMPED, {
+      addonKey: dto.addonKey,
+      // The mode the service ACTUALLY took (STRIPE / MANUAL / UNBILLED), never inferred from the DTO:
+      // a price id can ride along on a call that only flipped the flag.
+      billing: result.billing,
+      ...(dto.reason ? { reason: dto.reason } : {}),
     });
     return result;
   }
