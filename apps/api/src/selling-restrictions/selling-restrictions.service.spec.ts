@@ -1219,7 +1219,7 @@ describe("SellingRestrictionsService.evaluate", () => {
           }
         };
         walk(root);
-        // two construction sites, both inside assertLinesSellable (staff branch, buyer branch)
+        // three construction sites in this ONE file: assertLinesSellable (staff branch, buyer branch) and hiddenFromPortalRestriction (WS6)
         expect(offenders).toEqual(["selling-restrictions/selling-restrictions.service.ts"]);
       });
     });

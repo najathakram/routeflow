@@ -33,7 +33,12 @@ export interface RestrictionsEvaluation {
 
 /** Why a line was blocked — mirrors the engine's three-state result (plan §2.6). */
 export type RestrictionReason =
-  "FEDERAL_BAN" | "STATE_BAN" | "BUYER_PORTAL_ONLY" | "INDETERMINATE_ADDRESS" | "UNKNOWN_PRODUCT";
+  | "FEDERAL_BAN"
+  | "STATE_BAN"
+  | "BUYER_PORTAL_ONLY"
+  | "INDETERMINATE_ADDRESS"
+  | "UNKNOWN_PRODUCT"
+  | "HIDDEN_FROM_PORTAL";
 
 export interface BlockedLine {
   productId: string;
@@ -58,7 +63,10 @@ export interface SellingRestrictedError {
  * What a BUYER-channel caller gets in `blockedLines` (B612): the product only — no rule id, reason,
  * state, category or rule text. Staff still get the full {@link BlockedLine}.
  */
-export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName">;
+export type BuyerBlockedLine = Pick<BlockedLine, "productId" | "productName"> & {
+  /** Present ONLY for a product the tenant hid from the buyer portal (SA-606 WS6); never a ban/state reason. */
+  reason?: "HIDDEN_FROM_PORTAL";
+};
 
 /** The 409 body for a BUYER-channel caller: the same code, a generic sentence, names only. */
 export interface BuyerSellingRestrictedError {

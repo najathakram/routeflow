@@ -108,6 +108,22 @@ describe("ProductsExportButton", () => {
     expect(downloadCsvBlob).toHaveBeenCalledWith("products-2026-09-01-to-2026-09-29.csv", blob);
   });
 
+  it("the Hidden-from-portal filter is forwarded, so the file matches the filtered count shown (N1)", async () => {
+    render(<ProductsExportButton total={3} filters={{ portalVisible: false }} />);
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() => expect(downloadCsvBlob).toHaveBeenCalledTimes(1));
+    expect(get.mock.calls[0][1].params).toMatchObject({ portalVisible: false });
+  });
+
+  it("no portal filter -> portalVisible is not sent at all", async () => {
+    renderBtn();
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() => expect(downloadCsvBlob).toHaveBeenCalledTimes(1));
+    expect(get.mock.calls[0][1].params.portalVisible).toBeUndefined();
+  });
+
   it("the Inactive filter exports isActive=false (the same set the list shows)", async () => {
     render(<ProductsExportButton total={3} filters={{ isActive: false }} />);
     open();

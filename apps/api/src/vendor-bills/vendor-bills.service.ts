@@ -2342,7 +2342,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // totalPaid and could flip the bill's status, corrupting AP balances. The
     // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
     if (!(roundMoney(Number(dto.amount)) > 0)) {
-      throw new BadRequestException("Payment amount must be greater than zero.");
+      throw new BadRequestException({
+        code: API_ERROR_CODES.SUPPLIER_PAYMENT_NOT_POSITIVE,
+        message: "Payment amount must be greater than zero.",
+      });
     }
     return this.prisma.tenantTransaction(async (tx) => {
       // B285: lock the bill BEFORE reading its payments — two concurrent payments both read the
@@ -2359,12 +2362,21 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       }
       const alreadyPaid = roundMoney(bill.payments.reduce((s, p) => s + Number(p.amount), 0));
       const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
-      if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
+      // `billId` is a REQUEST ECHO (SA-634 exception): the path id the caller sent, read from no row.
+      if (remaining <= 0) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SUPPLIER_PAYMENT_FULLY_PAID,
+          message: "Bill already fully paid",
+          billId: id,
+        });
+      }
       const amount = roundMoney(Number(dto.amount));
       if (amount > remaining + 0.001) {
-        throw new BadRequestException(
-          `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
-        );
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SUPPLIER_PAYMENT_OVER_BALANCE,
+          message: `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+          remaining,
+        });
       }
       await tx.billPayment.create({
         data: {
@@ -2422,9 +2434,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     const requestedTotal = roundMoney(dto.allocations.reduce((s, a) => s + Number(a.amount), 0));
     if (requestedTotal > dto.totalAmount + 0.001) {
-      throw new BadRequestException(
-        `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
-      );
+      // SA-634: `allocatedTotal` is THIS pre-transaction `requestedTotal` (not the in-transaction accumulator of the same name
+      // further down), and `totalAmount` is the request's UNROUNDED value, so a half-cent overage stays visible.
+      throw new BadRequestException({
+        code: API_ERROR_CODES.SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT,
+        message: `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
+        allocatedTotal: requestedTotal,
+        totalAmount: Number(dto.totalAmount),
+      });
     }
 
     const paymentGroupId = randomUUID();
@@ -2454,9 +2471,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         // Highest-risk guard in this method: money must never land on another
         // supplier's bill. Checked per allocation, not once for the group.
         if (bill.supplierId !== dto.supplierId) {
-          throw new BadRequestException(
-            `Bill ${bill.billNumber} does not belong to the selected supplier.`,
-          );
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_WRONG_SUPPLIER,
+            message: `Bill ${bill.billNumber} does not belong to the selected supplier.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+          });
         }
         // The ONE status comparison this method makes, and the only one it may:
         // VOID is unambiguous. A voided bill keeps its totalOwed and gets no
@@ -2467,7 +2487,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         // operator voids the bill between the modal loading it and submitting.
         // Mirrors bookkeeping.payBillFully and invoices' recordStandalonePayment.
         if (bill.status === "VOID") {
-          throw new BadRequestException(`Bill ${bill.billNumber} is void and cannot be paid.`);
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_BILL_VOID,
+            message: `Bill ${bill.billNumber} is void and cannot be paid.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+          });
         }
 
         // The ledger, exactly as recordPayment does — never the denormalised
@@ -2477,9 +2502,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         );
         const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
         if (amount > remaining + 0.001) {
-          throw new BadRequestException(
-            `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
-          );
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_OVER_BALANCE,
+            message: `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+            amount,
+            remaining,
+          });
         }
 
         const payment = await tx.billPayment.create({
