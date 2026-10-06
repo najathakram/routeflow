@@ -17,7 +17,7 @@ export interface SaleOptions {
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
-  onReplay?: () => void;
+  onReplay?: (order: { id: string; status?: string; counterSale?: boolean }) => void;
 }
 
 /**
@@ -76,9 +76,9 @@ export function saleCreateOptions(
     ...(sale.counterSale ? { counterSale: true } : {}),
     ...(idempotencyKey
       ? {
-          onReplay: () => {
+          onReplay: (order) => {
             markReplay();
-            sale.onReplay?.();
+            sale.onReplay?.(order);
           },
         }
       : {}),
