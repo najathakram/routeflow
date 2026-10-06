@@ -76,8 +76,12 @@ describe("resolveFulfilPath: unset / delivery / both are byte-identical to today
   it.each(["unset", "delivery", "both", "some-unknown-mode"])("mode %s", async (mode) => {
     for (const audience of ["staff", "buyer"] as const)
       for (const [explicit, stored] of combos) {
+        // The buyer's REQUESTED path is honoured only where the portal offers a choice (portalMethods
+        // non-empty); an unset / unknown mode has none, so it is exactly today's `stored ?? ROUTE`.
+        const buyerNoChoice =
+          audience === "buyer" && (mode === "unset" || mode === "some-unknown-mode");
         expect(await resolveFulfilPath(deps(mode), { explicit, stored, audience })).toBe(
-          explicit ?? stored ?? R,
+          (buyerNoChoice ? undefined : explicit) ?? stored ?? R,
         );
         expect(await activeFulfilPath(deps(mode), { explicit, stored, audience })).toBeUndefined();
       }
@@ -97,9 +101,145 @@ describe("(g) SA-678: a capability read failure fails OPEN to today's rule (neve
   it("logs and resolves explicit ?? stored ?? ROUTE", async () => {
     const d = deps(new Error("db down"));
     expect(await resolveFulfilPath(d, { stored: R, audience: "staff" })).toBe(R);
-    expect(await resolveFulfilPath(d, { explicit: S, stored: R, audience: "buyer" })).toBe(S);
+    expect(await resolveFulfilPath(d, { explicit: S, stored: R, audience: "staff" })).toBe(S);
+    // a blip reads as unset: the buyer's requested path is ignored, exactly as for an unset tenant
+    expect(await resolveFulfilPath(d, { explicit: S, stored: R, audience: "buyer" })).toBe(R);
     expect(await activeFulfilPath(d, { stored: S, audience: "staff" })).toBeUndefined();
     expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining("capability read failed"));
+  });
+});
+
+const P = FulfillPath.PICKUP;
+const refusal = {
+  status: 400,
+  response: expect.objectContaining({ code: "FULFIL_METHOD_NOT_OFFERED" }),
+};
+
+describe("resolveFulfilPath: pickup mode (staff): ROUTE means no preference", () => {
+  it.each(["pickup", "pickup_ship"])(
+    "%s: no request, or a requested ROUTE, resolves PICKUP",
+    async (mode) => {
+      expect(await resolveFulfilPath(deps(mode), { stored: null, audience: "staff" })).toBe(P);
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: R, stored: null, audience: "staff" }),
+      ).toBe(P);
+      // the web and mobile hard-send the stored path: ROUTE over a stored ROUTE is still "no preference"
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: R, stored: R, audience: "staff" }),
+      ).toBe(P);
+    },
+  );
+
+  it.each(["pickup", "pickup_ship"])(
+    "%s: a customer default ROUTE (the column default) is PICKUP, a default SHIP is SHIP",
+    async (mode) => {
+      expect(await resolveFulfilPath(deps(mode), { stored: R, audience: "staff" })).toBe(P);
+      expect(await resolveFulfilPath(deps(mode), { stored: S, audience: "staff" })).toBe(S);
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: R, stored: S, audience: "staff" }),
+      ).toBe(S);
+    },
+  );
+
+  it.each(["pickup", "pickup_ship"])(
+    "%s: an explicit SHIP stays SHIP ('Ship this order instead'); an explicit PICKUP is PICKUP",
+    async (mode) => {
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: S, stored: R, audience: "staff" }),
+      ).toBe(S);
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: S, stored: P, audience: "staff" }),
+      ).toBe(S);
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: P, stored: S, audience: "staff" }),
+      ).toBe(P);
+      expect(
+        await resolveFulfilPath(deps(mode), { explicit: P, stored: R, audience: "staff" }),
+      ).toBe(P);
+    },
+  );
+
+  it("the active resolver answers (not undefined) for a pickup business", async () => {
+    expect(await activeFulfilPath(deps("pickup"), { stored: R, audience: "staff" })).toBe(P);
+  });
+});
+
+describe("resolveFulfilPath: pickup mode (buyer)", () => {
+  it("pickup: PICKUP only; default PICKUP whatever the customer's stored path", async () => {
+    for (const stored of [R, S, null]) {
+      expect(await resolveFulfilPath(deps("pickup"), { stored, audience: "buyer" })).toBe(P);
+      expect(
+        await resolveFulfilPath(deps("pickup"), { explicit: P, stored, audience: "buyer" }),
+      ).toBe(P);
+    }
+  });
+
+  it.each([S, R])("pickup: a requested %s is 400 FULFIL_METHOD_NOT_OFFERED", async (explicit) => {
+    await expect(
+      resolveFulfilPath(deps("pickup"), { explicit, stored: R, audience: "buyer" }),
+    ).rejects.toMatchObject(refusal);
+  });
+
+  it("pickup_ship: PICKUP or SHIP honoured, default PICKUP", async () => {
+    expect(await resolveFulfilPath(deps("pickup_ship"), { stored: R, audience: "buyer" })).toBe(P);
+    expect(await resolveFulfilPath(deps("pickup_ship"), { stored: S, audience: "buyer" })).toBe(P);
+    expect(
+      await resolveFulfilPath(deps("pickup_ship"), { explicit: P, stored: R, audience: "buyer" }),
+    ).toBe(P);
+    expect(
+      await resolveFulfilPath(deps("pickup_ship"), { explicit: S, stored: R, audience: "buyer" }),
+    ).toBe(S);
+  });
+
+  it("pickup_ship: a requested ROUTE is 400 FULFIL_METHOD_NOT_OFFERED", async () => {
+    await expect(
+      resolveFulfilPath(deps("pickup_ship"), { explicit: R, stored: R, audience: "buyer" }),
+    ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe("resolveFulfilPath: a requested PICKUP is refused wherever the business does not offer it", () => {
+  it.each(["unset", "delivery", "both", "ship", "some-unknown-mode"])(
+    "staff, mode %s",
+    async (mode) => {
+      await expect(
+        resolveFulfilPath(deps(mode), { explicit: P, stored: R, audience: "staff" }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
+
+  it("staff, capability read failed or no feature-config service: still refused (a blip never opens PICKUP)", async () => {
+    await expect(
+      resolveFulfilPath(deps(new Error("db down")), { explicit: P, stored: R, audience: "staff" }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      resolveFulfilPath({ tenantId: "t1" }, { explicit: P, stored: R, audience: "staff" }),
+    ).rejects.toMatchObject(refusal);
+  });
+
+  it.each(["delivery", "both", "ship"])(
+    "buyer, mode %s (the portal offers a choice, PICKUP is not in it)",
+    async (mode) => {
+      await expect(
+        resolveFulfilPath(deps(mode), { explicit: P, stored: R, audience: "buyer" }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
+});
+
+describe("resolveFulfilPath: the buyer's requested path is IGNORED where the portal offers no choice", () => {
+  it("unset: exactly today's stored ?? ROUTE, whatever was requested (PICKUP included: no 400)", async () => {
+    for (const explicit of [R, S, P]) {
+      expect(
+        await resolveFulfilPath(deps("unset"), { explicit, stored: S, audience: "buyer" }),
+      ).toBe(S);
+      expect(
+        await resolveFulfilPath(deps("unset"), { explicit, stored: R, audience: "buyer" }),
+      ).toBe(R);
+      expect(
+        await resolveFulfilPath(deps("unset"), { explicit, stored: null, audience: "buyer" }),
+      ).toBe(R);
+    }
   });
 });
 

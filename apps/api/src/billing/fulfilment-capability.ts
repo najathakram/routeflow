@@ -61,6 +61,15 @@ export function deriveFulfilmentCapability(input: {
 }
 
 /**
+ * The capability a STORED `fulfilment_model` alone implies (counter sales unset, fleet assumed held): the
+ * order-path resolver (`orders/fulfil-path-resolver.ts`) asks only "which methods does this mode offer?".
+ * It goes through the ONE derivation here, so no other module derives a capability of its own.
+ */
+export function capabilityForMode(mode: string): FulfilmentCapability {
+  return deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true });
+}
+
+/**
  * The add-on keys a tenant effectively holds: its active rows, with overrides absolute (GRANT
  * surfaces a key, DENY hides one; only RequireAddon-gated keys, Opus review of 8130b204 item 6).
  * Shared by `me/addons` and the capability answer, so "fleet" can never disagree with AddonGuard.
