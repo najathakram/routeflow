@@ -62,7 +62,11 @@ describe("OrdersService.changeStatus — PICKUP order to DELIVERED", () => {
 
   it("with a pending mirror draft it reconciles that draft and creates no second invoice", async () => {
     const { invoices } = await run("OUT_FOR_DELIVERY", true);
-    expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
+    // #3216: every DELIVERED reconcile (pickup included) treats a lone short draft as a partial.
+    expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
+      basis: "order",
+      shortDraftIsPartial: true,
+    });
     expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
     expect(invoices.send).not.toHaveBeenCalled();
   });
