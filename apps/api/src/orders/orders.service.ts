@@ -22,6 +22,7 @@ import {
   attachPaymentCreditNotes,
   ORDER_CREDIT_PAYMENT_SELECT,
 } from "./order-payment-credit-notes";
+import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -204,6 +205,7 @@ import {
   settledAtShipment,
 } from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
+import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -576,6 +578,7 @@ export class OrdersService implements OnApplicationBootstrap {
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
+    await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
     // Customer-facing fields only for the customer: no staff-only order/line fields, and no DRAFT
     // invoice in the order's invoice list (common/staff-only-fields.ts). Staff get the order as read.
@@ -2773,10 +2776,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
         ...(messagingEvent === NotificationEvent.ORDER_CONFIRMED
-          ? {
-              deliveryDate: formatDate(order.requestedDeliveryDate),
-              orderTotal: formatMoney(updated.total),
-            }
+          ? orderConfirmedVars(order, updated.total) // B1127: SHIP wording, no dangling date
           : {}),
         ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
         ...(messagingEvent === NotificationEvent.DELIVERED
