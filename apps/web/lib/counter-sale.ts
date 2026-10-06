@@ -195,6 +195,17 @@ export function isCounterSaleNotFound(err: unknown): boolean {
   return res?.status === 404 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_NOT_FOUND;
 }
 
+/** The one copy for a voided / cancelled counter sale (409 COUNTER_SALE_VOIDED). FINAL: the till never retries it. */
+export const COUNTER_SALE_VOIDED_COPY = "Voided — start a new sale";
+
+/** 409 COUNTER_SALE_VOIDED: the sale was voided or cancelled after it was rung. */
+export function isCounterSaleVoided(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+  )?.response;
+  return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_VOIDED;
+}
+
 /** The by-key lookup's 409 COUNTER_SALE_INCOMPLETE: the sale was half-written, so re-POST with the SAME key to finish it. */
 export function isCounterSaleIncomplete(err: unknown): boolean {
   const res = (
@@ -216,6 +227,8 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_VOIDED)
+    return COUNTER_SALE_VOIDED_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409)

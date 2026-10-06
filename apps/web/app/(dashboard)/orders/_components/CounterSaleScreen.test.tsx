@@ -570,6 +570,38 @@ describe("CounterSaleScreen: API contract wiring", () => {
         },
       );
 
+      const voided = {
+        response: { status: 409, data: { code: "COUNTER_SALE_VOIDED", message: "RAW" } },
+      };
+
+      it("a by-key 409 COUNTER_SALE_VOIDED is FINAL: the exact copy, unlocked, key dropped, and NO POST", async () => {
+        await goUnknown({ response: { status: 503 } });
+        lookupAsync.mockRejectedValueOnce(voided);
+        check();
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(screen.getByRole("alert")).toHaveTextContent("Voided — start a new sale");
+        expect(screen.getByRole("alert").textContent).toBe("Voided — start a new sale");
+        expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+        expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+        expect(mutateAsync).toHaveBeenCalledTimes(1); // no re-POST
+        expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "$20" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0));
+      });
+
+      it("a Try again answered 409 COUNTER_SALE_VOIDED is final too (an unknown attempt unlocks)", async () => {
+        await goUnknown({ response: { status: 503 } });
+        mutateAsync.mockRejectedValueOnce(voided);
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(screen.getByRole("alert")).toHaveTextContent("Voided — start a new sale");
+        expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+        expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+        expect(mutateAsync).toHaveBeenCalledTimes(2);
+      });
+
       describe("a by-key 409 COUNTER_SALE_INCOMPLETE (half-written): re-POST the SAME attempt once", () => {
         const incomplete = {
           response: { status: 409, data: { code: "COUNTER_SALE_INCOMPLETE" } },
@@ -598,6 +630,25 @@ describe("CounterSaleScreen: API contract wiring", () => {
           expect(keyOfCall(1)).toBe(keyOfCall(0));
           expect(lookupAsync).toHaveBeenCalledTimes(1); // once, not a loop
           expect(mutateAsync).toHaveBeenCalledTimes(2);
+        });
+
+        it("then a 409 COUNTER_SALE_VOIDED on the re-POST is FINAL: the exact copy, unlocked, key dropped, no further retry", async () => {
+          await goUnknown({ response: { status: 503 } });
+          lookupAsync.mockRejectedValueOnce(incomplete);
+          mutateAsync.mockRejectedValueOnce(voided);
+          check();
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+          await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+          expect(screen.getByRole("alert")).toHaveTextContent("Voided — start a new sale");
+          expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+          expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+          expect(keyOfCall(1)).toBe(keyOfCall(0));
+          expect(lookupAsync).toHaveBeenCalledTimes(1);
+          expect(mutateAsync).toHaveBeenCalledTimes(2); // never a third send
+          fireEvent.click(screen.getByRole("button", { name: "$20" }));
+          fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+          await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
+          expect(keyOfCall(2)).not.toBe(keyOfCall(0)); // the key was dropped: a NEW sale
         });
 
         it("then a refusal on the re-POST (a 403) also stays locked", async () => {
