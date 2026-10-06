@@ -298,6 +298,17 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
       expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
       expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
     });
+
+    it("control (blockCredits off, a ROUTE order): an unlisted add still saves, no refusal", async () => {
+      seed(order({ fulfillPath: "ROUTE", shippedAt: null }), false);
+      await expect(edit([keepA, fee])).resolves.toBeDefined();
+    });
+
+    it("control (blockCredits off, a ROUTE order): an unlisted qty change still saves, no refusal", async () => {
+      seed(order({ fulfillPath: "ROUTE", shippedAt: null }), true);
+      await expect(edit([keepA, { ...U, qty: 3 }])).resolves.toBeDefined();
+      await expect(edit([keepA, { ...U, qty: 1 }])).resolves.toBeDefined();
+    });
   });
 
   it("control: an UNSET-mode business is unchanged (an increase goes through)", async () => {
