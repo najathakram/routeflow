@@ -5,7 +5,10 @@ import {
   changeDue,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   counterSaleErrorCopy,
+  COUNTER_SALE_CHANGED_COPY,
   COUNTER_SALE_VOIDED_COPY,
+  finalCounterSaleCopy,
+  isCounterSaleChanged,
   isCounterSaleIncomplete,
   isCounterSaleVoided,
   isCounterSaleNotFound,
@@ -284,6 +287,32 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
       null,
     ])
       expect(isCounterSaleVoided(err)).toBe(false);
+  });
+  it("a 409 COUNTER_SALE_CHANGED is FINAL: the exact copy, definitive, and only that code", () => {
+    const changed = {
+      response: { status: 409, data: { code: "COUNTER_SALE_CHANGED", message: "RAW" } },
+    };
+    expect(COUNTER_SALE_CHANGED_COPY).toBe(
+      "This sale was changed after it was rung — check with the office.",
+    );
+    expect(isCounterSaleChanged(changed)).toBe(true);
+    expect(counterSaleErrorCopy(changed)).toBe(COUNTER_SALE_CHANGED_COPY);
+    expect(isDefinitiveCounterSaleRefusal(changed)).toBe(true);
+    expect(finalCounterSaleCopy(changed)).toBe(COUNTER_SALE_CHANGED_COPY);
+    for (const err of [
+      { response: { status: 409 } },
+      { response: { status: 409, data: { code: "COUNTER_SALE_VOIDED" } } },
+      { response: { status: 500, data: { code: "COUNTER_SALE_CHANGED" } } },
+      null,
+    ])
+      expect(isCounterSaleChanged(err)).toBe(false);
+  });
+  it("finalCounterSaleCopy: voided and changed only, null for everything else", () => {
+    expect(
+      finalCounterSaleCopy({ response: { status: 409, data: { code: "COUNTER_SALE_VOIDED" } } }),
+    ).toBe(COUNTER_SALE_VOIDED_COPY);
+    for (const err of [{ response: { status: 409 } }, { response: { status: 503 } }, null])
+      expect(finalCounterSaleCopy(err)).toBeNull();
   });
   it("any OTHER 409 stays a definitive refusal", () => {
     for (const data of [undefined, {}, { code: "WALK_IN_OPEN_CREDIT" }]) {

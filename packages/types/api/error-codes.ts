@@ -379,6 +379,11 @@ export const API_ERROR_CODES = {
    * A re-POST never resurrects or re-charges it.
    */
   COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
+  /**
+   * PLACEHOLDER until #3211's own entry lands (byte-align then). 409 from GET .../by-key/:key: the sale exists but staff
+   * changed it after it was rung. FINAL for a till: unlock, drop the key, never retry or re-POST.
+   */
+  COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /**

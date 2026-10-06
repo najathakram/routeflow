@@ -206,6 +206,25 @@ export function isCounterSaleVoided(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_VOIDED;
 }
 
+/** The one copy for a sale staff changed after it was rung (409 COUNTER_SALE_CHANGED). FINAL: the till never retries it. */
+export const COUNTER_SALE_CHANGED_COPY =
+  "This sale was changed after it was rung — check with the office.";
+
+/** 409 COUNTER_SALE_CHANGED: the sale exists but staff changed it after it was rung. */
+export function isCounterSaleChanged(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+  )?.response;
+  return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_CHANGED;
+}
+
+/** The fixed copy of a FINAL answer (voided / changed after it was rung), else null: such a sale is never retried. */
+export function finalCounterSaleCopy(err: unknown): string | null {
+  if (isCounterSaleVoided(err)) return COUNTER_SALE_VOIDED_COPY;
+  if (isCounterSaleChanged(err)) return COUNTER_SALE_CHANGED_COPY;
+  return null;
+}
+
 /** The by-key lookup's 409 COUNTER_SALE_INCOMPLETE: the sale was half-written, so re-POST with the SAME key to finish it. */
 export function isCounterSaleIncomplete(err: unknown): boolean {
   const res = (
@@ -227,8 +246,8 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
-  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_VOIDED)
-    return COUNTER_SALE_VOIDED_COPY;
+  const final = finalCounterSaleCopy(err);
+  if (final) return final;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409)

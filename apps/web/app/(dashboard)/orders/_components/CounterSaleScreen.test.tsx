@@ -591,6 +591,37 @@ describe("CounterSaleScreen: API contract wiring", () => {
         expect(keyOfCall(1)).not.toBe(keyOfCall(0));
       });
 
+      const CHANGED_COPY = "This sale was changed after it was rung — check with the office.";
+      const changed = {
+        response: { status: 409, data: { code: "COUNTER_SALE_CHANGED", message: "RAW" } },
+      };
+
+      it("a by-key 409 COUNTER_SALE_CHANGED is FINAL: the exact copy, unlocked, key dropped, and NO POST", async () => {
+        await goUnknown({ response: { status: 503 } });
+        lookupAsync.mockRejectedValueOnce(changed);
+        check();
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(screen.getByRole("alert").textContent).toBe(CHANGED_COPY);
+        expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+        expect(mutateAsync).toHaveBeenCalledTimes(1); // no re-POST
+        expect(lookupAsync).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "$20" }));
+        fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+        await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+        expect(keyOfCall(1)).not.toBe(keyOfCall(0)); // the key was dropped: a NEW sale
+      });
+
+      it("a Try again answered 409 COUNTER_SALE_CHANGED is final too (an unknown attempt unlocks)", async () => {
+        await goUnknown({ response: { status: 503 } });
+        mutateAsync.mockRejectedValueOnce(changed);
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+        await waitFor(() => expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull());
+        expect(screen.getByRole("alert").textContent).toBe(CHANGED_COPY);
+        expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+        expect(mutateAsync).toHaveBeenCalledTimes(2);
+      });
+
       it("a Try again answered 409 COUNTER_SALE_VOIDED is final too (an unknown attempt unlocks)", async () => {
         await goUnknown({ response: { status: 503 } });
         mutateAsync.mockRejectedValueOnce(voided);

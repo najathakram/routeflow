@@ -25,15 +25,14 @@ import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
-  COUNTER_SALE_VOIDED_COPY,
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
   cartTotals,
   changeDue,
   counterSaleErrorCopy,
+  finalCounterSaleCopy,
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
-  isCounterSaleVoided,
   judgeRecoveredSale,
   isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
@@ -257,11 +256,12 @@ export function CounterSaleScreen() {
       setOutcomeUnknown(false);
       return res;
     } catch (err) {
-      if (isCounterSaleVoided(err)) {
-        // FINAL (even for an unknown attempt): the sale was voided after it was rung. Drop the key, unlock, never retry.
+      const finalCopy = finalCounterSaleCopy(err);
+      if (finalCopy) {
+        // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
         attemptRef.current = null;
         setOutcomeUnknown(false);
-        setError(COUNTER_SALE_VOIDED_COPY);
+        setError(finalCopy);
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         setOutcomeUnknown(false);
@@ -366,11 +366,12 @@ export function CounterSaleScreen() {
         method: attempt.dto.payment.method,
       });
     } catch (err) {
-      if (isCounterSaleVoided(err)) {
-        // FINAL: voided or cancelled after it was rung. Unlock, drop the key, show the one copy, and NEVER re-POST.
+      const finalCopy = finalCounterSaleCopy(err);
+      if (finalCopy) {
+        // FINAL: voided or changed after it was rung. Unlock, drop the key, show the one copy, and NEVER re-POST.
         attemptRef.current = null;
         setOutcomeUnknown(false);
-        setError(COUNTER_SALE_VOIDED_COPY);
+        setError(finalCopy);
         refocus();
       } else if (isCounterSaleNotFound(err)) {
         attemptRef.current = null;
