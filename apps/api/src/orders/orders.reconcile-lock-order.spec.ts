@@ -124,8 +124,17 @@ function expectOrderLockFirst(log: ReturnType<typeof createOpLogTx>["log"]) {
   expect(log[0]?.op).toBe("$queryRaw");
   expect(log[0]?.sql).toMatch(/^SELECT id FROM "Order" WHERE id = \?.*FOR UPDATE$/);
   expect(log[0]?.values?.[0]).toBe("ord-1");
-  // Exactly one row lock: the credit code itself takes none.
-  expect(log.filter((e) => e.op === "$queryRaw" || e.op === "$executeRaw")).toHaveLength(1);
+  // B1052: the credit code now takes its own row locks too (settle: this Order again — a no-op on
+  // a row the tx holds — then its invoices, then its notes; restore: the note), so a second
+  // spender of the same note waits instead of double-spending. They all come AFTER this Order
+  // lock, they only ever lock Order / Invoice / CreditNote rows, and the only Order is this one.
+  const locks = log.filter((e) => e.op === "$queryRaw" || e.op === "$executeRaw");
+  for (const lock of locks) {
+    expect(lock.sql).toMatch(/FROM "(Order|Invoice|CreditNote)"/);
+    if (/^SELECT id FROM "Order" WHERE id = \?/.test(lock.sql ?? "")) {
+      expect(lock.values?.[0]).toBe("ord-1");
+    }
+  }
 }
 
 describe("reconcileOrderAfterEdit — the credit-sync tx takes Order FOR UPDATE first (SA-218 (2), #2116)", () => {
