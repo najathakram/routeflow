@@ -76,10 +76,16 @@ describe("FulfilmentCapabilityService.forBuyer", () => {
     });
   });
 
-  it("never reads counter_sales (it never changes the portal fields)", async () => {
+  it("counter_sales never changes the buyer answer: read through the shared readFulfilmentInputs, derived as unset", async () => {
     const { svc, getEffectiveMode } = makeService({ mode: "ship" });
-    await svc.forBuyer("t1");
-    expect(getEffectiveMode.mock.calls.map((c) => c[1])).toEqual(["fulfilment_model"]);
+    const base = await svc.forBuyer("t1");
+    expect(getEffectiveMode).toHaveBeenCalledWith("t1", "fulfilment_model");
+    // A failing counter_sales read (fulfilment_model still answers) leaves the buyer body unchanged.
+    getEffectiveMode.mockImplementation(async (_t: string, key: string) => {
+      if (key === "counter_sales") throw new Error("db down");
+      return "ship";
+    });
+    expect(await svc.forBuyer("t1")).toEqual(base);
   });
 
   it("a failed mode read is unset; a failed fleet read is the 503 FEATURES_UNAVAILABLE", async () => {

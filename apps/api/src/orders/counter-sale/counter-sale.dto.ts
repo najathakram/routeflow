@@ -1,0 +1,57 @@
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from "class-validator";
+import { Type } from "class-transformer";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
+
+/** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
+export const COUNTER_SALE_METHODS = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
+
+/** `CounterSaleItem` of the shared contract. `priceReason` maps to OrderItemDto.overrideReason. */
+export class CounterSaleItemDto {
+  @IsUUID() productId: string;
+  @IsOptional() @IsInt() @Min(1) @Max(100_000) qty?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
+  @IsOptional() @IsString() @MaxLength(200) priceReason?: string;
+}
+
+/** `CounterSalePayment`: `amount` is cash tendered / amount paid; omitted = the exact balance. */
+export class CounterSalePaymentDto {
+  @IsIn(COUNTER_SALE_METHODS) method: (typeof COUNTER_SALE_METHODS)[number];
+  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) amount?: number;
+  @IsOptional() @IsString() @MaxLength(100) reference?: string;
+}
+
+/** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */
+export class CounterSaleDto {
+  @IsOptional() @IsUUID() customerId?: string;
+  @IsOptional() @IsBoolean() walkIn?: boolean;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => CounterSaleItemDto)
+  items: CounterSaleItemDto[];
+
+  @ValidateNested()
+  @Type(() => CounterSalePaymentDto)
+  payment: CounterSalePaymentDto;
+
+  @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
+}

@@ -1,6 +1,7 @@
 import type { FulfilmentCapability, FulfilmentMethod } from "@routeflow/types";
 import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
+import type { FeatureConfigService } from "./feature-config.service";
 import { featureDefByKey, gateVia } from "./feature-registry";
 
 /**
@@ -92,4 +93,78 @@ export async function isFleetHeld(
 ): Promise<boolean> {
   const held = await heldAddonKeys(addonService, featureOverrides, tenantId);
   return FLEET_KEYS.some((k) => held.has(k));
+}
+
+/** The services the tenant-level capability read needs (the same three `GET /tenants/me/features` uses). */
+export interface FulfilmentCapabilityDeps {
+  featureConfig: Pick<FeatureConfigService, "getEffectiveMode">;
+  addonService: Pick<AddonService, "getActiveAddons">;
+  featureOverrides: Pick<FeatureOverrideService, "allActive">;
+}
+
+/** What the capability derivation reads, each read answered on its own so a caller keeps ITS failure rule. */
+export interface FulfilmentInputs {
+  fulfilmentMode: string;
+  counterSales: string;
+  /** null = the fleet read failed (the caller decides: 503 on the tenants endpoint, counter off on the gate). */
+  fleet: boolean | null;
+  /** true when either mode read failed (that mode then reads as "unset"). */
+  modesFailed: boolean;
+}
+
+/**
+ * The ONE place the capability's inputs are read (SA-666a availability is applied ONCE, inside
+ * deriveFulfilmentCapability) — `getEffectiveMode` for `fulfilment_model` and
+ * `counter_sales`, and `isFleetHeld` — shared by the counter gate and `GET /tenants/me/features`. It never
+ * throws: a failed mode read answers "unset" (+ `modesFailed`), a failed fleet read answers `null`, so each
+ * caller applies its own pinned failure behaviour to the same read.
+ */
+export async function readFulfilmentInputs(
+  deps: FulfilmentCapabilityDeps,
+  tenantId: string,
+): Promise<FulfilmentInputs> {
+  let modesFailed = false;
+  const mode = (key: string) =>
+    deps.featureConfig.getEffectiveMode(tenantId, key).then(
+      (m) => m,
+      () => {
+        modesFailed = true;
+        return "unset";
+      },
+    );
+  const [fulfilmentMode, counterSales, fleet] = await Promise.all([
+    mode("fulfilment_model"),
+    mode("counter_sales"),
+    isFleetHeld(deps.addonService, deps.featureOverrides, tenantId).then(
+      (f): boolean | null => f,
+      () => null,
+    ),
+  ]);
+  return { fulfilmentMode, counterSales, fleet, modesFailed };
+}
+
+/** The derivation over {@link readFulfilmentInputs}'s answer (a null fleet reads as false). */
+export function capabilityFromInputs(inputs: FulfilmentInputs): FulfilmentCapability {
+  return deriveFulfilmentCapability({
+    mode: inputs.fulfilmentMode,
+    counterSales: inputs.counterSales,
+    fleet: inputs.fleet ?? false,
+  });
+}
+
+/**
+ * The tenant-level capability for server-side rules (the counter-sale gate): STRICT. A null tenant or ANY
+ * failed read (a mode, the fleet, the overrides) answers the "unset" capability (counter "off"): a failed
+ * read never blocks the caller and never guesses "on".
+ */
+export async function readFulfilmentCapability(
+  deps: FulfilmentCapabilityDeps,
+  tenantId: string | null,
+): Promise<FulfilmentCapability> {
+  const off = () =>
+    deriveFulfilmentCapability({ mode: "unset", counterSales: "unset", fleet: false });
+  if (!tenantId) return off();
+  const inputs = await readFulfilmentInputs(deps, tenantId);
+  if (inputs.modesFailed || inputs.fleet === null) return off();
+  return capabilityFromInputs(inputs);
 }
