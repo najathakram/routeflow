@@ -1805,8 +1805,6 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      // A staff request wins over the customer's default (orders.fulfil-path-create.spec.ts); a BUYER's is
-      // ignored where the portal offers no choice (no capability bound = unset), so the default stands.
       it("a buyer's requested dto.fulfillPath is ignored: the customer's own default stands", async () => {
         tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
