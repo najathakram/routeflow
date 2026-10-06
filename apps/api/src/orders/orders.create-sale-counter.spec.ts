@@ -59,6 +59,15 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(typeof create.mock.calls[0][2]!.onReplay).toBe("function");
   });
 
+  it("sale.counterSale reaches create() as counterSale: true, and is absent otherwise (SA-672e)", async () => {
+    const a = await setup();
+    await a.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
+    expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, counterSale: true });
+    const b = await setup();
+    await b.h.service.createSale(dto, operatorPayload as never, { fulfillPath: "PICKUP" as never });
+    expect(b.create.mock.calls[0][2]).not.toHaveProperty("counterSale");
+  });
+
   it("suppressInvoiceNotify sends the invoice with { suppressNotify: true } (walk-in: no INVOICE_SENT email)", async () => {
     const { h, invoices } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { suppressInvoiceNotify: true });
@@ -137,20 +146,70 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
       expect(out).toMatchObject({ id: "inv-base" });
     });
 
-    it("a replayed order that was since CANCELLED is a 409, not a resumed sale", async () => {
-      const { h, invoices, setReplayed } = await setup("CANCELLED");
-      setReplayed(true);
-      const e = await h.service.createSale(keyed, operatorPayload as never).then(
+    const errorOf = (p: Promise<unknown>) =>
+      p.then(
         () => null,
         (err) => err,
       );
+
+    it("a replayed order that was since CANCELLED is a definitive 409 COUNTER_SALE_VOIDED: nothing is written or re-charged", async () => {
+      const { h, invoices, setReplayed } = await setup("CANCELLED");
+      setReplayed(true);
+      const e = await errorOf(h.service.createSale(keyed, operatorPayload as never));
       expect(e).toBeInstanceOf(ConflictException);
-      // The sale EXISTS: a client that reads every 409 as "nothing was charged" would re-ring it as a double
-      // sale, so this conflict carries its own code (an unknown outcome, not a clean refusal).
-      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_ORDER_CHANGED" });
+      expect(e.getResponse()).toMatchObject({
+        code: "COUNTER_SALE_VOIDED",
+        message: "This sale was voided after it was rung — start a new sale.",
+      });
       expect(h.prisma.order.update).not.toHaveBeenCalled();
       expect(invoices.createInvoiceFromOrder).not.toHaveBeenCalled();
+      expect(invoices.send).not.toHaveBeenCalled();
     });
+
+    it("a replayed order whose invoices are ALL VOID / WRITTEN_OFF is COUNTER_SALE_VOIDED: no 2nd invoice, no send, no status write", async () => {
+      const { h, invoices, setReplayed } = await setup("DELIVERED");
+      setReplayed(true);
+      h.prisma.invoice.findMany.mockResolvedValue([{ status: "VOID" }, { status: "WRITTEN_OFF" }]);
+      const e = await errorOf(h.service.createSale(keyed, operatorPayload as never));
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+      expect(h.prisma.order.update).not.toHaveBeenCalled();
+      expect(invoices.createInvoiceFromOrder).not.toHaveBeenCalled();
+      expect(invoices.send).not.toHaveBeenCalled();
+    });
+
+    it("a replay with a LIVE invoice still resumes (one voided sibling does not void the sale)", async () => {
+      const { h, invoices, setReplayed } = await setup("DELIVERED");
+      setReplayed(true);
+      h.prisma.invoice.findMany.mockResolvedValue([{ status: "VOID" }, { status: "SENT" }]);
+      invoices.createInvoiceFromOrder.mockResolvedValue([
+        { id: "inv-1", status: "SENT", createdAt: new Date(1) },
+      ]);
+      await expect(h.service.createSale(keyed, operatorPayload as never)).resolves.toMatchObject({
+        id: "inv-1",
+      });
+    });
+
+    it("a replay with NO invoice rows resumes (the first attempt stopped before the invoice step)", async () => {
+      const { h, invoices, setReplayed } = await setup("PENDING");
+      setReplayed(true);
+      h.prisma.invoice.findMany.mockResolvedValue([]);
+      invoices.createInvoiceFromOrder.mockResolvedValue([
+        { id: "inv-1", status: "DRAFT", createdAt: new Date(1) },
+      ]);
+      await h.service.createSale(keyed, operatorPayload as never);
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"])(
+      "any OTHER unexpected status (%s) stays the unknown-outcome COUNTER_SALE_ORDER_CHANGED",
+      async (status) => {
+        const { h, invoices, setReplayed } = await setup(status);
+        setReplayed(true);
+        const e = await errorOf(h.service.createSale(keyed, operatorPayload as never));
+        expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_ORDER_CHANGED" });
+        expect(invoices.createInvoiceFromOrder).not.toHaveBeenCalled();
+      },
+    );
 
     it("a failed invoice step leaves DELIVERED + no invoice; the retry with the same key finishes it, one DELIVERED write, one send", async () => {
       const { h, invoices, setReplayed } = await setup("PENDING");

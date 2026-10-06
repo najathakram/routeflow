@@ -6,7 +6,12 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { LineComponentView, TripEligibilityRow, TripOrigin } from "@routeflow/types";
+import type {
+  LineComponentView,
+  OrderCancelBlockedReason,
+  TripEligibilityRow,
+  TripOrigin,
+} from "@routeflow/types";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -134,6 +139,8 @@ export interface AdminOrder {
    * order has one — not optional, just like the API's `@default(ROUTE)`.
    */
   fulfillPath: "ROUTE" | "SHIP";
+  /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   createdAt: string;
   customer?: {
     id: string;
@@ -380,6 +387,8 @@ export interface AdminInvoice {
   /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
    *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
   pendingMirror?: boolean;
+  /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
+  pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
    *  the API already returned, previously untyped (needed to hydrate the edit
    *  screen and render Reference/Subject on the detail). */

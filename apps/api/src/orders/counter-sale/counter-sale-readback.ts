@@ -105,11 +105,3 @@ export function buildCounterSaleResponse(input: {
     ...(replayed ? { replayed: true } : {}),
   };
 }
-
-/**
- * A counter sale is recognised by its SHAPE, because no durable marker exists on Order (no source/kind
- * column, and nothing new is persisted): a PICKUP order created with skipAutoMerge. Only the counter writes
- * both (PICKUP is not a writable DTO value; a buyer's pickup order never skips the merge).
- */
-export const isCounterSaleOrder = (o: { fulfillPath?: string; skipAutoMerge?: boolean }) =>
-  o.fulfillPath === "PICKUP" && o.skipAutoMerge === true;

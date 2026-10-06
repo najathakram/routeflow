@@ -5,7 +5,17 @@
  * fulfillment-aware relabeling (plan §WP11) can be pinned against
  * `canTransitionOrder` (`lib/order-status-flow.ts`) without mounting the screen.
  */
+import type { OrderCancelBlockedReason } from "@routeflow/types";
 import type { OrderStatus } from "./api/orders";
+
+/** Fixed copy for a cancel the server refuses (ORDER_WITH_CARRIER_NO_CANCEL): the web's exact words. */
+export const WITH_CARRIER_COPY =
+  "This order is already with the carrier. Use a return instead of cancelling.";
+
+/** The note shown in place of Cancel for a `cancelBlockedReason` (the server's answer), or null. */
+export function cancelBlockedNote(reason?: OrderCancelBlockedReason | null): string | null {
+  return reason === "WITH_CARRIER" ? WITH_CARRIER_COPY : null;
+}
 
 export interface StatusAction {
   label: string;
@@ -185,8 +195,11 @@ function routeStatusActions(current: OrderStatus): StatusAction[] {
 export function statusActions(
   status: OrderStatus,
   fulfillPath: "ROUTE" | "SHIP" = "ROUTE",
+  /** `GET /orders/:id`'s `cancelBlockedReason`: the server's one answer, never derived from the status. */
+  cancelBlockedReason?: OrderCancelBlockedReason | null,
 ): StatusAction[] {
-  const actions = routeStatusActions(status);
+  const all = routeStatusActions(status);
+  const actions = cancelBlockedReason ? all.filter((a) => a.toStatus !== "CANCELLED") : all;
   if (fulfillPath !== "SHIP") return actions;
   return actions
     .filter((a) => a.toStatus !== "PARTIALLY_DELIVERED")

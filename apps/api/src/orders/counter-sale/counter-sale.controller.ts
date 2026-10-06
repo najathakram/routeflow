@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Headers, Param, Post, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Query,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../../auth/guards/jwt-auth.guard";
@@ -6,8 +16,10 @@ import { RolesGuard } from "../../auth/guards/roles.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { requireIdempotencyKey } from "./required-idempotency-key";
-import { CounterSaleDto } from "./counter-sale.dto";
+import { COUNTER_SALE_METHODS, CounterSaleDto } from "./counter-sale.dto";
+import type { CounterPaymentMethod } from "./counter-sale-payment";
 import { CounterSaleService } from "./counter-sale.service";
 
 /**
@@ -30,13 +42,26 @@ export class CounterSaleController {
   /**
    * A DEFINITIVE answer about a key (the unknown-outcome rule of the till): the sale this key rang, read back
    * from storage with `replayed: true`, or 404 COUNTER_SALE_NOT_FOUND. NOT gated by the counter capability
-   * (an answer must be possible even if the gate flipped off) and writes nothing.
+   * (an answer must be possible even if the gate flipped off) and writes nothing. The optional `?method=` is the
+   * method the till rang; with it POST's own `paymentRecorded` rule applies to it.
    */
   @Get("counter-sale/by-key/:key")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  async byKey(@Param("key") rawKey: string) {
-    return this.counterSale.byKey(this.normalizeKey(rawKey));
+  async byKey(@Param("key") rawKey: string, @Query("method") rawMethod?: string) {
+    return this.counterSale.byKey(this.normalizeKey(rawKey), this.parseMethod(rawMethod));
+  }
+
+  /** The method the till rang (optional): exactly one of the DTO's methods, else a 400 (never guessed). */
+  private parseMethod(raw: string | undefined): CounterPaymentMethod | undefined {
+    if (raw === undefined) return undefined;
+    if (!(COUNTER_SALE_METHODS as readonly string[]).includes(raw)) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.COUNTER_SALE_METHOD_INVALID,
+        message: `method must be one of ${COUNTER_SALE_METHODS.join(", ")}`,
+      });
+    }
+    return raw as CounterPaymentMethod;
   }
 
   @Post("counter-sale")

@@ -30,7 +30,7 @@ jest.mock("../../common/db-locks", () => ({
   },
 }));
 
-import { ConflictException, BadRequestException } from "@nestjs/common";
+import { ConflictException, BadRequestException, NotFoundException } from "@nestjs/common";
 import { LockTimeoutError, LockUnavailableError } from "../../common/db-locks";
 import { Test } from "@nestjs/testing";
 import { CounterSaleService } from "./counter-sale.service";
@@ -188,6 +188,15 @@ describe("CounterSaleService.ring", () => {
       reader.get.mockResolvedValue(cap(counter));
       await expect(service.ring(named({ method: "CASH" }) as never, staff)).resolves.toBeDefined();
       expect(reader.get).toHaveBeenCalledWith("test-tenant");
+    });
+
+    it("the counter POST marks the order as a counter sale (SA-672e: counterSale: true into createSale)", async () => {
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(createSale).toHaveBeenCalledWith(
+        expect.anything(),
+        staff,
+        expect.objectContaining({ counterSale: true }),
+      );
     });
 
     it("a carrier tenant (no fleet, counter optional) still rings PICKUP counter sales", async () => {
@@ -862,13 +871,15 @@ describe("CounterSaleService.ring", () => {
   });
 
   describe("byKey (GET /orders/counter-sale/by-key/:key): a definitive answer about a key", () => {
-    // No durable counter marker exists on Order, so a counter sale is recognised by its SHAPE: a PICKUP order
-    // created with skipAutoMerge (only the counter writes both; a buyer's pickup order never skips the merge).
+    // SA-672e: a counter sale is recognised by the durable Order.counterSale marker (set only by the counter
+    // POST), not by its shape: skipAutoMerge/PICKUP are written by other paths too.
     const sale = {
       id: "ord-1",
       orderNumber: "ORD-1",
       fulfillPath: "PICKUP",
       skipAutoMerge: true,
+      counterSale: true,
+      status: "DELIVERED",
       customerId: "cust-1",
     };
 
@@ -957,6 +968,82 @@ describe("CounterSaleService.ring", () => {
       });
     });
 
+    // S2: the till says which method it rang (?method=); POST's EXACT paymentRecorded rule then applies to it.
+    describe("byKey(key, method): the till's own method decides, by POST's rule", () => {
+      it.each(["CASH", "CARD", "CHECK"] as const)(
+        "a %s sale whose tender failed completely: paymentRecorded:false + COUNTER_PAYMENT_NOT_RECORDED, never ON_ACCOUNT/true",
+        async (method) => {
+          findReplayCandidateByKey.mockResolvedValue(sale);
+          invoices = [inv("inv-1", 37.25)];
+          const r = await service.byKey("k1", method);
+          expect(r).toMatchObject({
+            method,
+            paid: 0,
+            balanceDue: 37.25,
+            paymentRecorded: false,
+            paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+          });
+          expect(r.method).not.toBe("ON_ACCOUNT");
+        },
+      );
+
+      it("ON_ACCOUNT: recorded with the balance owing (nothing was asked of the till)", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [inv("inv-1", 37.25)];
+        expect(await service.byKey("k1", "ON_ACCOUNT")).toMatchObject({
+          method: "ON_ACCOUNT",
+          balanceDue: 37.25,
+          paymentRecorded: true,
+        });
+      });
+
+      it.each([
+        ["CASH", "CASH"],
+        ["CARD", "CREDIT_CARD"],
+        ["CHECK", "CHECK"],
+      ] as const)("a %s sale with its tender stored is recorded", async (method, stored) => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [
+          inv("inv-1", 37.25, [{ id: "p0", amount: 37.25, method: stored, status: "PAID" }]),
+        ];
+        expect(await service.byKey("k1", method)).toMatchObject({
+          method,
+          paid: 37.25,
+          balanceDue: 0,
+          paymentRecorded: true,
+        });
+      });
+
+      it("the rule is POST's: a stored partial tender reads recorded when the till rang that method", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [
+          inv("inv-1", 37.25, [{ id: "p0", amount: 20, method: "CASH", status: "PAID" }]),
+        ];
+        expect(await service.byKey("k1", "CASH")).toMatchObject({
+          paid: 20,
+          balanceDue: 17.25,
+          paymentRecorded: true,
+        });
+      });
+
+      it("byKey with ?method equals the POST body that rang it (except replayed:true and change)", async () => {
+        invoices = [inv("inv-1", 37.25)];
+        const posted = await service.ring(named({ method: "CARD" }) as never, staff, "k-card");
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        const { replayed: _r, change: _c, ...expected } = posted as any;
+        expect(await service.byKey("k-card", "CARD")).toEqual({ ...expected, replayed: true });
+      });
+
+      it("without ?method today's behaviour is kept (derived from storage)", async () => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = [inv("inv-1", 37.25)];
+        expect(await service.byKey("k1")).toMatchObject({
+          method: "ON_ACCOUNT",
+          paymentRecorded: true,
+        });
+      });
+    });
+
     it("the tender method maps Prisma CREDIT_CARD back to CARD", async () => {
       findReplayCandidateByKey.mockResolvedValue(sale);
       invoices = [
@@ -965,8 +1052,12 @@ describe("CounterSaleService.ring", () => {
       expect((await service.byKey("k1")).method).toBe("CARD");
     });
 
-    it("a PICKUP order that is not a counter sale (no skipAutoMerge: a buyer's pickup order) is a 404", async () => {
-      findReplayCandidateByKey.mockResolvedValue({ ...sale, skipAutoMerge: false });
+    it("a buyer's PICKUP order (no counterSale, no skipAutoMerge) is a 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({
+        ...sale,
+        skipAutoMerge: false,
+        counterSale: false,
+      });
       const e = await service.byKey("k1").then(
         () => null,
         (err) => err,
@@ -974,10 +1065,117 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it("an invoice-less order is not a finished sale: refused as an unknown outcome, never a guess", async () => {
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      invoices = [];
-      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 500 });
+    it("no invoice rows at all on a PENDING or DELIVERED order: COUNTER_SALE_INCOMPLETE (re-POST finishes it)", async () => {
+      for (const status of ["PENDING", "DELIVERED"]) {
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        invoices = [];
+        const e = await service.byKey("k1").then(
+          () => null,
+          (err) => err,
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "COUNTER_SALE_INCOMPLETE",
+          message: expect.stringMatching(/re-POST with the same key/i),
+        });
+      }
+    });
+
+    // SA-672c: a voided or cancelled sale must never read as "finish it": a re-POST would invoice and charge again.
+    it("ring then VOID the invoice: by-key says COUNTER_SALE_VOIDED (definitive), never INCOMPLETE", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-void");
+      invoices[0].status = "VOID"; // the invoice was voided after the sale was rung
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "DELIVERED" });
+      const e = await service.byKey("k-void").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({
+        code: "COUNTER_SALE_VOIDED",
+        message: "This sale was voided after it was rung — start a new sale.",
+      });
+    });
+
+    it("only VOID / WRITTEN_OFF invoices exist: COUNTER_SALE_VOIDED", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "DELIVERED" });
+      invoices = [
+        { ...inv("inv-v", 10, [], 0), status: "VOID" },
+        { ...inv("inv-w", 10, [], 1), status: "WRITTEN_OFF" },
+      ];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
+
+    it("a CANCELLED order is COUNTER_SALE_VOIDED, even with a live invoice", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CANCELLED" });
+      invoices = [inv("inv-1", 37.25)];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
+
+    // SA-672d: a PAID sale that staff moved on is still a live sale, never "voided" (a new ring would charge twice).
+    it.each(["CONFIRMED", "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY"])(
+      "ring (paid) then staff move it to %s: by-key is the live read-back, not VOIDED",
+      async (status) => {
+        invoices = [inv("inv-1", 37.25)];
+        await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-moved");
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        const r = await service.byKey("k-moved", "CASH");
+        expect(r).toMatchObject({
+          orderId: "ord-1",
+          paid: 37.25,
+          balanceDue: 0,
+          paymentRecorded: true,
+          replayed: true,
+        });
+      },
+    );
+
+    it.each(["CONFIRMED", "PARTIALLY_DELIVERED", "OUT_FOR_DELIVERY"])(
+      "an order moved to %s with NO invoice rows is a definitive 409 COUNTER_SALE_CHANGED (neither VOIDED nor ORDER_CHANGED)",
+      async (status) => {
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        invoices = [];
+        const e = await service.byKey("k1").then(
+          () => null,
+          (err) => err,
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toEqual({
+          code: "COUNTER_SALE_CHANGED",
+          message: "This sale was changed after it was rung — check with the office.",
+        });
+      },
+    );
+
+    it("a moved order whose invoices are all VOID is still VOIDED", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CONFIRMED" });
+      invoices = [{ ...inv("inv-v", 10, [], 0), status: "VOID" }];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
+
+    it("ring then cancel the order: by-key is VOIDED", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-cancel");
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CANCELLED" });
+      const e = await service.byKey("k-cancel").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
     });
 
     it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
@@ -989,13 +1187,34 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it("an order that is not a counter (PICKUP) sale is not a sale for this key: 404", async () => {
-      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "ROUTE" });
+    it("an ordinary PICKUP + skipAutoMerge order (counterSale false) found by the key is not a sale: coded 404", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, counterSale: false });
       const e = await service.byKey("k1").then(
         () => null,
         (err) => err,
       );
+      expect(e).toBeInstanceOf(NotFoundException);
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("an order with no counterSale field at all (an older shape) is not a sale: coded 404", async () => {
+      const { counterSale: _c, ...bare } = sale;
+      findReplayCandidateByKey.mockResolvedValue(bare);
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e).toBeInstanceOf(NotFoundException);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
+    });
+
+    it("a counter sale whose fulfillPath later moved off PICKUP is still a live sale (the marker, not the shape)", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, fulfillPath: "SHIP" });
+      invoices = [inv("inv-1", 37.25)];
+      await expect(service.byKey("k1")).resolves.toMatchObject({
+        orderId: "ord-1",
+        replayed: true,
+      });
     });
 
     it("is NOT gated by the counter capability: it answers even when the counter is off", async () => {

@@ -637,6 +637,7 @@ model Order {
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
   skipAutoMerge          Boolean     @default(false)
+  counterSale            Boolean     @default(false) // SA-672e: set only by the counter-sale POST; GET by-key matches on it
   // Phase 4: denormalized flag — true when any line's product is in a tracked
   // (regulated) category. Drives the split preview + signature-POD requirement.
   hasRegulated           Boolean     @default(false)

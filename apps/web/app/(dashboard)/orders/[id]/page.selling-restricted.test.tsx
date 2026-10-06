@@ -2,6 +2,7 @@ import * as React from "react";
 import type { BlockedLine } from "@routeflow/types";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
@@ -71,6 +72,7 @@ const reject = (status: number, data: object) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  seedSession("OPERATOR"); // B1134: the action bar is staff-only
   get.mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/orders/o1" ? order : [] }),
   );

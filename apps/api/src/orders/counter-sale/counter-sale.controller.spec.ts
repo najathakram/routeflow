@@ -99,8 +99,29 @@ describe("CounterSaleController", () => {
 
     it("normalises the key like the header (trim) and asks the service", async () => {
       await controller.byKey("  key-9 ");
-      expect(service.byKey).toHaveBeenCalledWith("key-9");
+      expect(service.byKey).toHaveBeenCalledWith("key-9", undefined);
     });
+
+    it.each(["CASH", "CARD", "CHECK", "ON_ACCOUNT"])(
+      "passes ?method=%s to the service",
+      async (m) => {
+        await controller.byKey("key-9", m);
+        expect(service.byKey).toHaveBeenCalledWith("key-9", m);
+      },
+    );
+
+    it("no ?method passes undefined (today's behaviour)", async () => {
+      await controller.byKey("key-9");
+      expect(service.byKey).toHaveBeenCalledWith("key-9", undefined);
+    });
+
+    it.each(["cash", "BITCOIN", "", " CASH"])(
+      "a junk ?method (%j) is a 400 before the service runs",
+      async (m) => {
+        await expect(controller.byKey("key-9", m)).rejects.toBeInstanceOf(BadRequestException);
+        expect(service.byKey).not.toHaveBeenCalled();
+      },
+    );
 
     it("a blank or malformed key is a 400 before the service runs", async () => {
       await expect(controller.byKey("   ")).rejects.toBeInstanceOf(BadRequestException);

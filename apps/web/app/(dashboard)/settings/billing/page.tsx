@@ -97,11 +97,10 @@ const ADDON_REFUSED_COPY =
 // UNBILLED on a tenant that is not on a trial: no Stripe subscription yet, so nothing is charged
 // online. Neutral on purpose (never a "free" promise, never an internal label).
 const NOT_BILLED_ONLINE_COPY = "Not billed online yet; your account manager will set up billing.";
-// Interim checkout gate (SA-690): the API refuses a trial tenant's checkout while an unbilled
-// self-serve add-on is on (ADDON_BILLING_PENDING_CHECKOUT), so the TRIAL enable sheet says so up
-// front. DROP this line when SA-690 Option A removes the gate.
-const TRIAL_CARD_GATE_COPY =
-  "Turn it off before adding your card, or contact support to set it up.";
+// SA-690 option A: a trial's add-on is billed at the card checkout (no refusal, nothing to turn off),
+// so the TRIAL enable sheet says WHEN it starts costing money. The retired interim gate's advice
+// ("Turn it off before adding your card...") is gone from the sheet.
+const TRIAL_BILLED_COPY = "It is billed from your first paid month, once you add your card.";
 const CHECKOUT_FAILED_COPY = "We couldn't start checkout. Nothing was changed. Please try again.";
 const CHECKOUT_ADDONS_PENDING_FALLBACK =
   "Turn off your add-ons before adding your card, or contact support to set them up.";
@@ -141,8 +140,9 @@ function blockReasonOf(code: string | undefined): "annual" | "included" | "other
  *  - STRIPE:   "About $X this cycle" (an estimate; the success toast shows Stripe's actual figure),
  *              added to the next bill;
  *  - MANUAL:   an invoiced-by-hand tenant — "will appear on your next invoice from us", no card wording;
- *  - UNBILLED: no Stripe subscription. A TRIAL tenant reads "Free during your trial, then $X/mo"
- *              ($X from the FRESH preview); anyone else reads the neutral "Not billed online yet" copy.
+ *  - UNBILLED: no Stripe subscription. A TRIAL tenant (the preview's `trial` flag) reads "Free during
+ *              your trial, then $X/mo" ($X from the FRESH preview) and that it is billed from the first
+ *              paid month once a card is added; anyone else reads the neutral "Not billed online yet" copy.
  * BLOCKED: a REFUSED preview (`billing === "REFUSED"` or a `refusal`), a server refusal on enable, or an
  * annual Stripe plan (a monthly add-on can't be added online). No price and no charge line, Confirm
  * disabled, and fixed copy chosen by the refusal `code` (annual: contact support; included: "<Name> is
@@ -161,7 +161,8 @@ function EnableAddonSheet({
   addon: AddonSkuDef | null;
   /** The tenant is on an annual plan (a monthly Stripe add-on can't be added online). */
   annual: boolean;
-  /** The tenant is on a trial (`status === "TRIAL"`): an unbilled add-on is free until it ends. */
+  /** The tenant is on a trial (`status === "TRIAL"`): an unbilled add-on is free until it ends. Only the
+   *  fallback for an API whose preview predates `trial`; the preview's own flag wins when present. */
   trial: boolean;
   busy: boolean;
   error: EnableAddonError;
@@ -194,6 +195,9 @@ function EnableAddonSheet({
             : null;
   const blocked = blockReason != null;
   const ready = fresh && !blocked;
+  // The server says whether this tenant is on its trial (the preview's `trial`); an older API that
+  // does not send it falls back to the subscription status.
+  const onTrial = p?.trial ?? trial;
   return (
     <Modal
       open={addon != null}
@@ -268,11 +272,11 @@ function EnableAddonSheet({
           {fresh && !blocked && mode === "UNBILLED" && (
             <>
               <p>
-                {trial
+                {onTrial
                   ? `Free during your trial, then ${formatMoney(p.monthly)}/mo`
                   : NOT_BILLED_ONLINE_COPY}
               </p>
-              {trial && <p>{TRIAL_CARD_GATE_COPY}</p>}
+              {onTrial && <p>{TRIAL_BILLED_COPY}</p>}
             </>
           )}
           {error === "failed" && (

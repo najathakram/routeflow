@@ -227,6 +227,34 @@ describe("InvoicesService.update() — SA-674b shipment invoice of an order with
     expect(prisma.invoice.update).toHaveBeenCalled();
   });
 
+  it("SA-689 a: the carrier state is read UNDER the invoice row lock — an order reopened to the carrier between the pre-read and the lock is refused", async () => {
+    arrange("ship", "DELIVERED"); // delivered: its invoice is editable and not with the carrier
+    let status = "DELIVERED";
+    prisma.order.findFirst.mockImplementation(async () => ({
+      id: "ord-1",
+      tenantId: "t-1",
+      orderNumber: "ORD-1",
+      status,
+      fulfillPath: "SHIP",
+      shippedAt: new Date("2026-10-01T00:00:00Z"),
+    }));
+    // a reopen to PARTIALLY_DELIVERED commits while this edit waits for the Order / Invoice row locks
+    prisma.tenantTransaction.mockImplementation((fn: any) =>
+      fn({
+        ...prisma.forTenant(),
+        $executeRaw: jest.fn(async () => {
+          status = "PARTIALLY_DELIVERED";
+          return 0;
+        }),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      }),
+    );
+    await expect(
+      service.update("inv-ship", { items: [{ ...ROW, qty: 2 }] } as any),
+    ).rejects.toMatchObject(conflict);
+    noWrites();
+  });
+
   it("control: an UNSET-mode business keeps today's edit (a delivered order's invoice)", async () => {
     arrange("unset", "DELIVERED");
     await service.update("inv-ship", { items: [{ ...ROW, qty: 2 }] } as any);

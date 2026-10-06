@@ -21,6 +21,7 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -94,6 +95,7 @@ export const API_ERROR_CODES = {
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
+  ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
@@ -146,6 +148,10 @@ export const API_ERROR_CODES = {
   ADDON_ANNUAL_NOT_SUPPORTED: "ADDON_ANNUAL_NOT_SUPPORTED",
   ADDON_INCLUDED_IN_PLAN: "ADDON_INCLUDED_IN_PLAN",
   ADDON_BILLING_PENDING_CHECKOUT: "ADDON_BILLING_PENDING_CHECKOUT",
+  ADDON_COMP_MANAGED_BY_SUPPORT: "ADDON_COMP_MANAGED_BY_SUPPORT",
+  ADDON_CHECKOUT_ITEM_UNREADABLE: "ADDON_CHECKOUT_ITEM_UNREADABLE",
+  ADDON_CHECKOUT_ITEM_MISSING: "ADDON_CHECKOUT_ITEM_MISSING",
+  ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
@@ -215,6 +221,26 @@ export const API_ERROR_CODES = {
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
+  /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
+   * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
+   * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.
+   */
+  COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",
+  /**
+   * 409: a counter sale was VOIDED after it was rung (its order cancelled, or every invoice VOID / WRITTEN_OFF). A
+   * DEFINITIVE answer from GET .../by-key/:key and from a re-POST of the same key: start a new sale, never retry.
+   * A re-POST never resurrects or re-charges it.
+   */
+  COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
+  /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
+   * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
+   * (A moved order that still has a live invoice reads back as the normal sale.)
+   */
+  COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
+  /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
+  COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
