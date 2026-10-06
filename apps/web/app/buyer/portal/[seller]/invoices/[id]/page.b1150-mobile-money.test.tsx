@@ -126,7 +126,7 @@ const STATES: Array<{
 
 describe("buyer invoice detail — money fits on phones (B1150)", () => {
   it.each(STATES)(
-    "$status: the tile grid is two-up below sm, four-up from sm",
+    "$status: the tile grid is two-up below md, four-up from md",
     ({ status, payments, balanceDue }) => {
       mockUseBuyerInvoice.mockReturnValue({
         data: makeInvoice({ status, payments, balanceDue }),
@@ -137,7 +137,9 @@ describe("buyer invoice detail — money fits on phones (B1150)", () => {
 
       const grid = screen.getByTestId("invoice-summary-tiles");
       expect(grid.classList.contains("grid-cols-2")).toBe(true);
-      expect(grid.classList.contains("sm:grid-cols-4")).toBe(true);
+      // B1150 pixels: 640-700 px broke amounts mid-number in 4 columns, so 2 columns hold until md.
+      expect(grid.classList.contains("md:grid-cols-4")).toBe(true);
+      expect(grid.classList.contains("sm:grid-cols-4")).toBe(false);
       // The bug's own value: an unconditional four-up grid at every width.
       expect(grid.classList.contains("grid-cols-4")).toBe(false);
     },
@@ -163,7 +165,9 @@ describe("buyer invoice detail — money fits on phones (B1150)", () => {
       for (const [key, text] of Object.entries(expected)) {
         const amount = screen.getByTestId(`invoice-tile-${key}`);
         expect(amount.textContent).toBe(text);
-        expect(amount.classList.contains("break-words")).toBe(true);
+        // never break inside a number (B1150 pixels: "$23,915,16 / 9.30")
+        expect(amount.classList.contains("whitespace-nowrap")).toBe(true);
+        expect(amount.classList.contains("break-words")).toBe(false);
         for (const cls of classesUpTo(amount, grid)) expect(cls).not.toMatch(CLIPPING);
       }
     },
@@ -216,6 +220,15 @@ describe("buyer invoice detail — money fits on phones (B1150)", () => {
     const sub = screen.getByTestId("invoice-line-subtotal-item-1");
     expect(sub.getAttribute("data-label")).toBe("Subtotal");
     expect(sub.classList.contains("sm:table-cell")).toBe(true);
+    // the line money never breaks inside a number either
+    for (const el of [sub, ...Array.from(sub.querySelectorAll("*"))]) {
+      expect(el.classList.contains("break-words")).toBe(false);
+    }
+    expect(
+      Array.from(sub.querySelectorAll("*")).some((el) =>
+        el.classList.contains("whitespace-nowrap"),
+      ),
+    ).toBe(true);
     expect(screen.getByTestId("invoice-line-unit-item-1").getAttribute("data-label")).toBe(
       "Unit Price",
     );

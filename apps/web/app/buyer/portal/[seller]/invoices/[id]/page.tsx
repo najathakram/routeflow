@@ -267,7 +267,7 @@ export default function BuyerInvoiceDetailPage() {
       {/* Summary cards */}
       <div
         data-testid="invoice-summary-tiles"
-        className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4 mb-6"
+        className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4 mb-6"
       >
         {[
           {
@@ -295,7 +295,7 @@ export default function BuyerInvoiceDetailPage() {
             </div>
             <p
               data-testid={`invoice-tile-${card.key}`}
-              className="break-words text-base font-bold tabular-nums text-navy sm:text-lg"
+              className="whitespace-nowrap text-sm font-bold tabular-nums text-navy sm:text-base lg:text-lg"
             >
               {card.value}
             </p>
@@ -358,7 +358,7 @@ export default function BuyerInvoiceDetailPage() {
                     data-label="Unit Price"
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
                   >
-                    <span className="break-words text-right tabular-nums">
+                    <span className="whitespace-nowrap text-right tabular-nums">
                       {fmt(Number(item.unitPrice))}
                       {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
@@ -373,7 +373,7 @@ export default function BuyerInvoiceDetailPage() {
                     data-label="Subtotal"
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden font-medium text-navy"
                   >
-                    <span className="break-words text-right tabular-nums">
+                    <span className="whitespace-nowrap text-right tabular-nums">
                       {fmt(Number(item.subtotal))}
                     </span>
                   </td>
