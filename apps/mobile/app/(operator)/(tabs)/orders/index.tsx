@@ -18,6 +18,11 @@ import { useProduct } from "../../../../lib/api/products";
 import { useDeliveryAccess } from "../../../../lib/api/addons";
 import { useTripDraftStore } from "../../../../lib/trip-draft";
 import { DraftStrip } from "../../../../components/DraftStrip";
+import { BatchShipSheet } from "../../../../components/BatchShipSheet";
+import { usePackingSlips } from "../../../../lib/api/orders";
+import { useTenantFeatures } from "../../../../lib/tenant-features";
+import { printPdf } from "../../../../lib/print-pdf";
+import { showToast } from "../../../../lib/toast";
 import {
   customerFilterChipLabel,
   productFilterChipLabel,
@@ -108,6 +113,25 @@ export default function OrdersListScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const setTripOrderIds = useTripDraftStore((s) => s.setOrderIds);
+
+  // #3168 batch ship + packing slips: offered wherever the tenant's fulfilment methods include SHIP
+  // (hide-only; the server refuses non-carrier orders regardless).
+  const { data: tenantFeatures } = useTenantFeatures();
+  const offersShip = tenantFeatures?.capabilities?.fulfilment?.methods?.includes("SHIP") ?? false;
+  const packingSlips = usePackingSlips();
+  const [shipSheetOpen, setShipSheetOpen] = useState(false);
+  const printSlips = async (ids: string[]) => {
+    try {
+      const res = await packingSlips.mutateAsync(ids);
+      if (!res.url) {
+        showToast("No packing slips to print. Only carrier orders have them.");
+        return;
+      }
+      await printPdf({ url: res.url, filename: "packing-slips.pdf" });
+    } catch {
+      showToast("Could not generate packing slips. Try again.");
+    }
+  };
 
   const toggleSelectMode = () => {
     setSelectMode((v) => !v);
@@ -280,8 +304,57 @@ export default function OrdersListScreen() {
             <Ionicons name="navigate-outline" size={18} color="#fff" />
             <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
           </Pressable>
+          {offersShip ? (
+            <View style={styles.bulkShipRow}>
+              <Pressable
+                style={[
+                  styles.bulkBtn,
+                  styles.bulkShipBtn,
+                  selected.size === 0 && styles.bulkBtnDisabled,
+                ]}
+                disabled={selected.size === 0}
+                onPress={() => setShipSheetOpen(true)}
+                accessibilityRole="button"
+                testID="batch-ship-open"
+              >
+                <Text style={styles.bulkBtnText}>Mark shipped ({selected.size})</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.bulkBtn,
+                  styles.bulkShipBtn,
+                  (selected.size === 0 || packingSlips.isPending) && styles.bulkBtnDisabled,
+                ]}
+                disabled={selected.size === 0 || packingSlips.isPending}
+                onPress={() => void printSlips([...selected])}
+                accessibilityRole="button"
+                testID="batch-ship-slips-open"
+              >
+                <Text style={styles.bulkBtnText}>Print packing slips</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
+      <BatchShipSheet
+        visible={shipSheetOpen}
+        orders={orders
+          .filter((o) => selected.has(o.id))
+          .map((o) => ({
+            id: o.id,
+            orderNumber: o.orderNumber,
+            customerName: o.customer?.businessName,
+          }))}
+        onClose={(ran) => {
+          setShipSheetOpen(false);
+          if (ran) {
+            setSelectMode(false);
+            setSelected(new Set());
+          }
+        }}
+        onPrintSlips={(ids) => void printSlips(ids)}
+        printing={packingSlips.isPending}
+      />
     </SafeAreaView>
   );
 }
@@ -459,5 +532,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   bulkBtnDisabled: { opacity: 0.4 },
+  bulkShipRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  bulkShipBtn: { flex: 1, paddingHorizontal: 8 },
   bulkBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });
