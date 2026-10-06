@@ -200,7 +200,7 @@ export function replayLineKey(
             unitsPerBox: upb,
           }).qty
         : `b${Number(r.boxes ?? 0)}p${Number(r.pieces ?? 0)}`;
-    return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${count}`;
+    return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${String(count)}`;
   }
   return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
 }
