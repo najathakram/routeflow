@@ -132,6 +132,8 @@ describe("genericToastCopy: codes users rely on", () => {
       "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
       /^This order has already shipped\. Contact the seller for changes\.$/,
     ],
+    ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
+    ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
