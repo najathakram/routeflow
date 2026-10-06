@@ -5,6 +5,7 @@ import { REGISTRY_FIXTURE } from "./__fixtures__/registry.fixtures";
 import { EFFECTIVE_FIXTURE } from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
 import { previewFixture } from "./__fixtures__/preview.fixtures";
+import { fulfilmentModeLabel } from "./setup-copy";
 
 const mockFetchRegistry = jest.fn();
 const mockFetchEffective = jest.fn();
@@ -457,5 +458,121 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
     // The addon-row write uses the legacy "msrp" addonKey the resolver reads via
     // useHasAddon(), NOT the registry row's own "flag.msrp" key.
     await waitFor(() => expect(mockEnableAddon).toHaveBeenCalledWith(TENANT_ID, "msrp", undefined));
+  });
+});
+
+// B1132 (demo D14): after a business profile is applied the "Current setup" card says "Ship by carrier",
+// so the "How orders reach customers" row must say the same, from the same stored mode: not the plan
+// default ("Inherited / Off") and not a "the new resolver disagrees" note.
+describe("FeatureConsole — fulfilment_model row after a profile is applied (B1132)", () => {
+  const FULFILMENT_ROW = {
+    key: "fulfilment_model",
+    kind: "boolean",
+    area: "routes",
+    label: "How orders reach customers",
+    description: "Whether orders go out on delivery runs, ship by carrier, or both.",
+    lifecycle: "ga",
+    internal: false,
+    gate: { via: "none", state: "none" },
+    billing: { skus: [] },
+    config: {
+      fallbackMode: "unset",
+      modes: [
+        { key: "unset", label: "Not configured (today's behavior)", lifecycle: "ga" },
+        { key: "delivery", label: "Own delivery", lifecycle: "ga" },
+        { key: "ship", label: "Ship by carrier", lifecycle: "ga" },
+      ],
+    },
+  };
+  // The real wire shape for this tenant: the old path serves it OFF, the resolver says ON from the
+  // SCALE plan default, and the API now also carries the applied mode with its source.
+  const effectiveRow = (mode: Record<string, unknown> | undefined) => ({
+    key: "fulfilment_model",
+    area: "routes",
+    serving: false,
+    resolver: true,
+    source: "PRESET",
+    detail: { planKey: "SCALE", catalogVersionId: "catalog-v11", term: "default", enforced: false },
+    billing: { charged: false },
+    ...(mode ? { mode } : {}),
+  });
+
+  async function renderWith(mode: Record<string, unknown> | undefined) {
+    mockFetchRegistry.mockResolvedValue([...REGISTRY_FIXTURE, FULFILMENT_ROW]);
+    mockFetchEffective.mockResolvedValue([...EFFECTIVE_FIXTURE, effectiveRow(mode)]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "SCALE" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    return document.querySelector('[data-feature-key="fulfilment_model"]') as HTMLElement;
+  }
+
+  it("shows the applied mode and its source, the same mode the Current setup card shows", async () => {
+    const row = await renderWith({
+      value: "ship",
+      effective: "ship",
+      source: "TENANT",
+      allowed: ["unset", "delivery", "ship"],
+      blocked: [],
+    });
+    const shown = within(row).getByTestId("applied-mode").textContent ?? "";
+    expect(shown).toBe("Ship by carrier");
+    // the card renders fulfilmentModeLabel(<stored value>); the row's label is the start of it
+    expect(fulfilmentModeLabel("ship").startsWith(shown)).toBe(true);
+    expect(within(row).getByTestId("applied-mode-source")).toHaveTextContent(
+      "Set for this business",
+    );
+    // the plan-default reading is gone: no Inherited badge, no On/Off
+    expect(within(row).queryByTestId("badge")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Off")).not.toBeInTheDocument();
+    expect(within(row).queryByText("On")).not.toBeInTheDocument();
+  });
+
+  it("the Why popover explains the applied profile, not the SCALE plan default or a resolver disagreement", async () => {
+    const row = await renderWith({
+      value: "ship",
+      effective: "ship",
+      source: "TENANT",
+      allowed: [],
+      blocked: [],
+    });
+    fireEvent.click(within(row).getByRole("button", { name: /Why is How orders reach customers/ }));
+    const panel = document.getElementById("why-panel-fulfilment_model") as HTMLElement;
+    expect(panel).toHaveTextContent(/Set to "Ship by carrier" for this business/);
+    expect(panel).toHaveTextContent(/business profile/);
+    expect(panel).not.toHaveTextContent(/SCALE/);
+    expect(panel).not.toHaveTextContent(/resolver disagrees/);
+  });
+
+  it("a tenant that was never set reads as the default, not as a tenant setting", async () => {
+    const row = await renderWith({
+      value: "unset",
+      effective: "unset",
+      source: "REGISTRY_DEFAULT",
+      allowed: [],
+      blocked: [],
+    });
+    expect(within(row).getByTestId("applied-mode")).toHaveTextContent(
+      "Not configured (today's behavior)",
+    );
+    expect(within(row).getByTestId("applied-mode-source")).toHaveTextContent(/Default/);
+  });
+
+  it("a saved delivery mode that is not in effect says so", async () => {
+    const row = await renderWith({
+      value: "delivery",
+      effective: "unset",
+      source: "TENANT",
+      allowed: [],
+      blocked: ["delivery"],
+    });
+    fireEvent.click(within(row).getByRole("button", { name: /Why is How orders reach customers/ }));
+    expect(document.getElementById("why-panel-fulfilment_model")).toHaveTextContent(
+      /saved value "Own delivery" is not in effect/,
+    );
   });
 });
