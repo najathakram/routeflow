@@ -4,7 +4,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AddonService } from "./addon.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeatureOverrideService } from "./feature-override.service";
-import { deriveFulfilmentCapability, isFleetHeld } from "./fulfilment-capability";
+import { capabilityFromInputs, readFulfilmentInputs } from "./fulfilment-capability";
 
 /**
  * Business profiles 1B: what a BUYER may know about its seller's fulfilment — the portal methods,
@@ -25,18 +25,26 @@ export class FulfilmentCapabilityService {
    * never a guessed `fleet: false`.
    */
   async forBuyer(tenantId: string): Promise<BuyerSellerCapability> {
-    const [mode, fleet] = await Promise.all([
-      this.featureConfig.getEffectiveMode(tenantId, "fulfilment_model").catch(() => "unset"),
-      isFleetHeld(this.addons, this.featureOverrides, tenantId).catch(() => {
-        throw new ServiceUnavailableException({
-          code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
-          message: "Feature resolution is temporarily unavailable. Please retry.",
-        });
-      }),
-    ]);
-    // counter_sales never changes the portal fields, so it is not read.
-    const { portalMethods, portalDefault } = deriveFulfilmentCapability({
-      mode,
+    // The ONE input read (shared with GET /tenants/me/features and the counter gate): a failed mode read
+    // already answers "unset"; a failed fleet read answers null, which is this endpoint's 503.
+    const inputs = await readFulfilmentInputs(
+      {
+        featureConfig: this.featureConfig,
+        addonService: this.addons,
+        featureOverrides: this.featureOverrides,
+      },
+      tenantId,
+    );
+    const fleet = inputs.fleet;
+    if (fleet === null) {
+      throw new ServiceUnavailableException({
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
+    // counter_sales never changes the portal fields, so it is derived as "unset".
+    const { portalMethods, portalDefault } = capabilityFromInputs({
+      ...inputs,
       counterSales: "unset",
       fleet,
     });
