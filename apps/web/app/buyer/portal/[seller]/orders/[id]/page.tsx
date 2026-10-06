@@ -30,6 +30,8 @@ import {
   type BuyerOrder,
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "@routeflow/types";
+import { SHIPPED_ORDER_COPY } from "@/lib/shipped-order-copy";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -297,6 +299,8 @@ function RequestChangeModal({
         setFormError(
           "The delivery run for this order has ended — changes can no longer be requested.",
         );
+      } else if (code === API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST) {
+        setFormError(SHIPPED_ORDER_COPY); // B1135: the order has shipped; there is no request to send
       } else {
         setFormError(err?.response?.data?.message ?? "Failed to send the change request.");
       }

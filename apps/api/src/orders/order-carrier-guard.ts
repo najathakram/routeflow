@@ -12,6 +12,8 @@
  *    that same lock, AFTER the re-read, so an order shipped mid-edit is refused with nothing reverted
  *    (never reverted on its own connection and then refused, stranding the shipment invoice in DRAFT).
  *  - `throwIfInTransitUnderLock` (#3219 S5): the cancel transaction's twin of the same re-read.
+ *  - `throwIfWithCarrierChangeRequest` / `buyerEditClosedMessage` (B1135): the buyer-facing answers for a
+ *    with-carrier order. SA-696 freezes its lines, so there is no change-request flow to point at.
  */
 import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
@@ -37,6 +39,36 @@ export function carrierBlocked({ featureConfig, prisma }: CarrierDeps, order: Ca
   return carrierCancelBlockedReason(featureConfig, order.tenantId, order, (id) =>
     lastShipStateSource(prisma, id),
   );
+}
+
+/** B1135: the one buyer-facing sentence for a with-carrier order (the change-request 409 and the buyer's edit 403). */
+export const SHIPPED_ORDER_MESSAGE =
+  "This order has already shipped. Contact the seller for changes.";
+
+/**
+ * B1135: a change request on a with-carrier order is refused with its own code. A carrier (SHIP) order has
+ * no route run, so the G7 gate would otherwise answer "still directly editable" while the buyer's edit
+ * answered "send a change request": a loop with no way out. Nothing here for a route-run order.
+ */
+export async function throwIfWithCarrierChangeRequest(
+  deps: CarrierDeps,
+  order: CarrierOrder,
+): Promise<void> {
+  if ((await carrierBlocked(deps, order)) === null) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
+    message: SHIPPED_ORDER_MESSAGE,
+  });
+}
+
+/** B1135: the message of the buyer's refused post-dispatch edit: it names the exit that exists. */
+export async function buyerEditClosedMessage(
+  deps: CarrierDeps,
+  order: CarrierOrder,
+): Promise<string> {
+  return (await carrierBlocked(deps, order)) === null
+    ? "This order is already out for delivery. Send a change request instead."
+    : SHIPPED_ORDER_MESSAGE;
 }
 
 export interface CarrierEditGuard {

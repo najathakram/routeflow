@@ -83,6 +83,8 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
+import { orderActionAccess } from "./order-action-access";
+import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
@@ -1990,6 +1992,14 @@ export default function OrderDetailPage() {
     localStatus === "DELIVERED" ||
     localStatus === "CANCELLED";
 
+  // B1134: what THIS session may do on the action bar (customers reach this page; fails closed). A status the
+  // local copy has not yet caught up with (or has moved past) is no status at all, never the stale initial one.
+  const access = orderActionAccess(
+    user?.role,
+    localStatus === order.status ? localStatus : "",
+    order.cancelBlockedReason === "WITH_CARRIER",
+  );
+
   const changeRequests = order.changeRequests ?? [];
   const pendingChangeRequests = changeRequests.filter((cr) => cr.status === "PENDING");
 
@@ -2465,7 +2475,7 @@ export default function OrderDetailPage() {
         {/* Action bar */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
-          {canEdit && !isEditing && (
+          {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
               <Button
                 size="sm"
@@ -2480,7 +2490,7 @@ export default function OrderDetailPage() {
 
           {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
               Any order, no cap — never gated on order status, unlike the buttons below. */}
-          {!isEditing && (
+          {!isEditing && access.staff && (
             <ActionTier tier="secondary">
               <RecordReturnAction
                 customerId={order.customerId}
@@ -2525,7 +2535,12 @@ export default function OrderDetailPage() {
           )}
 
           {/* DRAFT actions */}
-          {localStatus === "DRAFT" && !isEditing && (
+          {localStatus === "DRAFT" && !isEditing && !access.staff && access.cancel && (
+            <ActionTier tier="danger">
+              <CancelOrderButton blockedReason={order.cancelBlockedReason} onClick={handleCancel} />
+            </ActionTier>
+          )}
+          {localStatus === "DRAFT" && !isEditing && access.staff && (
             <>
               <ActionTier tier="primary">
                 <Button
@@ -2594,23 +2609,28 @@ export default function OrderDetailPage() {
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              <ActionTier tier="primary">
-                <Button
-                  size="sm"
-                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                  onClick={handleConfirm}
-                  loading={updateStatus.isPending}
-                >
-                  Confirm Order
-                </Button>
-              </ActionTier>
+              {access.staff && (
+                <ActionTier tier="primary">
+                  <Button
+                    size="sm"
+                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                    onClick={handleConfirm}
+                    loading={updateStatus.isPending}
+                  >
+                    Confirm Order
+                  </Button>
+                </ActionTier>
+              )}
               <ActionTier tier="danger">
-                <CancelOrderButton
-                  blockedReason={order.cancelBlockedReason}
-                  onClick={handleCancel}
-                />
+                {access.cancel && (
+                  <CancelOrderButton
+                    blockedReason={order.cancelBlockedReason}
+                    onClick={handleCancel}
+                  />
+                )}
                 {/* #3219 S3: an order with the carrier is not deleted either (the server 409s) */}
-                {!order.cancelBlockedReason &&
+                {access.staff &&
+                  !order.cancelBlockedReason &&
                   (showDeleteConfirm ? (
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-danger font-medium">Delete order?</span>
@@ -2655,7 +2675,7 @@ export default function OrderDetailPage() {
           )}
 
           {/* CONFIRMED actions */}
-          {localStatus === "CONFIRMED" && !isEditing && (
+          {access.staff && localStatus === "CONFIRMED" && !isEditing && (
             <>
               <ActionTier tier="primary">
                 <div className="flex flex-col items-start gap-1">
@@ -2703,7 +2723,7 @@ export default function OrderDetailPage() {
           )}
 
           {/* OUT_FOR_DELIVERY actions */}
-          {localStatus === "OUT_FOR_DELIVERY" && (
+          {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
               <ActionTier tier="primary">
                 <Button
@@ -2745,7 +2765,7 @@ export default function OrderDetailPage() {
               (routeRunStopId on a COMPLETED stop) 409s server-side — that
               surfaces via the standard error toast (app/providers.tsx), no
               special-cased UI needed here. */}
-          {localStatus === "DELIVERED" && (
+          {access.staff && localStatus === "DELIVERED" && (
             <>
               <ActionTier tier="secondary">
                 <div className="flex flex-col items-start gap-1">
@@ -2772,7 +2792,7 @@ export default function OrderDetailPage() {
           )}
 
           {/* CANCELLED */}
-          {localStatus === "CANCELLED" && (
+          {access.staff && localStatus === "CANCELLED" && (
             <>
               <ActionTier tier="secondary">
                 <Button
@@ -2836,6 +2856,9 @@ export default function OrderDetailPage() {
           )}
         </div>
       </div>
+
+      {/* B1135: a customer's way forward on an order that has shipped (no change request exists for it). */}
+      {access.shippedExits && <ShippedOrderExits />}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ── Main content ── */}
@@ -2949,84 +2972,86 @@ export default function OrderDetailPage() {
                       >
                         Save Draft
                       </Button>
-                      <Button
-                        size="sm"
-                        leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                        onClick={() => {
-                          // Save items first, then publish. Exactly the payload
-                          // "Save Draft" sends — deletes and prices included — so
-                          // publishing straight from edit mode can't bill differently.
-                          if (refuseLockedUnitLineEdit()) return;
-                          const updates: ItemUpdate[] = [
-                            ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-                            ...buildItemUpdates(editItems, order!.lineItems),
-                          ];
-                          const doPublish = () =>
-                            updateStatus.mutate(
-                              { id: order!.id, status: "PENDING" as any },
-                              {
-                                onSuccess: () => {
-                                  setLocalStatus("PENDING");
-                                  setIsEditing(false);
-                                  setEditItems([]);
-                                  setEditCredits([]);
-                                  setCreditsTouched(false);
-                                },
-                                onError: guardError(() => doPublish()),
-                              },
-                            );
-                          // Carry a shipping-fee edit into the publish save the same
-                          // way handleSaveItems does — otherwise publishing straight
-                          // from edit mode silently drops the fee the operator typed.
-                          const feeChanged =
-                            Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
-                          // #2406: the Returns section rides this save too, never silently dropped.
-                          const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
-                          if (inlineReturn === null) return;
-                          const saveThenPublish = () => {
-                            if (
-                              updates.length > 0 ||
-                              feeChanged ||
-                              creditsTouched ||
-                              inlineReturn
-                            ) {
-                              updateItems.mutate(
+                      {access.staff && (
+                        <Button
+                          size="sm"
+                          leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                          onClick={() => {
+                            // Save items first, then publish. Exactly the payload
+                            // "Save Draft" sends — deletes and prices included — so
+                            // publishing straight from edit mode can't bill differently.
+                            if (refuseLockedUnitLineEdit()) return;
+                            const updates: ItemUpdate[] = [
+                              ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+                              ...buildItemUpdates(editItems, order!.lineItems),
+                            ];
+                            const doPublish = () =>
+                              updateStatus.mutate(
+                                { id: order!.id, status: "PENDING" as any },
                                 {
-                                  id: order!.id,
-                                  items: updates,
-                                  // replaceAll:false — this is an incremental diff (new
-                                  // items have no id, and a fee-only save sends []).
-                                  // Without it the API's add-only/empty heuristic treats
-                                  // the payload as a full replace and deletes untouched
-                                  // lines. Mirrors handleSaveItems.
-                                  replaceAll: false,
-                                  ...(feeChanged ? { shippingFee: editShippingFee } : {}),
-                                  // Same dual-path threading as handleSaveItems — the
-                                  // line payload is shared (buildItemUpdates) but this
-                                  // flow still assembles its own mutation, so credits
-                                  // need the explicit carry-through (shippingFee had
-                                  // this exact miss last PR — do not repeat it).
-                                  ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
-                                  ...(inlineReturn ? { inlineReturn } : {}),
-                                },
-                                {
-                                  onSuccess: () => (returnSave.onSuccess(), doPublish()),
-                                  onError: returnSave.chainError(
-                                    inlineReturn,
-                                    guardError(() => saveThenPublish()),
-                                  ),
+                                  onSuccess: () => {
+                                    setLocalStatus("PENDING");
+                                    setIsEditing(false);
+                                    setEditItems([]);
+                                    setEditCredits([]);
+                                    setCreditsTouched(false);
+                                  },
+                                  onError: guardError(() => doPublish()),
                                 },
                               );
-                            } else {
-                              doPublish();
-                            }
-                          };
-                          saveThenPublish();
-                        }}
-                        loading={updateItems.isPending || updateStatus.isPending}
-                      >
-                        Publish Order
-                      </Button>
+                            // Carry a shipping-fee edit into the publish save the same
+                            // way handleSaveItems does — otherwise publishing straight
+                            // from edit mode silently drops the fee the operator typed.
+                            const feeChanged =
+                              Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                            // #2406: the Returns section rides this save too, never silently dropped.
+                            const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+                            if (inlineReturn === null) return;
+                            const saveThenPublish = () => {
+                              if (
+                                updates.length > 0 ||
+                                feeChanged ||
+                                creditsTouched ||
+                                inlineReturn
+                              ) {
+                                updateItems.mutate(
+                                  {
+                                    id: order!.id,
+                                    items: updates,
+                                    // replaceAll:false — this is an incremental diff (new
+                                    // items have no id, and a fee-only save sends []).
+                                    // Without it the API's add-only/empty heuristic treats
+                                    // the payload as a full replace and deletes untouched
+                                    // lines. Mirrors handleSaveItems.
+                                    replaceAll: false,
+                                    ...(feeChanged ? { shippingFee: editShippingFee } : {}),
+                                    // Same dual-path threading as handleSaveItems — the
+                                    // line payload is shared (buildItemUpdates) but this
+                                    // flow still assembles its own mutation, so credits
+                                    // need the explicit carry-through (shippingFee had
+                                    // this exact miss last PR — do not repeat it).
+                                    ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+                                    ...(inlineReturn ? { inlineReturn } : {}),
+                                  },
+                                  {
+                                    onSuccess: () => (returnSave.onSuccess(), doPublish()),
+                                    onError: returnSave.chainError(
+                                      inlineReturn,
+                                      guardError(() => saveThenPublish()),
+                                    ),
+                                  },
+                                );
+                              } else {
+                                doPublish();
+                              }
+                            };
+                            saveThenPublish();
+                          }}
+                          loading={updateItems.isPending || updateStatus.isPending}
+                        >
+                          Publish Order
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
