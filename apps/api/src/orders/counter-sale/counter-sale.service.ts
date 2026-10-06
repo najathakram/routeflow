@@ -271,6 +271,14 @@ export class CounterSaleService {
       });
     }
     const invoices = await this.readInvoices(order.id);
+    // Half-written: the order exists but nothing was invoiced (or only VOID / WRITTEN_OFF remain). Its own
+    // coded answer, so the till re-POSTs with the SAME key to finish it instead of reading an uncoded 500.
+    if (invoices.length === 0) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.COUNTER_SALE_INCOMPLETE,
+        message: "This sale was not finished: re-POST with the same key to finish it",
+      });
+    }
     // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
     return buildCounterSaleResponse({
       payment: method ? { method } : undefined,

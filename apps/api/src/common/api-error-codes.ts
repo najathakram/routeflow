@@ -216,6 +216,12 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   /**
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale's order exists but it has no live invoice (a half-written
+   * sale: the first attempt stopped before the invoice step, or only VOID / WRITTEN_OFF invoices remain). Not
+   * "no sale" and not an uncoded failure: re-POST with the same Idempotency-Key to finish it.
+   */
+  COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",
+  /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
    */

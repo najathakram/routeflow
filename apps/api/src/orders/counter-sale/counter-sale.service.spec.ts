@@ -1050,11 +1050,31 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it("an invoice-less order is not a finished sale: refused as an unknown outcome, never a guess", async () => {
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      invoices = [];
-      await expect(service.byKey("k1")).rejects.toMatchObject({ status: 500 });
-    });
+    it.each([
+      ["no invoice at all", () => []],
+      [
+        "only VOID / WRITTEN_OFF invoices (read back as none)",
+        () => [
+          { ...inv("inv-v", 10, [], 0), status: "VOID" },
+          { ...inv("inv-w", 10, [], 1), status: "WRITTEN_OFF" },
+        ],
+      ],
+    ])(
+      "a half-written sale (%s) is a coded 409 COUNTER_SALE_INCOMPLETE, not an uncoded 500",
+      async (_n, make) => {
+        findReplayCandidateByKey.mockResolvedValue(sale);
+        invoices = make() as never;
+        const e = await service.byKey("k1").then(
+          () => null,
+          (err) => err,
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "COUNTER_SALE_INCOMPLETE",
+          message: expect.stringMatching(/re-POST with the same key/i),
+        });
+      },
+    );
 
     it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
       const e = await service.byKey("nope").then(
