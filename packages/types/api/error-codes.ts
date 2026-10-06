@@ -243,6 +243,7 @@ export const API_ERROR_CODES = {
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE: "INVOICE_WITH_CARRIER_NO_LINE_CHANGE",
+  ORDER_WITH_CARRIER_NO_CHANGE_REQUEST: "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
@@ -374,3 +375,12 @@ export const CREDIT_NOTE_ERROR_CODES = [
 ] as const;
 
 export type CreditNoteErrorCode = (typeof CREDIT_NOTE_ERROR_CODES)[number];
+
+/**
+ * B1135: the one sentence for an order that is with the carrier (its lines are frozen, SA-696). Web and
+ * mobile import it from here. The API cannot value-import this package at runtime, so it keeps a literal
+ * copy (`SHIPPED_ORDER_MESSAGE`, apps/api/src/orders/order-carrier-guard.ts), pinned byte-equal to this
+ * one by apps/api/src/common/shipped-order-message-parity.spec.ts.
+ */
+export const SHIPPED_ORDER_MESSAGE =
+  "This order has already shipped. Contact the seller for changes.";
