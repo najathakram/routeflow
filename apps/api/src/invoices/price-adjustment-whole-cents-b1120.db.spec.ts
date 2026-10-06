@@ -175,10 +175,16 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
     unitLabel?: string | null;
     promoFreeUnits?: number | null;
     discount?: number;
+    /** "b" puts the line on the tenant's SECOND product (a bulk request is keyed by product). */
+    product?: "a" | "b";
   };
 
   /** One customer, one product, N SENT invoices (each with the given lines): the bulk scope's batch. */
-  async function seed(label: string, perInvoice: Line[][], opts: { categoryRate?: number } = {}) {
+  async function seed(
+    label: string,
+    perInvoice: Line[][],
+    opts: { categoryRate?: number; status?: "DRAFT" | "SENT" } = {},
+  ) {
     seq += 1;
     const slug = assertTestTenant(
       `qa-b1120-${RUN}-${seq}-${label}`,
@@ -213,6 +219,9 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
         trackedCategoryId: category?.id ?? null,
       },
     });
+    const productB = await prisma.product.create({
+      data: { tenantId, name: `p2 ${label}`, unit: "each", pricePerUnit: 10 },
+    });
     const rows: Array<{ invoiceId: string; lineIds: string[] }> = [];
     for (const [n, lines] of perInvoice.entries()) {
       const subtotal = lines.reduce((s, l) => s + l.subtotal, 0);
@@ -222,7 +231,7 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
           tenantId,
           customerId: customer.id,
           invoiceNumber: `INV-B1120-${RUN}-${seq}-${n + 1}`,
-          status: "SENT",
+          status: opts.status ?? "SENT",
           subtotal,
           taxAmount: Math.round(tax * 100) / 100,
           total: subtotal + Math.round(tax * 100) / 100,
@@ -234,7 +243,7 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
           data: {
             tenantId,
             invoiceId: invoice.id,
-            productId: product.id,
+            productId: l.product === "b" ? productB.id : product.id,
             description: `p ${label}`,
             qty: l.qty,
             unitPrice: l.unitPrice,
@@ -529,50 +538,148 @@ describeDb("price adjustments keep whole-cent unit prices and exact line totals 
   /** A second, plain line so the invoice total never reaches $0 (a $0 invoice settles to PAID and refuses re-prices). */
   const plain: Line = { qty: 1, unitPrice: 5, subtotal: 5 };
 
-  it("a pack-less legacy row: 10 -> 0 -> 10 refuses the step up from $0 (400 MONEY_INVARIANT) and leaves the rows as they were", async () => {
-    const s = await seed("packless0", [[packless(10, 4.17), plain]]);
+  /** The whole stored row as text, so "byte-identical" is a comparison of every column, updatedAt included. */
+  const rowText = async (lineId: string) => {
+    const [r] = await prisma.$queryRaw<Array<{ j: string }>>`
+      SELECT to_jsonb(t)::text AS j FROM "InvoiceItem" t WHERE id = ${lineId}`;
+    return r.j;
+  };
+  const DRAFT_REMEDY = "Re-enter this line's quantity and price.";
+  const ISSUED_REMEDY = "Issue a credit note, or void and reissue the invoice.";
+
+  it.each([
+    ["DRAFT", DRAFT_REMEDY],
+    ["SENT", ISSUED_REMEDY],
+  ] as const)(
+    "a pack-less legacy row on a %s invoice: 10 -> 0 -> 10 refuses the step up from $0 (400 MONEY_INVARIANT, the right remedy) and leaves the rows as they were",
+    async (status, remedy) => {
+      const s = await seed("packless0", [[packless(10, 4.17), plain]], { status });
+      const { invoiceId, lineIds } = s.rows[0];
+      expect(await line(invoiceId, lineIds[0])).toMatchObject({
+        unitPrice: "10.00",
+        subtotal: "4.17",
+      });
+
+      await single(s, [0, 5]);
+      expect(await line(invoiceId, lineIds[0])).toMatchObject({
+        unitPrice: "0.00",
+        subtotal: "0.00",
+      });
+      const out = await attempt(single(s, [10, 5]));
+
+      // persisted state first, so a red run names the wrong value: before SA-698a the row landed at 10.00 / 50.00
+      expect(await line(invoiceId, lineIds[0])).toMatchObject({
+        unitPrice: "0.00",
+        subtotal: "0.00",
+      });
+      expect((await stored(invoiceId)).invoice.total).toBe("5.00");
+      expect(out).toBeInstanceOf(BadRequestException);
+      expect(codeOf(out)).toBe("MONEY_INVARIANT");
+      expect((out as Error).message).toContain(remedy);
+      expect((out as Error).message).not.toContain(
+        remedy === DRAFT_REMEDY ? ISSUED_REMEDY : DRAFT_REMEDY,
+      );
+    },
+  );
+
+  it("N2: a pack-less row re-priced 10 -> 0.01 is refused (its gross would round to $0.00), and a row ALREADY at a $0.00 gross refuses a step up", async () => {
+    const s = await seed("packlesscent", [[packless(10, 4.17), plain]]);
     const { invoiceId, lineIds } = s.rows[0];
+
+    const out = await attempt(single(s, [0.01, 5]));
+
+    // today: the row lands at unitPrice 0.01 with subtotal 0.00, and every later re-price of it is refused
     expect(await line(invoiceId, lineIds[0])).toMatchObject({
       unitPrice: "10.00",
       subtotal: "4.17",
     });
-
-    await single(s, [0, 5]);
-    expect(await line(invoiceId, lineIds[0])).toMatchObject({
-      unitPrice: "0.00",
-      subtotal: "0.00",
-    });
-    const out = await attempt(single(s, [10, 5]));
-
-    // persisted state first, so a red run names the wrong value: today the row lands at 10.00 / 50.00
-    expect(await line(invoiceId, lineIds[0])).toMatchObject({
-      unitPrice: "0.00",
-      subtotal: "0.00",
-    });
-    expect((await stored(invoiceId)).invoice.total).toBe("5.00");
     expect(out).toBeInstanceOf(BadRequestException);
     expect(codeOf(out)).toBe("MONEY_INVARIANT");
-    expect((out as Error).message).toContain("Re-enter this line's quantity and price");
+    expect((out as Error).message).toContain("$0.00");
+
+    // a row ALREADY stranded (price 0.01, gross 0.00) cannot be moved up either
+    const stranded = await seed("packlessstranded", [[packless(0.01, 0), plain]]);
+    const out2 = await attempt(single(stranded, [10, 5]));
+    expect(await line(stranded.rows[0].invoiceId, stranded.rows[0].lineIds[0])).toMatchObject({
+      unitPrice: "0.01",
+      subtotal: "0.00",
+    });
+    expect(out2).toBeInstanceOf(BadRequestException);
+    expect(codeOf(out2)).toBe("MONEY_INVARIANT");
   });
 
-  it("a pack-less legacy row: 10 -> 0.01 -> 10 refuses the step up from a $0.00 total, never a $0.00 line at $10 forever", async () => {
-    const s = await seed("packlesscent", [[packless(10, 4.17), plain]]);
+  it("SA-698b SINGLE (the panel's payload): a pack-less $5.00 / $0.00-gross line sent UNCHANGED does not block B 10 -> 12, and its row is byte-identical", async () => {
+    const s = await seed("unchangedsingle", [
+      [packless(5, 0), { qty: 6, unitPrice: 10, subtotal: 60 }],
+    ]);
     const { invoiceId, lineIds } = s.rows[0];
+    const aBefore = await rowText(lineIds[0]);
 
-    await single(s, [0.01, 5]);
-    expect(await line(invoiceId, lineIds[0])).toMatchObject({
-      unitPrice: "0.01",
-      subtotal: "0.00",
-    }); // 0.0417 -> 0.00
-    const out = await attempt(single(s, [10, 5]));
+    const out = await attempt(single(s, [5, 12]));
 
-    // today: unitPrice 10.00 with subtotal 0.00, a line that bills nothing at a price of $10
-    expect(await line(invoiceId, lineIds[0])).toMatchObject({
-      unitPrice: "0.01",
-      subtotal: "0.00",
+    // today: a 400 naming the pack-less line, and B stays at 10.00 / 60.00
+    expect(out instanceof Error ? out.message : out).toBe("applied");
+    expect(await line(invoiceId, lineIds[1])).toMatchObject({
+      unitPrice: "12.00",
+      subtotal: "72.00",
     });
-    expect(out).toBeInstanceOf(BadRequestException);
-    expect(codeOf(out)).toBe("MONEY_INVARIANT");
+    expect(await rowText(lineIds[0])).toBe(aBefore);
+    expect((await stored(invoiceId)).invoice.total).toBe("72.00");
+  });
+
+  it("SA-698b SINGLE: a stored LEGACY NEGATIVE line at its unchanged price does not block the panel, and its row is byte-identical", async () => {
+    const s = await seed("unchangedneg", [
+      [
+        { qty: 1, unitPrice: 5, discount: 50, subtotal: -45 },
+        { qty: 6, unitPrice: 10, subtotal: 60 },
+      ],
+    ]);
+    const { invoiceId, lineIds } = s.rows[0];
+    const negBefore = await rowText(lineIds[0]);
+
+    const out = await attempt(single(s, [5, 12]));
+
+    // today: the B1031 negative-subtotal 400, because the unchanged negative line was re-derived
+    expect(out instanceof Error ? out.message : out).toBe("applied");
+    expect(await line(invoiceId, lineIds[1])).toMatchObject({
+      unitPrice: "12.00",
+      subtotal: "72.00",
+    });
+    expect(await rowText(lineIds[0])).toBe(negBefore);
+    expect((await stored(invoiceId)).invoice.total).toBe("27.00");
+  });
+
+  it("SA-698b BULK: a batch carrying the pack-less line at its unchanged price succeeds for the other lines on every invoice", async () => {
+    const mk = (): Line[] => [
+      packless(5, 0),
+      { qty: 6, unitPrice: 10, subtotal: 60, product: "b" },
+    ];
+    const s = await seed("unchangedbulk", [mk(), mk()]);
+    const aBefore = await Promise.all(s.rows.map((r) => rowText(r.lineIds[0])));
+
+    const out = await attempt(
+      tenantCtx.run(s.tenantId, () =>
+        invoices.applyPriceAdjustment(s.rows[0].invoiceId, {
+          items: [
+            { itemId: s.rows[0].lineIds[0], newUnitPrice: 5 },
+            { itemId: s.rows[0].lineIds[1], newUnitPrice: 12 },
+          ],
+          scope: "ALL_CUSTOMER_SINCE",
+          sinceDate: "2000-01-01",
+        } as any),
+      ),
+    );
+
+    // today: the pre-flight refuses the whole batch naming the pack-less line, and nothing is re-priced
+    expect(out instanceof Error ? out.message : out).toBe("applied");
+    for (const r of s.rows) {
+      expect(await line(r.invoiceId, r.lineIds[1])).toMatchObject({
+        unitPrice: "12.00",
+        subtotal: "72.00",
+      });
+      expect((await stored(r.invoiceId)).invoice.total).toBe("72.00");
+    }
+    expect(await Promise.all(s.rows.map((r) => rowText(r.lineIds[0])))).toEqual(aBefore);
   });
 
   it("a boxed line with a DERIVABLE pack: 10 -> 0 -> 10 restores $14.17 (master bills $170.00, 17 x $10)", async () => {

@@ -102,15 +102,30 @@ export async function syncLedgerAfterPriceChange(
  * It is only sound while that ratio exists: a stored price of 0, or a stored gross that rounded to 0, carries
  * NO memory of the quantity, and falling back to `qty` bills the pieces at the case price (a 12x overcharge)
  * while a ratio of 0 prices the line at $0.00 for good. So a re-price to a price above 0 from such a row is
- * REFUSED (400 MONEY_INVARIANT, naming the line); a new price of 0 is always allowed. SA-698a.
+ * REFUSED (400 MONEY_INVARIANT, naming the line), and so is a positive price whose NEW gross rounds to $0.00
+ * (a 0.01 typo would strand the line the same way); a new price of 0 is allowed. SA-698a, SA-698b N2. The
+ * remedy in the copy depends on the invoice: a DRAFT can be edited, an issued one needs a credit note or a
+ * void and reissue (SA-698b N1).
  *
- * The recovery divides an ALREADY-ROUNDED stored subtotal, so it re-bases the total a little on each re-price:
- * re-applying the SAME price is exactly the identity, but a round trip A -> B -> A can land up to
- * (1/2 cent) x A / B + 1/2 cent away from where it began, which is at most 1 cent whenever B is at least half
- * of A (pinned by an executed sweep and a real-rows case in the B1120 specs). Only a legacy row can carry this
- * shape; every other line prices from its own fields (a derivable-pack line restores exactly from $0).
+ * The recovery divides an ALREADY-ROUNDED stored subtotal, so it re-bases the total a little on each CHANGED
+ * price: a round trip A -> B -> A can land up to (1/2 cent) x A / B + 1/2 cent away from where it began, which
+ * is at most 1 cent whenever B is at least half of A (pinned by an executed sweep and a real-rows case in the
+ * B1120 specs). Re-applying the SAME price never reaches this function at all (see
+ * `buildPriceAdjustmentUpdates`). Only a legacy row can carry this shape; every other line prices from its own
+ * fields (a derivable-pack line restores exactly from $0).
  */
-function repricedLineTotal(line: any, newPrice: number, discount: number): number {
+/** N1: the remedy named in a refusal. An issued invoice cannot be edited line by line, so it never says "re-enter". */
+const refusalRemedy = (status: string | undefined): string =>
+  status === InvoiceStatus.DRAFT
+    ? "Re-enter this line's quantity and price."
+    : "Issue a credit note, or void and reissue the invoice.";
+
+function repricedLineTotal(
+  line: any,
+  newPrice: number,
+  discount: number,
+  invoiceStatus?: string,
+): number {
   const qty = Number(line.qty);
   const hasSplit = line.boxes != null || line.pieces != null;
   const snapshot = Number(line.unitsPerBox ?? 0);
@@ -120,15 +135,25 @@ function repricedLineTotal(line: any, newPrice: number, discount: number): numbe
     const oldUnitPrice = Number(line.unitPrice);
     const gross = Number(line.subtotal) + discount;
     if (!(newPrice > 0)) return roundMoney(-discount); // a price of 0 zeroes the gross whatever the quantity was
+    const label = `Line item "${line.description ?? "item"}"`;
     if (!(oldUnitPrice > 0) || !(gross > 0)) {
       throw new BadRequestException({
         code: API_ERROR_CODES.MONEY_INVARIANT,
         message:
-          `Line item "${line.description ?? "item"}" can't be re-priced: its stored price or total is $0, ` +
-          `so its quantity can't be recovered from them. Re-enter this line's quantity and price.`,
+          `${label} can't be re-priced: its stored price or total is $0, so its quantity can't be ` +
+          `recovered from them. ${refusalRemedy(invoiceStatus)}`,
       });
     }
-    return roundMoney(newPrice * (gross / oldUnitPrice) - discount);
+    const newGross = newPrice * (gross / oldUnitPrice);
+    if (!(roundMoney(newGross) > 0)) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.MONEY_INVARIANT,
+        message:
+          `${label} can't be re-priced to $${newPrice.toFixed(2)}: its total would round to $0.00 and its ` +
+          `quantity could not be recovered afterwards. Enter a higher price.`,
+      });
+    }
+    return roundMoney(newGross - discount);
   }
   const beforeDiscount = computeLineSubtotal({
     unitPrice: newPrice,
@@ -157,8 +182,11 @@ export function buildPriceAdjustmentUpdates(args: {
   categoriesById: Map<string, any>;
   unitsPerBoxByProduct: Map<string, number>;
   isTaxExempt: boolean;
+  /** The invoice's status: it picks the remedy in a refusal's copy (a DRAFT can be edited, an issued one cannot). */
+  invoiceStatus?: string;
 }): Array<{ id: string; data: Record<string, any> }> {
-  const { items, localPriceMap, categoriesById, unitsPerBoxByProduct, isTaxExempt } = args;
+  const { items, localPriceMap, categoriesById, unitsPerBoxByProduct, isTaxExempt, invoiceStatus } =
+    args;
   // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty already in
   // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox, falling back to the
   // product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored there) but correct for an
@@ -175,7 +203,17 @@ export function buildPriceAdjustmentUpdates(args: {
     const requested = localPriceMap.get(item.id);
     if (requested == null) continue;
     const newPrice = roundMoney(requested); // B1120: whole cents, the price the line is priced AT and stored as
-    const newSubtotal = repricedLineTotal(item, newPrice, Number(item.discount ?? 0));
+    // SA-640 / SA-698b: a line whose price is UNCHANGED is left alone, BEFORE anything is re-derived or refused:
+    // no new subtotal, no category tax, no negative-line judgement. The panel sends every line with its current
+    // price, so re-deriving the untouched ones is what moved them (and refused a whole save over a line the
+    // operator never touched). Untouched lines are never re-derived, never refused and never moved.
+    if (newPrice === roundMoney(Number(item.unitPrice))) continue;
+    const newSubtotal = repricedLineTotal(
+      item,
+      newPrice,
+      Number(item.discount ?? 0),
+      invoiceStatus,
+    );
     const data: Record<string, any> = { unitPrice: newPrice, subtotal: newSubtotal };
     const category = item.trackedCategoryId ? categoriesById.get(item.trackedCategoryId) : null;
     if (category) {
@@ -368,6 +406,7 @@ export async function preflightBulkPriceAdjustment(
       subtotal?: unknown;
       taxAmount?: unknown;
       total?: unknown;
+      status?: string | null;
       payments?: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null;
     };
     localMap: Map<string, number>;
@@ -384,6 +423,7 @@ export async function preflightBulkPriceAdjustment(
         items: inv.items,
         localPriceMap: localMap,
         isTaxExempt,
+        invoiceStatus: inv.status ?? undefined,
         ...reference,
       });
       assertAdjustedTotalsSane(inv, updates);
