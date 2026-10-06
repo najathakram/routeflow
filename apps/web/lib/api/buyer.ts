@@ -71,6 +71,9 @@ export interface DashboardData {
     createdAt: string;
     requestedDeliveryDate: string | null;
     itemCount: number;
+    /** Business profiles 1B: the badge reads the order detail's label (buyerOrderStatusLabel). */
+    fulfillPath: string;
+    shippedAt: string | null;
   }>;
   stats: {
     activeOrders: number;
@@ -135,6 +138,8 @@ export interface BuyerOrderTemplate {
     productId: string;
     qty: number;
     notes: string | null;
+    /** Set when the seller suspended this line — a manual reorder never places it. */
+    suspendedAt?: string | null;
     product: { id: string; name: string; unit: string };
   }>;
   customer: { id: string; businessName: string };
@@ -520,9 +525,12 @@ export function useBuyerTemplates() {
   });
 }
 
-export function useBuyerReorder() {
+/** `localErrorToast`: the caller (the reorder review sheet) renders its own fixed error sentence,
+ *  so the app-wide "Something went wrong…" toast must not also fire (one message per failure). */
+export function useBuyerReorder(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (templateId: string) =>
       buyerApiClient.post(`/buyer/templates/${templateId}/reorder`).then((r) => r.data),
     onSuccess: () => {
