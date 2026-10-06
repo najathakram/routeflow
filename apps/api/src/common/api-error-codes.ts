@@ -265,6 +265,13 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
+   * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.
+   */
+  PICKUP_PAYMENT_REQUIRED: "PICKUP_PAYMENT_REQUIRED",
+  PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
+  PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

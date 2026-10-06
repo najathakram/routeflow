@@ -130,7 +130,7 @@ describe("resolveFulfilPath: pickup mode (staff): ROUTE means no preference", ()
     },
   );
 
-  it.each(["pickup", "pickup_ship"])(
+  it.each(["pickup_ship"])(
     "%s: a customer default ROUTE (the column default) is PICKUP, a default SHIP is SHIP",
     async (mode) => {
       expect(await resolveFulfilPath(deps(mode), { stored: R, audience: "staff" })).toBe(P);
@@ -141,7 +141,7 @@ describe("resolveFulfilPath: pickup mode (staff): ROUTE means no preference", ()
     },
   );
 
-  it.each(["pickup", "pickup_ship"])(
+  it.each(["pickup_ship"])(
     "%s: an explicit SHIP stays SHIP ('Ship this order instead'); an explicit PICKUP is PICKUP",
     async (mode) => {
       expect(
@@ -285,5 +285,42 @@ describe("(e) SA-666b: pickup and pickup_ship are available and a stored one der
       expect(c.portalMethods.length > 0 && JSON.stringify(c.methods) !== "[]").toBe(true);
       expect(c).not.toEqual(unset);
     }
+  });
+});
+
+describe("resolveFulfilPath: pickup-ONLY never ships (staff); pickup_ship unchanged", () => {
+  it("a stored default ROUTE or none resolves PICKUP", async () => {
+    expect(await resolveFulfilPath(deps("pickup"), { stored: R, audience: "staff" })).toBe(P);
+    expect(await resolveFulfilPath(deps("pickup"), { stored: null, audience: "staff" })).toBe(P);
+  });
+  it("a stored SHIP (no explicit) resolves PICKUP", async () => {
+    expect(await resolveFulfilPath(deps("pickup"), { stored: S, audience: "staff" })).toBe(P);
+  });
+  it("an explicit SHIP EQUAL to the stored path is treated as omitted (logged) and resolves PICKUP", async () => {
+    const d = deps("pickup");
+    expect(await resolveFulfilPath(d, { explicit: S, stored: S, audience: "staff" })).toBe(P);
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining("treated as omitted"));
+  });
+  it.each([R, null, P])(
+    "an explicit SHIP DIFFERENT from the stored path (%s) is 400 FULFIL_METHOD_NOT_OFFERED",
+    async (stored) => {
+      await expect(
+        resolveFulfilPath(deps("pickup"), { explicit: S, stored, audience: "staff" }),
+      ).rejects.toMatchObject(refusal);
+    },
+  );
+  it("an explicit PICKUP is PICKUP", async () => {
+    expect(
+      await resolveFulfilPath(deps("pickup"), { explicit: P, stored: S, audience: "staff" }),
+    ).toBe(P);
+  });
+  it("pickup_ship is unchanged: explicit SHIP stays SHIP, stored SHIP stays SHIP", async () => {
+    expect(
+      await resolveFulfilPath(deps("pickup_ship"), { explicit: S, stored: R, audience: "staff" }),
+    ).toBe(S);
+    expect(
+      await resolveFulfilPath(deps("pickup_ship"), { explicit: S, stored: S, audience: "staff" }),
+    ).toBe(S);
+    expect(await resolveFulfilPath(deps("pickup_ship"), { stored: S, audience: "staff" })).toBe(S);
   });
 });

@@ -115,12 +115,11 @@ describe("OrdersService.create: fulfil path", () => {
       expect(created()).toBe("PICKUP");
     });
 
-    it("pickup tenant, staff sends the hard-coded ROUTE: no preference, PICKUP; explicit SHIP stays SHIP", async () => {
+    it("pickup tenant, staff sends the hard-coded ROUTE: no preference, PICKUP; a different explicit SHIP is refused (pickup-only never ships)", async () => {
       mode("pickup");
       await create({ fulfillPath: "ROUTE" });
       expect(created()).toBe("PICKUP");
-      await create({ fulfillPath: "SHIP" });
-      expect(created()).toBe("SHIP");
+      await expect(create({ fulfillPath: "SHIP" })).rejects.toMatchObject({ status: 400 });
       await create({ fulfillPath: "PICKUP" });
       expect(created()).toBe("PICKUP");
     });
