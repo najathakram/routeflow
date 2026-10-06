@@ -70,7 +70,10 @@ export class CounterSaleController {
   private parseMethod(raw: string | undefined): CounterPaymentMethod | undefined {
     if (raw === undefined) return undefined;
     if (!(COUNTER_SALE_METHODS as readonly string[]).includes(raw)) {
-      throw new BadRequestException(`method must be one of ${COUNTER_SALE_METHODS.join(", ")}`);
+      throw new BadRequestException({
+        code: API_ERROR_CODES.COUNTER_SALE_METHOD_INVALID,
+        message: `method must be one of ${COUNTER_SALE_METHODS.join(", ")}`,
+      });
     }
     return raw as CounterPaymentMethod;
   }

@@ -368,11 +368,19 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
   /**
-   * 409 from GET /orders/counter-sale/by-key/:key: the sale's order exists but it has no live invoice (a half-written
-   * sale: the first attempt stopped before the invoice step, or only VOID / WRITTEN_OFF invoices remain). Not
-   * "no sale" and not an uncoded failure: re-POST with the same Idempotency-Key to finish it.
+   * 409 from GET /orders/counter-sale/by-key/:key: the sale's PENDING or DELIVERED order exists but has NO invoice
+   * rows at all (a half-written sale: the first attempt stopped before the invoice step). Re-POST with the same
+   * Idempotency-Key to finish it. A voided or cancelled sale is COUNTER_SALE_VOIDED, never this.
    */
   COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",
+  /**
+   * 409: a counter sale was VOIDED after it was rung (its order cancelled, or every invoice VOID / WRITTEN_OFF). A
+   * DEFINITIVE answer from GET .../by-key/:key and from a re-POST of the same key: start a new sale, never retry.
+   * A re-POST never resurrects or re-charges it.
+   */
+  COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
+  /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
+  COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
