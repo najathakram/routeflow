@@ -117,6 +117,7 @@ export function CounterSaleScreen() {
   // The total and change the clerk SAW (client figures) when the sale was submitted: compared with the server's on the way out.
   const estimateRef = React.useRef({ total: 0, change: 0 });
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
+  const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   const submittingRef = React.useRef(false);
 
@@ -141,6 +142,12 @@ export function CounterSaleScreen() {
   React.useEffect(() => {
     const held = readHeldAttempt(heldKey);
     if (!held || attemptRef.current) return;
+    if (held === "corrupt") {
+      // Something was held but cannot be trusted: stay LOCKED (a sale may have been written); the payload is already dropped.
+      setHeldCorrupt(true);
+      setOutcomeUnknown(true);
+      return;
+    }
     attemptRef.current = {
       key: held.key,
       dto: held.dto as CounterSaleRequest,
@@ -263,6 +270,7 @@ export function CounterSaleScreen() {
     attemptRef.current = null;
     clearHeldAttempt(heldKey);
     setOutcomeUnknown(false);
+    setHeldCorrupt(false);
     setLookupFailed(false);
     refocus();
   }
@@ -785,19 +793,27 @@ export function CounterSaleScreen() {
           <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
           {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void completeSale(false, true)}
-              disabled={createSale.isPending || lookupSale.isPending}
-            >
-              Try again
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void checkSaleStatus()}
-              disabled={createSale.isPending || lookupSale.isPending}
-            >
-              Check sale status
-            </Button>
+            {heldCorrupt ? (
+              <Button variant="secondary" onClick={resetSale}>
+                Discard and start a new sale
+              </Button>
+            ) : (
+              <>
+                <Button
+                  onClick={() => void completeSale(false, true)}
+                  disabled={createSale.isPending || lookupSale.isPending}
+                >
+                  Try again
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => void checkSaleStatus()}
+                  disabled={createSale.isPending || lookupSale.isPending}
+                >
+                  Check sale status
+                </Button>
+              </>
+            )}
             <Link href="/orders" className="text-brand-700 underline">
               Check recent sales
             </Link>

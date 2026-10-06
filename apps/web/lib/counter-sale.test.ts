@@ -29,6 +29,9 @@ import {
   preselectFulfilment,
   quickTenderOptions,
   readAutoPrint,
+  heldAttemptKey,
+  readHeldAttempt,
+  writeHeldAttempt,
   validatePayment,
   writeAutoPrint,
 } from "./counter-sale";
@@ -460,5 +463,74 @@ describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
         response: { status: 409, data: { code: "COUNTER_SALE_KEY_CONFLICT" } },
       }),
     ).toBe("That sale reference was already used. Ring the sale again.");
+  });
+});
+
+describe("held attempt: minimal customer, validated read", () => {
+  const SK = "rf.counterSale.heldAttempt:acme:u-a";
+  const snap = (over: Record<string, unknown> = {}) =>
+    ({
+      key: "k1",
+      dto: { payment: { method: "CASH" } },
+      next: false,
+      estimate: { total: 2.5, change: 0 },
+      lines: [{ tempId: "t", productId: "p1", name: "Cola", unitPrice: 2.5, qty: 1 }],
+      customer: null,
+      method: "CASH",
+      tendered: "",
+      reference: "",
+      ...over,
+    }) as never;
+  beforeEach(() => window.sessionStorage.clear());
+
+  it("stores only id, businessName, pricingTier, fulfillPath of the customer", () => {
+    writeHeldAttempt(
+      SK,
+      snap({
+        customer: {
+          id: "c1",
+          businessName: "Acme",
+          pricingTier: 2,
+          fulfillPath: "PICKUP",
+          email: "a@b.c",
+          phone: "555",
+          address: "1 Main",
+          notes: "x",
+        },
+      }),
+    );
+    const c = JSON.parse(window.sessionStorage.getItem(SK) as string).customer;
+    expect(Object.keys(c).sort()).toEqual(["businessName", "fulfillPath", "id", "pricingTier"]);
+  });
+
+  it("reads a valid attempt back", () => {
+    writeHeldAttempt(SK, snap());
+    expect((readHeldAttempt(SK) as { key: string }).key).toBe("k1");
+  });
+
+  it.each([
+    ["corrupt JSON", () => window.sessionStorage.setItem(SK, "{nope")],
+    [
+      "non-numeric quantity",
+      () =>
+        window.sessionStorage.setItem(
+          SK,
+          JSON.stringify(
+            snap({ lines: [{ tempId: "t", productId: "p1", name: "C", unitPrice: 1, qty: "x" }] }),
+          ),
+        ),
+    ],
+    [
+      "missing key",
+      () => window.sessionStorage.setItem(SK, JSON.stringify(snap({ key: undefined }))),
+    ],
+  ])("%s -> corrupt, and the entry is removed", (_n, seed) => {
+    seed();
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+    expect(window.sessionStorage.getItem(SK)).toBeNull();
+  });
+
+  it("heldAttemptKey is unchanged", () => {
+    expect(heldAttemptKey("acme", "u-a")).toBe(SK);
   });
 });
