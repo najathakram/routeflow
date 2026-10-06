@@ -17,6 +17,7 @@ import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { counterSaleGate } from "./capability-shape";
+import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { toCounterOrderItem } from "./counter-sale-lines";
 import {
   buildCounterSaleResponse,
@@ -274,14 +275,16 @@ export class CounterSaleService {
 
   private async assertProductsExist(productIds: string[]): Promise<Map<string, number | null>> {
     const unique = [...new Set(productIds)];
-    const found = await this.prisma.forTenant().product.findMany({
-      where: { id: { in: unique } },
-      select: { id: true, unitsPerBox: true },
-    });
+    const found: Array<LineUnitsProduct & { id: string }> = await this.prisma
+      .forTenant()
+      .product.findMany({
+        where: { id: { in: unique } },
+        select: { id: true, unit: true, unitsPerBox: true },
+      });
     if (found.length !== unique.length) throw new NotFoundException("Product not found");
-    return new Map(
-      found.map((p: { id: string; unitsPerBox: number | null }) => [p.id, p.unitsPerBox]),
-    );
+    // The pack factor of a plain, label-less counter line, read the ONE sanctioned way (resolveLineUnits,
+    // units_v1), never off the product.
+    return new Map(found.map((row) => [row.id, resolveLineUnits(row, [], null).unitsPerBox]));
   }
 
   private async assertNoOpenCredit(customerId: string): Promise<void> {
