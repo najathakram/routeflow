@@ -63,7 +63,8 @@ describe("mergeEligibleWhere — one predicate per path", () => {
     expect(mergeEligibleWhere("force")).toEqual({
       status: OrderStatus.PENDING,
       transaction: { is: null },
-      invoices: { none: { status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } } },
+      invoices: { none: { status: { not: InvoiceStatus.DRAFT } } },
+      returns: { none: {} },
     });
   });
   it("auto keeps every historic condition", () => {
@@ -125,6 +126,10 @@ describe("lockAndRecheckMergeInputs", () => {
       [order("a"), order("b", {}, [line({ id: "b-l", qty: 7 })])],
     ],
     ["a new order joined the group", [order("a"), order("b"), order("c")]],
+    ...["promoFreeUnits", "priceType", "originalPrice"].map((f) => [
+      `a loser line's ${f} changed between the pre-read and the lock`,
+      [order("a"), order("b", {}, [line({ id: "b-l", [f]: "CHANGED" })])],
+    ]),
   ])("%s -> deferred, nothing written", async (_n, now) => {
     const tx = fakeTx(now as any[]);
     const err = await lockAndRecheckMergeInputs(tx, { customerId: "c", kind: "auto", pre }).catch(

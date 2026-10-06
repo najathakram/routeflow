@@ -168,6 +168,7 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     );
     await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
     await raw.invoice.deleteMany({ where: { tenantId } });
+    await raw.$executeRawUnsafe(`DELETE FROM "Return" WHERE "tenantId" = $1`, tenantId);
     await raw.orderIdempotencyKey.deleteMany({ where: { tenantId } });
     await (raw as any).orderRevision?.deleteMany?.({ where: { orderId: { in: ids } } });
     await raw.stockMovement.deleteMany({ where: { productId } });
@@ -377,6 +378,27 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     await settle(mergeForce());
     const invoice = await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     expect(invoice.orderId).toBe(loser);
+    expect(await exists(loser)).toBe(true);
+    expect(await qtyOf(winner)).toBe(WQ);
+  }, 120_000);
+
+  it("REG-B1053-FORCE-VOID (no race): force skips a loser carrying a VOID invoice (keeps the audit link)", async () => {
+    const { loser, winner } = await pair();
+    const invoiceId = await insertInvoice(loser, "VOID");
+    await settle(mergeForce());
+    expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).orderId).toBe(loser);
+    expect(await exists(loser)).toBe(true);
+    expect(await qtyOf(winner)).toBe(WQ);
+  }, 120_000);
+
+  it("REG-B1053-FORCE-RETURN (no race): force skips a loser carrying a Return, no raw P2003 500", async () => {
+    const { loser, winner } = await pair();
+    await commitedWrite(
+      `INSERT INTO "Return" (id, "orderId", "customerId", reason, "tenantId", "updatedAt") VALUES ($1, $2, $3, 'DAMAGED', $4, now())`,
+      [randomUUID(), loser, customerId, tenantId],
+    );
+    const out = await settle(mergeForce());
+    expect(out.error).toBeUndefined();
     expect(await exists(loser)).toBe(true);
     expect(await qtyOf(winner)).toBe(WQ);
   }, 120_000);

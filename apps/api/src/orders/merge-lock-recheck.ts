@@ -33,7 +33,8 @@ export type MergeOrder = Prisma.OrderGetPayload<{ include: { lineItems: true } }
 export const MERGE_WRITE_LOCK_TIMEOUT = "3s";
 
 /** Billed documents: a loser carrying one is a real bill / sale and is never deleted by a merge. */
-const BILLED_INVOICE = { status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] } };
+// A VOID invoice keeps its audit link to the order, so it counts too: only an open DRAFT mirror is removable.
+const BILLED_INVOICE = { status: { not: InvoiceStatus.DRAFT } };
 
 /**
  * The ONE eligibility predicate per path (the pre-read, the under-lock re-read and the guarded loser
@@ -57,6 +58,7 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
         status: OrderStatus.PENDING,
         transaction: { is: null },
         invoices: { none: BILLED_INVOICE },
+        returns: { none: {} },
       };
 }
 
@@ -111,6 +113,10 @@ export function mergeInputFingerprint(group: MergeOrder[]): string {
         String(li.unitPrice),
         String(li.subtotal),
         String(li.position ?? ""),
+        // line-only writers do not bump Order.updatedAt
+        String(li.promoFreeUnits ?? ""),
+        li.priceType ?? "",
+        String(li.originalPrice ?? ""),
       ]),
     ]),
   );
