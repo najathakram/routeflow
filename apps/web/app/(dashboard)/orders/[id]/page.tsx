@@ -83,6 +83,9 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
+import { ShipWithTrackingDialog } from "./ShipWithTrackingDialog";
+import { shipWithTracking } from "@/lib/ship-with-tracking";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
@@ -1851,6 +1854,7 @@ export default function OrderDetailPage() {
   // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
   // tracking-entry dialog open — see openSignal prop below.
   const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
+  const [showShipDialog, setShowShipDialog] = React.useState(false);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -2182,7 +2186,9 @@ export default function OrderDetailPage() {
     );
   };
 
-  const handleLock = () => {
+  // `withTracking`: the shipment (carrier + tracking) was saved first via the "Add tracking" dialog (F4),
+  // so the shipped email already carries it and the tracking card is not opened.
+  const handleLock = (withTracking = false) => {
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
       {
@@ -2190,12 +2196,15 @@ export default function OrderDetailPage() {
           setLocalStatus("OUT_FOR_DELIVERY");
           // Nudge the operator straight into tracking entry for a SHIP order —
           // there's nowhere else on this screen prompting for it.
-          if (order.fulfillPath === "SHIP") setShipmentOpenSignal((n) => n + 1);
+          if (order.fulfillPath === "SHIP" && !withTracking) setShipmentOpenSignal((n) => n + 1);
         },
-        onError: guardError(() => handleLock()),
+        onError: guardError(() => handleLock(withTracking)),
       },
     );
   };
+  // A SHIP order asks for tracking first (one shipped email that carries it); other orders ship at once.
+  const handleMarkShipped = () =>
+    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : handleLock();
 
   const handleCancel = () => setShowCancelConfirm(true);
 
@@ -2663,7 +2672,7 @@ export default function OrderDetailPage() {
                     size="sm"
                     variant={orderUiV2.enabled ? undefined : "secondary"}
                     leftIcon={<Truck className="h-4 w-4" />}
-                    onClick={handleLock}
+                    onClick={handleMarkShipped}
                     loading={updateStatus.isPending}
                   >
                     {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
@@ -3354,6 +3363,31 @@ export default function OrderDetailPage() {
               via a carrier instead of our own route. Gated so it doesn't render on
               every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
               historical rows that already carry tracking data. */}
+          {order.fulfillPath === "SHIP" && (
+            <ShipWithTrackingDialog
+              open={showShipDialog}
+              onClose={() => setShowShipDialog(false)}
+              isPending={updateShipment.isPending || updateStatus.isPending}
+              onSkip={() => handleLock()}
+              onShipWithTracking={(values) =>
+                shipWithTracking(
+                  {
+                    saveShipment: (v) =>
+                      updateShipment.mutateAsync({ id: order.id, ...v }).catch((e: unknown) => {
+                        toast({
+                          title: "Could not save shipment",
+                          description: genericToastCopy(e),
+                          variant: "error",
+                        });
+                        throw e;
+                      }),
+                    ship: () => handleLock(true),
+                  },
+                  values,
+                )
+              }
+            />
+          )}
           {(order.fulfillPath === "SHIP" ||
             order.shippingCarrier ||
             order.shippingTrackingNumber) && (
