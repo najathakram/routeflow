@@ -26,6 +26,22 @@ export interface CancelImpact {
   canCancel: boolean;
 }
 
+/**
+ * B1116: STAFF-ONLY field on the order detail read (`GET /orders/:id`) — never present on a buyer,
+ * customer or driver read. `flagged` is the derived "this order's invoices no longer match its lines"
+ * truth (the same predicate that makes Mark Delivered / Generate Invoice answer 409
+ * ORDER_INVOICES_NEED_REVIEW); it is always the live state, so it clears itself once staff fix the
+ * invoices. `flaggedAtStop` is decoration only (never changes `flagged`): present when a driver's stop
+ * completion left the audit row that names who and when.
+ */
+export interface OrderInvoicesNeedReview {
+  flagged: boolean;
+  /** Why the office is being asked to look — present when `flagged`. */
+  reason?: string;
+  /** Who flagged it at a stop, and when (ISO), from the latest ORDER_INVOICES_NEED_REVIEW audit row. */
+  flaggedAtStop?: { by: string; at: string };
+}
+
 export interface CustomerPriceHistory {
   [productId: string]: {
     lastPrice: number;

@@ -31,6 +31,7 @@ import {
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
 import { assertDriverMayEditOrder, underOrderLockForDriver } from "./driver-edit-access";
+import { throwIfWithCarrierChangeRequest } from "./order-carrier-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -149,6 +150,11 @@ export class ChangeRequestsService {
 
     // G7 inverse gate: change requests exist ONLY where direct editing ended.
     if (order.routeRun == null || order.routeRun.status === "SCHEDULED") {
+      // B1135: a with-carrier order never reaches a route run and its lines are frozen (SA-696).
+      await throwIfWithCarrierChangeRequest(
+        { featureConfig: this.ordersService.featureConfig, prisma: this.prisma },
+        order,
+      );
       throw new ConflictException({
         code: API_ERROR_CODES.EDIT_WINDOW_OPEN,
         message: "This order is still directly editable — use PATCH /orders/:id/items.",

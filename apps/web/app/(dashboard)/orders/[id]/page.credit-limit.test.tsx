@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
@@ -73,7 +74,11 @@ const open = async (status: string, button: RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name: button }));
 };
 
-beforeEach(() => jest.clearAllMocks());
+// B1134: the action bar is staff-only; these specs exercise staff behaviour, so sign in as one.
+beforeEach(() => {
+  jest.clearAllMocks();
+  seedSession("OPERATOR");
+});
 
 describe("order detail — CREDIT_LIMIT_EXCEEDED", () => {
   it("Mark as Delivered refused for credit: the dialog with the fixed sentence built from the server's numbers, no toast", async () => {
