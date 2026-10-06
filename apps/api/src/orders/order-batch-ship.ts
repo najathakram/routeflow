@@ -28,7 +28,7 @@ export const BATCH_SHIP_OUTCOMES = [
   "ALREADY_SHIPPED",
   "NOT_CONFIRMED",
   "CREDIT_HOLD",
-  "CONCURRENT_UPDATE",
+  "ORDER_CHANGED",
   "INVALID_TRACKING",
   "NOT_FOUND",
   "FAILED",
@@ -55,7 +55,7 @@ const MESSAGES: Record<BatchShipOutcome, string> = {
   ALREADY_SHIPPED: "Already shipped. Nothing was changed.",
   NOT_CONFIRMED: "Only confirmed orders can be marked shipped.",
   CREDIT_HOLD: "On credit hold. Resolve the customer's credit limit, then ship it again.",
-  CONCURRENT_UPDATE: "The order changed while shipping. Review it and try again.",
+  ORDER_CHANGED: "The order changed while shipping. Review it and try again.",
   INVALID_TRACKING: "The carrier or tracking number is not valid. Nothing was changed.",
   NOT_FOUND: "Order not found.",
   FAILED: "Could not be marked shipped. Nothing was confirmed; try it from the order page.",
@@ -176,7 +176,7 @@ export class OrderBatchShipService {
   private async mapStatusError(orderId: string, err: unknown): Promise<BatchShipOutcome> {
     const code = codeOf(err);
     if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED) return "CREDIT_HOLD";
-    if (code === API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT) return "CONCURRENT_UPDATE";
+    if (code === API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT) return "ORDER_CHANGED";
     if (err instanceof BadRequestException) return "INVALID_TRACKING";
     if (err instanceof ConflictException || code === API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW) {
       // changeStatus raises the invoice-settle failure AFTER the status committed.

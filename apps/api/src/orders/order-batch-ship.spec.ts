@@ -187,13 +187,13 @@ describe("OrderBatchShipService.batchShip", () => {
     expect(res.results.map((r) => r.outcome)).toEqual(["CREDIT_HOLD", "SHIPPED"]);
   });
 
-  it("B1095 409 -> CONCURRENT_UPDATE", async () => {
+  it("B1095 409 -> ORDER_CHANGED", async () => {
     const { svc, ordersService } = build([row("a")]);
     ordersService.changeStatus.mockRejectedValueOnce(
       new ConflictException({ code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT, message: "x" }),
     );
     const res = await svc.batchShip([{ orderId: "a" }], user);
-    expect(res.results[0].outcome).toBe("CONCURRENT_UPDATE");
+    expect(res.results[0].outcome).toBe("ORDER_CHANGED");
   });
 
   it("invalid tracking (400 from updateShipment) -> INVALID_TRACKING, status never changed", async () => {

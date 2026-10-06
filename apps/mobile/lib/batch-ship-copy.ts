@@ -40,7 +40,7 @@ export const BATCH_SHIP_COPY: Record<
     tone: "error",
     shipped: false,
   },
-  CONCURRENT_UPDATE: {
+  ORDER_CHANGED: {
     label: "Changed meanwhile",
     detail: "The order changed while shipping. Review it and try again.",
     tone: "error",
