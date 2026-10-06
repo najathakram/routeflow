@@ -59,6 +59,8 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
+    /** The server's default PDF stage for this invoice: "final" once issued or settled at shipment. */
+    pdfVariant?: "draft" | "final";
     /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
      *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
      *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */

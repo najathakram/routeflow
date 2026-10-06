@@ -175,6 +175,7 @@ export * from "./api/analytics-insights";
 export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";
+export * from "./api/ship-state";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
