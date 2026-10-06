@@ -2,6 +2,7 @@ import * as React from "react";
 import { render, screen } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import OrderDetailPage from "./page";
+import { seedSession } from "@/test-utils/session";
 
 /**
  * SHIP fulfilment mode on the order detail: no Fulfillment picker, carrier wording ("Mark shipped",
@@ -77,6 +78,7 @@ const open = async (status: string) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  seedSession("OPERATOR"); // B1134: the action bar is staff-only
   orderPath = undefined;
 });
 
