@@ -3185,6 +3185,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // payload skips this branch entirely — it merges below like an operator
         // edit (with prices already stripped), so untouched lines survive.
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
+        // SA-696a (decided, fail closed): this non-diff path recreates every line, so new line ids. On an
+        // order with the carrier that holds an unlisted line, settleStockForEdit reads that as a removal and
+        // refuses NO_REDUCE even when nothing changed; nothing is written.
         if (
           (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
           !isDiffPayload
@@ -3479,6 +3482,8 @@ export class OrdersService implements OnApplicationBootstrap {
           };
 
           if (replaceAll) {
+            // SA-696a (decided, fail closed): replace-all recreates every line (new ids), so on an order with
+            // the carrier that holds an unlisted line it is refused NO_REDUCE even when nothing changed.
             // Replace-all: client sends the full item list. Delete existing items then
             // re-create, honoring any per-line price override and any boxes/pieces
             // split (boxed products use BOX-price proration).
@@ -4728,6 +4733,7 @@ export class OrdersService implements OnApplicationBootstrap {
         : {};
     // WP3: hoisted for the same reason — the credit guard below runs inside the tx.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
+    const carrier = await carrierGuard.carrierEditGuard(this, order); // SA-696, read off the tx's connection
 
     const { subtotal, tax, total, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
@@ -5131,7 +5137,10 @@ export class OrdersService implements OnApplicationBootstrap {
         // is always PENDING/CONFIRMED/OUT_FOR_DELIVERY here — see the
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
-        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
+        const blockCredits = await carrierGuard.blockCreditsUnderLock(tx, order.id, carrier); // SA-696
+        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver, undefined, {
+          blockCredits,
+        });
         await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
