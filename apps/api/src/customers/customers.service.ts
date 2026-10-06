@@ -63,12 +63,8 @@ import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { omitStaffOnlyCustomerFields, pickSelfServiceFields } from "./self-service-fields";
 import { customerUpdateData } from "./customer-update-data";
-import { assertSafeCustomerNames } from "./customer-name-guard";
-import {
-  assertSafeAddress,
-  assertSafeLicense,
-  assertSafePersonName,
-} from "../common/text-cell-guards";
+import { assertSafeCustomerNames, assertSafeCustomerUpdate } from "./customer-name-guard";
+import { assertSafeAddress, assertSafePersonName } from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -90,7 +86,7 @@ import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { AuditService } from "../audit/audit.service";
-import { recordCreditLimitChange } from "./credit-limit-audit";
+import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -111,7 +107,6 @@ export class CustomersService {
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
     private readonly email: EmailService,
-    // B1018: credit-limit audit; @Optional (AuditModule is global, so production always has it).
     @Optional() private readonly audit?: AuditService,
   ) {}
 
@@ -811,7 +806,7 @@ export class CustomersService {
     id: string,
     dto: UpdateCustomerDto,
     options?: compliance.CustomerUpdateOptions,
-    actor?: { sub?: string | null; impersonatedBy?: string | null },
+    actor?: CreditLimitActor,
   ) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
@@ -819,21 +814,12 @@ export class CustomersService {
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
-    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
-    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
-    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
+    assertSafeCustomerUpdate(dto, existing, options?.compliance); // B956 / B984 / B964
     const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
-    await recordCreditLimitChange(
-      this.audit,
-      this.prisma.getTenantId(),
-      id,
-      existing.creditLimit,
-      dto.creditLimit,
-      actor,
-    );
+    await recordCreditLimitChange(this.audit, this.prisma.getTenantId(), existing, dto, actor);
     return updated;
   }
 
