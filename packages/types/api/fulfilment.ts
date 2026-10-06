@@ -65,13 +65,6 @@ export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
   consistent: true,
 };
 
-/**
- * What the buyer portal may know of the capability: ONLY the buyer-facing choice. It rides each row
- * of `GET /buyer/sellers` (`BuyerSellerFulfilment`), so the cart can offer "Pick up at store" /
- * "Ship to me" without a staff-only capability read. No other capability field is exposed.
- */
-export type BuyerFulfilmentOffer = Pick<FulfilmentCapability, "portalMethods" | "portalDefault">;
-
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }

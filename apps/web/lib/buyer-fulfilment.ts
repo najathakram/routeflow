@@ -1,6 +1,5 @@
 import {
   API_ERROR_CODES,
-  type BuyerFulfilmentOffer,
   type BuyerSellerCapability,
   type FulfilmentMethod,
 } from "@routeflow/types";
@@ -120,7 +119,7 @@ export function buyerOrderStatusLabel(
 }
 
 /**
- * Order ahead (buyer portal): what the buyer is offered, from `GET /buyer/sellers` `fulfilment`.
+ * Order ahead (buyer portal): what the buyer is offered, from `GET /buyer/capabilities` (the one buyer capability source).
  * `[]` / `null` = no choice (today): nothing is sent and the server applies its own default.
  */
 export interface BuyerFulfilmentChoice {
@@ -132,7 +131,7 @@ export interface BuyerFulfilmentChoice {
 }
 
 export function buyerFulfilmentChoice(
-  offer: Partial<BuyerFulfilmentOffer> | null | undefined,
+  offer: Partial<Pick<BuyerSellerCapability, "portalMethods" | "portalDefault">> | null | undefined,
 ): BuyerFulfilmentChoice {
   const methods = [...(offer?.portalMethods ?? [])];
   const fallback = methods.length === 1 ? methods[0] : null;

@@ -24,6 +24,7 @@ import {
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { buyerFulfilmentChoice } from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ function Section({
 export default function BuyerShelfPage() {
   const params = useParams();
   const router = useRouter();
-  const { activeSeller, sellers, isLoading: authLoading } = useBuyerAuth();
+  const { activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
   const { data: shelf, isLoading, isError } = useBuyerShelf();
@@ -217,11 +218,10 @@ export default function BuyerShelfPage() {
   const snoozed = estimates.filter((e) => e.snoozed);
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
-  // Order ahead: a quick order carries the seller's default method when it offers one.
-  const shelfOffer =
-    (sellers ?? []).find((x) => x.linkId === activeSeller?.linkId)?.fulfilment ??
-    activeSeller?.fulfilment;
-  const quickFulfillPath = buyerFulfilmentChoice(shelfOffer).defaultMethod;
+  // Order ahead: a quick order carries the seller's default method when it offers one. Loading /
+  // error => no capability => nothing sent (server default).
+  const { data: capability } = useBuyerSellerCapabilities();
+  const quickFulfillPath = buyerFulfilmentChoice(capability).defaultMethod;
 
   const handleAdd = async (e: ShelfEstimate) => {
     if (pendingAdd) return;

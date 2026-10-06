@@ -10,6 +10,7 @@ import BuyerCartPage from "./page";
 const mutateAsync = jest.fn();
 const clearCart = jest.fn();
 let offer: { portalMethods: string[]; portalDefault: string | null } | undefined;
+let capState: "ok" | "error" | "loading" = "ok";
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
@@ -18,9 +19,17 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/buyer-auth-context", () => ({
   useBuyerAuth: () => ({
     buyer: { id: "b1" },
-    activeSeller: { linkId: "l1", tenant: { slug: "acme" }, fulfilment: offer },
-    sellers: [{ linkId: "l1", tenant: { slug: "acme" }, fulfilment: offer }],
+    activeSeller: { linkId: "l1", tenant: { slug: "acme" } },
+    sellers: [{ linkId: "l1", tenant: { slug: "acme" } }],
     isLoading: false,
+  }),
+}));
+// #3200's seller-scoped hook is the ONE capability source (GET /buyer/capabilities).
+jest.mock("@/lib/api/buyer-capabilities", () => ({
+  useBuyerSellerCapabilities: () => ({
+    data: capState === "ok" && offer ? { ...offer, fleet: true } : undefined,
+    isLoading: capState === "loading",
+    isError: capState === "error",
   }),
 }));
 jest.mock("@/lib/buyer-cart", () => ({
@@ -46,6 +55,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mutateAsync.mockResolvedValue({ id: "o1", orderNumber: "SO-1" });
   offer = undefined;
+  capState = "ok";
 });
 
 describe("buyer cart — pickup / ship choice", () => {
@@ -110,5 +120,25 @@ describe("buyer cart — pickup / ship choice", () => {
     );
     expect(screen.queryByText(/raw server text/)).toBeNull();
     expect(clearCart).not.toHaveBeenCalled();
+  });
+
+  it("capability read failed (503): no choice and no fulfillPath in the payload", async () => {
+    offer = { portalMethods: ["PICKUP", "SHIP"], portalDefault: "PICKUP" };
+    capState = "error";
+    render(<BuyerCartPage />);
+    await place();
+    expect(screen.queryByRole("radio")).toBeNull();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).not.toHaveProperty("fulfillPath");
+  });
+
+  it("capability still loading: no choice and no fulfillPath in the payload", async () => {
+    offer = { portalMethods: ["PICKUP", "SHIP"], portalDefault: "PICKUP" };
+    capState = "loading";
+    render(<BuyerCartPage />);
+    await place();
+    expect(screen.queryByRole("radio")).toBeNull();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).not.toHaveProperty("fulfillPath");
   });
 });

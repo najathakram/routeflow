@@ -4,13 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
-import type { BuyerFulfilmentOffer } from "@routeflow/types";
-import { capabilityForMode } from "../billing/fulfilment-capability";
-import { FeatureConfigService } from "../billing/feature-config.service";
-import { FULFILMENT_MODEL_KEY } from "../orders/order-status-invoicing";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
@@ -27,28 +22,7 @@ export class BuyerService {
     private readonly emailService: EmailService,
     private readonly config: ConfigService,
     private readonly gateway: RouteFlowGateway,
-    // Global FeatureConfigModule. Optional so a unit harness without billing still builds; absent or
-    // failing reads as "no choice" (today's portal).
-    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
-
-  /**
-   * The buyer-facing fulfilment choice of ONE seller tenant (order ahead): `portalMethods` /
-   * `portalDefault` from the single capability derivation, and NOTHING else of the capability.
-   */
-  private async fulfilmentOffer(tenantId: string): Promise<BuyerFulfilmentOffer> {
-    const none: BuyerFulfilmentOffer = { portalMethods: [], portalDefault: null };
-    if (!this.featureConfig) return none;
-    try {
-      const cap = capabilityForMode(
-        await this.featureConfig.getEffectiveMode(tenantId, FULFILMENT_MODEL_KEY),
-      );
-      return { portalMethods: cap.portalMethods, portalDefault: cap.portalDefault };
-    } catch (err) {
-      this.logger.warn(`seller fulfilment offer read failed tenant=${tenantId}: ${String(err)}`);
-      return none;
-    }
-  }
 
   // ─── Seller listing ───────────────────────────────────────────────────────────
 
@@ -95,11 +69,6 @@ export class BuyerService {
           // identity only once the link is ACTIVE; pending/invited rows show the
           // seller branding + status badge only.
           customer: link.status === "ACTIVE" ? link.customer : null,
-          // Same rule as `customer`: the offer is a seller-config read, so only an ACTIVE link gets it.
-          fulfilment:
-            link.status === "ACTIVE"
-              ? await this.fulfilmentOffer(link.tenantId)
-              : { portalMethods: [], portalDefault: null },
         };
       }),
     );

@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/buyer";
 import type { FulfilmentMethod } from "@routeflow/types";
 import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import {
   FULFIL_METHOD_LABEL,
@@ -41,7 +42,7 @@ function fmt(n: number) {
 export default function BuyerCartPage() {
   const params = useParams();
   const router = useRouter();
-  const { buyer, activeSeller, sellers, isLoading: authLoading } = useBuyerAuth();
+  const { buyer, activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
@@ -57,12 +58,10 @@ export default function BuyerCartPage() {
   );
   const [orderError, setOrderError] = React.useState<string | null>(null);
 
-  // Order ahead: the seller's offer. The refreshed sellers list wins over the stored copy (a stale
-  // localStorage seller must not hide a newly configured choice).
-  const offer =
-    (sellers ?? []).find((x) => x.linkId === activeSeller?.linkId)?.fulfilment ??
-    activeSeller?.fulfilment;
-  const choice = buyerFulfilmentChoice(offer);
+  // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
+  // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
+  const { data: capability } = useBuyerSellerCapabilities();
+  const choice = buyerFulfilmentChoice(capability);
   const [pickedMethod, setPickedMethod] = React.useState<FulfilmentMethod | null>(null);
   const fulfillPath =
     pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
