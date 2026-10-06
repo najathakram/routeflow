@@ -4,9 +4,13 @@
 -- Additive and nullable with NO default: null reads as "not a walk-in" for every existing row, so there
 -- is no backfill and, on PG >= 11, no table rewrite (a metadata-only change).
 --
--- LOCK PROFILE: ALTER TABLE takes a brief ACCESS EXCLUSIVE lock on "Customer" while the catalog entry is
--- added. The lock wait is bounded by lock_timeout below, so a long-running transaction on the table makes
--- the migration fail fast instead of queueing behind it and blocking every customer read.
+-- Also (SA-672e): "Order"."counterSale" BOOLEAN NOT NULL DEFAULT false marks the orders the counter-sale
+-- POST created, so GET by-key matches on a durable marker instead of a PICKUP + skipAutoMerge shape. A
+-- constant default is metadata-only on PG >= 11 (no rewrite, no backfill: existing rows read false).
+--
+-- LOCK PROFILE: ALTER TABLE takes a brief ACCESS EXCLUSIVE lock on "Customer" and on "Order" while the
+-- catalog entries are added. The lock wait is bounded by lock_timeout below, so a long-running transaction
+-- on either table makes the migration fail fast instead of queueing behind it and blocking every read.
 --
 -- Recovery: if the lock wait exceeds 5s the migration rolls back and is recorded FAILED:
 --   prisma migrate resolve --rolled-back 20261004160000_customer_is_walk_in
@@ -20,5 +24,6 @@ SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
 ALTER TABLE "Customer" ADD COLUMN "isWalkIn" BOOLEAN;
+ALTER TABLE "Order" ADD COLUMN "counterSale" BOOLEAN NOT NULL DEFAULT false;
 
 COMMIT;

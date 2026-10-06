@@ -20,12 +20,7 @@ import { counterSaleGate } from "./capability-shape";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
-import {
-  buildCounterSaleResponse,
-  isCounterSaleOrder,
-  isTender,
-  type InvoiceRow,
-} from "./counter-sale-readback";
+import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -143,6 +138,7 @@ export class CounterSaleService {
       user,
       {
         fulfillPath: FulfillPath.PICKUP,
+        counterSale: true,
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
         onReplay: () => {
@@ -257,7 +253,7 @@ export class CounterSaleService {
    * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
    * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all) is a coded 409
    * COUNTER_SALE_INCOMPLETE (re-POST finishes it); a voided or cancelled one is COUNTER_SALE_VOIDED (start a
-   * new sale); a moved order with no invoice is COUNTER_SALE_CHANGED (check with the office, do not re-ring); nothing stored for the key is a definitive 404.
+   * new sale); a moved order with no invoice is COUNTER_SALE_CHANGED (check with the office, do not re-ring); nothing stored for the key, or an order whose Order.counterSale marker is not true (a staff/buyer order that shares the key store), is a definitive 404.
    */
   async byKey(key: string, method?: CounterPaymentMethod): Promise<CounterSaleResponse> {
     // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
@@ -267,7 +263,7 @@ export class CounterSaleService {
     // A customer id no row can hold: only the tenant-wide steps of the lookup can match (the key is the
     // identity here, not the customer).
     const order = await this.orders.findReplayCandidateByKey(key, NO_CUSTOMER);
-    if (!order || !isCounterSaleOrder(order)) {
+    if (!order || order.counterSale !== true) {
       throw new NotFoundException({
         code: API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
         message: "No sale exists for this key",

@@ -2103,6 +2103,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
+                // SA-672e: only the counter-sale POST passes this; every other order keeps the column default.
+                ...(options.counterSale ? { counterSale: true } : {}),
                 lineItems: { create: lineItemsData },
               },
               include: {

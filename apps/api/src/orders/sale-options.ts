@@ -9,11 +9,13 @@ import { parseOrderDate } from "./order-parsers";
  * INTERNAL options of `OrdersService.createSale` (SA-655): the counter sale threads these through the
  * prod-proven create -> DELIVERED -> invoice -> send flow. POST /orders/sell passes none and is unchanged.
  *  - `fulfillPath`: handed to create() as an internal option (PICKUP is not a writable DTO value).
+ *  - `counterSale` (SA-672e): stamp Order.counterSale (only the counter POST sets it).
  *  - `suppressInvoiceNotify`: send the invoice without the INVOICE_SENT message (the walk-in has no mailbox).
  *  - `onReplay`: called when `dto.idempotencyKey` replayed an earlier sale; createSale then RESUMES it.
  */
 export interface SaleOptions {
   fulfillPath?: FulfillPath;
+  counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
   onReplay?: () => void;
 }
@@ -71,6 +73,7 @@ export function saleCreateOptions(
   return {
     skipAutoMerge: true,
     ...(sale.fulfillPath ? { fulfillPath: sale.fulfillPath } : {}),
+    ...(sale.counterSale ? { counterSale: true } : {}),
     ...(idempotencyKey
       ? {
           onReplay: () => {
