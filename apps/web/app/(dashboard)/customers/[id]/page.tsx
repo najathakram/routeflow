@@ -818,14 +818,20 @@ function ContactPersonModal({
     e.preventDefault();
     if (!form.firstName.trim()) return;
     // #3206 follow-up: on edit an emptied optional field that was stored is an explicit null.
-    const payload = { customerId, ...contactPersonPayload(form, editingContact ?? null) };
     if (editingContact) {
       updateContact.mutate(
-        { ...payload, contactId: editingContact.id },
+        {
+          customerId,
+          ...contactPersonPayload(form, editingContact),
+          contactId: editingContact.id,
+        },
         { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
+      addContact.mutate(
+        { customerId, ...contactPersonPayload(form, null) },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
+      );
     }
   };
 

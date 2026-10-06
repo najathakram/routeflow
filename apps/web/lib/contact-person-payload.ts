@@ -29,9 +29,24 @@ type StoredContact = Partial<
   Record<"salutation" | "lastName" | "email" | "phone" | "mobile", string | null>
 >;
 
-/** The add / edit body for a contact person. `stored` is the contact being edited (null on add). */
-export function contactPersonPayload(form: ContactPersonForm, stored: StoredContact | null) {
-  const optional = (key: keyof StoredContact) =>
+type OptionalKey = "salutation" | "lastName" | "email" | "phone" | "mobile";
+type ContactBody<Empty> = { firstName: string; isPrimary: boolean } & Record<
+  OptionalKey,
+  string | Empty
+>;
+
+/** The add / edit body for a contact person. `stored` is the contact being edited (null on add):
+ *  an add never carries null, an edit may (a cleared field). */
+export function contactPersonPayload(form: ContactPersonForm, stored: null): ContactBody<undefined>;
+export function contactPersonPayload(
+  form: ContactPersonForm,
+  stored: StoredContact,
+): ContactBody<null | undefined>;
+export function contactPersonPayload(
+  form: ContactPersonForm,
+  stored: StoredContact | null,
+): ContactBody<null | undefined> {
+  const optional = (key: OptionalKey) =>
     stored ? clearableField(form[key], stored[key]) : form[key].trim() || undefined;
   return {
     salutation: optional("salutation"),
