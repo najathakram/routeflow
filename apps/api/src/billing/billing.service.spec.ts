@@ -24,6 +24,15 @@ import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { BillingNotificationService } from "./billing-notification.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+
+/** SA-690: the add-on checkout/adoption seam of SubscriptionMutationService — inert by default (no
+ *  add-ons), so every pre-existing assertion in this file measures exactly what it did before. */
+const mutationsStub = () =>
+  ({
+    checkoutAddonLines: jest.fn().mockResolvedValue({ lineItems: [], skus: [] }),
+    adoptCheckoutAddons: jest.fn().mockResolvedValue(undefined),
+  }) as any;
 
 /**
  * MRR-ledger reconciliation for the LEGACY Stripe lifecycle (Plans & Billing P6 follow-up).
@@ -55,6 +64,9 @@ function make(
     basePriceSnapshot: 349,
     discount: 0,
     stripeSubId: null,
+    // SA-690: a checkout completion writes nothing unless the session's customer is the one stored
+    // for the tenant (and the subscription's) — the legitimate case every checkout fixture here is.
+    stripeCustomerId: "cus_1",
   };
   const tx = {
     tenant: {
@@ -72,6 +84,8 @@ function make(
     tenantSubscription: {
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
+      // X1: the under-the-lock re-check re-reads the stored row — the same mock as the pre-tx read.
+      findUnique: jest.fn((args: unknown) => prisma.tenantSubscription.findUnique(args)),
     },
     auditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -118,6 +132,7 @@ function make(
     isConfigured: true,
     // #2440 N3: dahlia-shaped by default — the period lives on the subscription's items.
     getSubscription: jest.fn().mockResolvedValue({
+      customer: "cus_1",
       status: overrides.stripeStatus ?? "past_due",
       items: {
         data: [
@@ -153,6 +168,7 @@ function make(
     onPlanChange: jest.fn().mockResolvedValue({ action: "none" }),
     invalidateCaches: jest.fn(),
   } as any;
+  const mutations = mutationsStub();
   const svc = new BillingService(
     prisma,
     stripe,
@@ -162,9 +178,11 @@ function make(
     pricing,
     billingNotification,
     planTransition,
+    mutations,
   );
   return {
     svc,
+    mutations,
     prisma,
     tx,
     stripe,
@@ -209,6 +227,28 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         data: { status: "CANCELLED" },
       });
       // −(349 base + 12×2 add-ons − 0 discount) = −373, emitted inside the same tx.
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
+    });
+
+    it("SHOULD-2: the contribution sums only BILLABLE add-ons — a comp (a platform grant) carrying a stale snapshot is never counted", async () => {
+      const rows = [
+        { priceSnapshot: 12, quantity: 2, isComp: false },
+        { priceSnapshot: 19, quantity: 1, isComp: true }, // a row that was billed, then turned into a comp
+      ];
+      const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB, addons: rows });
+      // the query is what excludes the comp: evaluate its `isComp` predicate like Postgres would
+      tx.tenantAddon.findMany.mockImplementation(async ({ where }: any) =>
+        rows.filter((r) => where?.isComp === undefined || r.isComp === where.isComp),
+      );
+
+      await (svc as any).onSubscriptionDeleted(SUB_EVT);
+
+      expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toMatchObject({
+        tenantId: "t1",
+        active: true,
+        isComp: false,
+      });
+      // −(349 base + 12×2 billable add-ons) = −373; the comp's 19 is not part of it
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-373);
     });
 
@@ -568,7 +608,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
   it("(4) negative: metadata carries neither planKey nor the legacy plan key — left completely unchanged on the update branch, no emit", async () => {
     const { svc, prisma, events } = make({
       transitionCount: 1,
-      sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeCustomerId: "cus_1",
+      },
     });
     await (svc as any).onCheckoutCompleted(session(null));
 
@@ -604,6 +650,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         basePriceSnapshot: 199, // the negotiated figure already on the row
         discount: 0,
         stripeSubId: null,
+        stripeCustomerId: "cus_1",
         priceOverrideMonthly: 199,
       },
     });
@@ -657,7 +704,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a subscription with no stored planKey is judged from the legacy Tenant.plan", async () => {
       const { svc, prisma, planTransition } = make({
-        sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: null,
+          basePriceSnapshot: null,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
       prisma.tenant.findUnique.mockResolvedValue({ plan: "PROFESSIONAL", planVersionId: null });
 
@@ -670,7 +723,13 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
     it("a replay: the stored key equals the checkout's plan, so the hook sees NO rank move (from == to)", async () => {
       const { svc, planTransition } = make({
-        sub: { tenantId: "t1", planKey: "GROWTH", basePriceSnapshot: 349, discount: 0 },
+        sub: {
+          tenantId: "t1",
+          planKey: "GROWTH",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+        },
       });
 
       await (svc as any).onCheckoutCompleted(session("GROWTH"));
@@ -739,7 +798,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(opts.timeout + opts.maxWait).toBeLessThan(10_000); // bounded: a slow restore times out and Stripe retries
     });
 
-    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert is the PLAIN one (no transaction)", async () => {
+    it("flag OFF: no extra tenant read, the hook is never consulted, and the upsert runs in the tenant-locked transaction (X1)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.isEnabled.mockResolvedValue(false);
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
@@ -749,12 +808,20 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
       expect(planTransition.prepare).not.toHaveBeenCalled();
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
-      // the write is exactly what it always was: called on the client itself, never through a tx
+      // X1: the SAME write, now inside a transaction whose first statement is the tenant row lock, so the
+      // duplicate-checkout re-check reads the stored subscription under it; still no hook, no CAS on the plan.
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.findUnique.mock.invocationCallOrder[0],
+      );
+      expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.tenantSubscription.upsert.mock.invocationCallOrder[0],
+      );
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
     });
 
-    it("the flag flipped OFF between the two reads: still the plain upsert (prepared.enabled is false)", async () => {
+    it("the flag flipped OFF between the two reads: still no hook, the upsert in the locked transaction (prepared.enabled is false)", async () => {
       const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
       planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
 
@@ -762,7 +829,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       expect(planTransition.onPlanChange).not.toHaveBeenCalled();
       expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
-      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
     });
 
     it("a checkout that names no plan cannot move it: the hook is not consulted at all", async () => {
@@ -789,15 +856,22 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
           tenantId: "t1",
           planKey: "BUSINESS", // the stored key the transition was judged from
+          stripeSubId: null, // X1: and the subscription id the duplicate question was judged from
         });
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
         expect(prisma.auditLog.create).not.toHaveBeenCalled(); // no alarm row for the retryable conflict
       });
 
-      it("the CAS matches a NULL stored planKey as IS NULL, and a fresh tenant (no row) skips it", async () => {
+      it("the CAS matches a NULL stored planKey as IS NULL; a tenant with no subscription row is refused before any write (SA-690)", async () => {
         const nullKey = make({
-          sub: { tenantId: "t1", planKey: null, basePriceSnapshot: null, discount: 0 },
+          sub: {
+            tenantId: "t1",
+            planKey: null,
+            basePriceSnapshot: null,
+            discount: 0,
+            stripeCustomerId: "cus_1",
+          },
         });
         await (nullKey.svc as any).onCheckoutCompleted(withId());
         expect(nullKey.tx.tenantSubscription.updateMany.mock.calls[0][0].where.planKey).toBeNull();
@@ -810,14 +884,17 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
       it("MAJOR 2: a redelivery of an already-applied session does NOTHING (no hook, no write)", async () => {
         const { svc, prisma, tx, planTransition, events } = make({ transitionCount: 1 });
-        prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        // only the APPLIED marker exists (the sticky DUPLICATE lookup finds nothing)
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
 
         await (svc as any).onCheckoutCompleted(withId("cs_done"));
 
-        expect(prisma.auditLog.findFirst.mock.calls[0][0].where).toMatchObject({
-          tenantId: "t1",
-          entityId: "cs_done",
-        });
+        const applied = prisma.auditLog.findFirst.mock.calls.find(
+          (c: any[]) => c[0].where.action === "STRIPE_CHECKOUT_APPLIED",
+        );
+        expect(applied?.[0].where).toMatchObject({ tenantId: "t1", entityId: "cs_done" });
         expect(planTransition.onPlanChange).not.toHaveBeenCalled();
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).toEqual([]);
@@ -843,7 +920,9 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         );
 
         const dup = make({ transitionCount: 1 });
-        dup.prisma.auditLog.findFirst.mockResolvedValue({ id: "a1" });
+        dup.prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
         await (dup.svc as any).onCheckoutCompleted(withId("cs_done"));
         expect(dup.planTransition.invalidateCaches).not.toHaveBeenCalled();
 
@@ -1191,13 +1270,19 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         });
       });
 
-      it("flag OFF: none of the guards read anything — no audit lookup, no snapshot lookup, no tenant read, plain upsert", async () => {
+      it("flag OFF: none of the flag-ON guards read anything — no snapshot lookup, no tenant read; the only audit reads are the sticky duplicate decision and the session's APPLIED marker (both read for every flag state, S2)", async () => {
         const { svc, prisma, tx, planTransition } = make({ transitionCount: 1 });
         planTransition.isEnabled.mockResolvedValue(false);
 
         await (svc as any).onCheckoutCompleted(withId("cs_off", { created: 1 }));
 
-        expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+        // X1 + S2: the only audit lookups are the session's sticky DUPLICATE decision and its APPLIED marker (a
+        // session that was already applied is never judged a duplicate), read for every flag state
+        expect(
+          prisma.auditLog.findFirst.mock.calls.every((c: any[]) =>
+            ["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_CHECKOUT_APPLIED"].includes(c[0].where.action),
+          ),
+        ).toBe(true);
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
         expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled(); // no CAS, no tx write
@@ -1233,6 +1318,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     basePriceSnapshot: 349,
     discount: 0,
     stripeSubId: null,
+    stripeCustomerId: "cus_1",
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
     retainedUserIds: ["u-keep"],
@@ -1418,6 +1504,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
           provide: PlanTransitionConfigService,
           useValue: { prepare: jest.fn(), onPlanChange: jest.fn() },
         },
+        { provide: SubscriptionMutationService, useValue: mutationsStub() },
       ],
     }).compile();
 
@@ -1788,6 +1875,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
   const END = new Date(1_702_000_000 * 1000);
   const dahlia = (extra: Record<string, unknown> = {}) => ({
     status: "active",
+    customer: "cus_1",
     items: { data: [{ current_period_start: 1_700_000_000, current_period_end: 1_702_000_000 }] },
     ...extra,
   });
@@ -2212,7 +2300,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
 
   it("N1: checkout.session.completed with no period logs a warning and still stores stripeSubId", async () => {
     const { svc, prisma, stripe } = make({ transitionCount: 1 });
-    stripe.getSubscription.mockResolvedValue({ status: "active" });
+    stripe.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
     await (svc as any).onCheckoutCompleted({
       metadata: { tenantId: "t1" },
