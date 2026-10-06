@@ -869,6 +869,7 @@ describe("CounterSaleService.ring", () => {
       orderNumber: "ORD-1",
       fulfillPath: "PICKUP",
       skipAutoMerge: true,
+      status: "DELIVERED",
       customerId: "cust-1",
     };
 
@@ -1050,20 +1051,10 @@ describe("CounterSaleService.ring", () => {
       expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_NOT_FOUND" });
     });
 
-    it.each([
-      ["no invoice at all", () => []],
-      [
-        "only VOID / WRITTEN_OFF invoices (read back as none)",
-        () => [
-          { ...inv("inv-v", 10, [], 0), status: "VOID" },
-          { ...inv("inv-w", 10, [], 1), status: "WRITTEN_OFF" },
-        ],
-      ],
-    ])(
-      "a half-written sale (%s) is a coded 409 COUNTER_SALE_INCOMPLETE, not an uncoded 500",
-      async (_n, make) => {
-        findReplayCandidateByKey.mockResolvedValue(sale);
-        invoices = make() as never;
+    it("no invoice rows at all on a PENDING or DELIVERED order: COUNTER_SALE_INCOMPLETE (re-POST finishes it)", async () => {
+      for (const status of ["PENDING", "DELIVERED"]) {
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        invoices = [];
         const e = await service.byKey("k1").then(
           () => null,
           (err) => err,
@@ -1073,8 +1064,63 @@ describe("CounterSaleService.ring", () => {
           code: "COUNTER_SALE_INCOMPLETE",
           message: expect.stringMatching(/re-POST with the same key/i),
         });
+      }
+    });
+
+    // SA-672c: a voided or cancelled sale must never read as "finish it": a re-POST would invoice and charge again.
+    it("ring then VOID the invoice: by-key says COUNTER_SALE_VOIDED (definitive), never INCOMPLETE", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-void");
+      invoices[0].status = "VOID"; // the invoice was voided after the sale was rung
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "DELIVERED" });
+      const e = await service.byKey("k-void").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getStatus()).toBe(409);
+      expect(e.getResponse()).toMatchObject({
+        code: "COUNTER_SALE_VOIDED",
+        message: "This sale was voided after it was rung — start a new sale.",
+      });
+    });
+
+    it("only VOID / WRITTEN_OFF invoices exist: COUNTER_SALE_VOIDED", async () => {
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "DELIVERED" });
+      invoices = [
+        { ...inv("inv-v", 10, [], 0), status: "VOID" },
+        { ...inv("inv-w", 10, [], 1), status: "WRITTEN_OFF" },
+      ];
+      const e = await service.byKey("k1").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
+
+    it.each(["CANCELLED", "CONFIRMED", "OUT_FOR_DELIVERY"])(
+      "an order in status %s (not PENDING/DELIVERED) is COUNTER_SALE_VOIDED, even with a live invoice",
+      async (status) => {
+        findReplayCandidateByKey.mockResolvedValue({ ...sale, status });
+        invoices = [inv("inv-1", 37.25)];
+        const e = await service.byKey("k1").then(
+          () => null,
+          (err) => err,
+        );
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
       },
     );
+
+    it("ring then cancel the order: by-key is VOIDED", async () => {
+      invoices = [inv("inv-1", 37.25)];
+      await service.ring(named({ method: "CASH", amount: 40 }) as never, staff, "k-cancel");
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, status: "CANCELLED" });
+      const e = await service.byKey("k-cancel").then(
+        () => null,
+        (err) => err,
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_SALE_VOIDED" });
+    });
 
     it("not found: 404 with the coded COUNTER_SALE_NOT_FOUND (a definitive 'no sale for this key')", async () => {
       const e = await service.byKey("nope").then(

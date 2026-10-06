@@ -97,6 +97,7 @@ import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./or
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData, writeStatusIfUnchanged } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
+import { assertSaleReplayable } from "./sale-replay-guard";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   cartMismatchConflict,
@@ -2268,13 +2269,8 @@ export class OrdersService implements OnApplicationBootstrap {
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
     );
-    if (replay && order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DELIVERED) {
-      // The sale EXISTS (and may be charged): this is an UNKNOWN outcome, not a clean refusal, so it is coded.
-      throw new ConflictException({
-        code: API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
-        message: "This sale's order was changed after it was created",
-      });
-    }
+    // A replayed sale that was voided or cancelled must never be resumed (no invoice, send, charge or status write).
+    if (replay) await assertSaleReplayable(this.prisma.forTenant(), order);
 
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would

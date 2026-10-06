@@ -18,6 +18,7 @@ import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { counterSaleGate } from "./capability-shape";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
+import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
 import {
   buildCounterSaleResponse,
@@ -254,8 +255,9 @@ export class CounterSaleService {
    * Without the request's payment the body carries no `change`, and `paymentRecorded` is read from what is
    * stored: an ON_ACCOUNT sale (no tender, nothing asked of the till) reads `paymentRecorded:true`, a stored
    * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
-   * (a tender that failed completely reads `false`). A half-written sale (no live invoice) is a coded 409
-   * COUNTER_SALE_INCOMPLETE; nothing stored for the key is a definitive 404.
+   * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all) is a coded 409
+   * COUNTER_SALE_INCOMPLETE (re-POST finishes it); a voided or cancelled one is COUNTER_SALE_VOIDED (start a
+   * new sale); nothing stored for the key is a definitive 404.
    */
   async byKey(key: string, method?: CounterPaymentMethod): Promise<CounterSaleResponse> {
     // The replay lookup rides forTenant(), which is UNSCOPED without a tenant: refuse, like create().
@@ -271,15 +273,23 @@ export class CounterSaleService {
         message: "No sale exists for this key",
       });
     }
-    const invoices = await this.readInvoices(order.id);
-    // Half-written: the order exists but nothing was invoiced (or only VOID / WRITTEN_OFF remain). Its own
-    // coded answer, so the till re-POSTs with the SAME key to finish it instead of reading an uncoded 500.
-    if (invoices.length === 0) {
+    // The ONE stored-sale rule (shared with createSale's replay guard): voided / cancelled is definitive,
+    // an order with no invoice rows at all is half-written, anything else is a live sale.
+    const all = await this.prisma
+      .forTenant()
+      .invoice.findMany({ where: { orderId: order.id }, select: { status: true } });
+    const state = storedSaleState(
+      order.status,
+      all.map((r: { status: string }) => r.status),
+    );
+    if (state === "voided") throw saleVoidedConflict();
+    if (state === "incomplete") {
       throw new ConflictException({
         code: API_ERROR_CODES.COUNTER_SALE_INCOMPLETE,
         message: "This sale was not finished: re-POST with the same key to finish it",
       });
     }
+    const invoices = await this.readInvoices(order.id);
     // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
     return buildCounterSaleResponse({
       payment: method ? { method } : undefined,
