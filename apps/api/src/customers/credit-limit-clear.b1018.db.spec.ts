@@ -92,9 +92,27 @@ describeDb("Customer.creditLimit clear + audit (B1018), real Postgres", () => {
 
   it("the audit row stores {from, to} and a null `to` round-trips", async () => {
     const audit = new AuditService(prisma);
-    await recordCreditLimitChange(audit, tenantId, customerId, 250, null, { sub: null });
-    await recordCreditLimitChange(audit, tenantId, customerId, null, 750, { sub: null });
-    await recordCreditLimitChange(audit, tenantId, customerId, 750, 750, { sub: null }); // unchanged: no row
+    await recordCreditLimitChange(
+      audit,
+      tenantId,
+      { id: customerId, creditLimit: 250 },
+      { creditLimit: null },
+      { sub: null },
+    );
+    await recordCreditLimitChange(
+      audit,
+      tenantId,
+      { id: customerId, creditLimit: null },
+      { creditLimit: 750 },
+      { sub: null },
+    );
+    await recordCreditLimitChange(
+      audit,
+      tenantId,
+      { id: customerId, creditLimit: 750 },
+      { creditLimit: 750 },
+      { sub: null },
+    ); // unchanged: no row
     const rows = await prisma.auditLog.findMany({
       where: { tenantId, action: "CUSTOMER_CREDIT_LIMIT_CHANGED", entityId: customerId },
       orderBy: { createdAt: "asc" },
