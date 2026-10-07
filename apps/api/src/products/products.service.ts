@@ -1259,6 +1259,8 @@ export class ProductsService {
         });
         if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
       }
+      // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
+      if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
       // propagation to this row's children after the write. Off = nothing runs.
       const family =
