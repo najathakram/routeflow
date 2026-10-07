@@ -1,3 +1,4 @@
+import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { ConflictException } from "@nestjs/common";
 import { BarcodeOrigin, PackagingLevel, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -168,26 +169,10 @@ function fieldsAreBarcodeConstraint(fields: readonly string[]): boolean {
  */
 export function isBarcodeUniqueViolation(e: unknown): e is Prisma.PrismaClientKnownRequestError {
   if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return false;
-  const meta = (e.meta ?? {}) as {
-    target?: unknown;
-    driverAdapterError?: { cause?: { constraint?: { index?: unknown; fields?: unknown } } };
-  };
-
-  const target = meta.target;
-  if (typeof target === "string" && BARCODE_CONSTRAINT_NAMES.has(target)) return true;
-  if (Array.isArray(target) && fieldsAreBarcodeConstraint(target.map(String))) return true;
-
-  const constraint = meta.driverAdapterError?.cause?.constraint;
-  if (typeof constraint?.index === "string" && BARCODE_CONSTRAINT_NAMES.has(constraint.index)) {
-    return true;
-  }
-  if (
-    Array.isArray(constraint?.fields) &&
-    fieldsAreBarcodeConstraint(constraint.fields.map(String))
-  ) {
-    return true;
-  }
-  return false;
+  const c = uniqueViolationConstraints(e);
+  if (!c) return false;
+  if (c.names.some((n) => BARCODE_CONSTRAINT_NAMES.has(n))) return true;
+  return c.fields.length > 0 && fieldsAreBarcodeConstraint(c.fields);
 }
 
 export function mapBarcodeUniqueViolation(e: unknown, code: string): never {
