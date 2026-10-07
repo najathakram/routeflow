@@ -5,7 +5,7 @@ import { applyUnitOption } from "./default-unit-line";
 import { invoiceLineDto, type InvoiceTotalsLine } from "./invoice-totals";
 import type { CreateInvoiceItem } from "./api/invoices";
 import type { CreateSaleItemInput } from "./api/orders";
-import { isUnitLine } from "./sale-line";
+import { isUnitLine, setLineUnits } from "./sale-line";
 import { decideTrayPrice, saleLinePriceFields } from "./staff-price-override";
 import { unitPriceBase, type UnitOption } from "./unit-options";
 import type { UnitPickerLine } from "../components/UnitPickerRow";
@@ -269,4 +269,34 @@ export function unitNotOfferedCode(err: unknown): boolean {
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
   return code === API_ERROR_CODES.UNIT_NOT_OFFERED;
+}
+
+/**
+ * Guard for the shared default-unit resolver (which writes through applyUnitOption, untouched): a
+ * factor-1 "Piece" flagged as the default on a BOXED product would become a `unitLabel:"Piece"` unit
+ * line, billed at the ladder piece price instead of the pack proration (the cent drift this screen
+ * forbids). Such a line becomes the piece-as-pack line chooseInvoiceUnit's Piece branch makes: sold by
+ * "unit", pieces counted (N default taps = N pieces, rolled into boxes), no unit fields. Everything
+ * else, and any product we cannot see, is returned as the SAME object.
+ */
+export function normalizeInvoiceUnitLines<T extends InvoiceLineState>(
+  items: Record<string, T>,
+  productFor: (productId: string) => { unitsPerBox?: Upb } | undefined,
+): Record<string, T> {
+  let out = items;
+  for (const [id, line] of Object.entries(items)) {
+    if (!isUnitLine(line) || !(Number(line.unitFactor ?? 0) <= 1)) continue;
+    const upb = packSize(productFor(id)?.unitsPerBox);
+    if (!(upb > 1)) continue;
+    const piece = chooseInvoiceUnit(
+      line,
+      { ...PACK_OPTION, value: PIECE_LABEL, kind: "piece" },
+      upb,
+    );
+    const count = Math.max(1, Math.trunc(line.qty ?? 1));
+    const fixed = (count === 1 ? piece : (setLineUnits(piece, count, upb) ?? piece)) as T;
+    if (out === items) out = { ...items };
+    out[id] = fixed;
+  }
+  return out;
 }

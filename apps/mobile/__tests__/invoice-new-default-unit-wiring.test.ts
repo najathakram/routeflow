@@ -64,7 +64,7 @@ describe("VU-4b: the New-invoice screen reuses Create Order's unit machinery", (
 
   it("staff only: the picker and the default-start resolver are gated on isStaffRole", () => {
     expect(screen).toMatch(/isStaffRole\(userRole\)/);
-    expect(screen).toMatch(/useDefaultUnitResolver\(\s*items,\s*setItems,\s*isStaff,/);
+    expect(screen).toMatch(/useDefaultUnitResolver\(\s*items,[\s\S]*?\),\s*isStaff,/);
     expect(screen).toMatch(/isStaff \?|isStaff &&|\{isStaff/);
   });
 
@@ -100,6 +100,15 @@ describe("VU-4b: the New-invoice screen reuses Create Order's unit machinery", (
       const body = between(screen, `const ${w} = `, "\n\n");
       expect(body).toMatch(/editItemLine\(/);
     }
+  });
+
+  it("the factor-1 Piece guard runs on the resolver's updates AND on the submit-time resolve", () => {
+    expect(screen).toContain("normalizeInvoiceUnitLines");
+    const hook = between(screen, "useDefaultUnitResolver(", "const anyUnitLoading");
+    expect(hook).toMatch(/normalizeInvoiceUnitLines\(/);
+    expect(hook).toMatch(/setItems\(\(m\) => normalizeInvoiceUnitLines\(fn\(m\)/);
+    const onSave = between(screen, "const onSave = ", "const unlistedPlacement");
+    expect(onSave).toMatch(/normalizeInvoiceUnitLines\(settled\.lines/);
   });
 
   it("BoxedQtyBand shows only for a pack line (a unit line has no cases/loose)", () => {

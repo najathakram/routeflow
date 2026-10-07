@@ -26,6 +26,7 @@ import {
   invoiceItemDto,
   invoiceLinePrice,
   invoiceTotalsLine,
+  normalizeInvoiceUnitLines,
   pickerLineOf,
   saleItemDto,
   unitNotOfferedCode,
@@ -511,5 +512,90 @@ describe("G1: the van-sale gate with a unit line in the cart", () => {
     });
     expect(predicted.total).toBe(computeInvoiceTotals({ lines }).total);
     expect(predicted.total).toBe(roundMoney(120 + 102));
+  });
+});
+
+describe("N: a factor-1 Piece default never becomes a unit line on a boxed product", () => {
+  const PIECE_DEFAULT = level({
+    label: "Piece",
+    factorToBase: 1,
+    price: "2.10",
+    isDefaultSelling: true,
+  });
+  const productFor = (id: string) => (id === "p1" ? { unitsPerBox: 24 } : { unitsPerBox: 1 });
+
+  it("the resolver's output is rewritten to the piece-as-pack line; pack proration bills it; no unitLabel on either DTO", () => {
+    const pending = applyAddToItems(
+      {},
+      {
+        id: "p1",
+        level: "BOX",
+        dflt: true,
+        viaRow: true,
+        role: "OPERATOR",
+        upb: 24,
+      },
+    ).p1!;
+    const resolved = startLineOnDefault(pending, PRODUCT, [PIECE_DEFAULT], 1);
+    expect(resolved).toMatchObject({ unitLabel: "Piece", unitFactor: 1 }); // the shared resolver's shape
+    const fixed = normalizeInvoiceUnitLines({ p1: resolved }, productFor).p1!;
+    expect(fixed).toMatchObject({ sellBy: "unit", boxes: 0, pieces: 1, qty: 1 });
+    expect(fixed.unitLabel).toBeUndefined();
+    expect(fixed.unitBasePrice).toBeUndefined();
+    expect(fixed.unitFactor).toBeUndefined();
+    expect(fixed.unitPrice).toBeUndefined();
+    const expected = computeLineSubtotal({
+      unitPrice: 48,
+      qty: 1,
+      boxes: 0,
+      pieces: 1,
+      unitsPerBox: 24,
+    });
+    expect(expected).toBe(2);
+    expect(totalOf(fixed, 24, 48).total).toBe(expected);
+    expect(invoiceItemDto(fixed, { id: "p1", description: "Soda" }, 48, 24, 0)).not.toHaveProperty(
+      "unitLabel",
+    );
+    const sale = saleItemDto(
+      fixed,
+      { id: "p1", unitsPerBox: 24 },
+      {
+        catalogPrice: 48,
+        listPrice: 48,
+        isSpecial: false,
+      },
+    );
+    expect(sale).not.toHaveProperty("unitLabel");
+    expect(sale).toMatchObject({ boxes: 0, pieces: 1, unitPrice: 48 });
+  });
+
+  it("keeps the tap count (3 taps = 3 pieces) and rolls a full box over", () => {
+    const three = { unitLabel: "Piece", unitFactor: 1, unitBasePrice: 2.1, qty: 3 };
+    expect(normalizeInvoiceUnitLines({ p1: three }, productFor).p1).toMatchObject({
+      pieces: 3,
+      qty: 3,
+      boxes: 0,
+    });
+    const full = { ...three, qty: 24 };
+    expect(normalizeInvoiceUnitLines({ p1: full }, productFor).p1).toMatchObject({
+      boxes: 1,
+      pieces: 0,
+      qty: 24,
+    });
+  });
+
+  it("leaves everything else alone and returns the SAME object when nothing changes", () => {
+    const lvl = chooseInvoiceUnit(BOX_LINE, pick(optionsFor(), "Case"), 24);
+    const items = {
+      p1: lvl, // a real level (factor 12)
+      p2: { unitLabel: "Piece", unitFactor: 1, unitBasePrice: 2, qty: 4 }, // non-boxed: a Piece IS the unit
+      p3: BOX_LINE,
+    };
+    expect(
+      normalizeInvoiceUnitLines(items, (id) =>
+        id === "p2" ? { unitsPerBox: 1 } : { unitsPerBox: 24 },
+      ),
+    ).toBe(items);
+    expect(normalizeInvoiceUnitLines(items, () => undefined)).toBe(items); // unknown product: untouched
   });
 });

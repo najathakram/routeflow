@@ -70,6 +70,7 @@ import {
   dropStaleUnitLines,
   invoiceItemDto,
   invoiceTotalsLine,
+  normalizeInvoiceUnitLines,
   pickerLineOf,
   saleItemDto,
   unitNotOfferedCode,
@@ -569,7 +570,14 @@ function InvoiceComposer({
     );
   // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
   const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
-    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+    useDefaultUnitResolver(
+      items,
+      // a factor-1 Piece default on a boxed product must stay a pack line (lib/invoice-unit-pick)
+      (fn) => setItems((m) => normalizeInvoiceUnitLines(fn(m), (id) => productById.get(id))),
+      isStaff,
+      (id) => productById.get(id),
+      effectiveTierFor,
+    );
   const anyUnitLoading = anyLineLoading(items, unitStatusFor); // Create waits only while a line is LOADING (#2865)
 
   const removeLine = (id: string) =>
@@ -1269,7 +1277,7 @@ function InvoiceComposer({
       showToast(UNITS_BLOCKED_MESSAGE);
       return;
     }
-    const lines = settled.lines;
+    const lines = normalizeInvoiceUnitLines(settled.lines, (id) => productById.get(id));
     setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
     if (settled.kind === "stop") return; // the retry press only settles; a second press submits
 
