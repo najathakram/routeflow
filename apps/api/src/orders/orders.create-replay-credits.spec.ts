@@ -39,6 +39,10 @@ describe("OrdersService.create - credit sync survives a create-tail failure (B12
       user: { status: "ACTIVE" },
     });
     h.prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "P1", unit: "each" }]);
+    // untouched by default: no intent, no apply block, no edit revision
+    h.prisma.orderCreditNote.count.mockResolvedValue(0);
+    h.prisma.creditNoteApplyBlock.count.mockResolvedValue(0);
+    h.prisma.orderRevision.count.mockResolvedValue(0);
     jest.spyOn(h.service, "findReplayCandidateByKey").mockResolvedValue(stored as never);
     const credits = h.module.get(CreditNotesService) as unknown as {
       syncOrderCreditSelections: jest.Mock;
@@ -68,6 +72,39 @@ describe("OrdersService.create - credit sync survives a create-tail failure (B12
     const calls = h.credits.syncOrderCreditSelections.mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[1].slice(1)).toEqual(calls[0].slice(1));
+  });
+
+  it("the heal gate reads EDIT revisions only (ship-state markers are not edits), scoped to the order", async () => {
+    const h = await build();
+    await h.service.create(dto(), operatorPayload as never);
+    expect(h.prisma.orderRevision.count).toHaveBeenCalledWith({
+      where: { orderId: "ord-1", source: { notIn: expect.arrayContaining([expect.any(String)]) } },
+    });
+    expect(h.prisma.orderCreditNote.count).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+  });
+
+  it("an operator already holds a credit intent on the order: the replay does NOT re-sync it", async () => {
+    const h = await build();
+    h.prisma.orderCreditNote.count.mockResolvedValue(1);
+    const out = await h.service.create(dto(), operatorPayload as never);
+    expect(out).toMatchObject({ id: "ord-1" });
+    expect(h.credits.syncOrderCreditSelections).not.toHaveBeenCalled();
+    expect(h.credits.settleOrderCreditsInTx).not.toHaveBeenCalled();
+  });
+
+  it("an operator removed a credit (apply block left on the invoice): the replay does NOT re-add it", async () => {
+    const h = await build();
+    h.prisma.creditNoteApplyBlock.count.mockResolvedValue(1);
+    await h.service.create(dto(), operatorPayload as never);
+    expect(h.credits.syncOrderCreditSelections).not.toHaveBeenCalled();
+  });
+
+  it("the order was edited after create (an EDIT revision exists): the replay returns it as-is, no re-sync", async () => {
+    const h = await build();
+    h.prisma.orderRevision.count.mockResolvedValue(1);
+    const out = await h.service.create(dto(), operatorPayload as never);
+    expect(out).toMatchObject({ id: "ord-1" });
+    expect(h.credits.syncOrderCreditSelections).not.toHaveBeenCalled();
   });
 
   it("a replay with no credit selection (undefined) does not touch credits", async () => {

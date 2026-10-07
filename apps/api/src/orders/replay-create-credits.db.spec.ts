@@ -284,5 +284,55 @@ describeDb(
       const after = await raw.creditNote.findUniqueOrThrow({ where: { id: note.id } });
       expect(Number(after.amountUsed)).toBe(0);
     }, 60_000);
+
+    async function noteFor(customerId: string) {
+      return raw.creditNote.create({
+        data: {
+          tenantId,
+          customerId,
+          creditNoteNumber: `CN-${run}-${++n}`,
+          amount: "50",
+          status: "ISSUED",
+        },
+      });
+    }
+    const exhaustOnce = () => {
+      const spy = jest.spyOn(credits, "syncOrderCreditSelections");
+      spy
+        .mockRejectedValueOnce(conflict())
+        .mockRejectedValueOnce(conflict())
+        .mockRejectedValueOnce(conflict());
+      return spy;
+    };
+    const editRevision = (orderId: string) =>
+      raw.orderRevision.create({
+        data: { tenantId, orderId, revisionNumber: 1, source: "EDIT", snapshot: {} },
+      });
+
+    it("B1201 ruling: an operator edited the order after the tail 503 - the replay does NOT apply the credit", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const key = `b1201-${run}-edit`;
+      const spy = exhaustOnce();
+      const e: any = await errorOf(create(c.id, key, note.id));
+      spy.mockRestore();
+      const orderId = e.getResponse().orderId as string;
+      await editRevision(orderId); // the operator edited it (and so owns its credit state)
+      const again = (await create(c.id, key, note.id)) as any;
+      expect(again.id).toBe(orderId);
+      expect(await raw.orderCreditNote.count({ where: { orderId } })).toBe(0);
+    }, 60_000);
+
+    it("B1201 ruling: an operator removed the credit after a successful create - a replay does NOT re-add it", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const key = `b1201-${run}-removed`;
+      const first = (await create(c.id, key, note.id)) as any;
+      expect(await raw.orderCreditNote.count({ where: { orderId: first.id } })).toBe(1);
+      await raw.orderCreditNote.deleteMany({ where: { orderId: first.id } }); // operator unticked it
+      await editRevision(first.id);
+      await create(c.id, key, note.id);
+      expect(await raw.orderCreditNote.count({ where: { orderId: first.id } })).toBe(0);
+    }, 60_000);
   },
 );
