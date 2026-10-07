@@ -14,6 +14,8 @@ import { showToast } from "../../../lib/toast";
 import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
 import { confirm } from "../../../lib/confirm";
 import { decideScanResult, runScanDecision } from "../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../lib/use-scan-match-picker";
 import type { AdminProduct } from "../../../lib/api/admin";
 import { nextUnitCost } from "../../../lib/purchase-receive-logic";
 
@@ -33,6 +35,7 @@ export default function QuickReceiveScreen() {
   const [supplierId, setSupplierId] = useState("");
   const [supplierName, setSupplierName] = useState("");
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -87,12 +90,10 @@ export default function QuickReceiveScreen() {
         return;
       }
       const decision = decideScanResult(result, "stock");
-      if (decision.kind === "confirm-suggestion") {
-        runScanDecision(decision, (p) => applyPickedProduct(p), confirm);
-        return;
-      }
-      if (!result.notFound) {
-        applyPickedProduct(result.product);
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither writes unprompted.
+      if (
+        runScanDecision(decision, (p) => applyPickedProduct(p), confirm, { pick: matchPicker.open })
+      ) {
         return;
       }
     } catch {
@@ -287,6 +288,7 @@ export default function QuickReceiveScreen() {
         />
       </FormSheet>
       <BarcodeFab onScanned={onScanned} hidden={productPickerOpen || supplierPickerOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }

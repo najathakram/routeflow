@@ -20,6 +20,9 @@ import { BarcodeScanner } from "./BarcodeScanner";
 import { archivedMessage, resolveProductByCode } from "../lib/barcode-resolve";
 import { confirm } from "../lib/confirm";
 import { decideScanResult, runScanDecision } from "../lib/scan-suggestion";
+import { resolvePickedProduct } from "../lib/picker-select";
+import { useScanMatchPicker } from "../lib/use-scan-match-picker";
+import { ScanMatchPickerSheet } from "./ScanMatchPickerSheet";
 import { showToast } from "../lib/toast";
 import { apiClient } from "../lib/api-client";
 
@@ -99,9 +102,34 @@ export function ProductPickerSheet({
     else setBrowsing(false);
   }, [visible, initialSearch, setSearch]);
 
-  const pick = (p: AdminProduct, level?: SellLevel) => {
+  const matchPicker = useScanMatchPicker<AdminProduct>();
+
+  const select = (p: AdminProduct, level?: SellLevel) => {
     setSearch("");
     onSelect(p, level);
+  };
+
+  // The ONE commit path — a tapped row, a scan hit, a confirmed suggestion and a row chosen from
+  // the several-matches list all pass through here, so the parent-only (`standaloneOnly`)
+  // resolve-to-parent rule can never be skipped.
+  const commitPick = async (p: AdminProduct, level?: SellLevel) => {
+    try {
+      const resolved = await resolvePickedProduct(
+        p as AdminProduct & { parentProductId?: string | null },
+        {
+          standaloneOnly,
+          fetchParent: async (parentId) =>
+            (await apiClient.get<AdminProduct>(`/products/${parentId}`)).data,
+        },
+      );
+      if (!resolved) {
+        showToast("Couldn't load the parent product.");
+        return;
+      }
+      select(resolved.product, resolved.resolvedToParent ? undefined : level);
+    } catch {
+      showToast("Couldn't load the parent product.");
+    }
   };
 
   const onScanned = async (code: string) => {
@@ -117,37 +145,17 @@ export function ProductPickerSheet({
         showToast(archivedMessage(result.product));
         return;
       }
-      const decision = decideScanResult(result, "add");
-      if (decision.kind === "confirm-suggestion") {
-        runScanDecision(
-          decision,
-          (p) => {
-            const scanned = p as AdminProduct & { unitsPerBox?: number | null };
-            pick(scanned, resolveScanSellLevel(scanned, levelsForScan(trimmed, scanned)));
-          },
-          confirm,
-        );
-        return;
-      }
-      if (!result.notFound) {
-        const hit = result.product as AdminProduct & { parentProductId?: string | null };
-        if (standaloneOnly && hit.parentProductId) {
-          // Scanned a variant while picking a parent — resolve to its parent
-          // directly. The page rows are now gated on a term/browse, so a
-          // scanned variant would otherwise always miss the local `find`.
-          const { data: parent } = await apiClient.get<AdminProduct>(
-            `/products/${hit.parentProductId}`,
-          );
-          if (parent) {
-            pick(parent);
-            return;
-          }
-        } else {
-          const scanned = hit as AdminProduct & { unitsPerBox?: number | null };
-          pick(scanned, resolveScanSellLevel(scanned, levelsForScan(trimmed, scanned)));
-          return;
-        }
-      }
+      // B1220: a lone fuzzy match asks first and 2+ matches open a list; a plain hit commits.
+      const handled = runScanDecision(
+        decideScanResult(result, "add"),
+        (p) => {
+          const scanned = p as AdminProduct & { unitsPerBox?: number | null };
+          void commitPick(scanned, resolveScanSellLevel(scanned, levelsForScan(trimmed, scanned)));
+        },
+        confirm,
+        { pick: matchPicker.open },
+      );
+      if (handled) return;
     } catch {
       // network error → fall through to the toast
     }
@@ -213,7 +221,7 @@ export function ProductPickerSheet({
                   typeof p.currentStock === "string" ? Number(p.currentStock) || 0 : p.currentStock;
                 const label = p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name;
                 return (
-                  <Pressable key={p.id} style={styles.row} onPress={() => pick(p)}>
+                  <Pressable key={p.id} style={styles.row} onPress={() => void commitPick(p)}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.name} numberOfLines={1}>
                         {label}
@@ -252,6 +260,7 @@ export function ProductPickerSheet({
         {scanOpen ? (
           <BarcodeScanner onScanned={(c) => void onScanned(c)} onClose={() => setScanOpen(false)} />
         ) : null}
+        <ScanMatchPickerSheet {...matchPicker.props} />
       </View>
     </Modal>
   );

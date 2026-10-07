@@ -21,7 +21,9 @@ import {
 } from "../../../../../lib/api/admin";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
-import { decideScanResult, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
@@ -125,6 +127,8 @@ export default function EditInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
@@ -268,20 +272,18 @@ export default function EditInvoiceScreen() {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
       const decision = decideScanResult(result, "add");
-      if (decision.kind === "confirm-suggestion") {
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
         runScanDecision(
           decision,
           (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
           confirm,
-        );
-        return { feedback: { kind: "error", text: `Confirm: ${decision.message}` } };
-      }
-      if (!result.notFound) {
-        addCatalogLine(
-          result.product,
-          resolveScanSellLevel(result.product, levelsForScan(trimmed, result.product)),
-        );
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+          { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
+        )
+      ) {
+        return decision.kind === "add"
+          ? { feedback: { kind: "added", text: `${decision.product.name} added` } }
+          : { feedback: { kind: "error", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -629,7 +631,8 @@ export default function EditInvoiceScreen() {
           onSelect={addCatalogLine}
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }

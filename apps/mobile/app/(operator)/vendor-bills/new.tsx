@@ -12,6 +12,8 @@ import { useProducts } from "../../../lib/api/products";
 import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
 import { confirm } from "../../../lib/confirm";
 import { decideScanResult, runScanDecision } from "../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../lib/use-scan-match-picker";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
@@ -237,6 +239,7 @@ function LineItemRow({
   const suggestions = (productData?.data ?? []) as PickableProduct[];
   const [showSugs, setShowSugs] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<PickableProduct>();
 
   const handleDescChange = (v: string) => {
     setSearch(v);
@@ -279,12 +282,8 @@ function LineItemRow({
         onUpdate(index, linePrefillFor(p));
         setShowSugs(false);
       };
-      if (decision.kind === "confirm-suggestion") {
-        runScanDecision(decision, link, confirm);
-        return;
-      }
-      if (!result.notFound && result.product) {
-        link(result.product);
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither links unprompted.
+      if (runScanDecision(decision, link, confirm, { pick: matchPicker.open })) {
         return;
       }
     } catch {
@@ -397,6 +396,7 @@ function LineItemRow({
       {scanOpen ? (
         <BarcodeScanner onScanned={handleScanned} onClose={() => setScanOpen(false)} />
       ) : null}
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </View>
   );
 }

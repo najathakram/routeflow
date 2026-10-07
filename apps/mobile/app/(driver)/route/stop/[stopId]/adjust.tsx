@@ -37,6 +37,8 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { confirm } from "../../../../../lib/confirm";
 import { decideScanResult, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -107,6 +109,7 @@ export default function AdjustOrderScreen() {
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
   const [added, setAdded] = useState<AddedLineDraft[]>([]);
   const [saving, setSaving] = useState(false);
+  const matchPicker = useScanMatchPicker();
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const pendingRef = useRef<{ diff: CreateChangeRequestInput[]; index: number } | null>(null);
@@ -234,7 +237,12 @@ export default function AdjustOrderScreen() {
         showToast(`Added ${p.name}`);
       };
       // B1220: a lone fuzzy match is only added after the driver confirms.
-      if (!runScanDecision(decideScanResult(result, "add"), addScanned, confirm)) {
+      // B1220: a lone fuzzy match asks first; 2+ matches open a list — neither adds unprompted.
+      if (
+        !runScanDecision(decideScanResult(result, "add"), addScanned, confirm, {
+          pick: matchPicker.open,
+        })
+      ) {
         addScanned(result.product);
       }
     } catch (err: any) {
@@ -511,6 +519,7 @@ export default function AdjustOrderScreen() {
           during the license block -- a scan landing mid-batch grows a draft
           past what a just-sent ADD_ITEM already covers. */}
       <BarcodeFab onScanned={handleScanned} aimAssist hidden={saving || !!licenseBlock} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the
