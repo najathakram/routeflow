@@ -2020,6 +2020,10 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
+    // B1186: this reserve is a NON-transactional numbering write that runs before the retry loop. A
+    // request that then loses the same-key race (the P2002 exit below, now replayed) has burned its
+    // number: a GAP in the return / credit-note series, never a duplicate. Gaps are accepted for these
+    // documents (lead ruling 2026-10-06) - do not "fix" this by moving the reserve into the tx.
     const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {

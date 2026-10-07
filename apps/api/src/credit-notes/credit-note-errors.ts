@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { txConflictState } from "../common/tx-retry";
+import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
 /**
  * #2648/#2848 (SA-608): the credit-note refusals carry a machine-readable `body.code` from the
@@ -49,14 +50,8 @@ export function asReadableConflict(err: unknown, logger: { warn(message: string)
       "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
     );
   if ((err as { code?: string })?.code === "P2002") {
-    const meta = (err as { meta?: { target?: unknown } }).meta;
-    const target = Array.isArray(meta?.target)
-      ? meta.target.join(",")
-      : typeof meta?.target === "string"
-        ? meta.target
-        : "";
-    logger.warn(`Credit note write failed code=P2002 target=${target}`);
-    if (target === "" || target.includes("creditNoteNumber"))
+    logger.warn(`Credit note write failed code=P2002 target=${describeUniqueViolation(err)}`);
+    if (uniqueViolationOn(err, "creditNoteNumber"))
       return cnConflict(
         API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
         "Credit note number conflict — please retry.",

@@ -28,6 +28,7 @@ import {
 } from "../common/money-invariants.util";
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
 // (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
@@ -276,13 +277,10 @@ export class EstimatesService {
       // constraint actually names estimateNumber is a number conflict; anything
       // else propagates untouched, and every P2002 leaves a log line.
       if (err?.code === "P2002") {
-        const target = Array.isArray(err?.meta?.target)
-          ? err.meta.target.join(",")
-          : String(err?.meta?.target ?? "");
         this.logger.warn(
-          `Estimate create failed customer=${dto.customerId} code=P2002 target=${target}`,
+          `Estimate create failed customer=${dto.customerId} code=P2002 target=${describeUniqueViolation(err)}`,
         );
-        if (target === "" || target.includes("estimateNumber"))
+        if (uniqueViolationOn(err, "estimateNumber"))
           throw new ConflictException("Estimate number conflict — please retry.");
       }
       throw err;

@@ -346,7 +346,14 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
       prisma.estimate.create.mockRejectedValue({
         code: "P2002",
-        message: "Unique constraint failed on the fields: (`estimateNumber`)",
+        message:
+          "Unique constraint failed on the constraint: `Estimate_tenantId_estimateNumber_key`",
+        // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Estimate_tenantId_estimateNumber_key" } },
+          },
+        },
       });
 
       await expect(

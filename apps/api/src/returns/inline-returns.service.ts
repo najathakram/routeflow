@@ -63,6 +63,7 @@ import { creditOverrideAuditItems } from "./inline-returns-pricing";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
+import { uniqueViolationOn } from "../common/prisma-unique";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -133,9 +134,6 @@ export class InlineReturnsService {
     return !NO_RESTOCK_REASONS.has(reason ?? "");
   }
 
-  /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique
-   * index — permissive on an empty/unreported target (mirrors credit-notes.service.ts's
-   * `create()` P2002 handling), but never true for an unrelated unique violation. */
   /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
   private assertReplaySameItems(
     existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
@@ -144,12 +142,11 @@ export class InlineReturnsService {
     assertReplayItems(existing, dto, this.logger);
   }
 
+  /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique index
+   * (B1186: read through common/prisma-unique, so the pg adapter's shape counts, and an
+   * unreported or unrelated constraint - a returnNumber collision - does not). */
   private isReturnKeyConflict(err: any): boolean {
-    if (err?.code !== "P2002") return false;
-    const target = Array.isArray(err?.meta?.target)
-      ? err.meta.target.join(",")
-      : String(err?.meta?.target ?? "");
-    return target === "" || target.includes("returnKey");
+    return uniqueViolationOn(err, "returnKey");
   }
 
   private async reverseLedgerForReturn(tx: any, ret: { id: string; items: any[] }): Promise<void> {
