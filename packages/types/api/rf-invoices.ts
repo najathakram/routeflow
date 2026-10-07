@@ -79,7 +79,7 @@ export interface RfInvoiceListQuery {
 
 export interface RfInvoiceListResponse {
   rows: RfInvoiceRow[];
-  meta: { total: number; page: number; limit: number };
+  meta: { total: number; page: number; limit: number; pages: number };
 }
 
 export interface RfInvoiceMoneyBucket {

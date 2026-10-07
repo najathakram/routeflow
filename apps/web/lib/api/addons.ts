@@ -80,9 +80,11 @@ export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
   return { enabled: od.enabled, resolved: od.resolved };
 }
 
-export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
+/** `pending` is true only while the addons read is in flight (not after it errored), so a layout
+ *  reservation (dashboard CLS) can never outlive the read. */
+export function useRoutesAccess(): { enabled: boolean; resolved: boolean; pending: boolean } {
   const rr = useRecurringRoutes();
-  return { enabled: rr.enabled, resolved: rr.resolved };
+  return { enabled: rr.enabled, resolved: rr.resolved, pending: rr.isLoading };
 }
 
 // ─── MSRP on invoices (display-only suggested retail price) ───────────────────

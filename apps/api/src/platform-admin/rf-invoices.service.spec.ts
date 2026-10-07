@@ -309,7 +309,7 @@ describe("API-2 list: views, sort, paging, search", () => {
   it("meta carries total, page and limit", async () => {
     const t = make({ invoices: [inv(), inv({ id: "inv-2" })] });
     const r = await t.svc.list({ page: 2, limit: 1 }, NOW);
-    expect(r.meta).toEqual({ total: 2, page: 2, limit: 1 });
+    expect(r.meta).toEqual({ total: 2, page: 2, limit: 1, pages: 2 });
   });
 });
 
@@ -534,6 +534,8 @@ describe("OWNER RULINGS on mark-paid", () => {
     ["dashed groups", "4111-1111-1111-1111"],
     ["dashed groups in text", "ZEL 1234-5678-9012-3456 ok"],
     ["mixed separators", "4111 - 1111-1111 1111"],
+    ["dotted groups", "4111.1111.1111.1111"],
+    ["slashed groups", "4111/1111/1111/1111"],
   ])(
     "a card number written with %s is refused (separators are stripped first)",
     async (_n, ref) => {
@@ -544,6 +546,19 @@ describe("OWNER RULINGS on mark-paid", () => {
       expect(t.prisma.$transaction).not.toHaveBeenCalled();
     },
   );
+
+  it("a card-like NOTE is refused too (same code and message)", async () => {
+    for (const note of ["card 4111111111111111", "4111 1111 1111 1111", "4111.1111.1111.1111"]) {
+      const { t, p } = attempt({ method: "CASH", note });
+      const e = await thrown(p);
+      expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD);
+      expect(body(e).message).toBe("Don't enter card or full account numbers.");
+      expect(t.prisma.$transaction).not.toHaveBeenCalled();
+    }
+    await expect(
+      attempt({ method: "CASH", note: "paid 2026-10-07 by wire" }).p,
+    ).resolves.toBeTruthy();
+  });
 
   it("12 digits, a date-style reference and short groups are fine", async () => {
     await expect(attempt({ method: "ZELLE", reference: "411111111111" }).p).resolves.toBeTruthy();
@@ -570,7 +585,7 @@ describe("API-5 mark-paid conflicts (CAS)", () => {
     expect(t.audits).toHaveLength(0);
   });
 
-  it("VOID -> 409 VOIDED", async () => {
+  it("VOID -> 409 RF_INVOICE_IS_VOID", async () => {
     const t = make({ invoices: [inv({ status: "VOID" })] });
     const e = await thrown(t.svc.markPaid("inv-1", { method: "CASH" }, ADMIN, NOW));
     expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
@@ -588,7 +603,7 @@ describe("API-5 mark-paid conflicts (CAS)", () => {
     expect(t.audits).toHaveLength(0);
   });
 
-  it("a race lost to a void reports VOIDED", async () => {
+  it("a race lost to a void reports RF_INVOICE_IS_VOID", async () => {
     const t = make({ invoices: [inv()], racer: (row) => Object.assign(row, { status: "VOID" }) });
     const e = await thrown(t.svc.markPaid("inv-1", { method: "CASH" }, ADMIN, NOW));
     expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
@@ -629,7 +644,7 @@ describe("API-8 reopen and void", () => {
     expect(t.audits[0].meta).toMatchObject({ reason: "bounced", number: "RF-2026-0001" });
   });
 
-  it("reopen of an OPEN invoice is a 409 NOT_PAID; of a VOID one, VOIDED", async () => {
+  it("reopen of an OPEN invoice is a 409 NOT_PAID; of a VOID one, RF_INVOICE_IS_VOID", async () => {
     const a = make({ invoices: [inv()] });
     const e = await thrown(a.svc.reopen("inv-1", { reason: "again" }, ADMIN, NOW));
     expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_NOT_PAID);
@@ -656,7 +671,7 @@ describe("API-8 reopen and void", () => {
     expect(t.audits[0].meta).toMatchObject({ reason: "wrong plan" });
   });
 
-  it("void of a PAID invoice is a 409 ALREADY_PAID (reopen it first); of a VOID one, VOIDED", async () => {
+  it("void of a PAID invoice is a 409 ALREADY_PAID (reopen it first); of a VOID one, RF_INVOICE_IS_VOID", async () => {
     const a = make({ invoices: [inv({ status: "PAID" })] });
     expect(
       body(await thrown(a.svc.voidInvoice("inv-1", { reason: "oops" }, ADMIN, NOW))).code,

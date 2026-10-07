@@ -126,6 +126,7 @@ describe("OrderTemplatesService oversell call sites", () => {
     beforeTx();
     expect(decrement).toHaveBeenCalledTimes(1);
     expect(decrement.mock.calls[0][3]).toBe(true);
+    expect(decrement.mock.calls[0][4]).toMatchObject({ customerFacing: false }); // staff keep the numbers
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -152,6 +153,8 @@ describe("OrderTemplatesService oversell call sites", () => {
       beforeTx();
       expect(decrement.mock.calls[0][3]).toBe(want);
       expect(typeof decrement.mock.calls[0][3]).toBe("boolean");
+      // OOS PR2 (R4): a buyer's Reorder is customer-facing, whatever the policy says.
+      expect(decrement.mock.calls[0][4]).toMatchObject({ customerFacing: true });
     },
   );
 
@@ -182,6 +185,55 @@ describe("OrderTemplatesService oversell call sites", () => {
     beforeTx();
     expect(decrement).toHaveBeenCalledTimes(1);
     expect(decrement.mock.calls[0][3]).toBe(true);
+    expect(decrement.mock.calls[0][4]).toMatchObject({ customerFacing: false }); // the cron is not a buyer
     expect(read).not.toHaveBeenCalled();
+  });
+
+  describe("OOS PR2 (R4): a buyer's Reorder of an out-of-stock line, through the REAL stock helper", () => {
+    const realDecrement = () =>
+      decrement.mockImplementationOnce((...args: unknown[]) =>
+        (jest.requireActual("../orders/order-stock") as any).decrementStockForSale(...args),
+      );
+    const outOfStock = () =>
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "p1",
+          name: "Widget",
+          pricePerUnit: 10,
+          unitsPerBox: null,
+          trackedCategoryId: null,
+          currentStock: 0,
+        },
+      ]);
+
+    it("policy off: the refusal is the coded INSUFFICIENT_STOCK with the fixed copy and NO digits or product", async () => {
+      await build("off");
+      outOfStock();
+      realDecrement();
+      prisma.customer.findFirst.mockResolvedValue({ id: "c1" });
+      const err = await service.generateOrderForUser("t1", buyer).then(
+        () => null,
+        (e) => e,
+      );
+      const body = err?.getResponse?.() as { code?: string; message?: string };
+      expect(body.code).toBe("INSUFFICIENT_STOCK");
+      expect(body.message).toMatch(/^Some items aren't available/);
+      expect(body.message).not.toMatch(/\d|Widget|available:|requested:/);
+    });
+
+    it("staff keep the numbers (the same line, the same helper)", async () => {
+      await build("off");
+      outOfStock();
+      realDecrement();
+      // a staff manual run oversells (true), so force the refusal path with an explicit false
+      resolve.mockResolvedValueOnce(false);
+      const err = await service.generateOrderForUser("t1", staff).then(
+        () => null,
+        (e) => e,
+      );
+      const body = err?.getResponse?.() as { code?: string; message?: string };
+      expect(body.code).toBe("INSUFFICIENT_STOCK");
+      expect(body.message).toMatch(/Insufficient stock: Widget \(available: 0, requested: 3\)/);
+    });
   });
 });

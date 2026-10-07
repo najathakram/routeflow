@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsISO8601,
+  IsUUID,
   IsOptional,
   IsString,
   IsUUID,
@@ -34,8 +35,7 @@ export class RfInvoiceListQueryDto {
   q?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(64)
+  @IsUUID()
   tenantId?: string;
 
   @IsOptional()

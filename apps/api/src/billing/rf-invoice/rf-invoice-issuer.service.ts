@@ -217,15 +217,6 @@ export class RfInvoiceIssuerService {
       return { status: "no_price" };
     }
 
-    if (draft.irregularPeriod) {
-      await this.raiseOnce(
-        sub.tenantId,
-        RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
-        periodKey,
-        `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
-      );
-    }
-
     try {
       const invoice = await withRfInvoiceNumberLock(() =>
         withRfInvoiceNumber(() =>
@@ -267,6 +258,18 @@ export class RfInvoiceIssuerService {
           }),
         ),
       );
+      // Only after the row is committed: a failed create must never leave a notice saying "was issued".
+      // BEST EFFORT: raiseOnce swallows and logs its own failure, and nothing re-raises it - if this notice
+      // fails once, the invoice stays issued and the notice is never written again (the row's needsReview flag
+      // is the durable signal).
+      if (draft.irregularPeriod) {
+        await this.raiseOnce(
+          sub.tenantId,
+          RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
+          periodKey,
+          `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
+        );
+      }
       await this.emailIssued(invoice.id, now);
       return { status: "issued", invoice };
     } catch (e) {

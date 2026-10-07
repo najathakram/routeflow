@@ -18,6 +18,7 @@ import {
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { deriveTilePrice } from "../_components/tile-pricing";
+import { stockLine } from "@/lib/buyer-backorder";
 import { ProductGallery } from "./_components/ProductGallery";
 import { DetailActions } from "./_components/DetailActions";
 
@@ -25,21 +26,6 @@ import { DetailActions } from "./_components/DetailActions";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-}
-
-/** Same copy/colors as the shop tile's stockText — kept in sync deliberately. */
-function stockText(
-  status: "IN_STOCK" | "LOW" | "OUT_OF_STOCK" | undefined,
-  stockLeft: number | null | undefined,
-): { label: string; cls: string } {
-  const s = status ?? "IN_STOCK";
-  if (s === "OUT_OF_STOCK") return { label: "Out of stock", cls: "text-danger" };
-  if (s === "LOW")
-    return {
-      label: stockLeft != null ? `Only ${stockLeft} left` : "Low stock",
-      cls: "text-warning",
-    };
-  return { label: "In stock", cls: "text-success" };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -148,7 +134,7 @@ export default function BuyerProductDetailPage() {
     : product.thumbnailUrl
       ? [product.thumbnailUrl]
       : [];
-  const stock = stockText(product.stockStatus, product.stockLeft);
+  const stock = stockLine(product); // the tile uses the same helper, so the two cannot disagree
 
   return (
     <div data-testid="product-detail-page" className="p-6 max-w-5xl">
