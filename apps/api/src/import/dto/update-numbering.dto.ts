@@ -1,10 +1,32 @@
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  ValidationArguments,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  Validate,
+} from "class-validator";
+import { validateDocumentPrefix } from "@routeflow/types";
+
+/** B1188: the shared prefix rule (length, charset, no trailing digit), same fn the web forms use. */
+@ValidatorConstraint({ name: "documentPrefix", async: false })
+export class DocumentPrefixConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return validateDocumentPrefix(value) === null;
+  }
+  defaultMessage(args: ValidationArguments): string {
+    return validateDocumentPrefix(args.value) ?? "Invalid prefix.";
+  }
+}
 
 /** Body for `PUT /import/numbering/:docType` — a partial edit plus the required version token. */
 export class UpdateNumberingDto {
   @IsOptional()
   @IsString()
-  @MaxLength(16)
+  @Validate(DocumentPrefixConstraint)
   prefix?: string;
 
   @IsOptional()

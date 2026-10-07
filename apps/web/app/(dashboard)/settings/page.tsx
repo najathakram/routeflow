@@ -87,6 +87,7 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -2407,14 +2408,6 @@ function TierLabelsCard() {
 
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
-const TERMS_OPTIONS = [
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 function InvoicingTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -2428,16 +2421,12 @@ function InvoicingTab() {
 
   const [invoiceNotes, setInvoiceNotes] = React.useState("");
   const [invoiceTerms, setInvoiceTerms] = React.useState("");
-  const [invoicePrefix, setInvoicePrefix] = React.useState("");
-  const [paymentDueDays, setPaymentDueDays] = React.useState("");
   const [savingDefaults, setSavingDefaults] = React.useState(false);
 
   React.useEffect(() => {
     if (savedSettings) {
       setInvoiceNotes(savedSettings.invoiceNotes ?? "");
       setInvoiceTerms(savedSettings.invoiceTerms ?? "");
-      setInvoicePrefix(savedSettings.invoicePrefix ?? "");
-      setPaymentDueDays(savedSettings.paymentDueDays ?? "");
     }
   }, [savedSettings]);
 
@@ -2552,8 +2541,6 @@ function InvoicingTab() {
       await apiClient.patch("/settings", {
         invoiceNotes,
         invoiceTerms,
-        invoicePrefix,
-        paymentDueDays,
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
@@ -2584,7 +2571,7 @@ function InvoicingTab() {
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
-                {TERMS_OPTIONS.map((opt) => (
+                {INVOICE_TERMS_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -2679,46 +2666,7 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <Card title="Invoice Numbering">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">
-              Invoice Number Prefix
-            </label>
-            <input
-              type="text"
-              value={invoicePrefix}
-              onChange={(e) => setInvoicePrefix(e.target.value)}
-              placeholder="INV-"
-              maxLength={10}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Prepended to invoice numbers (e.g. INV-, 2026-).
-            </p>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">Payment Due Days</label>
-            <input
-              type="number"
-              value={paymentDueDays}
-              onChange={(e) => setPaymentDueDays(e.target.value)}
-              placeholder="30"
-              min="0"
-              max="365"
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Default days until payment is due (0 = due on receipt).
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={handleSaveDefaults} loading={savingDefaults} size="sm">
-            Save Numbering
-          </Button>
-        </div>
-      </Card>
+      <InvoiceNumberingCard />
 
       <Card title="Invoice Defaults">
         <div className="space-y-4">
