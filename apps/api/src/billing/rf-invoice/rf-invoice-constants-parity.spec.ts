@@ -51,4 +51,13 @@ describe("rf-invoice constants parity", () => {
       "RouteFlow invoice not issued (no price)",
     );
   });
+
+  it("PR2 lifecycle audit codes are registered with their labels", () => {
+    expect(AdminAuditAction.RF_INVOICE_MARKED_PAID).toBe("RF_INVOICE_MARKED_PAID");
+    expect(AdminAuditAction.RF_INVOICE_REOPENED).toBe("RF_INVOICE_REOPENED");
+    expect(AdminAuditAction.RF_INVOICE_VOIDED).toBe("RF_INVOICE_VOIDED");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_MARKED_PAID).toBe("RouteFlow invoice marked paid");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_REOPENED).toBe("RouteFlow invoice reopened");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_VOIDED).toBe("RouteFlow invoice voided");
+  });
 });
