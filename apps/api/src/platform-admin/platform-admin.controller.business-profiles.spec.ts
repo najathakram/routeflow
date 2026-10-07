@@ -27,6 +27,7 @@ import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BusinessProfileService } from "../billing/business-profile.service";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
@@ -524,29 +525,70 @@ describe("POST business-profile (confirm) — through the existing audited write
     expect(t.writes).toEqual([]);
   });
 
-  it.each(["in_store_retailer", "in_store_shipping_retailer"])(
-    "SA-671 M1: %s is refused with BUSINESS_PROFILE_UNAVAILABLE before ANY write",
-    async (profile) => {
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 lifted: %s (%s, now available) applies through the audited writes",
+    async (profile, mode) => {
       const t = fakeTenant({ addons: ["recurring_routes"] });
-      const err = await t.controller
-        .applyBusinessProfile(T, { profile: profile as never }, admin)
-        .catch((e) => e);
-      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
-      expect(t.writes).toEqual([]);
-      expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+      await t.controller.applyBusinessProfile(T, { profile: profile as never }, admin);
+      expect(t.writes).toEqual(
+        expect.arrayContaining([
+          `mode fulfilment_model=${mode}`,
+          "mode counter_sales=on",
+          "disable recurring_routes",
+        ]),
+      );
+      expect(t.svc.recordAdminAction).toHaveBeenCalled();
+      expect(t.state().modes).toMatchObject({ fulfilment_model: mode, counter_sales: "on" });
     },
   );
 
-  it("SA-671 M1 bypass: a tenant ALREADY stored in-store is still refused — no counter_sales, no DENYs", async () => {
-    const t = fakeTenant({
-      addons: ["recurring_routes"],
-      modes: { fulfilment_model: "pickup", counter_sales: "unset" },
+  // The refusal is DERIVED from registry availability (unavailableModes), so it stays covered by marking the
+  // live registry row unavailable for one test (restored in finally).
+  const withUnavailable = async (mode: string, run: () => Promise<void>) => {
+    const row = FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes[mode] as {
+      available: boolean;
+    };
+    row.available = false;
+    try {
+      await run();
+    } finally {
+      row.available = true;
+    }
+  };
+
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 (registry fixture: %s's mode %s marked unavailable) is refused with BUSINESS_PROFILE_UNAVAILABLE before ANY write",
+    async (profile, mode) => {
+      await withUnavailable(mode, async () => {
+        const t = fakeTenant({ addons: ["recurring_routes"] });
+        const err = await t.controller
+          .applyBusinessProfile(T, { profile: profile as never }, admin)
+          .catch((e) => e);
+        expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+        expect(t.writes).toEqual([]);
+        expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("SA-671 M1 bypass (registry fixture): a tenant ALREADY stored in-store is still refused while its mode is unavailable — no counter_sales, no DENYs", async () => {
+    await withUnavailable("pickup", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes"],
+        modes: { fulfilment_model: "pickup", counter_sales: "unset" },
+      });
+      const err = await t.controller
+        .applyBusinessProfile(T, { profile: "in_store_retailer" }, admin)
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+      expect(t.writes).toEqual([]);
     });
-    const err = await t.controller
-      .applyBusinessProfile(T, { profile: "in_store_retailer" }, admin)
-      .catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
-    expect(t.writes).toEqual([]);
   });
 
   it("an unknown profile is refused before ANY write", async () => {
