@@ -1,4 +1,4 @@
-import { sellableCatalogRows } from "../lib/sellable-products";
+import { isFamilyProduct, sellableCatalogRows } from "../lib/sellable-products";
 
 type Row = {
   id: string;
@@ -56,5 +56,33 @@ describe("sellableCatalogRows", () => {
 
   it("keeps a flat variant row whose family was not in the page", () => {
     expect(sellableCatalogRows<Row>([v1]).map((r) => r.id)).toEqual(["v1"]);
+  });
+});
+
+describe("sellableCatalogRows dedupe prefers the OUTER row", () => {
+  type R = Row & { thumbnailUrl?: string; barcodes?: string[] };
+  const outerV1: R = { ...v1, thumbnailUrl: "t.png", barcodes: ["111"] };
+  it("keeps the outer variant (thumbnail + barcodes) over the nested copy, family listed first", () => {
+    const fam: R = { ...family, variants: [v1, v2] };
+    const out = sellableCatalogRows<R>([fam, outerV1]);
+    const got = out.find((r) => r.id === "v1")!;
+    expect(got.thumbnailUrl).toBe("t.png");
+    expect(got.barcodes).toEqual(["111"]);
+    expect(got.parent).toEqual({ id: "f1", name: "Soda" });
+    expect(out.filter((r) => r.id === "v1")).toHaveLength(1);
+  });
+  it("keeps the outer variant when it is listed before its family", () => {
+    const out = sellableCatalogRows<R>([outerV1, family]);
+    expect(out.find((r) => r.id === "v1")!.thumbnailUrl).toBe("t.png");
+    expect(out.map((r) => r.id).sort()).toEqual(["v1", "v2"]);
+  });
+});
+
+describe("isFamilyProduct", () => {
+  it("is true only for a FAMILY container", () => {
+    expect(isFamilyProduct(family)).toBe(true);
+    expect(isFamilyProduct(v1)).toBe(false);
+    expect(isFamilyProduct(plain)).toBe(false);
+    expect(isFamilyProduct(null)).toBe(false);
   });
 });

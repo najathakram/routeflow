@@ -1,4 +1,5 @@
 import {
+  getProductConflictRefusal,
   getReactivationRefusal,
   reactivationRetryPayload,
   reactivationResolveLabel,
@@ -123,5 +124,77 @@ describe("reactivationResolveLabel", () => {
     expect(reactivationResolveLabel(["A", "B", "C"])).toBe(
       "Deactivate 3 products and reactivate this",
     );
+  });
+});
+
+describe("getProductConflictRefusal (gate: resolve only for a REACTIVATION)", () => {
+  const codeTaken = err({
+    code: "CODE_TAKEN",
+    message: "RAW SERVER TEXT",
+    field: "sku",
+    value: "A-1",
+    productId: "h1",
+    productName: "Grape Soda",
+  });
+  const nameTaken = err({
+    code: "NAME_TAKEN",
+    message: "RAW SERVER TEXT",
+    field: "name",
+    value: "Grape Soda",
+    productId: "h2",
+    productName: "Grape Soda",
+  });
+
+  it("a reactivation conflict (stored inactive, payload active) offers resolve", () => {
+    const r = getProductConflictRefusal(codeTaken, {
+      storedIsActive: false,
+      payloadIsActive: true,
+    });
+    expect(r).toMatchObject({ kind: "HOLDERS", holderIds: ["h1"], canResolve: true });
+  });
+  it("an edit of an ACTIVE product is info only: fixed copy, no holder ids, no deactivate offer", () => {
+    const r = getProductConflictRefusal(codeTaken, { storedIsActive: true, payloadIsActive: true });
+    expect(r).toEqual({
+      kind: "INFO",
+      lines: ['The SKU "A-1" is used by Grape Soda.'],
+    });
+    expect(JSON.stringify(r)).not.toMatch(/RAW SERVER TEXT|holderIds|canResolve/);
+  });
+  it("an active-product NAME conflict is info only", () => {
+    const r = getProductConflictRefusal(nameTaken, { storedIsActive: true, payloadIsActive: true });
+    expect(r).toEqual({ kind: "INFO", lines: ['The name "Grape Soda" is used by Grape Soda.'] });
+  });
+  it("an inactive product saved while staying inactive is info only", () => {
+    const r = getProductConflictRefusal(codeTaken, {
+      storedIsActive: false,
+      payloadIsActive: false,
+    });
+    expect(r?.kind).toBe("INFO");
+  });
+  it("a name clash with no named holder still reads as info", () => {
+    const r = getProductConflictRefusal(err({ code: "NAME_TAKEN", value: "Grape Soda" }), {
+      storedIsActive: true,
+      payloadIsActive: true,
+    });
+    expect(r).toEqual({
+      kind: "INFO",
+      lines: ['The name "Grape Soda" is used by another product.'],
+    });
+  });
+  it("HOLDERS_CHANGED outside a reactivation is not a resolve retry", () => {
+    expect(
+      getProductConflictRefusal(err({ code: "HOLDERS_CHANGED" }), {
+        storedIsActive: true,
+        payloadIsActive: true,
+      }),
+    ).toBeNull();
+  });
+  it("any other error is null in every mode", () => {
+    expect(
+      getProductConflictRefusal(err({ code: "X" }), {
+        storedIsActive: true,
+        payloadIsActive: true,
+      }),
+    ).toBeNull();
   });
 });

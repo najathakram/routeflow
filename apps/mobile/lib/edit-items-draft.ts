@@ -20,6 +20,7 @@
  * footer cannot disagree.
  */
 import type { ProductUnitLevel } from "@routeflow/types";
+import { isFamilyProduct } from "./sellable-products";
 import { needsUnitLabelConfirm } from "./scan-unit-confirm";
 import {
   roundMoney,
@@ -477,6 +478,8 @@ export interface PickInput {
   name: string;
   unit?: string;
   level: SellLevel;
+  /** A FAMILY container is never added: the pick is a no-op. */
+  kind?: "FAMILY" | "STANDARD" | "VARIANT" | "RECIPE" | null;
   /** The fresh-add ladder snapshot (`ladderProductFor`'s real-tier-prices
    *  input) — only used on a fresh add; an existing entry keeps its own. */
   packLadder?: LadderProduct;
@@ -504,6 +507,7 @@ export function applyPickToDraft(
   key: string,
   input: PickInput,
 ): Record<string, DraftItem> {
+  if (isFamilyProduct(input)) return draft; // a family container is never a line
   const existing = draft[key];
   const upb = Number(existing?.unitsPerBox ?? input.unitsPerBox ?? 0);
   const boxed = upb > 1;
@@ -558,6 +562,7 @@ export interface ResolvePickTargetInput {
   unit?: string;
   unitsPerBox: number | null;
   level: SellLevel;
+  kind?: PickInput["kind"];
   startPrice: number;
   catalogPrice: number;
   packLadder?: LadderProduct;
@@ -608,6 +613,7 @@ export function resolvePickTarget(
       name: input.name,
       unit: input.unit,
       level: input.level,
+      kind: input.kind,
       packLadder: input.packLadder,
     });
   return { key, existingLabel, apply };

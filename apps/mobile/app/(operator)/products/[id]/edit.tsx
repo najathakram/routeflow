@@ -16,9 +16,10 @@ import {
   useUpdateReorderSettings,
 } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
+import { productSaveErrorCopy } from "../../../../lib/product-save-error-copy";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import {
-  getReactivationRefusal,
+  getProductConflictRefusal,
   reactivationResolveLabel,
   type ReactivationRefusal,
 } from "../../../../lib/product-reactivation-refusal";
@@ -86,9 +87,13 @@ export default function EditProductScreen() {
         },
         onError: (e: unknown) => {
           // Fixed copy only: the server message is never shown.
-          const refusal = getReactivationRefusal(e);
+          // Resolve (deactivate holders) only for a reactivation; an ordinary edit's clash is info only.
+          const refusal = getProductConflictRefusal(e, {
+            storedIsActive: product.isActive,
+            payloadIsActive: payload.isActive,
+          });
           if (refusal) return askReactivationResolve(refusal, payload);
-          showToast("Couldn't save. Try again.");
+          showToast(productSaveErrorCopy(e));
         },
       },
     );
@@ -98,6 +103,10 @@ export default function EditProductScreen() {
   const askReactivationResolve = (refusal: ReactivationRefusal, payload: SubmitPayload) => {
     if (refusal.kind === "RETRY") {
       alertInfo("Products changed", "The conflicting products changed. Save again to continue.");
+      return;
+    }
+    if (refusal.kind === "INFO") {
+      alertInfo("Can't save", refusal.lines.join("\n\n"));
       return;
     }
     const lines = refusal.holders.map((h) => h.line).join("\n\n");

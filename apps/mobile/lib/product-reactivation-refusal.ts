@@ -28,7 +28,20 @@ export type ReactivationRefusal =
       /** False when any holder is blocked, or none can be named: nothing to offer but "change it there". */
       canResolve: boolean;
     }
-  | { kind: "RETRY" };
+  | { kind: "RETRY" }
+  /** An ordinary edit (not a reactivation) hit a code/name clash: say who holds it, offer nothing destructive. */
+  | { kind: "INFO"; lines: string[] };
+
+/** What the save was: the product as stored, and what the form is sending. */
+export interface ProductConflictContext {
+  storedIsActive: boolean | null | undefined;
+  payloadIsActive: boolean | null | undefined;
+}
+
+/** The server only accepts `deactivateHolderIds` when reactivating an inactive product. */
+export function isReactivation(ctx: ProductConflictContext): boolean {
+  return ctx.storedIsActive === false && ctx.payloadIsActive === true;
+}
 
 const WHAT: Record<"sku" | "unitSku" | "barcode", { noun: string; fix: string }> = {
   sku: { noun: "the SKU", fix: "a new SKU" },
@@ -122,4 +135,45 @@ export function reactivationResolveLabel(names: string[]): string {
   if (names.length === 1) return `Deactivate "${names[0]}" and reactivate this`;
   if (names.length === 2) return `Deactivate "${names[0]}" and "${names[1]}" and reactivate this`;
   return `Deactivate ${names.length} products and reactivate this`;
+}
+
+const INFO_WHAT: Record<string, string> = {
+  sku: "The SKU",
+  unitSku: "The unit code",
+  barcode: "The barcode",
+  name: "The name",
+};
+
+/**
+ * The refusal to show for a product SAVE. Only a reactivation (stored inactive, sending active) may resolve by
+ * deactivating holders; any other CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN is info only (fixed copy, no deactivate
+ * offer, since the server would refuse the retry with a 400). Null = not a conflict: the caller's generic copy.
+ */
+export function getProductConflictRefusal(
+  err: unknown,
+  ctx: ProductConflictContext,
+): ReactivationRefusal | null {
+  const base = getReactivationRefusal(err);
+  if (!base) return null;
+  if (isReactivation(ctx)) return base;
+  if (base.kind === "RETRY") return null;
+  return { kind: "INFO", lines: infoLines(err) };
+}
+
+function infoLines(err: unknown): string[] {
+  const data = (err as { response?: { data?: Record<string, unknown> } } | null)?.response?.data;
+  const listed = Array.isArray(data?.holders) ? (data!.holders as unknown[]).filter(isHolder) : [];
+  const source: ProductReactivationHolder[] = listed.length
+    ? listed
+    : isHolder(data)
+      ? [data as unknown as ProductReactivationHolder]
+      : [];
+  const one = (h: Partial<ProductReactivationHolder>) => {
+    const isName = h.code === API_ERROR_CODES.NAME_TAKEN || h.field === "name";
+    const what = INFO_WHAT[isName ? "name" : String(h.field)] ?? INFO_WHAT.sku!;
+    const by = h.productName ? h.productName : "another product";
+    return `${what} "${h.value ?? ""}" is used by ${by}.`;
+  };
+  if (source.length === 0) return [one(data as Partial<ProductReactivationHolder>)];
+  return source.map(one);
 }

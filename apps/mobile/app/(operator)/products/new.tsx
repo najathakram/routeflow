@@ -6,7 +6,7 @@ import { PackSizeSheet } from "../../../components/PackSizeSheet";
 import { packSizePromptFor } from "../../../lib/pack-size-logic";
 import { useCreateProduct, useUpdateReorderSettings } from "../../../lib/api/products";
 import { showToast } from "../../../lib/toast";
-
+import { productSaveErrorCopy } from "../../../lib/product-save-error-copy";
 /**
  * A name/unit that reads like it's packaged, with `unitsPerBox` still unset,
  * gets a prompt (see PackSizeSheet). Returns null for a piece-priced product,
@@ -64,7 +64,7 @@ export default function NewProductScreen() {
           showToast("Product created");
           router.replace(`/(operator)/products/${res.id}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: unknown) => showToast(productSaveErrorCopy(e)),
       },
     );
   };

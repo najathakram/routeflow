@@ -15,9 +15,28 @@ export interface CatalogProductLike {
   variants?: CatalogProductLike[] | null;
 }
 
+/** Fixed copy shown when a family container is refused at an add point. */
+export const FAMILY_ADD_MESSAGE = "Pick a variant. A product family can't be ordered.";
+
+/** A FAMILY container is never an orderable line: the cart-add choke point and resumed drafts refuse it. */
+export function isFamilyProduct(p: { kind?: ProductKind | null } | null | undefined): boolean {
+  return p?.kind === "FAMILY";
+}
+
 export function sellableCatalogRows<T extends CatalogProductLike>(rows: readonly T[]): T[] {
   const out: T[] = [];
   const seen = new Set<string>();
+  // The same variant can arrive twice: as an outer (top-level) row, which carries thumbnailUrl + barcodes, and nested
+  // inside its family's `variants`. The outer row wins; the nested copy only lends its family as `parent`.
+  const outerById = new Map<string, T>();
+  const familyOf = new Map<string, { id: string; name: string }>();
+  for (const row of rows) {
+    if (row.kind === "FAMILY") {
+      for (const v of row.variants ?? []) familyOf.set(v.id, { id: row.id, name: row.name });
+    } else {
+      outerById.set(row.id, row);
+    }
+  }
   const push = (r: T) => {
     if (seen.has(r.id)) return;
     seen.add(r.id);
@@ -27,11 +46,18 @@ export function sellableCatalogRows<T extends CatalogProductLike>(rows: readonly
     if (row.kind === "FAMILY") {
       for (const v of row.variants ?? []) {
         // Variant names are stored bare ("Grape"); the parent lets the row compose "<Parent> - <Variant>".
-        push({ ...v, parent: v.parent ?? { id: row.id, name: row.name } } as T);
+        const parent = { id: row.id, name: row.name };
+        const outer = outerById.get(v.id);
+        push(
+          outer
+            ? ({ ...outer, parent: outer.parent ?? v.parent ?? parent } as T)
+            : ({ ...v, parent: v.parent ?? parent } as T),
+        );
       }
       continue;
     }
-    push(row);
+    const fam = familyOf.get(row.id);
+    push(fam && !row.parent ? ({ ...row, parent: fam } as T) : row);
   }
   return out;
 }
