@@ -126,6 +126,7 @@ async function releaseLive(
     select: { id: true, code: true },
   });
   for (const r of liveRows) {
+    if (r.code == null) continue; // the query asks for live rows only; a row without a code frees nothing
     if (only && !only.some((o) => o.field === "barcode" && o.value === r.code)) continue;
     // eslint-disable-next-line no-await-in-loop -- one or two rows per product
     await tx.productBarcode.update({
@@ -378,8 +379,10 @@ export async function claimCodes(
           // What the release actually freed (the holder's own spellings), not every spelling that was searched.
           codes:
             released.freed.length > 0
-              ? released.freed.map((f) => f.value)
-              : held.map((h) => h.value),
+              ? [...new Set(released.freed.map((f) => f.value))].filter(
+                  (v): v is string => typeof v === "string",
+                )
+              : [...new Set(held.map((h) => h.value))],
           claimedBy: productId,
           reason: "released on reuse",
         },
