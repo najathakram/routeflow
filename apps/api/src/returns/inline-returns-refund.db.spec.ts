@@ -228,7 +228,9 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     tenantId: s.tenantId,
     tenantSlug: "x",
   });
-  const inTenant = <T>(s: Seed, fn: () => Promise<T>) => tenantCtx.run(s.tenantId, fn);
+  // The service under test is `any` here (a prototype-built instance), so the results are `any` too.
+  const inTenant = (s: Seed, fn: () => Promise<any>): Promise<any> =>
+    tenantCtx.run(s.tenantId, fn) as Promise<any>;
   let keySeq = 0;
   /** Captures `pieces` of the sale's product on the sale's own order (a counter return). `returnKey` pins a replay. */
   const capture = (
