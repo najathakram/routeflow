@@ -392,6 +392,8 @@ model RfInvoice {
   sendCount   Int       @default(0)
   voidedAt    DateTime?
   voidReason  String?
+  /// An add-on line had no price snapshot and was written at 0: the office must look at it.
+  needsReview Boolean   @default(false)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
