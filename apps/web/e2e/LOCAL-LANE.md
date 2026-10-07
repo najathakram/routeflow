@@ -206,3 +206,14 @@ needed, and `e2e-routeflow` holds exactly one `ACTIVE` `TENANT_ADMIN` again.
 If your local compose Postgres still has an `e2e_impersonated_admin` row from an earlier seed
 run (before this revert), it's harmless but stale — `npm run local:reset` wipes the volumes and
 drops it along with the rest of the DB (not run here; do so if you want a clean slate).
+
+## Spec 71 (`counter-ship-handoff`): local lane only, and why
+
+`71-counter-ship-handoff.spec.ts` is on the `local:e2e` allow-list but is **never** part of the post-deploy / nightly / CI
+runs. It changes the tenant's fulfilment config: its `beforeAll` applies the `in_store_shipping_retailer` business profile as
+the local super-admin and its `afterAll` (also after a failure) writes the tenant's `TenantFeatureConfig` +
+`TenantFeatureOverride` rows back exactly as read. Because those workflows run `npx playwright test` with no project
+filter, `playwright.config.ts` registers the project only when `PLAYWRIGHT_BASE_URL` is local and `GITHUB_ACTIONS` is not
+`true`; the spec also calls `assertLocalFulfilmentTarget` (localhost web + API, provably local DB, approved test tenant)
+before any write and throws otherwise. It needs the local super-admin: run `npm run local:sa` once after `local:up`
+(credentials stay in the gitignored `local-assets/local-sa.env`, never in a committed file).

@@ -4,8 +4,12 @@
  *   -> the order builder opens on the parked draft: the same 2 lines, the customer, and "Ship via carrier" on.
  * At 1440 / 768 px.
  *
- * Role: OPERATOR (pre-authed), on an approved test tenant whose counter capability offers SHIP ("Ship this order
- * instead" is visible). The two products and the customer are DISCOVERED over the API (active products with an exact
+ * LOCAL LANE ONLY. The spec puts the tenant on the in_store_shipping_retailer profile itself (super-admin, via
+ * helpers/local-fulfilment-profile.ts) and, in afterAll (also after a failure), restores the tenant's previous fulfilment
+ * config row-for-row. Every write is behind assertLocalFulfilmentTarget (localhost + local DB + approved test tenant +
+ * not GitHub Actions); playwright.config.ts also registers this project only for a local run. Needs `npm run local:sa`.
+ *
+ * Role: OPERATOR (pre-authed), on an approved test tenant. The two products and the customer are DISCOVERED over the API (active products with an exact
  * SKU; the first customer), so no fixture is needed beyond the standard seed. Nothing is sold: the hand-off parks an
  * ORDER draft, which this spec deletes through the API at the end. A tenant without the counter, or without the
  * Ship button, is a FAILURE (a skipped spec hides a broken flow), never a skip.
@@ -14,6 +18,13 @@ import { test, expect } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
+import {
+  applyBusinessProfile,
+  localTarget,
+  restoreFulfilmentConfig,
+  snapshotFulfilmentConfig,
+  type FulfilmentSnapshot,
+} from "./helpers/local-fulfilment-profile";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
 
@@ -21,6 +32,20 @@ const VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
   { name: "768", width: 768, height: 1024 },
 ] as const;
+
+let before: FulfilmentSnapshot | null = null;
+const target = () => localTarget(apiBase(BASE));
+
+test.beforeAll(async () => {
+  before = await snapshotFulfilmentConfig(target()); // read first: nothing is written until this succeeds
+  await applyBusinessProfile(target(), before, "in_store_shipping_retailer");
+});
+
+test.afterAll(async () => {
+  if (!before) return;
+  const restored = await restoreFulfilmentConfig(target(), before);
+  expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
+});
 
 for (const vp of VIEWPORTS) {
   test.describe(`B1210 counter -> ship hand-off @ ${vp.name}`, () => {
