@@ -56,7 +56,7 @@ describeDb("backorder marker (SA-714 R1) through OrdersService, real Postgres", 
       tenantId,
       tenantSlug: slug,
     }) as JwtPayload;
-  const inTenant = <T>(fn: () => Promise<T>) => tenantCtx.run(tenantId, fn);
+  const inTenant = (fn: () => Promise<any>): Promise<any> => tenantCtx.run(tenantId, fn);
   const createOrder = (qty: number, extra: object = {}, skipAutoMerge = true) =>
     inTenant(() =>
       orders.create({ customerId, items: [{ productId, qty }], ...extra }, operator(), {
