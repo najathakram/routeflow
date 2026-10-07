@@ -615,7 +615,13 @@ export class BuyerController {
             // already folded this cart must replay it, not fold it in a second time (2 + 3 + 3 = 8).
             if (idempotencyKey) {
               const replayed = await this.ordersService
-                .findOrderIdByIdempotencyKey(idempotencyKey, ctx.customerId, requestHash)
+                .findOrderIdByIdempotencyKey(
+                  idempotencyKey,
+                  ctx.customerId,
+                  requestHash,
+                  undefined,
+                  { items: dto.items }, // BUG-A: a column hit compares the body to the order it made
+                )
                 .catch(scrubForeignOrderId); // never hand a buyer another customer's order id
               if (replayed) {
                 // The fold's convergent tail may not have run (the key commits inside the fold's tx).

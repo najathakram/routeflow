@@ -42,6 +42,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -63,6 +64,7 @@ import { creditOverrideAuditItems } from "./inline-returns-pricing";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
+import { uniqueViolationOn } from "../common/prisma-unique";
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -133,9 +135,6 @@ export class InlineReturnsService {
     return !NO_RESTOCK_REASONS.has(reason ?? "");
   }
 
-  /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique
-   * index — permissive on an empty/unreported target (mirrors credit-notes.service.ts's
-   * `create()` P2002 handling), but never true for an unrelated unique violation. */
   /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
   private assertReplaySameItems(
     existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
@@ -144,12 +143,11 @@ export class InlineReturnsService {
     assertReplayItems(existing, dto, this.logger);
   }
 
+  /** MED-7: true only for a P2002 whose violated constraint is `returnKey`'s own unique index
+   * (B1186: read through common/prisma-unique, so the pg adapter's shape counts, and an
+   * unreported or unrelated constraint - a returnNumber collision - does not). */
   private isReturnKeyConflict(err: any): boolean {
-    if (err?.code !== "P2002") return false;
-    const target = Array.isArray(err?.meta?.target)
-      ? err.meta.target.join(",")
-      : String(err?.meta?.target ?? "");
-    return target === "" || target.includes("returnKey");
+    return uniqueViolationOn(err, "Return_tenantId_returnKey_key", { exact: true });
   }
 
   private async reverseLedgerForReturn(tx: any, ret: { id: string; items: any[] }): Promise<void> {
@@ -972,6 +970,11 @@ export class InlineReturnsService {
    * transaction with its own claim/restock instead of a separate later step). Returns the
    * minted credit note (for the caller's post-commit gateway emit), or `null` if `amount` is
    * not worth minting.
+   *
+   * Lock contract (SA-706c): the caller holds the Return AND the carrying Order (FOR UPDATE)
+   * before this runs — the intent insert below takes KEY SHARE on the Order and settle upgrades
+   * it. Every entry: captureInTx (its first statement locks the Order), issueCredit() and
+   * approve() (`lockOrderRow` right after the Return lock).
    */
   private async issueCreditInTx(
     tx: any,
@@ -1092,6 +1095,8 @@ export class InlineReturnsService {
       // cancel() (or a racing issue) already moved this return out of RECEIVED/no-CN/no-hold —
       // "cancel between re-read and link ⇒ no CN": mint nothing.
       if (!fresh || fresh.status !== "RECEIVED" || fresh.creditNoteId || fresh.holdReason) return;
+      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
+      await lockOrderRow(tx, tenantId, fresh.orderId);
 
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
@@ -1176,6 +1181,8 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
+      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
+      await lockOrderRow(tx, tenantId, fresh.orderId);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
