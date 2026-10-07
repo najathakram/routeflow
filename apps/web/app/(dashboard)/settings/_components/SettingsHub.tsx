@@ -236,6 +236,14 @@ function cardMatches(href: string, q: string): boolean {
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
 
+  // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
+  // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
+  // to scroll to until now, so bring the card into view once it is mounted.
+  React.useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
+  }, []);
+
   const canShow = React.useCallback(
     (item: HubItem) => (item.show === "admin" ? isAdmin : true),
     [isAdmin],

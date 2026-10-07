@@ -73,12 +73,18 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
               <div className="text-sm font-medium text-navy">{OVERSELL_COPY.label}</div>
               <div className="text-xs text-navy/55">{OVERSELL_COPY.description}</div>
             </div>
-            <MiniSwitch
-              checked={on}
-              disabled={!canEdit || update.isPending}
-              onToggle={onToggle}
-              ariaLabel={OVERSELL_COPY.label}
-            />
+            {/* The switch is 36x20: the label gives it a 44x44 touch target (a tap on it toggles). */}
+            <label
+              data-testid="oversell-switch-target"
+              className="-m-1 flex min-h-[44px] min-w-[44px] flex-none cursor-pointer items-center justify-center"
+            >
+              <MiniSwitch
+                checked={on}
+                disabled={!canEdit || update.isPending}
+                onToggle={onToggle}
+                ariaLabel={OVERSELL_COPY.label}
+              />
+            </label>
           </div>
           {!canEdit && <p className="text-xs text-navy/55">{OVERSELL_COPY.readOnly}</p>}
           {overrides > 0 && (

@@ -99,6 +99,37 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("Compliance")).toBeInTheDocument();
   });
 
+  describe("a page loaded with a card's hash scrolls to that card", () => {
+    const scroll = jest.fn();
+    beforeEach(() => {
+      scroll.mockClear();
+      Element.prototype.scrollIntoView = scroll;
+    });
+    afterEach(() => {
+      window.history.replaceState(null, "", window.location.pathname);
+    });
+
+    it("#out-of-stock-ordering lands on the Out-of-stock ordering card", () => {
+      window.history.replaceState(null, "", "#out-of-stock-ordering");
+      renderWithProviders(<SettingsHub isAdmin />);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.instances[0]).toBe(document.getElementById("out-of-stock-ordering"));
+    });
+
+    it("#route-defaults lands on its card the same way", () => {
+      window.history.replaceState(null, "", "#route-defaults");
+      renderWithProviders(<SettingsHub isAdmin />);
+      expect(scroll.mock.instances[0]).toBe(document.getElementById("route-defaults"));
+    });
+
+    it("no hash, or a hash that names nothing here, scrolls nothing", () => {
+      renderWithProviders(<SettingsHub isAdmin />);
+      window.history.replaceState(null, "", "#no-such-card");
+      renderWithProviders(<SettingsHub isAdmin />);
+      expect(scroll).not.toHaveBeenCalled();
+    });
+  });
+
   it("mounts the route defaults card", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();

@@ -130,6 +130,17 @@ describe("BuyerOversellCard", () => {
     expect(theSwitch()).toBeDisabled();
   });
 
+  it("the switch sits in a 44x44 touch target, and a tap on that target toggles it", () => {
+    loaded("off");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    const target = screen.getByTestId("oversell-switch-target");
+    expect(target.className).toMatch(/min-h-\[44px\]/);
+    expect(target.className).toMatch(/min-w-\[44px\]/);
+    fireEvent.click(target);
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toStrictEqual({ buyerOversell: "backorder" });
+  });
+
   it("says how many customers have their own setting (and nothing when none do)", () => {
     loaded("off", 0);
     const { unmount } = renderWithProviders(<BuyerOversellCard canEdit />);
