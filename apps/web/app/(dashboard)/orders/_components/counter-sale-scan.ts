@@ -22,6 +22,8 @@ export interface SaleLine {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** POS-3: an optional per-line note (max NOTE_MAX); sent as the wire item's `note`. */
+  note?: string;
   /**
    * B1210: the product snapshot taken when the line was added, so "Ship this order instead" can park the line without a
    * second lookup. `unitPrice` is the TIER price the clerk saw; `listPrice` is the catalogue price. Absent on a line held

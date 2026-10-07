@@ -1,11 +1,13 @@
 import * as React from "react";
+import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { cartTotals } from "@/lib/counter-sale";
-import { isBoxedLine, lineQtyLabel } from "./counter-sale-line-edit";
+import { NOTE_MAX, isBoxedLine, lineQtyLabel } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-const STEP_BTN = "rounded border px-2 py-0.5 text-xs disabled:opacity-40";
+/** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
+const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
 
 /** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
 export function LineStepper({
@@ -20,7 +22,7 @@ export function LineStepper({
   const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
     <button
       type="button"
-      className={STEP_BTN}
+      className={LINE_BTN}
       aria-label={label}
       disabled={locked || stepLine(line, unit, dir) === line}
       onClick={() => onStep(line.tempId, unit, dir)}
@@ -29,49 +31,109 @@ export function LineStepper({
     </button>
   );
   return isBoxedLine(line) ? (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
+    <span
+      className="flex flex-wrap items-center gap-1"
+      role="group"
+      aria-label={`Quantity of ${line.name}`}
+    >
       {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
       {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
       {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
       {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
     </span>
   ) : (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
+    <span
+      className="flex flex-wrap items-center gap-1"
+      role="group"
+      aria-label={`Quantity of ${line.name}`}
+    >
       {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
       {btn(`Add one ${line.name}`, "+", "piece", 1)}
     </span>
   );
 }
 
-/** One cart line: name + quantity label, the stepper, the line subtotal and the remove button. */
+/**
+ * One cart line. Top row: name + quantity label, subtotal, remove. Below: the stepper and the note. `locked` disables EVERY
+ * control on the line (an unknown outcome, or the sale POST in flight).
+ */
 export function CounterLineRow({
   line: l,
   locked,
   onStep,
   onRemove,
+  onNote,
 }: {
   line: SaleLine;
   locked: boolean;
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
   onRemove: (tempId: string) => void;
+  onNote: (tempId: string, note: string) => void;
 }) {
+  const [editing, setEditing] = React.useState(false);
+  const hasNote = !!l.note?.trim();
   return (
-    <li className="flex items-center justify-between gap-2 p-3 text-sm">
-      <span>
-        {l.name} · {lineQtyLabel(l)}
-      </span>
-      <span className="flex items-center gap-3">
+    <li className="flex flex-col gap-2 p-3 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 break-words">
+          {l.name} · {lineQtyLabel(l)}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span>{money(cartTotals([l], 0).subtotal)}</span>
+          <button
+            type="button"
+            className={LINE_BTN}
+            aria-label={`Remove ${l.name}`}
+            disabled={locked}
+            onClick={() => onRemove(l.tempId)}
+          >
+            ×
+          </button>
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
-        <span>{money(cartTotals([l], 0).subtotal)}</span>
         <button
           type="button"
-          aria-label={`Remove ${l.name}`}
+          className={LINE_BTN}
+          aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
+          aria-expanded={editing}
           disabled={locked}
-          onClick={() => onRemove(l.tempId)}
+          onClick={() => setEditing((v) => !v)}
         >
-          ×
+          {hasNote ? "Edit note" : "Add note"}
         </button>
-      </span>
+        {hasNote ? (
+          <button
+            type="button"
+            className={LINE_BTN}
+            aria-label={`Clear the note on ${l.name}`}
+            disabled={locked}
+            onClick={() => {
+              onNote(l.tempId, "");
+              setEditing(false);
+            }}
+          >
+            Clear note
+          </button>
+        ) : null}
+      </div>
+      {editing ? (
+        <textarea
+          rows={2}
+          maxLength={NOTE_MAX}
+          aria-label={`Note for ${l.name}`}
+          className="min-h-[44px] w-full resize-y rounded border px-2 py-1 text-sm"
+          placeholder="Flavor or note for this item (prints on invoice)"
+          disabled={locked}
+          value={l.note ?? ""}
+          onChange={(e) => onNote(l.tempId, e.target.value)}
+        />
+      ) : hasNote ? (
+        <p className="break-words text-xs text-navy/70" data-testid="line-note">
+          {l.note}
+        </p>
+      ) : null}
     </li>
   );
 }
