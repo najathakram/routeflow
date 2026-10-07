@@ -12,6 +12,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   QuoteInlineReturnRequest,
+  RefundInlineReturnRequest,
 } from "@routeflow/types";
 
 export type {
@@ -25,6 +26,9 @@ export type {
   InlineReturnStatus,
   QuoteInlineReturnItem,
   QuoteInlineReturnRequest,
+  RefundInlineReturnRequest,
+  InlineReturnRefundTender,
+  InlineReturnResolution,
 } from "@routeflow/types";
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
@@ -68,4 +72,13 @@ export function useCaptureInlineReturn() {
       qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
+}
+
+/**
+ * POS-4b: POST /returns/:id/refund — pay a REFUND-resolution capture back. Plain call (not a hook) so
+ * the dialog can re-POST ONLY the refund on a retry; the capture's own cache invalidation already ran.
+ * Errors: 409 REFUND_AMOUNT_CHANGED, 409 RETURN_ALREADY_RESOLVED, 403.
+ */
+export function refundReturn(id: string, body: RefundInlineReturnRequest): Promise<unknown> {
+  return apiClient.post(`/returns/${id}/refund`, body).then((r) => r.data);
 }

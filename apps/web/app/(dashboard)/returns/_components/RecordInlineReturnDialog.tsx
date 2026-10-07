@@ -19,9 +19,18 @@ import * as React from "react";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
-import { useCaptureInlineReturn } from "@/lib/api/inline-returns";
+import {
+  refundReturn,
+  useCaptureInlineReturn,
+  useInlineReturnQuote,
+} from "@/lib/api/inline-returns";
 import { useOptionalAuth } from "@/lib/auth-context";
-import type { InlineReturnRecord } from "@routeflow/types";
+import type {
+  InlineReturnQuoteResponse,
+  InlineReturnRecord,
+  InlineReturnRefundTender,
+  InlineReturnResolution,
+} from "@routeflow/types";
 import {
   buildCaptureRequest,
   canOverrideReturnCredit,
@@ -29,9 +38,17 @@ import {
   DEFAULT_EXCESS_OPTION,
   extractRefusalMessage,
   keyReusedReturnOf,
+  buildQuoteRequest,
   mintReturnKey,
   refundAmountOf,
 } from "@routeflow/returns";
+import {
+  REFUND_COPY,
+  TENDER_OPTIONS,
+  handBackLine,
+  refundErrorKind,
+  type RefundErrorKind,
+} from "./refund-copy";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
 
 function money(n: number): string {
@@ -47,8 +64,18 @@ export interface RecordInlineReturnDialogProps {
    *  used as the carrying order (capture's `orderId`) with no extra picker. Omit when
    *  opening from customer detail (the order picker below is then required). */
   orderId?: string;
-  /** Optional: called once when a return is recorded (the counter receipt shows its own hand-back note). */
-  onRecorded?: (result: InlineReturnRecord) => void;
+  /** POS-4b: offer "Store credit or Refund" on the quote step (counter receipt + order detail only).
+   *  Off (customer detail) = today's dialog, no choice block. */
+  allowRefund?: boolean;
+  /** Optional: called once when a return is fully recorded — after the refund, if one was chosen
+   *  (the counter receipt shows its own hand-back note from `info`). */
+  onRecorded?: (result: InlineReturnRecord, info?: RecordedInfo) => void;
+}
+
+export interface RecordedInfo {
+  resolution: InlineReturnResolution;
+  tender?: InlineReturnRefundTender;
+  amount?: number;
 }
 
 type DialogPhase = "capture" | "success" | "refused";
@@ -59,6 +86,7 @@ export function RecordInlineReturnDialog({
   customerId,
   customerName,
   orderId,
+  allowRefund = false,
   onRecorded,
 }: RecordInlineReturnDialogProps) {
   const role = useOptionalAuth()?.user?.role;
@@ -91,6 +119,23 @@ export function RecordInlineReturnDialog({
   const returnKeyRef = React.useRef("");
 
   const captureMutation = useCaptureInlineReturn();
+  const requoteMutation = useInlineReturnQuote();
+
+  // POS-4b: refund-vs-credit state. `saved` = the return the capture recorded (a refund retry
+  // never re-captures); `busyRef` absorbs a double click before React re-renders the disabled button.
+  const [resolution, setResolution] = React.useState<InlineReturnResolution>("STORE_CREDIT");
+  const [tender, setTender] = React.useState<InlineReturnRefundTender | null>(null);
+  const [saved, setSaved] = React.useState<InlineReturnRecord | null>(null);
+  const [refunding, setRefunding] = React.useState(false);
+  const [refundError, setRefundError] = React.useState<RefundErrorKind | null>(null);
+  const [refundDone, setRefundDone] = React.useState<{
+    tender: InlineReturnRefundTender;
+    amount: number;
+  } | null>(null);
+  const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
+    null,
+  );
+  const busyRef = React.useRef(false);
 
   // Fresh attempt every time the dialog opens — bumps `openSeq`, which InlineReturnSection
   // takes as its own reset signal (clearing lines/quote/reason and re-seeding from the entry
@@ -104,29 +149,99 @@ export function RecordInlineReturnDialog({
     setRefusalMessage("");
     setRecordedReturn(null);
     returnKeyRef.current = "";
+    setResolution("STORE_CREDIT");
+    setTender(null);
+    setSaved(null);
+    setRefunding(false);
+    setRefundError(null);
+    setRefundDone(null);
+    setRequoteOverride(null);
+    busyRef.current = false;
   }, [open, orderId]);
+
+  const quoted = sectionState.quote;
+  const showChoice = allowRefund && !!quoted?.canRefund;
+  const walkIn = showChoice && !!quoted?.customerIsWalkIn;
+  const effResolution: InlineReturnResolution = !showChoice
+    ? "STORE_CREDIT"
+    : walkIn
+      ? "REFUND"
+      : resolution;
+  const effTender: InlineReturnRefundTender = tender ?? quoted?.paidMethods?.[0] ?? "CASH";
+  const quotedAmount = quoted?.total ?? 0;
+
+  function doRetry(ret: InlineReturnRecord) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    doRefund(ret);
+  }
+
+  function doRefund(ret: InlineReturnRecord) {
+    setRefunding(true);
+    setRefundError(null);
+    const amount = quotedAmount;
+    const used = effTender;
+    refundReturn(ret.id, { tender: used, expectedAmount: amount }).then(
+      () => {
+        busyRef.current = false;
+        setRefunding(false);
+        setRefundDone({ tender: used, amount });
+        setResult(ret);
+        setPhase("success");
+        onRecorded?.(ret, { resolution: "REFUND", tender: used, amount });
+      },
+      (err: unknown) => {
+        busyRef.current = false;
+        setRefunding(false);
+        const kind = refundErrorKind(err);
+        setRefundError(kind);
+        if (kind === "changed") {
+          // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
+            onSuccess: (fresh) => setRequoteOverride(fresh),
+          });
+        }
+      },
+    );
+  }
 
   function handleConfirm() {
     if (!sectionState.captureReason) {
       toast({ title: "Choose a reason before confirming", variant: "error" });
       return;
     }
+    if (showChoice) {
+      if (busyRef.current) return;
+      busyRef.current = true;
+      // Capture already recorded (a refund that needs a fresh confirm): re-POST ONLY the refund.
+      if (saved) return doRefund(saved);
+    }
     if (!returnKeyRef.current) returnKeyRef.current = mintReturnKey();
     captureMutation.mutate(
-      buildCaptureRequest({
-        customerId,
-        orderId: carryingOrderId,
-        lines: sectionState.lines,
-        returnKey: returnKeyRef.current,
-        reason: sectionState.captureReason,
-      }),
+      {
+        ...buildCaptureRequest({
+          customerId,
+          orderId: carryingOrderId,
+          lines: sectionState.lines,
+          returnKey: returnKeyRef.current,
+          reason: sectionState.captureReason,
+        }),
+        ...(showChoice ? { resolution: effResolution } : {}),
+      },
       {
         onSuccess: (data) => {
+          if (showChoice && effResolution === "REFUND") {
+            setSaved(data);
+            doRefund(data);
+            return;
+          }
+          busyRef.current = false;
           setResult(data);
           setPhase("success");
-          onRecorded?.(data);
+          onRecorded?.(data, showChoice ? { resolution: "STORE_CREDIT" } : undefined);
         },
         onError: (err) => {
+          busyRef.current = false;
           setRefusalMessage(extractRefusalMessage(err));
           // #2647: the earlier capture WAS recorded: link it and clear the draft (a fresh key and a
           // re-seeded section), so the same goods are not re-entered and credited twice.
@@ -177,26 +292,58 @@ export function RecordInlineReturnDialog({
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
+        quoteOverride={requoteOverride}
+        renderQuoteFooter={() =>
+          showChoice ? (
+            <RefundChoice
+              amount={money(quotedAmount)}
+              walkIn={walkIn}
+              resolution={effResolution}
+              onResolution={setResolution}
+              tender={effTender}
+              onTender={setTender}
+              locked={!!saved || refunding}
+              error={refundError}
+            />
+          ) : null
+        }
         renderLinesActions={() => (
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
         )}
-        renderQuoteActions={() => (
-          <Button
-            disabled={
-              !sectionState.captureReason ||
-              // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
-              (!!sectionState.quote &&
-                canOverrideReturnCredit(role) &&
-                missingAlreadyReturnedReasons(sectionState.lines, sectionState.quote).length > 0)
-            }
-            loading={captureMutation.isPending}
-            onClick={handleConfirm}
-          >
-            Issue credit note and receive goods
-          </Button>
-        )}
+        renderQuoteActions={() =>
+          showChoice && (refundError === "failed" || refundError === "resolved") ? (
+            refundError === "failed" && saved ? (
+              <Button loading={refunding} onClick={() => saved && doRetry(saved)}>
+                Retry refund
+              </Button>
+            ) : (
+              <Button onClick={onClose}>Close</Button>
+            )
+          ) : (
+            <Button
+              disabled={
+                refunding ||
+                !sectionState.captureReason ||
+                // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
+                (!!sectionState.quote &&
+                  canOverrideReturnCredit(role) &&
+                  missingAlreadyReturnedReasons(sectionState.lines, sectionState.quote).length > 0)
+              }
+              loading={captureMutation.isPending}
+              onClick={handleConfirm}
+            >
+              {!showChoice
+                ? "Issue credit note and receive goods"
+                : refunding
+                  ? "Refunding…"
+                  : effResolution === "REFUND"
+                    ? `Return & refund ${money(quotedAmount)}`
+                    : "Return & issue store credit"}
+            </Button>
+          )
+        }
         onQuoteRefused={(message) => {
           setRefusalMessage(message);
           setPhase("refused");
@@ -230,7 +377,7 @@ export function RecordInlineReturnDialog({
                 </dd>
               </div>
             )}
-            {refundAmountOf(result.refundAmount) !== null && (
+            {!refundDone && refundAmountOf(result.refundAmount) !== null && (
               <div className="flex justify-between">
                 <dt className="text-navy/70">Amount</dt>
                 <dd>{money(refundAmountOf(result.refundAmount) as number)}</dd>
@@ -245,6 +392,11 @@ export function RecordInlineReturnDialog({
               </dd>
             </div>
           </dl>
+          {refundDone && (
+            <p role="status" className="text-sm text-navy">
+              Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
+            </p>
+          )}
           {result.parkedReversals && (
             <div
               data-testid="inline-return-parked-warning"
@@ -290,5 +442,72 @@ export function RecordInlineReturnDialog({
         </div>
       )}
     </Modal>
+  );
+}
+
+function RefundChoice({
+  amount,
+  walkIn,
+  resolution,
+  onResolution,
+  tender,
+  onTender,
+  locked,
+  error,
+}: {
+  amount: string;
+  walkIn: boolean;
+  resolution: InlineReturnResolution;
+  onResolution: (r: InlineReturnResolution) => void;
+  tender: InlineReturnRefundTender;
+  onTender: (t: InlineReturnRefundTender) => void;
+  locked: boolean;
+  error: RefundErrorKind | null;
+}) {
+  const refund = resolution === "REFUND";
+  return (
+    <div className="mt-4 space-y-2 rounded-lg border border-surface-border p-3">
+      <p className="text-sm font-medium text-navy">{REFUND_COPY.heading}</p>
+      {!walkIn && (
+        <label className="flex items-center gap-2 text-sm text-navy">
+          <input
+            type="radio"
+            name="return-resolution"
+            checked={!refund}
+            disabled={locked}
+            onChange={() => onResolution("STORE_CREDIT")}
+          />
+          Store credit
+        </label>
+      )}
+      <label className="flex items-center gap-2 text-sm text-navy">
+        <input
+          type="radio"
+          name="return-resolution"
+          checked={refund}
+          disabled={locked}
+          onChange={() => onResolution("REFUND")}
+        />
+        Refund {amount}
+      </label>
+      {walkIn && <p className="text-xs text-navy/70">{REFUND_COPY.walkIn}</p>}
+      {refund && (
+        <>
+          <Select
+            label="Refund by"
+            value={tender}
+            disabled={locked}
+            onChange={(e) => onTender(e.target.value as InlineReturnRefundTender)}
+            options={TENDER_OPTIONS}
+          />
+          <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>
+        </>
+      )}
+      {error && (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {REFUND_COPY[error]}
+        </p>
+      )}
+    </div>
   );
 }

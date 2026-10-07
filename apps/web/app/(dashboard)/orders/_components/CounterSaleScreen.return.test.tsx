@@ -60,4 +60,13 @@ it("the receipt mounts the return action for the sale's order", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
   await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
   expect(screen.getByRole("button", { name: "Return items for o1" })).toBeInTheDocument();
+  // POS-4b: the entry sits BETWEEN Print and New sale.
+  const names = screen.getByTestId("counter-sale-receipt").querySelectorAll("button");
+  const order = Array.from(names).map((b) => b.textContent);
+  const print = order.indexOf("Print");
+  const ret = order.indexOf("Return items for o1");
+  const next = order.indexOf("New sale");
+  expect(print).toBeGreaterThanOrEqual(0);
+  expect(ret).toBe(print + 1);
+  expect(next).toBe(ret + 1);
 });

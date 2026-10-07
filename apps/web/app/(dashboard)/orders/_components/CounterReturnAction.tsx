@@ -10,12 +10,20 @@ import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { useOrder } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { RecordInlineReturnDialog } from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
+import {
+  RecordInlineReturnDialog,
+  type RecordedInfo,
+} from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
+import { handBackLine } from "@/app/(dashboard)/returns/_components/refund-copy";
 import { orderActionAccess } from "../[id]/order-action-access";
+
+function money(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
 
 export function CounterReturnAction({ orderId }: { orderId: string }) {
   const [open, setOpen] = React.useState(false);
-  const [recorded, setRecorded] = React.useState(false);
+  const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
   const staff = orderActionAccess(role, "", false).staff;
@@ -26,6 +34,7 @@ export function CounterReturnAction({ orderId }: { orderId: string }) {
     <>
       <Button
         variant="secondary"
+        className="w-full sm:w-auto"
         leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
         onClick={() => setOpen(true)}
       >
@@ -37,12 +46,14 @@ export function CounterReturnAction({ orderId }: { orderId: string }) {
         customerId={order.customerId}
         customerName={order.customer?.businessName}
         orderId={order.id}
-        onRecorded={() => setRecorded(true)}
+        allowRefund
+        onRecorded={(_ret, info) => setRecorded(info ?? { resolution: "STORE_CREDIT" })}
       />
       {recorded ? (
-        <p role="status" className="basis-full text-sm font-medium text-navy">
-          Return recorded. Stock is back and a credit note was issued. Hand the refund to the
-          customer yourself.
+        <p role="status" className="order-last basis-full text-sm font-medium text-navy">
+          {recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
+            ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
+            : "Return recorded. Store credit was issued to the customer."}
         </p>
       ) : null}
     </>

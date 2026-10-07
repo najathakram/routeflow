@@ -573,10 +573,10 @@ export function CounterSaleScreen() {
         </dl>
         <div className="flex flex-wrap gap-2 print:hidden">
           <Button onClick={() => window.print()}>Print</Button>
+          <CounterReturnAction orderId={receipt.orderId} />
           <Button variant="secondary" onClick={resetSale}>
             New sale
           </Button>
-          <CounterReturnAction orderId={receipt.orderId} />
         </div>
       </div>
     );

@@ -19,11 +19,11 @@ jest.mock("@/lib/auth-context", () => ({
 }));
 
 const dialogProps = jest.fn();
-let recorded: (() => void) | undefined;
+let recorded: ((r?: unknown, info?: unknown) => void) | undefined;
 jest.mock("@/app/(dashboard)/returns/_components/RecordInlineReturnDialog", () => ({
   RecordInlineReturnDialog: (p: Record<string, unknown>) => {
     dialogProps(p);
-    recorded = p.onRecorded as () => void;
+    recorded = p.onRecorded as typeof recorded;
     return p.open ? <div data-testid="dialog-open" /> : null;
   },
 }));
@@ -65,13 +65,36 @@ describe("CounterReturnAction", () => {
       expect.objectContaining({ open: true, orderId: "o1", customerId: "c1" }),
     );
   });
-  it("after a recorded return, tells the clerk to hand the refund back themselves", () => {
+  it("passes allowRefund to the dialog and styles the button full-width on a phone", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    expect(dialogProps).toHaveBeenLastCalledWith(expect.objectContaining({ allowRefund: true }));
+    expect(screen.getByRole("button", { name: "Return items" }).className).toMatch(
+      /w-full sm:w-auto/,
+    );
+  });
+  it("store credit: says the credit was issued", () => {
     const { container } = render(<CounterReturnAction orderId="o1" />);
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
-    React.act(() => recorded?.());
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT" }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Stock is back and a credit note was issued. Hand the refund to the customer yourself.",
+      "Return recorded. Store credit was issued to the customer.",
     );
     expect(container.textContent).not.toMatch(/void/i);
+  });
+  it("cash refund: repeats the hand-back line", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Hand $12.40 back to the customer.",
+    );
+  });
+  it("card refund: repeats the card line", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CARD", amount: 12.4 }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Give $12.40 back on the customer's card at the terminal.",
+    );
   });
 });
