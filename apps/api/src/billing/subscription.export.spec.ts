@@ -156,6 +156,17 @@ describe("SubscriptionService.getExport (B1187)", () => {
     ]);
   });
 
+  it("non-array addons/flags fail closed to []", async () => {
+    const { svc } = build([], []);
+    jest.spyOn(svc, "getSubscription").mockResolvedValue({
+      planKey: "GROWTH",
+      flags: { stripe: "x" },
+      addons: { priceSnapshot: 5 },
+    } as never);
+    const out = await svc.getExport(TENANT);
+    expect(out.subscription).toEqual({ planKey: "GROWTH", flags: [], addons: [] });
+  });
+
   it("scopes event and invoice reads by tenantId and excludes internal event types", async () => {
     const { svc, prisma } = build([], []);
     await svc.getExport(TENANT);

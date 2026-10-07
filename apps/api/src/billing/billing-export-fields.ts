@@ -174,10 +174,11 @@ function pick(row: unknown, fields: readonly string[]): Record<string, unknown> 
 
 export function projectSubscriptionForExport(sub: unknown): Record<string, unknown> {
   const out = pick(sub, BILLING_EXPORT_SUBSCRIPTION_FIELDS);
-  if (Array.isArray(out.addons)) {
-    out.addons = out.addons.map((a) => pick(a, BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS));
-  }
-  if (Array.isArray(out.flags)) out.flags = out.flags.filter((f) => typeof f === "string");
+  // Fail closed: a non-array addons/flags becomes [] rather than passing through unprojected.
+  out.addons = Array.isArray(out.addons)
+    ? out.addons.map((a) => pick(a, BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS))
+    : [];
+  out.flags = Array.isArray(out.flags) ? out.flags.filter((f) => typeof f === "string") : [];
   return out;
 }
 
