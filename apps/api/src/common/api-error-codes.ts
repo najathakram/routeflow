@@ -221,6 +221,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
