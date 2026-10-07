@@ -10,6 +10,13 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+} from "@/lib/product-search-groups";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
@@ -421,13 +428,16 @@ export function CreateOrderModal({
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedCustomerSearch]);
 
+  // Top-level rows (parents + standalones) with variants nested. A variant that matched on its own
+  // gets its parent re-attached and opened (B1215 C6); a FAMILY is only ever a group header (C7).
+  const productGroups = React.useMemo(
+    () => groupSearchRows<any>(productsData?.data ?? []),
+    [productsData],
+  );
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    // Only return top-level products (parents + standalones); variants are nested inside parents
-    return (productsData?.data ?? [])
-      .filter((p: any) => !p.parentProductId) // exclude variant rows from top-level
-      .slice(0, 10);
-  }, [productsData, debouncedProductSearch]);
+    return productGroups.rows.slice(0, 10);
+  }, [productGroups, debouncedProductSearch]);
 
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale. The
   // resolve ladder (archived / hit / network error / unknown code) lives in
@@ -835,6 +845,7 @@ export function CreateOrderModal({
 
   /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
+    if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
     addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
@@ -1874,7 +1885,11 @@ export function CreateOrderModal({
                     )}
                     {filteredProducts.map((p: any) => {
                       const hasVariants = p.variants?.length > 0;
-                      const isExpanded = expandedParentId === p.id;
+                      const isExpanded = isGroupExpanded(
+                        expandedParentId,
+                        productGroups.expandedIds,
+                        p.id,
+                      );
                       const alreadyAdded = lineItems.some((li) => li.productId === p.id);
                       return (
                         <React.Fragment key={p.id}>
@@ -1883,7 +1898,7 @@ export function CreateOrderModal({
                               type="button"
                               onClick={() => {
                                 if (hasVariants) {
-                                  setExpandedParentId(isExpanded ? null : p.id);
+                                  setExpandedParentId(isExpanded ? "" : p.id);
                                 } else {
                                   // Already-added rows increment qty (addLineItem's
                                   // repeat path) — the old no-op left the search
@@ -1939,7 +1954,7 @@ export function CreateOrderModal({
                                 <li key={v.id} className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => addPicked(v)}
+                                    onClick={() => addPicked(attachParent(v, p))}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
                                       variantAdded && "opacity-40",
@@ -1947,7 +1962,7 @@ export function CreateOrderModal({
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">
                                       <span className="font-medium truncate">
-                                        {v.variantName ?? v.name}
+                                        {pickerProductName(v, p)}
                                       </span>
                                       {v.sku && (
                                         <span className="text-xs text-navy/70 shrink-0">
