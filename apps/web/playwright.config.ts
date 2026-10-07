@@ -476,6 +476,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 65). READ-ONLY:
+    // never clicks Confirm; asserts no write request leaves the page.
+    {
+      name: "invoice-numbering-card",
+      testMatch: /65-invoice-numbering-card\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
     // REG-B92: /invoices/recurring/[id]/edit exists and persists a schedule/notes
     // change; every list card links to it. REG-B09: the Edit Standing Order modal
