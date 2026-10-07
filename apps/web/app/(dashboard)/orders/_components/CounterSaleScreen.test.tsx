@@ -1469,6 +1469,17 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(screen.queryByRole("button", { name: "Complete sale" })).toBeNull();
     });
 
+    it("POS-1: after completing, keyboard focus lands on the receipt heading", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+      await user.type(screen.getByLabelText("Amount tendered"), "20{Enter}");
+      const heading = await screen.findByRole("heading", { name: "Receipt" });
+      await waitFor(() => expect(heading).toHaveFocus());
+      expect(heading).toHaveAttribute("tabindex", "-1");
+    });
+
     it("Enter in the tendered field does NOT submit while the tender is short", async () => {
       const user = userEvent.setup();
       renderWithProviders(<CounterSaleScreen />);
