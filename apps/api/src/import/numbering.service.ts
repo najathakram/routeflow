@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger } from "@nes
 import { randomUUID } from "crypto";
 import { DocumentNumberType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { validateDocumentPrefix } from "@routeflow/types";
+import { validateDocumentPrefix } from "../common/document-prefix";
 import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 
 /**

@@ -184,7 +184,6 @@ export * from "./api/error-codes";
 export * from "./api/policies";
 export * from "./api/inventory-settings";
 export * from "./api/preferences";
-export * from "./api/numbering-prefix";
 export * from "./api/settings-registry";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────

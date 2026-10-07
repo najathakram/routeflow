@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, useToast } from "@routeflow/ui/web";
-import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "@routeflow/types";
+import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "@/lib/document-prefix";
 import { apiClient } from "@/lib/api-client";
 import { describeSaveError } from "@/lib/reason-copy";
 import { ConfirmDialog } from "@/components/ConfirmDialog";

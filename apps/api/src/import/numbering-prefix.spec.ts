@@ -1,11 +1,11 @@
 import "reflect-metadata";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
-import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "@routeflow/types";
+import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "../common/document-prefix";
 import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 
-// B1188 (SA-723 MUST 3): ONE shared prefix validator (packages/types) used by the api DTO and the
-// web form. A prefix ending in a digit merges into the padded number ("INV2" + "0043" ->
+// B1188 (SA-723 MUST 3): the api-owned prefix validator (common/document-prefix.ts, mirrored on web and pinned by
+// document-prefix-parity.spec.ts) used by the api DTO. A prefix ending in a digit merges into the padded number ("INV2" + "0043" ->
 // "INV20043"), so the numeric-max scan reads it as INV + 20043 and the series corrupts.
 describe("validateDocumentPrefix (shared, B1188)", () => {
   it.each(["INV-", "EST-", "CN-", "2026-", "A/B-", "INV.", "INV_", "A", "INV-2026-"])(

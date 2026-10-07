@@ -34,11 +34,8 @@ import {
   type IncompleteProduct,
 } from "@/lib/api/import-resolution";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
-import {
-  PRODUCT_IMPORT_COLUMNS,
-  CUSTOMER_IMPORT_COLUMNS,
-  validateDocumentPrefix,
-} from "@routeflow/types";
+import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 interface ImportResult {
   imported?: number;

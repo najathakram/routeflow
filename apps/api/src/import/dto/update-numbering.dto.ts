@@ -9,7 +9,7 @@ import {
   ValidatorConstraintInterface,
   Validate,
 } from "class-validator";
-import { validateDocumentPrefix } from "@routeflow/types";
+import { validateDocumentPrefix } from "../../common/document-prefix";
 
 /** B1188: the shared prefix rule (length, charset, no trailing digit), same fn the web forms use. */
 @ValidatorConstraint({ name: "documentPrefix", async: false })
