@@ -16,6 +16,12 @@ import {
   useUpdateReorderSettings,
 } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
+import { alertInfo, confirm } from "../../../../lib/confirm";
+import {
+  getReactivationRefusal,
+  reactivationResolveLabel,
+  type ReactivationRefusal,
+} from "../../../../lib/product-reactivation-refusal";
 
 /**
  * A name/unit that reads like it's packaged, with `unitsPerBox` still unset,
@@ -64,11 +70,11 @@ export default function EditProductScreen() {
     );
   }
 
-  const finalize = (payload: SubmitPayload) => {
+  const finalize = (payload: SubmitPayload, deactivateHolderIds?: string[]) => {
     if (!id) return;
     const { reorderPoint, reorderQty, ...productDto } = payload;
     mut.mutate(
-      { id, ...productDto },
+      { id, ...productDto, ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}) },
       {
         onSuccess: () => {
           // Save reorder settings separately (PATCH /inventory/products/:id/reorder-settings)
@@ -78,9 +84,31 @@ export default function EditProductScreen() {
           showToast("Saved");
           router.back();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: unknown) => {
+          // Fixed copy only: the server message is never shown.
+          const refusal = getReactivationRefusal(e);
+          if (refusal) return askReactivationResolve(refusal, payload);
+          showToast("Couldn't save. Try again.");
+        },
       },
     );
+  };
+
+  /** A reactivation the server refused: name the holders, offer to deactivate them, re-send with their ids. */
+  const askReactivationResolve = (refusal: ReactivationRefusal, payload: SubmitPayload) => {
+    if (refusal.kind === "RETRY") {
+      alertInfo("Products changed", "The conflicting products changed. Save again to continue.");
+      return;
+    }
+    const lines = refusal.holders.map((h) => h.line).join("\n\n");
+    if (!refusal.canResolve) {
+      alertInfo("Can't reactivate", lines);
+      return;
+    }
+    confirm("Can't reactivate yet", lines, () => finalize(payload, refusal.holderIds), {
+      confirmText: reactivationResolveLabel(refusal.holders.map((h) => h.productName)),
+      destructive: true,
+    });
   };
 
   return (

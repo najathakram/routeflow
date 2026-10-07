@@ -19,6 +19,7 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
+import type { ProductUnitLevel } from "@routeflow/types";
 import { needsUnitLabelConfirm } from "./scan-unit-confirm";
 import {
   roundMoney,
@@ -36,7 +37,7 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
-import { unitPriceBase, type UnitOption } from "./unit-options";
+import { defaultStartOption, unitPriceBase, type UnitOption } from "./unit-options";
 import { incrementLine, incrementLinePiece, isUnitLine } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
 
@@ -121,6 +122,11 @@ export type DraftItem = {
    * the server needs a count on every unit-line UPDATE, and guessing one bills wrong.
    */
   needsRepair?: boolean;
+  /**
+   * UI-only: the qty a line added THIS session was created with. The default selling unit applies once, only while `qty`
+   * still equals it and no unit is held (any quantity edit or unit pick ends the default-start). Never submitted.
+   */
+  startOnDefaultUnit?: number;
 };
 
 /**
@@ -330,6 +336,7 @@ export function applyUnitPick(
   const isPack = option.value === "";
   return {
     ...cur,
+    startOnDefaultUnit: undefined,
     unitLabel: isPack ? undefined : option.value,
     unitBasePrice: isPack ? undefined : option.price,
     unitsPerBox: isPack ? (cur.packLadder?.unitsPerBox ?? cur.unitsPerBox) : option.factorToBase,
@@ -339,6 +346,31 @@ export function applyUnitPick(
     boxSplit: false,
     unitPrice: isPack ? packTierPrice : option.price,
   };
+}
+
+/** A line added this session that still waits for its default selling unit: untouched quantity, no unit held. */
+export function startsOnDefaultUnit(
+  item: Pick<DraftItem, "startOnDefaultUnit" | "qty" | "unitLabel">,
+): boolean {
+  return item.startOnDefaultUnit != null && item.qty === item.startOnDefaultUnit && !item.unitLabel;
+}
+
+/**
+ * A new line moved onto the product's default selling unit (the level flagged `isDefaultSelling`, only if the picker
+ * offers it), exactly like web's Create Order (`defaultStartOption`). With nothing flagged/offered the line is returned
+ * as it was. This is the same decision `UnitPickerRow` makes when it mounts with `startOnDefaultUnit`.
+ */
+export function startNewLineOnDefault(
+  item: DraftItem,
+  units: readonly ProductUnitLevel[],
+  tier: number,
+  packTierPrice: number,
+): DraftItem {
+  if (!startsOnDefaultUnit(item)) return item;
+  const start = defaultStartOption(ladderProductFor(item), units, tier, {
+    hasUnit: !!item.unitLabel,
+  });
+  return start ? applyUnitPick(item, start, packTierPrice) : item;
 }
 
 /**
@@ -355,7 +387,14 @@ export function applyBoxEdit(cur: DraftItem, boxes: number, unitsPerBox: number)
   if (cur.unitLabel) return cur;
   const b = Math.max(0, Math.floor(boxes));
   const pieces = cur.pieces ?? 0;
-  return { ...cur, boxes: b, pieces, qty: b * unitsPerBox + pieces, boxSplit: true };
+  return {
+    ...cur,
+    boxes: b,
+    pieces,
+    qty: b * unitsPerBox + pieces,
+    boxSplit: true,
+    startOnDefaultUnit: undefined,
+  };
 }
 
 /** SA-085i(c): the loose-pieces counterpart of `applyBoxEdit` — see its doc comment. */
@@ -363,7 +402,14 @@ export function applyPieceEdit(cur: DraftItem, pieces: number, unitsPerBox: numb
   if (cur.unitLabel) return cur;
   const pcs = Math.max(0, Math.floor(pieces));
   const boxes = cur.boxes ?? 0;
-  return { ...cur, boxes, pieces: pcs, qty: boxes * unitsPerBox + pcs, boxSplit: true };
+  return {
+    ...cur,
+    boxes,
+    pieces: pcs,
+    qty: boxes * unitsPerBox + pcs,
+    boxSplit: true,
+    startOnDefaultUnit: undefined,
+  };
 }
 
 /**
@@ -484,11 +530,25 @@ export function applyPickToDraft(
   };
   if (boxed) {
     // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+    // Only a tap/case add starts on the default unit; a piece-code scan's level is decided by the code (as web).
     return input.level === "UNIT"
       ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-      : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
+      : {
+          ...draft,
+          [key]: {
+            ...base,
+            qty: upb,
+            boxes: 1,
+            pieces: 0,
+            boxSplit: true,
+            startOnDefaultUnit: upb,
+          },
+        };
   }
-  return { ...draft, [key]: { ...base, qty: 1 } };
+  return {
+    ...draft,
+    [key]: { ...base, qty: 1, ...(input.level === "UNIT" ? {} : { startOnDefaultUnit: 1 }) },
+  };
 }
 
 /** The screen's own resolved inputs a pick needs, beyond what `PickInput` already covers. */
