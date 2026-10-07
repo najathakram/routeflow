@@ -84,6 +84,14 @@ describe("OrdersService.create - a create-tail credit failure (B1201)", () => {
     expect(h.prisma.orderCreditNote.count).not.toHaveBeenCalled();
   });
 
+  it("the hint's count throws: the replay of the saved order still returns it, with no creditsPending key", async () => {
+    const h = await build();
+    h.prisma.orderCreditNote.count.mockRejectedValue(new Error("db down"));
+    const out: any = await h.service.create(dto(), operatorPayload as never);
+    expect(out).toMatchObject({ id: "ord-1" });
+    expect(out).not.toHaveProperty("creditsPending");
+  });
+
   it("a non-staff replay never gets the hint (the body's credits are ignored for them)", async () => {
     const h = await build();
     h.prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });

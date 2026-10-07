@@ -461,6 +461,8 @@ describe("CreateOrderModal - saved, credits not applied (B1201)", () => {
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: COPY }));
     expect(orderPosts()).toHaveLength(1);
     expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/press create again/i);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/nothing was saved/i);
+    expect(document.body.textContent).not.toMatch(/nothing was saved/i);
   });
 
   it("the coded 503 is a KNOWN outcome: closing raises no 'may have gone through' warning and the next open mints a fresh key", async () => {

@@ -145,7 +145,13 @@ describeDb(
             // its collaborators are never reached when the order has no invoice yet.
             provide: CreditNotesService,
             useFactory: (p: PrismaService) =>
-              new CreditNotesService(p, {} as never, {} as never, {} as never, {} as never),
+              new CreditNotesService(
+                p,
+                { emitCreditNoteVoided: jest.fn() } as never,
+                { unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined) } as never,
+                {} as never,
+                {} as never,
+              ),
             inject: [PrismaService],
           },
           {
@@ -347,7 +353,13 @@ describeDb(
       const key = `b1201-${run}-voided`;
       const e = await tail503(c.id, key, note.id);
       const orderId = e.getResponse().orderId as string;
-      await raw.creditNote.update({ where: { id: note.id }, data: { status: "VOID" } });
+      // the REAL credit-note void path (not a raw update): the replay must see what production leaves behind
+      await tenantCtx.run(tenantId, () =>
+        credits.voidWithReversal(note.id, operatorPayload.sub, "b1201 pin"),
+      );
+      expect((await raw.creditNote.findUniqueOrThrow({ where: { id: note.id } })).status).toBe(
+        "VOID",
+      );
       const again = (await create(c.id, key, note.id)) as any;
       expect(again.id).toBe(orderId);
       expect(await intents(orderId)).toBe(0);

@@ -1,6 +1,8 @@
-import { ServiceUnavailableException } from "@nestjs/common";
+import { Logger, ServiceUnavailableException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PrismaService } from "../prisma/prisma.service";
+
+const logger = new Logger("create-credit-tail");
 
 /**
  * B1201: create() commits the order BEFORE its credit tx, so a credit tx that exhausts its retries
@@ -28,6 +30,11 @@ export async function savedCreditsPending(orderId: string, run: () => Promise<vo
  * B1201: READ-ONLY hint on a keyed replay's response. `creditsPending` is true when the request chose
  * credit notes but the order holds no credit intent, so a lost-response replay can show the same
  * "apply them on the order" message. It only drives that message and never triggers a write.
+ *
+ * It can UNDERCOUNT (read false) when an inline return's system credit intent already sits on the order:
+ * that intent also counts as "held". Acceptable: the hint only chooses copy and never gates a write, and
+ * the operator sees the order's real credit state when it opens. A failing count must never turn a replay
+ * of a SAVED order into a 500: any error returns the order without the hint (logged, no ids or amounts).
  */
 export async function withCreditsPendingHint<T extends { id: string }>(
   prisma: PrismaService,
@@ -36,8 +43,13 @@ export async function withCreditsPendingHint<T extends { id: string }>(
 ): Promise<T & { creditsPending?: boolean }> {
   const tenantId = prisma.getTenantId();
   if (!chosen?.length || !tenantId) return order;
-  const held = await prisma
-    .forTenant()
-    .orderCreditNote.count({ where: { orderId: order.id, tenantId } });
-  return { ...order, creditsPending: held === 0 };
+  try {
+    const held = await prisma
+      .forTenant()
+      .orderCreditNote.count({ where: { orderId: order.id, tenantId } });
+    return { ...order, creditsPending: held === 0 };
+  } catch {
+    logger.warn("creditsPending hint skipped: the credit-intent count failed");
+    return order;
+  }
 }
