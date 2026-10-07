@@ -226,8 +226,10 @@ export function CounterSaleScreen() {
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
+  const receiptHeadingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!receipt) refocus();
+    else receiptHeadingRef.current?.focus(); // POS-1: keyboard focus lands on the receipt heading
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
@@ -577,7 +579,9 @@ export function CounterSaleScreen() {
     const changeAsEntered = serverChange == null && shownChange != null;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
-        <h1 className="text-xl font-semibold">Receipt</h1>
+        <h1 ref={receiptHeadingRef} tabIndex={-1} className="text-xl font-semibold outline-none">
+          Receipt
+        </h1>
         <p className="text-sm text-navy/70">
           Order {receipt.orderNumber} · Invoice {receipt.invoiceNumber}
         </p>
