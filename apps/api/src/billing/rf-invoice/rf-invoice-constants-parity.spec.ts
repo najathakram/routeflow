@@ -9,6 +9,10 @@ import {
 import {
   RF_INVOICE_AUDIT_ACTIONS,
   RF_INVOICE_LINE_KINDS,
+  RF_INVOICE_SEND_COOLDOWN_MS,
+  RF_INVOICE_SEND_MAX_IDS,
+  RF_INVOICE_SEND_OUTCOME_VALUES,
+  RF_INVOICE_SEND_TRIGGERS,
   RF_INVOICE_STATUS_VALUES,
   RF_INVOICE_VIEW_VALUES,
   rfInvoiceTestTenantSlugs,
@@ -64,6 +68,28 @@ describe("rf-invoice constants parity", () => {
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_MARKED_PAID).toBe("RouteFlow invoice marked paid");
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_REOPENED).toBe("RouteFlow invoice reopened");
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_VOIDED).toBe("RouteFlow invoice voided");
+  });
+
+  it("PR3: send outcomes and triggers match packages/types; the 10-minute cooldown", () => {
+    expect([...RF_INVOICE_SEND_OUTCOME_VALUES]).toEqual(s.RF_INVOICE_SEND_OUTCOME_VALUES);
+    expect([...RF_INVOICE_SEND_OUTCOME_VALUES]).toEqual([
+      "sent",
+      "cooldown",
+      "not_open",
+      "not_found",
+      "no_recipients",
+      "failed",
+    ]);
+    expect([...RF_INVOICE_SEND_TRIGGERS]).toEqual(s.RF_INVOICE_SEND_TRIGGERS);
+    expect([...RF_INVOICE_SEND_TRIGGERS]).toEqual(["manual", "issue", "d0", "d7", "d14"]);
+    expect(RF_INVOICE_SEND_COOLDOWN_MS).toBe(10 * 60 * 1000);
+    expect(RF_INVOICE_SEND_MAX_IDS).toBe(50);
+  });
+
+  it("PR3: the RF_INVOICE_SENT audit code is registered with its label", () => {
+    expect(RF_INVOICE_AUDIT_ACTIONS.SENT).toBe("RF_INVOICE_SENT");
+    expect(AdminAuditAction.RF_INVOICE_SENT).toBe("RF_INVOICE_SENT");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_SENT).toBe("RouteFlow invoice emailed");
   });
 
   it("RF_INVOICE_TEST_TENANT_SLUGS: default empty; parses a trimmed list; a non-test slug throws", () => {

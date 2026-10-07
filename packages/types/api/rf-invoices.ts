@@ -109,3 +109,38 @@ export interface RfInvoiceMarkPaidDto {
 export interface RfInvoiceReasonDto {
   reason: string;
 }
+
+/** What one send attempt resolved to. Plain strings (not API error codes): a bulk send reports one per id. */
+export const RF_INVOICE_SEND_OUTCOME_VALUES = [
+  "sent",
+  "cooldown",
+  "not_open",
+  "not_found",
+  "no_recipients",
+  "failed",
+] as const;
+export type RfInvoiceSendOutcome = (typeof RF_INVOICE_SEND_OUTCOME_VALUES)[number];
+
+/** Why an invoice email went out (the RF_INVOICE_SENT audit row's `trigger`). */
+export const RF_INVOICE_SEND_TRIGGERS = ["manual", "issue", "d0", "d7", "d14"] as const;
+export type RfInvoiceSendTrigger = (typeof RF_INVOICE_SEND_TRIGGERS)[number];
+
+/** One invoice's send result. `recipients` is a COUNT of admins emailed, never an address. */
+export interface RfInvoiceSendResult {
+  id: string;
+  number?: string;
+  outcome: RfInvoiceSendOutcome;
+  /** Set on `cooldown`: ISO time the invoice may be sent again. */
+  nextAllowedAt?: string;
+  /** Set on `sent`. */
+  recipients?: number;
+}
+
+/** POST rf-invoices/send: 1 to 50 invoice ids, processed sequentially. */
+export interface RfInvoiceBulkSendDto {
+  ids: string[];
+}
+
+export interface RfInvoiceBulkSendResponse {
+  results: RfInvoiceSendResult[];
+}

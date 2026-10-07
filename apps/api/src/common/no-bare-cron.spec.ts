@@ -25,6 +25,7 @@ const EXPECTED_NAMES = [
   "billing-cron.rollCycles",
   "billing-cron.warnTrialsEnding",
   "billing-invoice.issueDue",
+  "billing-invoice.remind",
   "billing.suspendOverdueTenants",
   "order-templates.generateDailyOrders",
   "orders.cronSweepPendingOrders",
@@ -120,7 +121,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 26 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 27 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -133,7 +134,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // #2113 (SA-528) added mailbox-alert.sweepPending, 23 -> 24.
     // WS4 (SA-606) added email.pruneDeliveries (90-day EmailDelivery retention), 24 -> 25.
     // Manual invoices due PR1 added billing-invoice.issueDue (dark: RF_INVOICING_MODE=off), 25 -> 26.
-    expect(declared).toBe(26);
+    // Manual invoices due PR3 added billing-invoice.remind (d0/d7/d14 reminders, live mode only), 26 -> 27.
+    expect(declared).toBe(27);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -167,7 +169,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 26 expected job names, all unique", () => {
+  it("registers the 27 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

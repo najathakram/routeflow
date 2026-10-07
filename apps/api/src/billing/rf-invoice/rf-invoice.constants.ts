@@ -37,7 +37,38 @@ export const RF_INVOICE_AUDIT_ACTIONS = {
   NEEDS_PRICE: AdminAuditAction.RF_INVOICE_NEEDS_PRICE,
   STALE_PERIOD: AdminAuditAction.RF_INVOICE_STALE_PERIOD,
   IRREGULAR_PERIOD: AdminAuditAction.RF_INVOICE_IRREGULAR_PERIOD,
+  SENT: AdminAuditAction.RF_INVOICE_SENT,
 } as const;
+
+/** What one send attempt resolved to (mirrored in packages/types; a plain string enum, not an error code). */
+export const RF_INVOICE_SEND_OUTCOME_VALUES = [
+  "sent",
+  "cooldown",
+  "not_open",
+  "not_found",
+  "no_recipients",
+  "failed",
+] as const;
+export type RfInvoiceSendOutcome = (typeof RF_INVOICE_SEND_OUTCOME_VALUES)[number];
+
+/** Why an invoice email went out: a super-admin resend, the issue email, or a d0 / d7 / d14 reminder. */
+export const RF_INVOICE_SEND_TRIGGERS = ["manual", "issue", "d0", "d7", "d14"] as const;
+export type RfInvoiceSendTrigger = (typeof RF_INVOICE_SEND_TRIGGERS)[number];
+
+/** The reminder stages: days after the due date (UTC) on which each fires. Nothing fires after the last. */
+export const RF_INVOICE_REMINDER_STAGES = [
+  { trigger: "d0", days: 0 },
+  { trigger: "d7", days: 7 },
+  { trigger: "d14", days: 14 },
+] as const;
+
+/** A reminder stage may still be sent this many days after its stage day (a missed cron); then it is skipped for good. */
+export const RF_INVOICE_REMINDER_CATCHUP_DAYS = 3;
+
+/** A manual resend of one invoice is refused for this long after the previous send. */
+export const RF_INVOICE_SEND_COOLDOWN_MS = 10 * 60 * 1000;
+/** Most invoices one bulk resend accepts. */
+export const RF_INVOICE_SEND_MAX_IDS = 50;
 
 /**
  * The exact unique-index names a P2002 is matched against (`uniqueViolationOn(e, name, { exact: true })`,
@@ -75,4 +106,14 @@ export function rfInvoiceTestTenantSlugs(
     .filter(Boolean);
   for (const slug of slugs) assertApprovedTestTenantSlug(slug, "RF_INVOICE_TEST_TENANT_SLUGS");
   return [...new Set(slugs)];
+}
+
+/**
+ * Tenants the queue and the mailer act on: PRODUCTION and undeleted, plus any RF_INVOICE_TEST_TENANT_SLUGS
+ * (approved test tenants, e.g. for an e2e run). With no allowlist this is exactly the PRODUCTION scope.
+ */
+export function rfInvoiceTenantScope(slugs: string[]): Record<string, unknown> {
+  return slugs.length
+    ? { deletedAt: null, OR: [{ class: "PRODUCTION" }, { slug: { in: slugs } }] }
+    : { class: "PRODUCTION", deletedAt: null };
 }

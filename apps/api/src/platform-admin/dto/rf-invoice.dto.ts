@@ -1,5 +1,8 @@
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsInt,
   IsISO8601,
@@ -11,7 +14,10 @@ import {
   Min,
   MinLength,
 } from "class-validator";
-import { RF_INVOICE_VIEW_VALUES } from "../../billing/rf-invoice/rf-invoice.constants";
+import {
+  RF_INVOICE_SEND_MAX_IDS,
+  RF_INVOICE_VIEW_VALUES,
+} from "../../billing/rf-invoice/rf-invoice.constants";
 import { EXTERNAL_PAYMENT_METHODS, type ExternalPaymentMethod } from "./activate-subscription.dto";
 
 export const RF_INVOICE_SORT_VALUES = ["due", "amount", "tenant"] as const;
@@ -81,4 +87,13 @@ export class RfInvoiceReasonDto {
   @MinLength(3)
   @MaxLength(500)
   reason!: string;
+}
+
+/** POST rf-invoices/send: one to fifty invoice ids. */
+export class SendRfInvoicesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(RF_INVOICE_SEND_MAX_IDS)
+  @IsUUID("all", { each: true })
+  ids!: string[];
 }

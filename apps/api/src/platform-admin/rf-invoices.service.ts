@@ -26,6 +26,7 @@ import {
 } from "../billing/rf-invoice/rf-invoice-issuer.service";
 import {
   RF_INVOICE_LEAD_DAYS,
+  rfInvoiceTenantScope,
   rfInvoiceTestTenantSlugs,
   rfInvoicingMode,
   type RfInvoiceStatus,
@@ -48,16 +49,6 @@ const REFERENCE_REQUIRED_METHODS: readonly ExternalPaymentMethod[] = [
 /** 13-19 consecutive digits is the length of a card number (and of a full account number). */
 const CARD_LIKE = /\d{13,19}/;
 const CARD_LIKE_MESSAGE = "Don't enter card or full account numbers.";
-
-/**
- * Tenants the queue shows: PRODUCTION and undeleted, plus any RF_INVOICE_TEST_TENANT_SLUGS (approved test
- * tenants, e.g. for an e2e run). With no allowlist this is exactly the PRODUCTION scope.
- */
-function tenantScope(slugs: string[]): Record<string, unknown> {
-  return slugs.length
-    ? { deletedAt: null, OR: [{ class: "PRODUCTION" }, { slug: { in: slugs } }] }
-    : { class: "PRODUCTION", deletedAt: null };
-}
 
 /** The queue row's columns: deliberately no paidNote, voidReason or actor ids. */
 const ROW_SELECT = {
@@ -125,7 +116,7 @@ export class RfInvoicesAdminService {
     const today = dayStart(now);
 
     const where: Record<string, unknown> = {
-      tenant: tenantScope(rfInvoiceTestTenantSlugs()),
+      tenant: rfInvoiceTenantScope(rfInvoiceTestTenantSlugs()),
       ...(q.tenantId ? { tenantId: q.tenantId } : {}),
       ...viewWhere(view, today),
     };
@@ -166,7 +157,7 @@ export class RfInvoicesAdminService {
   async summary(now: Date = new Date()): Promise<RfInvoiceSummary> {
     const today = dayStart(now);
     const slugs = rfInvoiceTestTenantSlugs();
-    const scope = { tenant: tenantScope(slugs) };
+    const scope = { tenant: rfInvoiceTenantScope(slugs) };
     const [openRows, byStatus, paid, subs] = await Promise.all([
       this.prisma.rfInvoice.findMany({
         where: { ...scope, status: "OPEN" },
@@ -182,7 +173,7 @@ export class RfInvoicesAdminService {
         where: slugs.length
           ? ({
               ...RF_INVOICE_CANDIDATE_WHERE,
-              tenant: { deletedAt: null, status: "ACTIVE", ...tenantScope(slugs) },
+              tenant: { deletedAt: null, status: "ACTIVE", ...rfInvoiceTenantScope(slugs) },
             } as any)
           : RF_INVOICE_CANDIDATE_WHERE,
         select: {
