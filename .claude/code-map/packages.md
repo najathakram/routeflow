@@ -505,6 +505,9 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `api/counter-sale.ts` (#3211) — NEW `COUNTER_SALE_PAYMENT_METHOD_VALUES`, `CounterSalePaymentMethod`, `CounterSaleItem`, `CounterSalePayment`, `CounterSaleRequest`, `CounterSaleResponse`; re-exported from `index.ts`. `api/routes.ts` gains the pickup-stop fields.
 - `api/error-codes.ts` (#3211, #3244) — +`ORDER_WITH_CARRIER_NO_ADD`; counter-sale family `COUNTER_SALES_DISABLED`, `COUNTER_TENDER_SHORT`, `COUNTER_CHECK_NUMBER_REQUIRED`, `COUNTER_PAYMENT_EXCEEDS_TOTAL`, `COUNTER_PAYMENT_NOT_RECORDED`, `COUNTER_SALE_{ORDER_CHANGED,KEY_CONFLICT,NOT_FOUND,INCOMPLETE,VOIDED,CHANGED,METHOD_INVALID}`, the `WALK_IN_*` codes, and `IDEMPOTENCY_KEY_{OTHER_ORDER,CART_MISMATCH,REQUIRED}`. API literals are pinned by the parity spec (L-261).
 
-## TODO (W16 train landings, sha to come)
+## Landed 2026-10-06 (W16 train)
 
-- [ ] W16 train PR landings: add entries here, then restamp `_meta.json` `mappedSha`.
+- `api/counter-sale.ts` (#3239) — pickup-complete request and response types added beside the #3211 counter-sale ones.
+- `api/error-codes.ts` (#3250, #3239) — batch-ship and pickup-complete codes added (API literals pinned by the parity spec, L-261).
+- `api/orders.ts` (#3250) — batch-ship and packing-slip request and result types.
+- `api/buyer.ts` (#3215) — buyer response shapes narrowed to the customer-facing fields.
