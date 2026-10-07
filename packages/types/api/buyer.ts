@@ -240,6 +240,12 @@ export interface BuyerProduct {
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
   stockLeft: number | null;
+  /**
+   * OOS PR2: this buyer may order the item even when it is out of stock (the seller's setting,
+   * resolved server-side once per request). Absent/false = an out-of-stock item is not orderable.
+   * Where the seller hides backorders, `inStock` / `stockStatus` already read as in stock.
+   */
+  canBackorder?: boolean;
 }
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is

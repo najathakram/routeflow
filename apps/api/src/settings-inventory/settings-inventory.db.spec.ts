@@ -102,6 +102,7 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
     const b = await seed();
     expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toEqual({
       buyerOversell: "off",
+      buyerBackorderVisibility: "show",
       customerOverrides: 0,
     });
 
@@ -113,14 +114,44 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
 
     expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toEqual({
       buyerOversell: "backorder",
+      buyerBackorderVisibility: "show",
       customerOverrides: 0,
     });
     expect(await inTenant(b.tenantId, () => controller.get(b.admin))).toEqual({
       buyerOversell: "off",
+      buyerBackorderVisibility: "show",
       customerOverrides: 0,
     });
     expect(await buyerAllowed(a)).toBe(true);
     expect(await buyerAllowed(b)).toBe(false);
+  });
+
+  it("OOS PR2: the visibility setting is per tenant, defaults to show, and is read back from the DB", async () => {
+    const a = await seed();
+    const b = await seed();
+    expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toMatchObject({
+      buyerBackorderVisibility: "show",
+    });
+
+    await inTenant(a.tenantId, () =>
+      controller.update({ buyerBackorderVisibility: "hide" }, a.admin),
+    );
+    // A fresh service/cache per read: prove the DB, not a cache.
+    policies = new PolicyService(prisma);
+    reader = new PolicyOversellReader(policies);
+    controller = new SettingsInventoryController(new SettingsInventoryService(policies, prisma));
+
+    expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toMatchObject({
+      buyerOversell: "off", // writing the visibility never touches the out-of-stock switch
+      buyerBackorderVisibility: "hide",
+    });
+    expect(await inTenant(b.tenantId, () => controller.get(b.admin))).toMatchObject({
+      buyerBackorderVisibility: "show",
+    });
+    const rows = await prisma.auditLog.findMany({
+      where: { tenantId: a.tenantId, action: POLICY_SET_ACTION },
+    });
+    expect(rows).toHaveLength(1); // exactly the one audited write
   });
 
   it("a PATCH writes one policy.set AuditLog row for the tenant", async () => {

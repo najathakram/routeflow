@@ -5,6 +5,12 @@ import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
+import {
+  BuyerBackorderViewResolver,
+  NO_BACKORDER_VIEW,
+  maskStockForBuyer,
+  type BuyerBackorderView,
+} from "../orders/buyer-backorder-view";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
@@ -31,6 +37,7 @@ export class BuyerCatalogService {
     private readonly ordersService: OrdersService,
     private readonly replenishment: ReplenishmentService,
     private readonly promotions: PromotionsService,
+    private readonly backorderView: BuyerBackorderViewResolver,
   ) {}
 
   /**
@@ -66,21 +73,34 @@ export class BuyerCatalogService {
    * catalog listing and the single-product detail so a tile and its detail page
    * can never disagree about stock (an OOS tile must stay OOS when opened).
    */
-  private deriveStock(p: {
-    currentStock?: unknown;
-    lowStockThreshold?: unknown;
-  }): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft"> {
+  private deriveStock(
+    p: {
+      currentStock?: unknown;
+      lowStockThreshold?: unknown;
+    },
+    view: BuyerBackorderView,
+  ): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft" | "canBackorder"> {
     const stock = Number(p.currentStock ?? 0);
     const lowThreshold = Number(p.lowStockThreshold ?? 5);
     const stockStatus: BuyerProduct["stockStatus"] =
       stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
-    return {
+    const truthful = {
       inStock: stock > 0,
       stockStatus,
       // Whole units only, floor >= 1 so a fractional Decimal never renders
       // "Only 0 left" while status is LOW (stock > 0 by definition here).
       stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
     };
+    // OOS PR2: where the seller hides backorders AND this buyer can backorder, the item looks in
+    // stock; for every other buyer the triple above is returned untouched.
+    return { ...maskStockForBuyer(truthful, view), canBackorder: view.canBackorder };
+  }
+
+  /** ONE resolution per request (never per product): this buyer's backorder ability and visibility. */
+  private resolveBackorderView(customerId: string): Promise<BuyerBackorderView> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return Promise.resolve(NO_BACKORDER_VIEW);
+    return this.backorderView.resolve({ tenantId, customerId });
   }
 
   /**
@@ -103,6 +123,7 @@ export class BuyerCatalogService {
     customerId: string,
     buyerAccountId?: string,
   ) {
+    const backorder = await this.resolveBackorderView(customerId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
@@ -212,7 +233,7 @@ export class BuyerCatalogService {
           thumbnailUrl: p.thumbnailUrl ?? null,
           imageKeys: ownKeys,
           imageUrls,
-          ...this.deriveStock(p),
+          ...this.deriveStock(p, backorder),
         };
       }),
     );
@@ -328,6 +349,7 @@ export class BuyerCatalogService {
    */
   async getProductDetail(productId: string, customerId: string) {
     const product = await this.productsService.findOne(productId);
+    const backorder = await this.resolveBackorderView(customerId);
 
     // Buyers must not see inactive/discontinued products
     if (!isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, product as any)) {
@@ -395,7 +417,7 @@ export class BuyerCatalogService {
       thumbnailUrl: imageUrls[0] ?? null,
       imageUrls,
       imageKeys: product.imageKeys ?? [],
-      ...this.deriveStock(product),
+      ...this.deriveStock(product, backorder),
       variants: activeVariants.map((v: any) => ({
         id: v.id,
         name: v.variantName,

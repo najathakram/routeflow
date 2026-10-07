@@ -3,12 +3,19 @@ import type { InventorySettings, UpdateInventorySettingsRequest } from "@routefl
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PolicyService, type PolicyActor } from "../policy/policy.service";
-import { BUYER_OVERSELL_MODES, type BuyerOversellMode } from "../policy/policy-registry";
+import {
+  BUYER_BACKORDER_VISIBILITY_MODES,
+  BUYER_OVERSELL_MODES,
+  type BuyerBackorderVisibility,
+  type BuyerOversellMode,
+} from "../policy/policy-registry";
 import { PrismaService } from "../prisma/prisma.service";
 import { requireTenantContext } from "./require-tenant-context";
 
 export const INVENTORY_SETTINGS_DEFAULT_REASON = "Changed in Settings → Inventory & ordering";
 export const INVENTORY_SETTINGS_INVALID_MESSAGE = 'buyerOversell must be "off" or "backorder".';
+export const INVENTORY_VISIBILITY_INVALID_MESSAGE =
+  'buyerBackorderVisibility must be "show" or "hide".';
 const REASON_MAX = 500;
 
 /**
@@ -26,7 +33,12 @@ export class SettingsInventoryService {
   async get(): Promise<InventorySettings> {
     const tenantId = requireTenantContext(this.prisma);
     const raw = await this.policies.resolve(tenantId, "orders.buyerOversell", {});
-    return { buyerOversell: toMode(raw), customerOverrides: await this.countOverrides(tenantId) };
+    const visibility = await this.policies.resolve(tenantId, "orders.buyerBackorderVisibility", {});
+    return {
+      buyerOversell: toMode(raw),
+      buyerBackorderVisibility: toVisibility(visibility),
+      customerOverrides: await this.countOverrides(tenantId),
+    };
   }
 
   /**
@@ -41,17 +53,24 @@ export class SettingsInventoryService {
 
   async update(body: unknown, user: JwtPayload): Promise<InventorySettings> {
     const tenantId = requireTenantContext(this.prisma);
-    const { buyerOversell, reason } = parseUpdate(body);
-    await this.policies.set({
-      tenantId,
-      key: "orders.buyerOversell",
-      scopeType: "TENANT",
-      scopeId: null,
-      value: buyerOversell,
-      reason,
-      actor: actorOf(user),
-    });
-    return { buyerOversell, customerOverrides: await this.countOverrides(tenantId) };
+    const { buyerOversell, buyerBackorderVisibility, reason } = parseUpdate(body);
+    const writes: Array<[string, string]> = [];
+    if (buyerOversell !== undefined) writes.push(["orders.buyerOversell", buyerOversell]);
+    if (buyerBackorderVisibility !== undefined) {
+      writes.push(["orders.buyerBackorderVisibility", buyerBackorderVisibility]);
+    }
+    for (const [key, value] of writes) {
+      await this.policies.set({
+        tenantId,
+        key,
+        scopeType: "TENANT",
+        scopeId: null,
+        value,
+        reason,
+        actor: actorOf(user),
+      });
+    }
+    return this.get();
   }
 }
 
@@ -62,7 +81,17 @@ function toMode(raw: unknown): BuyerOversellMode {
     : "off";
 }
 
-function invalid(field: "buyerOversell" | "reason", message: string): BadRequestException {
+/** Fail closed to today's behaviour: anything but a known mode reads as "show". */
+function toVisibility(raw: unknown): BuyerBackorderVisibility {
+  return (BUYER_BACKORDER_VISIBILITY_MODES as readonly unknown[]).includes(raw)
+    ? (raw as BuyerBackorderVisibility)
+    : "show";
+}
+
+function invalid(
+  field: "buyerOversell" | "buyerBackorderVisibility" | "reason",
+  message: string,
+): BadRequestException {
   return new BadRequestException({
     statusCode: 400,
     code: API_ERROR_CODES.INVENTORY_SETTING_INVALID,
@@ -71,14 +100,33 @@ function invalid(field: "buyerOversell" | "reason", message: string): BadRequest
   });
 }
 
-/** Extra fields are ignored; `buyerOversell` must be exactly a known mode. */
-function parseUpdate(body: unknown): { buyerOversell: BuyerOversellMode; reason: string } {
+/**
+ * Extra fields are ignored. At least one of `buyerOversell` / `buyerBackorderVisibility` must be
+ * present, and each present one must be exactly a known mode.
+ */
+function parseUpdate(body: unknown): {
+  buyerOversell?: BuyerOversellMode;
+  buyerBackorderVisibility?: BuyerBackorderVisibility;
+  reason: string;
+} {
   const b =
     body !== null && typeof body === "object" && !Array.isArray(body)
       ? (body as Partial<Record<keyof UpdateInventorySettingsRequest, unknown>>)
       : {};
-  if (!(BUYER_OVERSELL_MODES as readonly unknown[]).includes(b.buyerOversell)) {
+  if (b.buyerOversell === undefined && b.buyerBackorderVisibility === undefined) {
     throw invalid("buyerOversell", INVENTORY_SETTINGS_INVALID_MESSAGE);
+  }
+  if (
+    b.buyerOversell !== undefined &&
+    !(BUYER_OVERSELL_MODES as readonly unknown[]).includes(b.buyerOversell)
+  ) {
+    throw invalid("buyerOversell", INVENTORY_SETTINGS_INVALID_MESSAGE);
+  }
+  if (
+    b.buyerBackorderVisibility !== undefined &&
+    !(BUYER_BACKORDER_VISIBILITY_MODES as readonly unknown[]).includes(b.buyerBackorderVisibility)
+  ) {
+    throw invalid("buyerBackorderVisibility", INVENTORY_VISIBILITY_INVALID_MESSAGE);
   }
   let reason = INVENTORY_SETTINGS_DEFAULT_REASON;
   if (b.reason !== undefined && b.reason !== null) {
@@ -89,7 +137,15 @@ function parseUpdate(body: unknown): { buyerOversell: BuyerOversellMode; reason:
     }
     if (trimmed) reason = trimmed;
   }
-  return { buyerOversell: b.buyerOversell as BuyerOversellMode, reason };
+  return {
+    ...(b.buyerOversell !== undefined
+      ? { buyerOversell: b.buyerOversell as BuyerOversellMode }
+      : {}),
+    ...(b.buyerBackorderVisibility !== undefined
+      ? { buyerBackorderVisibility: b.buyerBackorderVisibility as BuyerBackorderVisibility }
+      : {}),
+    reason,
+  };
 }
 
 function actorOf(user: JwtPayload): PolicyActor {
