@@ -47,6 +47,8 @@ export interface PackingSlipOrderLike {
     pieces: number | null;
     unitLabel: string | null;
     status: string;
+    /** SA-714 R1: pieces sold past stock; > 0 prints the "Backorder" tag. Display only. */
+    backorderedPieces?: unknown;
     product?: { name?: string | null; sku?: string | null; unitSku?: string | null } | null;
   }[];
 }
@@ -55,7 +57,20 @@ export interface PackingSlipLine {
   name: string;
   sku: string | null;
   qtyText: string;
+  backordered: boolean;
 }
+
+/** The OrderItem columns a slip line reads (one const so a DB spec can run the exact select). */
+export const PACKING_SLIP_LINE_SELECT = {
+  name: true,
+  qty: true,
+  boxes: true,
+  pieces: true,
+  unitLabel: true,
+  status: true,
+  backorderedPieces: true, // SA-714 R1: the "Backorder" tag (display only)
+  product: { select: { name: true, sku: true, unitSku: true } },
+} as const;
 
 export interface PackingSlipPage {
   orderId: string;
@@ -125,6 +140,7 @@ export function buildPackingSlipPages(
             pieces: i.pieces,
             unitLabel: i.unitLabel,
           }),
+          backordered: num(i.backorderedPieces) > 0,
         })),
     };
   });

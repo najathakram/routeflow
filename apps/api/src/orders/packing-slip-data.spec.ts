@@ -88,11 +88,27 @@ describe("buildPackingSlipPages", () => {
     expect(p.trackingNumber).toBe("1Z999");
     expect(p.shipTo).toEqual(expect.arrayContaining(["Shop One", "9 Elm"]));
   });
+  it("SA-714: a line with backordered pieces carries the Backorder flag; others do not", () => {
+    const base = order();
+    const [p] = buildPackingSlipPages(
+      [
+        order({
+          items: [
+            { ...base.items[0], backorderedPieces: "3" },
+            { ...base.items[0], name: "Other", backorderedPieces: "0" },
+            { ...base.items[0], name: "Legacy" },
+          ],
+        }),
+      ],
+      seller,
+    );
+    expect(p.lines.map((l) => l.backordered)).toEqual([true, false, false]);
+  });
   it("NO money field anywhere on a page", () => {
     const json = JSON.stringify(buildPackingSlipPages([order()], seller));
     expect(json).not.toMatch(/unitPrice|subtotal|price|total|amount|tax|"5"|\$/i);
     for (const l of buildPackingSlipPages([order()], seller)[0].lines) {
-      expect(Object.keys(l).sort()).toEqual(["name", "qtyText", "sku"]);
+      expect(Object.keys(l).sort()).toEqual(["backordered", "name", "qtyText", "sku"]);
     }
   });
   it("the template source prints no money", () => {
