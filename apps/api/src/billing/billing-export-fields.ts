@@ -111,3 +111,59 @@ export function projectBillingEventForExport(
     payload: projectEventPayloadForExport(row.type, row.payload),
   };
 }
+
+/** Subscription block (the settings-billing header's own tenant-facing fields). `addons` and `flags` are projected below. */
+export const BILLING_EXPORT_SUBSCRIPTION_FIELDS = [
+  "planKey",
+  "flags",
+  "paymentRequired",
+  "planName",
+  "status",
+  "readOnlyReason",
+  "cycle",
+  "monthlyPrice",
+  "annualPrice",
+  "isCustom",
+  "renewalAt",
+  "cancelAtPeriodEnd",
+  "downgradeToPlanKey",
+  "downgradeEffectiveAt",
+  "trialEndsAt",
+  "addons",
+] as const;
+
+export const BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS = [
+  "sku",
+  "name",
+  "quantity",
+  "monthly",
+] as const;
+
+export const BILLING_EXPORT_USAGE_FIELDS = [
+  "meter",
+  "used",
+  "included",
+  "remaining",
+  "resetsAt",
+] as const;
+
+function pick(row: unknown, fields: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!row || typeof row !== "object") return out;
+  const src = row as Record<string, unknown>;
+  for (const k of fields) if (Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+  return out;
+}
+
+export function projectSubscriptionForExport(sub: unknown): Record<string, unknown> {
+  const out = pick(sub, BILLING_EXPORT_SUBSCRIPTION_FIELDS);
+  if (Array.isArray(out.addons)) {
+    out.addons = out.addons.map((a) => pick(a, BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS));
+  }
+  if (Array.isArray(out.flags)) out.flags = out.flags.filter((f) => typeof f === "string");
+  return out;
+}
+
+export function projectUsageForExport(usage: unknown): Record<string, unknown>[] {
+  return Array.isArray(usage) ? usage.map((u) => pick(u, BILLING_EXPORT_USAGE_FIELDS)) : [];
+}

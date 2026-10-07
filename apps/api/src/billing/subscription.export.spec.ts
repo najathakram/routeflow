@@ -105,6 +105,57 @@ describe("SubscriptionService.getExport (B1187)", () => {
     expect(prisma.user.findMany.mock.calls[0][0].where.id.in).toEqual(["u1"]);
   });
 
+  it("actor lookup is tenant-scoped and a cross-tenant id is 'RouteFlow support', never 'you'", async () => {
+    // The scoped query returns nothing for another tenant's user, exactly as the real DB would.
+    const { svc, prisma } = build([ev({ actorId: "other-tenant-user" })], []);
+    const out = await svc.getExport(TENANT);
+    expect(prisma.user.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: TENANT,
+      id: { in: ["other-tenant-user"] },
+    });
+    expect(out.billingEvents[0].actor).toBe("RouteFlow support");
+  });
+
+  it("a SUPER_ADMIN row even carrying this tenantId is support, not 'you'", async () => {
+    const { svc } = build(
+      [ev({ actorId: "sa" })],
+      [{ id: "sa", role: "SUPER_ADMIN", tenantId: TENANT }],
+    );
+    expect((await svc.getExport(TENANT)).billingEvents[0].actor).toBe("RouteFlow support");
+  });
+
+  it("subscription and usage drop unlisted keys (futureColumn) at every level", async () => {
+    const { svc } = build([], []);
+    jest.spyOn(svc, "getSubscription").mockResolvedValue({
+      planKey: "GROWTH",
+      flags: ["flag.returns"],
+      status: "ACTIVE",
+      monthlyPrice: 99,
+      stripeSubId: "sub_x",
+      stripeCustomerId: "cus_x",
+      futureColumn: "x",
+      addons: [
+        { sku: "A", name: "Addon", quantity: 1, monthly: 5, priceSnapshot: 5, stripeItemId: "si" },
+      ],
+    } as never);
+    jest
+      .spyOn(svc, "getUsage")
+      .mockResolvedValue([
+        { meter: "SEATS", used: 1, included: 5, remaining: 4, resetsAt: null, futureColumn: "y" },
+      ] as never);
+    const out = await svc.getExport(TENANT);
+    expect(out.subscription).toEqual({
+      planKey: "GROWTH",
+      flags: ["flag.returns"],
+      status: "ACTIVE",
+      monthlyPrice: 99,
+      addons: [{ sku: "A", name: "Addon", quantity: 1, monthly: 5 }],
+    });
+    expect(out.usage).toEqual([
+      { meter: "SEATS", used: 1, included: 5, remaining: 4, resetsAt: null },
+    ]);
+  });
+
   it("scopes event and invoice reads by tenantId", async () => {
     const { svc, prisma } = build([], []);
     await svc.getExport(TENANT);

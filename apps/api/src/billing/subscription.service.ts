@@ -15,6 +15,8 @@ import {
   deriveExportActor,
   projectBillingEventForExport,
   projectInvoiceForExport,
+  projectSubscriptionForExport,
+  projectUsageForExport,
 } from "./billing-export-fields";
 
 /**
@@ -149,18 +151,19 @@ export class SubscriptionService {
     const actorIds = [
       ...new Set(billingEvents.map((e) => e.actorId).filter((id): id is string => !!id)),
     ];
-    // Plain (non-forTenant) read: platform staff rows carry no tenantId and must resolve too.
+    // Explicitly tenant-scoped: another tenant's (or platform staff's) user row is never read, so
+    // any actor not found here is labelled "RouteFlow support" by deriveExportActor.
     const actors = actorIds.length
       ? await this.prisma.user.findMany({
-          where: { id: { in: actorIds } },
+          where: { tenantId, id: { in: actorIds } },
           select: { id: true, role: true, tenantId: true },
         })
       : [];
     const actorById = new Map(actors.map((u) => [u.id, u]));
     return {
       exportedAt: new Date().toISOString(),
-      subscription,
-      usage,
+      subscription: projectSubscriptionForExport(subscription),
+      usage: projectUsageForExport(usage),
       billingEvents: billingEvents.map((e) =>
         projectBillingEventForExport(
           e,
