@@ -46,6 +46,7 @@ const CHANGED: Pin[] = [
       'aria-label="Remove extra pieces"',
       "+ pieces\n",
       "1 box = {li.unitsPerBox} pcs",
+      '{li.qty === 1 ? "pc" : "pcs"} total',
     ],
   },
   {
@@ -97,7 +98,7 @@ const CHANGED: Pin[] = [
   {
     file: `${D}orders/[id]/scan-level-line.tsx`,
     mustNotContain: ['"case" : "cases"', "} loose`"],
-    mustContain: ['"box" : "boxes"', "} pcs`"],
+    mustContain: ['"box" : "boxes"', '=== 1 ? "pc" : "pcs"'],
   },
   {
     file: `${W}components/VariantSplitModal.tsx`,

@@ -175,7 +175,7 @@ describe("R1: a UNIT code adds one PIECE — never a hidden case", () => {
     await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
     expect(casesInput().value).toBe("0");
     expect(looseInput()?.value).toBe("1"); // no hidden quantity: the line states boxes AND pieces
-    expect(lineFor("Sample Chips").textContent).toContain("1 pcs total");
+    expect(lineFor("Sample Chips").textContent).toContain("1 pc total");
   });
 
   it("UNIT onto an existing case line -> 1 case + 1 loose on the ONE line (qty 13), and the merge toast says both", async () => {
@@ -308,7 +308,7 @@ describe("SA-595a R4: a sku (BOX-level) hit at upb <= 1 adds today's line shape 
     await waitFor(() => expect(lineFor("Sample Soda")).toBeTruthy());
     expect(casesInput().value).toBe("1");
     expect(looseInput()).toBeNull();
-    expect(lineFor("Sample Soda").textContent).toContain("1 pcs total");
+    expect(lineFor("Sample Soda").textContent).toContain("1 pc total");
     await scan(UPB_ONE, "700800900", ["BOX"]);
     await waitFor(() => expect(casesInput().value).toBe("2"));
     expect(looseInput()).toBeNull();

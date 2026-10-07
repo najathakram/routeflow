@@ -182,7 +182,9 @@ export function PurchaseOrderLinesTable({
                     />
                   )}
                   {isBoxed && (
-                    <p className="mt-0.5 text-[10px] text-navy/50">boxes + pcs · {qty} pcs total</p>
+                    <p className="mt-0.5 text-[10px] text-navy/50">
+                      boxes + pcs · {qty} {qty === 1 ? "pc" : "pcs"} total
+                    </p>
                   )}
                 </div>
                 <div role="cell" className="min-w-0">

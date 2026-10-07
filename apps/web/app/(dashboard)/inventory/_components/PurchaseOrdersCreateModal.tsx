@@ -214,7 +214,7 @@ export function CreatePOModal({
                           )}
                           {isBoxed && (
                             <p className="mt-0.5 text-[10px] text-navy/50">
-                              boxes + pcs · {qty} pcs total
+                              boxes + pcs · {qty} {qty === 1 ? "pc" : "pcs"} total
                             </p>
                           )}
                         </td>

@@ -537,7 +537,10 @@ export function LineItemRow({
             {li.qty > 0 && (
               <>
                 {" "}
-                · <span className="font-medium text-navy/70">{li.qty} pcs total</span>
+                ·{" "}
+                <span className="font-medium text-navy/70">
+                  {li.qty} {li.qty === 1 ? "pc" : "pcs"} total
+                </span>
               </>
             )}
           </span>

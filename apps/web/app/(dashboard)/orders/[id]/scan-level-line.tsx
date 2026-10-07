@@ -48,7 +48,7 @@ export function bumpLineForScan<
 /** "1 box + 0 pcs", "2 boxes + 1 pcs" — the count word agrees with its number. */
 export function splitLineHintText(qty: number, upb: number): string {
   const boxes = Math.floor(qty / upb);
-  return `${boxes} ${boxes === 1 ? "box" : "boxes"} + ${qty % upb} pcs`;
+  return `${boxes} ${boxes === 1 ? "box" : "boxes"} + ${qty % upb} ${qty % upb === 1 ? "pc" : "pcs"}`;
 }
 
 /** No hidden quantity (SA-580): a split line counts PIECES, so say boxes + pcs. */

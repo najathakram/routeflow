@@ -270,7 +270,10 @@ describe("RecordInlineReturnDialog — boxed product (AC3)", () => {
 
     expect(screen.getByLabelText(/^boxes$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^pieces$/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^qty/i)).not.toBeInTheDocument(); // no bare qty field
+    // A bare loose field would now ALSO be labelled "Pieces" (or the old "Qty (pieces)"), so count:
+    // exactly ONE pieces control (the boxed extra-pieces input) and no Qty-labelled field.
+    expect(screen.getAllByLabelText(/pieces/i)).toHaveLength(1);
+    expect(screen.queryByLabelText(/^qty/i)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/^boxes$/i), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });

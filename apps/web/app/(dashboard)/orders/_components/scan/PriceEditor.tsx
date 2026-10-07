@@ -231,7 +231,7 @@ export function PriceEditor({
                 </div>
               )}
               <p className="text-xs text-navy/50">
-                1 box = {li.unitsPerBox} pcs · {li.qty} pcs total
+                1 box = {li.unitsPerBox} pcs · {li.qty} {li.qty === 1 ? "pc" : "pcs"} total
               </p>
             </>
           ) : (
