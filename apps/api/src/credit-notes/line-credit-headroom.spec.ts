@@ -4,6 +4,7 @@ import {
   lineTakeRefusal,
   piecesPerQtyOf,
   loadLineCredits,
+  loadOrderPool,
   type HeadroomLine,
 } from "./line-credit-headroom";
 
@@ -184,7 +185,10 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
       return: { findMany: jest.fn() },
     };
     expect((await loadLineCredits(db, "inv", [A])).size).toBe(0);
-    expect(db.return.findMany).not.toHaveBeenCalled();
+    // the legacy (credit-note-linked) lookup is skipped; only SA-727's external-refund read touches `return`
+    expect(db.return.findMany).not.toHaveBeenCalledWith({
+      where: expect.objectContaining({ creditNoteId: { in: expect.anything() } }),
+    });
   });
   it("excludeCreditNoteId leaves the reissued note out of BOTH terms", async () => {
     const db = {
@@ -263,5 +267,80 @@ describe("piecesPerQtyOf resolves the pack like the inline pricing", () => {
     expect(piecesPerQtyOf({ qty: 24, boxes: null, product: { unitsPerBox: 6 } })).toBe(6);
     expect(piecesPerQtyOf({ qty: 2, product: { unitsPerBox: 12 } })).toBe(12);
     expect(piecesPerQtyOf({ qty: 2 })).toBe(1);
+  });
+});
+
+describe("SA-727 (M4): a STANDARD return resolved by an EXTERNAL_REFUND counts against its lines (no credit note mints it)", () => {
+  const extReturn = [
+    { orderId: "o1", refundMethod: "EXTERNAL_REFUND", items: [{ productId: "pa", qty: 1 }] },
+  ];
+  const base = (over: Record<string, unknown> = {}) => ({
+    creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+    creditNote: { findMany: jest.fn().mockResolvedValue([]) },
+    invoice: {
+      findFirst: jest.fn().mockResolvedValue({ orderId: "o1" }),
+      count: jest.fn().mockResolvedValue(1),
+    },
+    return: { findMany: jest.fn().mockResolvedValue(extReturn) },
+    ...over,
+  });
+  it("a sole-invoice order: the externally refunded line has no headroom left for a credit note", async () => {
+    const d = base();
+    const out = await loadLineCredits(d, "inv", [A, B]);
+    expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
+    expect(out.get("b")).toBeUndefined();
+    expect(d.return.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: { not: "INLINE" },
+          refundMethod: "EXTERNAL_REFUND",
+          creditNoteId: null,
+          status: "REFUNDED",
+          order: { invoices: { some: { id: "inv" } } },
+        }),
+      }),
+    );
+  });
+  it("with 2+ creditable invoices the per-invoice term leaves it to the order pool (no double attribution)", async () => {
+    const d = base({
+      invoice: {
+        findFirst: jest.fn().mockResolvedValue({ orderId: "o1" }),
+        count: jest.fn().mockResolvedValue(2),
+      },
+    });
+    expect((await loadLineCredits(d, "inv", [A, B])).size).toBe(0);
+  });
+  it("the order pool counts it once, pooled by product", async () => {
+    const d = {
+      creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+      creditNote: { findMany: jest.fn().mockResolvedValue([]) },
+      invoice: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "i1", items: [{ id: "a", productId: "pa", subtotal: 100, qty: 1 }] },
+          { id: "i2", items: [{ id: "b", productId: "pb", subtotal: 100, qty: 1 }] },
+        ]),
+      },
+      return: { findMany: jest.fn().mockResolvedValue(extReturn) },
+    };
+    const pool = await loadOrderPool(d, "o1");
+    expect(pool.credited.get("a")).toMatchObject({ amount: 100, qty: 1 });
+    expect(pool.credited.get("b")).toBeUndefined();
+  });
+  it("an INLINE return counts through the inline term whatever its resolution: the query has no refundMethod/creditNote filter, so an EXTERNAL_REFUND one is in", async () => {
+    const d = {
+      creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+      creditNote: { findMany: jest.fn().mockResolvedValue([]) },
+      return: { findMany: jest.fn().mockResolvedValue([]) },
+      returnItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ sourceInvoiceItemId: "a", qty: 1, subtotal: 100 }]),
+      },
+    };
+    const out = await loadLineCredits(d, "inv", [A]);
+    expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
+    const where = d.returnItem.findMany.mock.calls[0][0].where;
+    expect(where.return).toEqual({ kind: "INLINE", status: { notIn: ["CANCELLED", "REJECTED"] } });
+    expect(JSON.stringify(where)).not.toMatch(/refundMethod|creditNoteId/);
   });
 });

@@ -30,6 +30,7 @@ import { ProcessRefundDto } from "./dto/process-refund.dto";
 import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
 import { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
 import { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
+import { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 
 /** #2406: `GET /returns?kind=` whitelist — the Prisma `ReturnKind` enum (the same set as the
  * shared RETURN_KIND_VALUES, pinned by enum-parity.spec.ts) plus the read-only "ALL" filter.
@@ -117,6 +118,23 @@ export class ReturnsController {
   @RequireAddon("orders_inline_returns")
   rejectInline(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.inlineReturns.reject(id, user);
+  }
+
+  /**
+   * SA-727: resolves a captured inline return with a cash/card/check refund instead of store credit. Office roles only
+   * (the same gate as the STANDARD `:id/refund`); the amount is the server's, `expectedAmount` only confirms it. It sits
+   * under `inline/` because `POST :id/refund` is the STANDARD flow's route and refuses INLINE returns.
+   */
+  @Post("inline/:id/refund")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @UseGuards(AddonGuard)
+  @RequireAddon("orders_inline_returns")
+  refundInline(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: RefundInlineReturnDto,
+  ) {
+    return this.inlineReturns.refund(id, dto, user);
   }
 
   /** m-5: undoes a captured inline return (restock/ledger/credit) and cancels the row. */

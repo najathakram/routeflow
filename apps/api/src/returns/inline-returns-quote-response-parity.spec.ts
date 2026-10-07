@@ -81,7 +81,7 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
     // Record<string, QuoteBreakdown> }>` — pull the intersected object literal's own field
     // names out (not `QuoteBreakdown`'s, which the previous test already pins).
     const sigMatch = quoteServiceSource.match(
-      /async quote\([^)]*\):\s*Promise<QuoteBreakdown\s*&\s*\{([\s\S]*?)\}>/,
+      /async quote\([^)]*\):\s*Promise<\s*QuoteBreakdown\s*&\s*\{([\s\S]*?)\}\s*>/,
     );
     expect(sigMatch).not.toBeNull();
     const extraFields: string[] = [];
@@ -89,7 +89,14 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
       const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\??:\s*/);
       if (m) extraFields.push(m[1]);
     }
-    expect(extraFields).toEqual(["productBreakdown"]);
+    // SA-727: the four additive refund fields ride on the quote response
+    expect(extraFields).toEqual([
+      "productBreakdown",
+      "canRefund",
+      "paidInFull",
+      "paidMethods",
+      "customerIsWalkIn",
+    ]);
 
     const responseSource = sharedTypesSource.match(
       /export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown \{([\s\S]*?)\n\}/,
@@ -100,6 +107,27 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
       const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\??:\s*/);
       if (m) sharedExtra.push(m[1]);
     }
-    expect(sharedExtra).toEqual(["productBreakdown"]);
+    expect(sharedExtra).toEqual([
+      "productBreakdown",
+      "canRefund",
+      "paidInFull",
+      "paidMethods",
+      "customerIsWalkIn",
+    ]);
+  });
+});
+
+describe("SA-727: the refund tender list the API validates equals the shared one", () => {
+  it("INLINE_REFUND_TENDER_VALUES (packages/types) = REFUND_TENDERS (apps/api)", () => {
+    const shared = sharedTypesSource.match(
+      /INLINE_REFUND_TENDER_VALUES\s*=\s*\[([^\]]*)\]\s*as const/,
+    );
+    expect(shared).not.toBeNull();
+    const sharedList = (shared as RegExpMatchArray)[1]
+      .match(/"([A-Z_]+)"/g)
+      ?.map((v) => v.slice(1, -1));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { REFUND_TENDERS } = require("./inline-return-refund");
+    expect(sharedList).toEqual([...REFUND_TENDERS]);
   });
 });

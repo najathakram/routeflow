@@ -44,6 +44,7 @@ import {
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { canRefundRole, loadSourceInvoicesState } from "./inline-return-refund";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -127,8 +128,36 @@ export class InlineReturnsQuoteService {
   async quote(
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
-  ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
-    return this.priceInlineReturn(dto, user, this.prisma.forTenant());
+  ): Promise<
+    QuoteBreakdown & {
+      productBreakdown: Record<string, QuoteBreakdown>;
+      canRefund: boolean;
+      paidInFull: boolean;
+      paidMethods: string[];
+      customerIsWalkIn: boolean;
+    }
+  > {
+    const db = this.prisma.forTenant();
+    const priced = await this.priceInlineReturn(dto, user, db);
+    // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
+    // only; POST /returns/inline/:id/refund re-checks everything under its locks.
+    const [customer, source] = await Promise.all([
+      db.customer.findFirst({
+        where: { id: dto.customerId, deletedAt: null },
+        select: { isWalkIn: true },
+      }),
+      loadSourceInvoicesState(
+        db,
+        priced.chunks.map((c) => c.sourceInvoiceItemId),
+      ),
+    ]);
+    return {
+      ...priced,
+      canRefund: canRefundRole(user.role) && source.paidInFull,
+      paidInFull: source.paidInFull,
+      paidMethods: source.paidMethods,
+      customerIsWalkIn: customer?.isWalkIn === true,
+    };
   }
 
   /**
