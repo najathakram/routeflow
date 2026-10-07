@@ -329,6 +329,7 @@ export const API_ERROR_CODES = {
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
   // Settings -> Fulfillment (tenant admin toggle): 400 body {field} / 403 flag off / 409 stale (body = a fresh
   // GET /settings/fulfilment) / 409 carrier orders in transit (body {count}).
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
   FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
   FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
   FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",

@@ -122,6 +122,7 @@ export class SettingsFulfilmentService {
     if (user.tenantId !== tenantId) {
       throw new ForbiddenException({
         statusCode: 403,
+        code: API_ERROR_CODES.FULFILMENT_TENANT_MISMATCH,
         message: "This account does not belong to the current tenant.",
       });
     }
@@ -403,7 +404,8 @@ export class SettingsFulfilmentService {
           });
         }
       }
-      // Standing orders follow the staff default of the new setup.
+      // Standing orders: the count is every active one, because each order's path is resolved per customer
+      // (the saved delivery method wins), which is not derivable without per-customer reads; the copy says "may".
       if (before.staffDefault !== after.staffDefault) {
         const count = await this.prisma.orderTemplate.count({
           where: { tenantId, isActive: true },
@@ -415,8 +417,8 @@ export class SettingsFulfilmentService {
             count,
             text:
               count === 1
-                ? `1 standing order will create its new orders ${how} from now on.`
-                : `${count} standing orders will create their new orders ${how} from now on.`,
+                ? `1 standing order may create its new orders ${how} from now on, unless the customer's saved delivery method says otherwise.`
+                : `${count} standing orders may create their new orders ${how} from now on, unless a customer's saved delivery method says otherwise.`,
           });
         }
       }
