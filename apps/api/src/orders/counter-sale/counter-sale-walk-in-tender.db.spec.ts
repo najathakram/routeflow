@@ -4,7 +4,7 @@
  * The sale's total is only known inside OrdersService.create() (pricing, tax), so the counter sale passes create() a
  * `beforeWrite({ total })` hook (see counter-sale.service.ts) that runs after pricing and before the stock lock and
  * the transaction. This drives the REAL create() through the same `Object.create` harness as
- * counter-sale-replay.db.spec.ts with exactly that hook (assertWalkInTenderCoversTotal): a short tender is a 409
+ * counter-sale-replay.db.spec.ts with exactly that hook (assertWalkInTenderCoversTotal): a short tender is a 400
  * COUNTER_TENDER_SHORT and leaves NO order, NO stock movement, NO invoice and NO payment row, and the stock is
  * untouched; an exact tender creates the order. NOT RUN by the authoring lane (no Postgres): the DB lane runs it
  * (`npm run local:test:db`, test tenant only, collected only by jest.db.config.js).
@@ -147,20 +147,27 @@ describeDb(
       await pool?.end();
     }, 120_000);
 
-    const ring = (productId: string, amount: number | undefined) =>
+    const ring = (
+      productId: string,
+      amount: number | undefined,
+      key = `cs-tender-${randomUUID()}`,
+      hook?: jest.Mock,
+    ) =>
       tenantCtx.run(tenantId, () =>
         orders.create(
           {
             customerId,
             items: [{ productId, qty: 3 }],
-            idempotencyKey: `cs-tender-${randomUUID()}`,
+            idempotencyKey: key,
           },
           staff(),
           {
             skipAutoMerge: true,
             counterSale: true,
-            beforeWrite: ({ total }: { total: number }) =>
-              assertWalkInTenderCoversTotal({ method: "CASH", amount }, total),
+            beforeWrite: ({ total }: { total: number }) => {
+              hook?.(total);
+              assertWalkInTenderCoversTotal({ method: "CASH", amount }, total);
+            },
           },
         ),
       );
@@ -174,15 +181,43 @@ describeDb(
       ),
     });
 
-    it("a tender below the server total: 409 COUNTER_TENDER_SHORT and no order / movement / invoice / payment, stock untouched", async () => {
+    it("a tender below the server total: 400 COUNTER_TENDER_SHORT and no order / movement / invoice / payment, stock untouched", async () => {
       const productId = await plainProduct();
       const before = await rows(productId);
       await expect(ring(productId, 5)).rejects.toMatchObject({
-        status: 409,
+        status: 400,
         response: { code: "COUNTER_TENDER_SHORT" },
       });
       expect(await rows(productId)).toEqual(before);
       expect(before.stock).toBe(100);
+    });
+
+    it("a same-key REPLAY of a committed sale with a short tender body: the hook never fires, the saved order returns, nothing is added", async () => {
+      const productId = await plainProduct();
+      const key = `cs-tender-${randomUUID()}`;
+      const first = await ring(productId, 7.5, key);
+      const afterFirst = await rows(productId);
+      const hook = jest.fn();
+      let replayed = false;
+      const second = await tenantCtx.run(tenantId, () =>
+        orders.create(
+          { customerId, items: [{ productId, qty: 3 }], idempotencyKey: key },
+          staff(),
+          {
+            skipAutoMerge: true,
+            counterSale: true,
+            onReplay: () => (replayed = true),
+            beforeWrite: ({ total }: { total: number }) => {
+              hook(total);
+              assertWalkInTenderCoversTotal({ method: "CASH", amount: 1 }, total);
+            },
+          },
+        ),
+      );
+      expect(replayed).toBe(true);
+      expect(hook).not.toHaveBeenCalled();
+      expect(second.id).toBe(first.id);
+      expect(await rows(productId)).toEqual(afterFirst);
     });
 
     it("an exact tender (3 x 2.50 = 7.50) creates the order and takes the stock once", async () => {

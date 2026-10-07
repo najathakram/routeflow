@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 
@@ -36,14 +36,14 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
 }
 
 /**
- * B1209: a walk-in has no account, so a stated tender below the SERVER total is refused (409 COUNTER_TENDER_SHORT)
+ * B1209: a walk-in has no account, so a stated tender below the SERVER total is refused (400 COUNTER_TENDER_SHORT, the status pickup-complete uses for the same code)
  * before anything is written. `total` is create()'s own, handed over through `beforeWrite`. An omitted amount is the
  * exact balance; ON_ACCOUNT takes no money (assertPaymentShape already refuses it for a walk-in).
  */
 export function assertWalkInTenderCoversTotal(payment: CounterPaymentInput, total: number): void {
   if (payment.method === "ON_ACCOUNT" || payment.amount == null) return;
   if (roundMoney(payment.amount) < roundMoney(total)) {
-    throw new ConflictException({
+    throw new BadRequestException({
       code: API_ERROR_CODES.COUNTER_TENDER_SHORT,
       message: "A walk-in customer must pay the full balance",
     });

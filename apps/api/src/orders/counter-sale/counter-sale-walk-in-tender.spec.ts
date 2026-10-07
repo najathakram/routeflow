@@ -20,14 +20,16 @@ import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
+import * as fs from "fs";
+import * as path from "path";
 import { assertWalkInTenderCoversTotal } from "./counter-sale-payment";
 
 /**
  * B1209: a walk-in has no account, so a CASH (or card/check) tender below the SERVER-computed total is refused with
- * 409 COUNTER_TENDER_SHORT BEFORE anything is committed (a refusal after the commit would leave the whole sale an
+ * 400 COUNTER_TENDER_SHORT BEFORE anything is committed (a refusal after the commit would leave the whole sale an
  * open invoice on the shared walk-in customer). The total is only known inside create() (tax, tiers, overrides), so
  * ring() hands createSale a `beforeWrite(total)` hook that create() calls right after pricing and before the stock
- * lock / transaction. Mirrors pickup-complete's walk-in guard (which answers 400); the till wants a 409.
+ * lock / transaction. Mirrors pickup-complete's walk-in guard (one code, one status: 400).
  */
 const cap = {
   counter: "always",
@@ -85,12 +87,12 @@ describe("CounterSaleService.ring: walk-in tender must cover the server total (B
   const walkInSale = (payment: any) =>
     ({ walkIn: true, items: [{ productId: "p1", qty: 2, unitPrice: 5 }], payment }) as never;
 
-  it("walk-in CASH short of the total: 409 COUNTER_TENDER_SHORT, and NOTHING was written or recorded", async () => {
+  it("walk-in CASH short of the total: 400 COUNTER_TENDER_SHORT, and NOTHING was written or recorded", async () => {
     const err: any = await service.ring(walkInSale({ method: "CASH", amount: 20 }), staff).then(
       () => null,
       (e) => e,
     );
-    expect(err?.getStatus?.()).toBe(409);
+    expect(err?.getStatus?.()).toBe(400);
     expect(err.getResponse().code).toBe("COUNTER_TENDER_SHORT");
     expect(written).toBe(false);
     expect(recordPayment).not.toHaveBeenCalled();
@@ -129,13 +131,26 @@ describe("CounterSaleService.ring: walk-in tender must cover the server total (B
     expect(r.orderId).toBe("ord-1");
   });
 
+  it("a same-key REPLAY of a committed sale with a short tender body: no refusal, the saved order comes back", async () => {
+    // create() answers a replay from its pre-check, before pricing, so it never calls beforeWrite.
+    const hook = jest.fn();
+    createSale.mockImplementationOnce(async (_d: any, _u: any, sale: any) => {
+      sale.onReplay?.({ id: "ord-1", counterSale: true });
+      return { id: "inv-1", orderId: "ord-1" };
+    });
+    const r = await service.ring(walkInSale({ method: "CASH", amount: 1 }), staff, "key-1");
+    expect(hook).not.toHaveBeenCalled();
+    expect(r.orderId).toBe("ord-1");
+    expect(r.replayed).toBe(true);
+  });
+
   it("the hook is the only thing deciding: it receives the SERVER total, never a client figure", async () => {
     await service.ring(walkInSale({ method: "CASH", amount: 40 }), staff);
     const sale = createSale.mock.calls[0][2];
     expect(typeof sale.beforeWrite).toBe("function");
     expect(() => sale.beforeWrite({ total: 37.25 })).not.toThrow();
     expect(() => sale.beforeWrite({ total: 40.01 })).toThrow(
-      expect.objectContaining({ status: 409 }),
+      expect.objectContaining({ status: 400 }),
     );
   });
 });
@@ -148,5 +163,35 @@ describe("assertWalkInTenderCoversTotal", () => {
     expect(() => assertWalkInTenderCoversTotal({ method: "CASH", amount: 37.24 }, 37.25)).toThrow();
     expect(() => assertWalkInTenderCoversTotal({ method: "CASH" }, 37.25)).not.toThrow();
     expect(() => assertWalkInTenderCoversTotal({ method: "ON_ACCOUNT" }, 37.25)).not.toThrow();
+  });
+});
+
+describe("B1209: one code, one status; the hook never fires on a replay", () => {
+  it("ring() and pickup-complete answer COUNTER_TENDER_SHORT with the SAME status (400)", () => {
+    let ringStatus = 0;
+    try {
+      assertWalkInTenderCoversTotal({ method: "CASH", amount: 1 }, 5);
+    } catch (e: any) {
+      ringStatus = e.getStatus();
+    }
+    const pickup = fs.readFileSync(path.join(__dirname, "pickup-complete.service.ts"), "utf8");
+    const block = pickup.slice(
+      pickup.indexOf("must pay the full balance") - 200,
+      pickup.indexOf("must pay the full balance"),
+    );
+    expect(block).toContain("API_ERROR_CODES.COUNTER_TENDER_SHORT");
+    expect(pickup).toMatch(
+      /throw new BadRequestException\(\{\s*code: API_ERROR_CODES\.COUNTER_TENDER_SHORT/,
+    );
+    expect(ringStatus).toBe(400);
+  });
+
+  it("create() runs both replay exits' onReplay path BEFORE it prices (the only caller of beforeWrite)", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "orders.service.ts"), "utf8");
+    const preCheck = src.indexOf("options.onReplay?.(existing)");
+    const hook = src.indexOf("options.beforeWrite?.(");
+    expect(preCheck).toBeGreaterThan(0);
+    expect(hook).toBeGreaterThan(preCheck);
+    expect(src.split("options.beforeWrite?.(").length - 1).toBe(1);
   });
 });
