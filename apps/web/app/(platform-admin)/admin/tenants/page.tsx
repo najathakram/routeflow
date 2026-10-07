@@ -7,7 +7,13 @@ import { setImpersonation } from "@/lib/impersonation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
-import { ImpersonateDialog } from "../../_components/TenantActionDialogs";
+import {
+  DeleteTenantDialog,
+  ImpersonateDialog,
+  SuspendDialog,
+  TENANT_ACTION_COPY,
+  deleteFailureCopy,
+} from "../../_components/TenantActionDialogs";
 import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
@@ -121,21 +127,19 @@ export default function AdminTenantsPage() {
   }, [page, debouncedSearch, statusFilter, planFilter, showDeleted]);
 
   const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
-  const [deleteConfirmSlug, setDeleteConfirmSlug] = React.useState("");
   const [suspendingTenant, setSuspendingTenant] = React.useState<Tenant | null>(null);
   const [impersonatingTenant, setImpersonatingTenant] = React.useState<Tenant | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [bulkError, setBulkError] = React.useState<string | null>(null);
 
   const deleteTenant = async () => {
-    if (!deletingTenant || deleteConfirmSlug !== deletingTenant.slug) return;
+    if (!deletingTenant) return; // DeleteTenantDialog only confirms once the slug is typed exactly
     setActionLoading(deletingTenant.id + "-del");
     setActionError(null);
     try {
       await superAdminClient.delete(`/platform-admin/tenants/${deletingTenant.id}`);
       const deletedId = deletingTenant.id;
       setDeletingTenant(null);
-      setDeleteConfirmSlug("");
       // Remove deleted tenant from local state immediately; re-fetch to sync
       setData((prev) =>
         prev
@@ -148,10 +152,7 @@ export default function AdminTenantsPage() {
       );
       fetchTenants(page);
     } catch (err: unknown) {
-      setActionError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Delete failed",
-      );
+      setActionError(deleteFailureCopy(err));
     } finally {
       setActionLoading(null);
     }
@@ -171,10 +172,7 @@ export default function AdminTenantsPage() {
       });
       fetchTenants(page);
     } catch (err: unknown) {
-      setActionError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Action failed",
-      );
+      setActionError(TENANT_ACTION_COPY.statusFailed);
     } finally {
       setActionLoading(null);
     }
@@ -192,10 +190,7 @@ export default function AdminTenantsPage() {
       });
       fetchTenants(page);
     } catch (err: unknown) {
-      setActionError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Action failed",
-      );
+      setActionError(TENANT_ACTION_COPY.statusFailed);
     } finally {
       setActionLoading(null);
     }
@@ -210,10 +205,7 @@ export default function AdminTenantsPage() {
       setTenantCookie(tenant.slug);
       window.location.href = "/dashboard";
     } catch (err: unknown) {
-      setActionError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Impersonation failed",
-      );
+      setActionError(TENANT_ACTION_COPY.impersonateFailed);
     } finally {
       setActionLoading(null);
     }
@@ -329,33 +321,13 @@ export default function AdminTenantsPage() {
         }}
       />
 
-      {/* Suspend confirmation modal */}
-      <AdminModal
+      {/* Suspend confirmation: the shared dialog (the tenant page uses the same one). */}
+      <SuspendDialog
         open={!!suspendingTenant}
+        tenant={suspendingTenant ?? { name: "" }}
         onClose={() => setSuspendingTenant(null)}
-        title={`Suspend "${suspendingTenant?.businessName ?? suspendingTenant?.slug}"?`}
-        footer={
-          <>
-            <button
-              onClick={() => setSuspendingTenant(null)}
-              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={confirmSuspend}
-              className="rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white hover:bg-yellow-500"
-            >
-              Suspend
-            </button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-300">
-          This tenant will be suspended and their users will no longer be able to log in. You can
-          reactivate them at any time.
-        </p>
-      </AdminModal>
+        onConfirm={confirmSuspend}
+      />
 
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
@@ -529,68 +501,15 @@ export default function AdminTenantsPage() {
         </p>
       </AdminModal>
 
-      {/* Delete confirmation modal */}
-      <AdminModal
+      {/* Delete confirmation: the shared type-the-slug dialog (the tenant page uses the same one). */}
+      <DeleteTenantDialog
         open={!!deletingTenant}
-        onClose={() => {
-          setDeletingTenant(null);
-          setDeleteConfirmSlug("");
-        }}
-        title="Permanently delete tenant?"
-        footer={
-          <>
-            <button
-              onClick={() => {
-                setDeletingTenant(null);
-                setDeleteConfirmSlug("");
-              }}
-              className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
-            >
-              Cancel
-            </button>
-            <button
-              disabled={
-                deleteConfirmSlug !== deletingTenant?.slug ||
-                actionLoading === deletingTenant?.id + "-del"
-              }
-              onClick={deleteTenant}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
-            >
-              {actionLoading === deletingTenant?.id + "-del" ? "Deleting..." : "Delete Permanently"}
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          {actionError && (
-            <div
-              role="alert"
-              className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400 ring-1 ring-red-700"
-            >
-              {actionError}
-            </div>
-          )}
-          <p className="text-sm text-slate-300">
-            This will permanently cancel and archive{" "}
-            <strong className="text-white">
-              {deletingTenant?.businessName ?? deletingTenant?.slug}
-            </strong>
-            . This action cannot be undone.
-          </p>
-          <p className="text-sm text-slate-400">
-            Type the tenant slug{" "}
-            <strong className="font-mono text-slate-200">{deletingTenant?.slug}</strong> to confirm:
-          </p>
-          <input
-            aria-label="Type the tenant slug to confirm deletion"
-            type="text"
-            value={deleteConfirmSlug}
-            onChange={(e) => setDeleteConfirmSlug(e.target.value)}
-            placeholder={deletingTenant?.slug}
-            className="h-9 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30"
-          />
-        </div>
-      </AdminModal>
+        tenant={deletingTenant ?? { name: "", slug: "" }}
+        busy={actionLoading === deletingTenant?.id + "-del"}
+        error={actionError}
+        onClose={() => setDeletingTenant(null)}
+        onConfirm={deleteTenant}
+      />
 
       {loading && <div className="text-center text-slate-400 py-12">Loading tenants...</div>}
       {error && (
@@ -736,7 +655,7 @@ export default function AdminTenantsPage() {
                               disabled={!!actionLoading}
                               onClick={() => {
                                 setDeletingTenant(t);
-                                setDeleteConfirmSlug("");
+                                setActionError(null);
                               }}
                               className="rounded px-2 py-1 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
                             >

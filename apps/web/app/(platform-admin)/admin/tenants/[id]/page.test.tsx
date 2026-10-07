@@ -14,9 +14,10 @@ import {
 
 const TENANT_ID = "tenant-1";
 
+const mockRouterPush = jest.fn();
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: TENANT_ID }),
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockRouterPush, replace: jest.fn() }),
 }));
 
 const mockFetchRegistry = jest.fn();
@@ -383,7 +384,7 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
 
     fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
-    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
     expect(within(dialog).getByText("acme_admin")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(calls(/impersonate$/)).toHaveLength(0);
@@ -395,7 +396,7 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     // The confirmed request fails (no admin) so jsdom never navigates; only the request is asserted.
     post().mockRejectedValueOnce({ response: { data: { message: "No active TENANT_ADMIN" } } });
     fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
-    const again = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    const again = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
     fireEvent.click(within(again).getByRole("button", { name: "Impersonate" }));
     await waitFor(() => expect(calls(/impersonate$/)).toHaveLength(1));
     expect(calls(/impersonate$/)[0][0]).toBe("/platform-admin/tenants/tenant-1/impersonate");
@@ -411,10 +412,10 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     expect(
       within(dialog).getByText(
-        /Acme is Active\. Extending the trial changes its status to Trial until /,
+        /Acme \(acme\) is Active\. Extending the trial changes its status to Trial until /,
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -426,7 +427,7 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
 
     post().mockResolvedValueOnce({ data: { trialEndsAt: "2026-10-21T12:00:00.000Z" } });
     fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
-    const again = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    const again = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     fireEvent.click(within(again).getByRole("button", { name: "Extend Trial" }));
     await waitFor(() => expect(calls(/extend-trial$/)).toHaveLength(1));
     expect(calls(/extend-trial$/)[0]).toEqual([
@@ -443,8 +444,129 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
-    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     expect(within(dialog).getByText(/^The trial will end on /)).toBeInTheDocument();
     expect(within(dialog).queryByText(/changes its status to Trial/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Tenant detail page — Suspend and Delete ask first (back office P1)", () => {
+  const client = () => superAdminClient as unknown as { patch: jest.Mock; delete: jest.Mock };
+  const statusPatches = () =>
+    client().patch.mock.calls.filter((c) => /\/status$/.test(String(c[0])));
+
+  it("Suspend: nothing is sent until Confirm; the dialog names the tenant and slug; Cancel sends nothing", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(statusPatches()).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(statusPatches()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const again = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
+    fireEvent.click(within(again).getByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(statusPatches()).toHaveLength(1));
+    expect(statusPatches()[0]).toEqual([
+      "/platform-admin/tenants/tenant-1/status",
+      { status: "SUSPENDED" },
+    ]);
+  });
+
+  it("Reactivate stays a single click (it restores access, it removes nothing)", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate" }));
+    await waitFor(() => expect(statusPatches()).toHaveLength(1));
+    expect(statusPatches()[0][1]).toEqual({ status: "ACTIVE" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Delete Tenant is visible and ENABLED for a tenant that is not suspended (pinned: no dimming)", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    expect(screen.getByRole("button", { name: "Delete Tenant" })).toBeEnabled();
+  });
+
+  it("Delete: the type-the-slug dialog gates the button; DELETE is sent once and the page navigates away", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
+    const del = within(dialog).getByRole("button", { name: "Delete Tenant" });
+    expect(del).toBeDisabled();
+    expect(client().delete).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
+      target: { value: "acme" },
+    });
+    fireEvent.click(del);
+    await waitFor(() => expect(client().delete).toHaveBeenCalledTimes(1));
+    expect(client().delete).toHaveBeenCalledWith("/platform-admin/tenants/tenant-1");
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/admin/tenants"));
+  });
+
+  it("a server refusal shows FIXED copy inside the dialog, which stays open; no navigation", async () => {
+    client().delete.mockRejectedValueOnce({
+      response: { status: 400, data: { message: "Tenant must be SUSPENDED (internal state 7)" } },
+    });
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
+    fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
+      target: { value: "acme" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete Tenant" }));
+    expect(
+      await within(dialog).findByText(
+        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/internal state 7/)).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("Escape closes the delete dialog and sends nothing", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
+    await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(client().delete).not.toHaveBeenCalled();
+  });
+
+  it("Extend Trial: days cleared / 0 / over 365 block Confirm with a plain line and send nothing", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.change(screen.getByLabelText("Days"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
+    expect(within(dialog).getByText("Enter 1–365 days.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Extend Trial" })).toBeDisabled();
+    expect(within(dialog).queryByText(/Invalid Date/)).toBeNull();
+    expect(
+      (superAdminClient.post as unknown as jest.Mock).mock.calls.filter((c) =>
+        /extend-trial$/.test(String(c[0])),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("a failed Extend Trial shows fixed copy, not the server's text", async () => {
+    (superAdminClient.post as unknown as jest.Mock).mockRejectedValueOnce({
+      response: { data: { message: "prisma: unique constraint failed" } },
+    });
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Extend Trial" }));
+    expect(await screen.findByText("Couldn't extend the trial. Try again.")).toBeInTheDocument();
+    expect(screen.queryByText(/prisma/)).toBeNull();
   });
 });
