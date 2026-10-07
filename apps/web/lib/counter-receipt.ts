@@ -60,7 +60,9 @@ export interface CounterReceiptModel {
   changeAsEntered: boolean;
 }
 
-export const formatReceiptMoney = (n: number): string => `$${n.toFixed(2)}`;
+/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
+export const formatReceiptMoney = (n: number): string =>
+  `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 
 const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   CASH: "Cash",

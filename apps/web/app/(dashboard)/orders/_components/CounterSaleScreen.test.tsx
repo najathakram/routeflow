@@ -142,6 +142,11 @@ describe("CounterSaleScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    // print: the wrapper drops its padding and width cap so the 72 mm printable area is the receipt's
+    expect(screen.getByTestId("counter-sale-receipt").className).toEqual(
+      expect.stringContaining("print:max-w-none"),
+    );
+    expect(screen.getByTestId("counter-sale-receipt").className).toContain("print:p-0");
     expect(mutateAsync).toHaveBeenCalledWith({
       dto: {
         walkIn: true,

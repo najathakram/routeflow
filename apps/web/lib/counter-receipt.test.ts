@@ -118,6 +118,8 @@ describe("buildCounterReceipt", () => {
 
   it("formats money", () => {
     expect(formatReceiptMoney(2.5)).toBe("$2.50");
+    expect(formatReceiptMoney(-1)).toBe("-$1.00");
+    expect(formatReceiptMoney(0)).toBe("$0.00");
   });
 
   it("subtotal + adjustment reconcile to the server total, also for a repriced sale", () => {

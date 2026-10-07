@@ -50,11 +50,11 @@ export function CounterReceiptBody({
 
   return (
     <div
-      className="space-y-4 print:mx-auto print:w-[72mm] print:max-w-none print:space-y-2 print:p-0 print:text-black"
+      className="space-y-4 print:w-full print:max-w-none print:space-y-2 print:p-0 print:text-black"
       data-testid="receipt-print-root"
     >
-      {/* mounted only while the receipt is on screen, so the page size applies to this print and no other */}
-      <style>{`@media print { @page { size: 72mm auto; margin: 3mm; } }`}</style>
+      {/* mounted only while the receipt is on screen, so the page size applies to this print and no other: 80 mm paper, 72 mm printable */}
+      <style>{`@media print { @page { size: 80mm auto; margin: 4mm; } }`}</style>
       {hasHeader ? (
         <div className="text-center text-sm" data-testid="receipt-header">
           {logoUrl ? (

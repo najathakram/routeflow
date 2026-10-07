@@ -480,7 +480,10 @@ export function CounterSaleScreen() {
 
   if (receipt) {
     return (
-      <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
+      <div
+        className="mx-auto max-w-md space-y-4 p-4 print:max-w-none print:p-0"
+        data-testid="counter-sale-receipt"
+      >
         <CounterReceiptBody
           receipt={receipt}
           lines={lines}

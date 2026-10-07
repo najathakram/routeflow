@@ -114,6 +114,13 @@ describe("CounterReceiptBody", () => {
     expect(screen.getByTestId("receipt-total")).toHaveTextContent("$24.75");
   });
 
+  it("a downward reprice prints the adjustment sign first", () => {
+    show({ ...RECEIPT, total: 21.5, paid: 21.5, change: undefined as never });
+    expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("-$1.00");
+    expect(screen.getByTestId("receipt-adjustment")).not.toHaveTextContent("$-");
+    expect(screen.getByTestId("receipt-total")).toHaveTextContent("$21.50");
+  });
+
   it("card has no change or tendered line", () => {
     show({ ...RECEIPT, method: "CARD" as never, change: undefined as never });
     expect(screen.getByTestId("receipt-method")).toHaveTextContent("Card");
@@ -127,11 +134,13 @@ describe("CounterReceiptBody", () => {
     expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
   });
 
-  it("print: 72 mm width and a page size scoped to this receipt only", () => {
+  it("print: 80 mm paper with 4 mm margins (72 mm printable), root fills it, scoped to this receipt", () => {
     show();
     const root = screen.getByTestId("receipt-print-root");
-    expect(root.className).toContain("print:w-[72mm]");
-    expect(root.querySelector("style")?.textContent).toMatch(/@page\s*\{\s*size:\s*72mm/);
+    expect(root.className).toContain("print:w-full");
+    expect(root.className).not.toContain("print:w-[72mm]");
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/@page\s*\{\s*size:\s*80mm auto;\s*margin:\s*4mm;/);
     expect(document.querySelector("header")).toBeNull();
   });
 });
