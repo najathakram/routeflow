@@ -257,6 +257,9 @@ export class RfInvoiceIssuerService {
         ),
       );
       // Only after the row is committed: a failed create must never leave a notice saying "was issued".
+      // BEST EFFORT: raiseOnce swallows and logs its own failure, and nothing re-raises it - if this notice
+      // fails once, the invoice stays issued and the notice is never written again (the row's needsReview flag
+      // is the durable signal).
       if (draft.irregularPeriod) {
         await this.raiseOnce(
           sub.tenantId,
