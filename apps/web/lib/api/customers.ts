@@ -165,11 +165,11 @@ export function useCustomerOrders<T = unknown>(id: string) {
   });
 }
 
-export function useCustomerRoutes(id: string) {
+export function useCustomerRoutes(id: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["customers", id, "routes"],
     queryFn: () => apiClient.get(`/customers/${id}/routes`).then((r) => r.data),
-    enabled: !!id,
+    enabled: !!id && (options?.enabled ?? true),
   });
 }
 

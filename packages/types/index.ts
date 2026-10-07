@@ -174,6 +174,7 @@ export * from "./api/config-snapshots";
 export * from "./api/counter-sale";
 export * from "./api/import";
 export * from "./api/analytics-insights";
+export * from "./api/fulfilment-methods";
 export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";

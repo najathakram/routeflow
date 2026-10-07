@@ -168,6 +168,7 @@ import {
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -389,8 +390,6 @@ export class OrdersService implements OnApplicationBootstrap {
       urgent,
       page = 1,
       limit = 20,
-      deliveryDateFrom,
-      deliveryDateTo,
       fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
@@ -434,12 +433,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
     // key at all (every existing order stays visible either way).
     if (fulfillPath) where.fulfillPath = fulfillPath;
-    if (deliveryDateFrom || deliveryDateTo) {
-      where.requestedDeliveryDate = {
-        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
-        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
-      };
-    }
+    Object.assign(where, dateAndShipmentFilters(query));
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().order.findMany({
