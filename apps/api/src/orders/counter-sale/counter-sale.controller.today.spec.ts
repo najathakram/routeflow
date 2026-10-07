@@ -32,7 +32,7 @@ function getRoutes(): Route[] {
   for (const ctrl of [OrdersController, CounterSaleController, PickupCompleteController]) {
     const base = String(Reflect.getMetadata("path", ctrl)).replace(/^\/|\/$/g, "");
     for (const name of Object.getOwnPropertyNames(ctrl.prototype)) {
-      const fn = (ctrl.prototype as Record<string, unknown>)[name];
+      const fn = (ctrl.prototype as unknown as Record<string, unknown>)[name];
       if (typeof fn !== "function" || name === "constructor") continue;
       if (Reflect.getMetadata("method", fn) !== RequestMethod.GET) continue;
       const sub = String(Reflect.getMetadata("path", fn) ?? "").replace(/^\/|\/$/g, "");
