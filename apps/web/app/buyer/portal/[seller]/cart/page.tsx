@@ -34,6 +34,7 @@ import {
   isFulfilMethodNotOffered,
 } from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
 
 function fmt(n: number) {
@@ -217,7 +218,7 @@ export default function BuyerCartPage() {
         return;
       }
       // OOS PR2 (R4): a stock refusal is coded; show the portal's own fixed copy, never a raw server string.
-      if (err?.response?.status === 409 && data?.code === "INSUFFICIENT_STOCK") {
+      if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.INSUFFICIENT_STOCK) {
         setOrderError(BUYER_INSUFFICIENT_STOCK_COPY);
         return;
       }

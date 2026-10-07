@@ -22,7 +22,9 @@ import {
 } from "./buyer-product-visibility";
 
 /** The stock fields a favourite carries (no remaining count). */
-const pickStock = (s: Pick<BuyerProduct, "stockStatus" | "canBackorder">) => ({
+const pickStock = (
+  s: Pick<BuyerProduct, "stockStatus" | "canBackorder">,
+): Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">> => ({
   stockStatus: s.stockStatus,
   canBackorder: s.canBackorder,
 });

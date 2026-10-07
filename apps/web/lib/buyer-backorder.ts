@@ -10,7 +10,8 @@ import type { BuyerProduct } from "@routeflow/types";
  */
 export const SHIPS_WHEN_RESTOCKED = "Ships when restocked";
 
-type StockInput = Pick<BuyerProduct, "stockStatus" | "canBackorder">;
+/** Partial: a cached or older row may lack the field (a missing stockStatus reads as IN_STOCK). */
+type StockInput = Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">>;
 
 const isOutOfStock = (p: StockInput): boolean => (p.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";
 
@@ -23,7 +24,9 @@ export const isOrderBlocked = (p: StockInput): boolean =>
   isOutOfStock(p) && p.canBackorder !== true;
 
 /** The tile / detail stock line. */
-export function stockLine(p: Pick<BuyerProduct, "stockStatus" | "stockLeft" | "canBackorder">): {
+export function stockLine(
+  p: Partial<Pick<BuyerProduct, "stockStatus" | "stockLeft" | "canBackorder">>,
+): {
   label: string;
   cls: string;
 } {

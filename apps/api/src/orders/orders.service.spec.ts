@@ -1,6 +1,7 @@
 // SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
 jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
+import { CUSTOMER_INSUFFICIENT_STOCK_MESSAGE } from "./order-stock";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -8082,7 +8083,8 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 8 },
+        // OOS PR2 (R4): a buyer gets the fixed copy and no stock numbers.
+        response: { code: "INSUFFICIENT_STOCK", message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE },
       });
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
@@ -8144,7 +8146,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-2", available: 3, requested: 4 },
+        response: { code: "INSUFFICIENT_STOCK", message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE },
       });
     });
 
@@ -8320,7 +8322,7 @@ describe("OrdersService", () => {
       await expect(
         settle(order, [{ productId: "prod-1", qty: 10 }], customerPayload),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 10 },
+        response: { code: "INSUFFICIENT_STOCK", message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE },
       });
       expect(fakeDb.product.update).not.toHaveBeenCalled();
     });

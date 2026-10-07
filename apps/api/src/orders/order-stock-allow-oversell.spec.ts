@@ -156,12 +156,11 @@ describe("OOS PR2 (R4): the stock refusal is CODED, and a buyer never sees stock
     const err = await refuseSale(true);
     expect(err).toBeInstanceOf(ConflictException);
     expect(body(err)).toEqual({
-      statusCode: 409,
       code: "INSUFFICIENT_STOCK",
       message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
-      error: "Conflict",
     });
-    expect(String(body(err).message)).not.toMatch(/\d|Widget|available|requested/);
+    // no digits, no product name, and not the "available: N, requested: M" shape of the staff message
+    expect(String(body(err).message)).not.toMatch(/\d|Widget|available:|requested:/);
   });
 
   it("sale path, staff / driver: the same code, and the numbers are kept", async () => {
@@ -177,7 +176,16 @@ describe("OOS PR2 (R4): the stock refusal is CODED, and a buyer never sees stock
   const refuseEdit = (role: UserRole) => {
     const { tx } = fakeTx([prod(3)]);
     const order = { id: "o-1", lineItems: [line(1)] } as never;
-    return settleStockForEdit(deps, tx, order, [line(1)], [line(9)], { role }, undefined, undefined)
+    return settleStockForEdit(
+      deps,
+      tx,
+      order,
+      [line(1)],
+      [line(9)],
+      { role } as never,
+      undefined,
+      undefined,
+    )
       .then(() => null)
       .catch((e) => e);
   };
@@ -185,10 +193,8 @@ describe("OOS PR2 (R4): the stock refusal is CODED, and a buyer never sees stock
   it("edit path, buyer: code INSUFFICIENT_STOCK, fixed copy, no productId / available / requested", async () => {
     const err = await refuseEdit(UserRole.CUSTOMER);
     expect(body(err)).toEqual({
-      statusCode: 409,
       code: "INSUFFICIENT_STOCK",
       message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
-      error: "Conflict",
     });
   });
 

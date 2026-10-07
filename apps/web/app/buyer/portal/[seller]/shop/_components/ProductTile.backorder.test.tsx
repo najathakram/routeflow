@@ -62,7 +62,7 @@ describe("ProductTile — out of stock + canBackorder", () => {
     expect(screen.getByText("Ships when restocked")).toBeInTheDocument();
     expect(screen.queryByText("Out of stock")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /notify me/i })).not.toBeInTheDocument();
-    const add = screen.getByRole("button", { name: /add/i });
+    const add = screen.getByRole("button", { name: /^add$/i });
     expect(add).toBeEnabled();
     fireEvent.click(add);
     expect(onAdd).toHaveBeenCalledTimes(1);
@@ -74,7 +74,7 @@ describe("ProductTile — out of stock + canBackorder", () => {
       const { onAdd, onToggleStockAlert } = setup(product({ canBackorder }));
       expect(screen.getByText("Out of stock")).toBeInTheDocument();
       expect(screen.queryByText("Ships when restocked")).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^add/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^add$/i })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /notify me/i }));
       expect(onToggleStockAlert).toHaveBeenCalledTimes(1);
       expect(onAdd).not.toHaveBeenCalled();
@@ -85,6 +85,6 @@ describe("ProductTile — out of stock + canBackorder", () => {
     setup(product({ inStock: true, stockStatus: "IN_STOCK", canBackorder: true }));
     expect(screen.getByText("In stock")).toBeInTheDocument();
     expect(screen.queryByText("Ships when restocked")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /add/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^add$/i })).toBeEnabled();
   });
 });
