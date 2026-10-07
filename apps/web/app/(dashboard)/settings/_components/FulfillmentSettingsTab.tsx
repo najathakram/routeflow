@@ -62,6 +62,7 @@ const COPY = {
   saving: "Saving…",
   cancel: "Cancel",
   reviewAgain: "Review Again",
+  reviewOrders: "Review orders",
   loadFailed: "Couldn't load your fulfillment settings.",
   tryAgain: "Try Again",
   readOnly: "Only an admin can change these settings.",
@@ -77,6 +78,8 @@ const COPY = {
 
 const PLAN_LINK = "/settings/billing";
 const COUNTER_LINK = "/orders/counter-sale";
+// The orders list's existing URL filters: carrier orders that have shipped (status "Shipped") and not been delivered.
+const CARRIER_ORDERS_LINK = "/orders?fulfillPath=SHIP&status=OUT_FOR_DELIVERY";
 
 const modeTitle = (m: string) => COPY.modes[m as FulfilmentMode]?.[0] ?? m;
 const onOff = (v: string) => (v === "on" ? "On" : "Off");
@@ -410,10 +413,17 @@ export function FulfillmentSettingsTab() {
               <Button variant="secondary" onClick={() => setReview(null)} disabled={pending}>
                 {COPY.cancel}
               </Button>
-              {err?.kind === "stale" || err?.kind === "carrier" ? (
+              {err?.kind === "stale" ? (
                 <Button onClick={reviewAgain} disabled={previewMut.isPending}>
                   {COPY.reviewAgain}
                 </Button>
+              ) : err?.kind === "carrier" ? (
+                <NextLink
+                  href={CARRIER_ORDERS_LINK}
+                  className="text-sm font-medium text-brand-600 underline underline-offset-2"
+                >
+                  {COPY.reviewOrders}
+                </NextLink>
               ) : err?.kind === "fleet" ? null : (
                 <Button onClick={confirm} disabled={pending}>
                   {pending ? COPY.saving : COPY.confirm}
@@ -429,8 +439,8 @@ export function FulfillmentSettingsTab() {
             {err?.kind === "carrier" && (
               <p role="alert">
                 {err.count === 1
-                  ? "1 order is with the carrier. Try again after it is delivered."
-                  : `${err.count} orders are with the carrier. Try again after they are delivered.`}
+                  ? "1 order is still with the carrier. Try again once it's delivered."
+                  : `${err.count} orders are still with the carrier. Try again once they're delivered.`}
               </p>
             )}
             {err?.kind === "fleet" && (
