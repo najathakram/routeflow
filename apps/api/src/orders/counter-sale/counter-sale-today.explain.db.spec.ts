@@ -11,8 +11,8 @@
  * evidence for a human, not a CI assertion (a small table legitimately gets a seq scan). The reading rule from the
  * brief: if the page query or any summary query exceeds ~150 ms at 5,000 orders, or shows a Seq Scan on "Order",
  * file the follow-up migration `(tenantId, counterSale, createdAt)` as its own PR; this PR adds NO index. The money-in
- * query now filters `InvoicePayment.paidAt` (only the `tenantId` and `invoiceId` indexes help it): read its plan too,
- * and if it is slow file `(tenantId, paidAt)` the same way.
+ * query now filters `InvoicePayment.paidAt`; the `(tenantId, paidAt)` index ships with this PR's migration. The seed
+ * runs ANALYZE on the seeded tables first, otherwise the planner has no statistics and the plans prove nothing.
  *
  * NOT RUN by the authoring lane (no Postgres): the DB lane runs it (`npm run local:test:db`, test tenant only,
  * collected only by jest.db.config.js).
@@ -115,6 +115,9 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
         status: "PAID" as const,
       })),
     });
+    // A fresh seed has no planner statistics (row estimate ~1 -> nested loops, a 72 s "hang" on the Mac mini); the plan is
+    // only evidence once the tables are analyzed, as they are in production.
+    await raw.$executeRawUnsafe('ANALYZE "Order", "Invoice", "InvoicePayment", "Customer"');
   }, 300_000);
 
   afterAll(async () => {
