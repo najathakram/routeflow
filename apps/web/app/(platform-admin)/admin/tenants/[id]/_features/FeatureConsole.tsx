@@ -516,6 +516,7 @@ export function FeatureConsole({
         addonKey={enabling?.addonKey ?? ""}
         addonLabel={enabling?.label ?? ""}
         unmetRequirement={enabling?.unmetRequirement}
+        onCustomise={onCustomise}
         onEnabled={load}
       />
     </div>
