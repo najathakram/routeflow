@@ -618,17 +618,15 @@ export class InvoicesService {
     // participates in the dueDate computation, so it is not a candidate.)
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
-    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this
-    // invoice doesn't already carry an explicit deposit — an explicit caller-supplied
-    // deposit (overrides.depositPercent, e.g. a future "New sale" deposit field)
-    // always wins and is never clobbered. Otherwise falls back to
-    // effectiveDepositPercent (WP-D1: customer override when set, else the
-    // tenant-wide default) — already null-or-positive, so no extra >0 guard is
-    // needed here. The deposit is due immediately (depositDueDate = issueDate); the
-    // remainder still rides the terms-label dueDate resolved above.
-    // computeDepositFields does all the read-time math — nothing derived is stored
-    // here. No effective deposit leaves these keys OUT of extraInvoiceData entirely,
-    // so the create payload is byte-identical to before this change.
+    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this invoice doesn't
+    // already carry an explicit deposit — an explicit caller-supplied deposit
+    // (overrides.depositPercent, e.g. a future "New sale" deposit field) always wins and is never
+    // clobbered. Otherwise falls back to effectiveDepositPercent (WP-D1: customer override when
+    // set, else the tenant-wide default) — already null-or-positive, so no extra >0 guard is needed
+    // here. The deposit is due immediately (depositDueDate = issueDate); the remainder still rides
+    // the terms-label dueDate resolved above. computeDepositFields does all the read-time math —
+    // nothing derived is stored here. No effective deposit leaves these keys OUT of
+    // extraInvoiceData entirely, so the create payload is byte-identical to before this change.
     const depositFields: Record<string, any> =
       overrides?.depositPercent != null
         ? {
