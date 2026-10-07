@@ -2,13 +2,17 @@
  * #2070 / SA-523, real Postgres: two partial invoices racing for the last 96 pieces of a line.
  *
  * T2 (a raw pg connection) holds the OrderItem row FOR UPDATE. Partials A and B both read
- * `remaining = 96` (plain reads, not blocked), both create their invoice inside their transaction,
- * and both then block on the invoicedQty bump, observed as TWO waiters via `pg_blocking_pids` with
- * `pg_stat_clear_snapshot()` per poll. T2 commits without changing anything; A's and B's bumps then
- * run one after the other:
+ * `remaining = 96` (plain reads, not blocked). Since SA-706 each creation takes the ORDER row lock as
+ * its first statement, so they no longer both reach the bump: A takes the Order, creates its invoice
+ * and blocks on T2 at the invoicedQty bump; B is blocked BY A on the Order row (observed via
+ * `pg_blocking_pids` with `pg_stat_clear_snapshot()` per poll: one pair "A blocked by T2, B blocked by
+ * A"; without the Order lock both would wait on T2 and the pair would not exist). T2 commits without
+ * changing anything; A finishes, B then runs on its OWN stale read:
  *   - fixed code (a CAS on the read invoicedQty/qty/status): exactly one 201 and one 409;
  *     invoicedQty = 96; one invoice for the order (the loser's invoice rolled back);
- *   - pre-fix code (an unconditional increment): both succeed; invoicedQty = 192; two invoices.
+ *   - with the CAS replaced by an unconditional increment: both succeed; invoicedQty = 192; two
+ *     invoices (the outcome case goes red). The CAS is ALSO pinned directly, below, by two bumps off
+ *     the same stale read, because the Order lock now serialises the service paths ahead of it.
  * Second case (SA-523, recommended): T2 CANCELs the line while A waits ⇒ A gets a 409 and no
  * invoice exists; pre-fix, A bills a cancelled line.
  * No spy and no symbol from partial-invoice-cas.ts.
@@ -56,6 +60,7 @@ import { AfterCommit } from "../common/after-commit";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 import { Client } from "pg";
+import { bumpInvoicedQtyCas } from "./partial-invoice-cas";
 import { ConflictException } from "@nestjs/common";
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
@@ -259,6 +264,50 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
     }
   }
 
+  /**
+   * SA-706 Order-first serialization: like `holdLine`, but the two creations do NOT both reach the bump. The
+   * first takes the Order row, creates its invoice and blocks on T2 (the OrderItem bump); the second is
+   * blocked BY THE FIRST on the Order row. Waits for exactly that chain (bounded 3 s, inside the 5 s tx
+   * timeout, never a silent poll timeout) and reports it: `chain` = pairs (A blocked by T2, B blocked by A),
+   * `waiting` = backends blocked by T2 (1 when the lock-first order holds; 2 and chain 0 without it).
+   */
+  async function holdLineChain(orderItemId: string, starts: Array<() => Promise<unknown>>) {
+    const t2 = new Client({ connectionString: process.env.DATABASE_URL });
+    await t2.connect();
+    try {
+      await t2.query("BEGIN");
+      await t2.query(`SELECT id FROM "OrderItem" WHERE id = $1 FOR UPDATE`, [orderItemId]);
+      const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const results = starts.map((s) =>
+        s().then(
+          (v) => ({ ok: true as const, v }),
+          (e) => ({ ok: false as const, e }),
+        ),
+      );
+      let chain = 0;
+      for (let i = 0; i < 120 && chain < 1; i++) {
+        const q = await t2.query(
+          `SELECT pg_stat_clear_snapshot(), (SELECT count(*)::int FROM pg_stat_activity b
+             JOIN pg_stat_activity a ON a.pid = ANY(pg_blocking_pids(b.pid))
+             WHERE $1 = ANY(pg_blocking_pids(a.pid))) AS n`,
+          [pid],
+        );
+        chain = q.rows[0].n;
+        if (chain < 1) await new Promise((x) => setTimeout(x, 25));
+      }
+      const waiting = (
+        await t2.query(
+          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+          [pid],
+        )
+      ).rows[0].n;
+      await t2.query("COMMIT");
+      return { waiting, chain, results: await Promise.all(results) };
+    } finally {
+      await t2.end().catch(() => undefined);
+    }
+  }
+
   const partial = (s: { tenantId: string; orderId: string; orderItemId: string }) => () =>
     tenantCtx.run(s.tenantId, () =>
       invoicesService.createPartialFromOrder(s.orderId, {
@@ -266,10 +315,25 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
       } as any),
     );
 
+  it("SA-706 Order-first serialization: the second partial is blocked BY THE FIRST on the Order row, not by T2", async () => {
+    const s = await seedLine();
+    const { waiting, chain, results } = await holdLineChain(s.orderItemId, [
+      partial(s),
+      partial(s),
+    ]);
+    // A blocked by T2 and B blocked by A: one pair. Without the Order lock: waiting 2, chain 0.
+    expect(chain).toBe(1);
+    expect(waiting).toBe(1); // only A reached the bump
+    // Neither creation was a deadlock victim (a bare 40P01, never an HttpException).
+    for (const r of results) {
+      if (!r.ok) expect(String((r.e as Error)?.message)).not.toMatch(/40P01|deadlock detected/i);
+    }
+  });
+
   it("two partials for the last 96 pieces: exactly one 201 + one 409; invoicedQty 96; one invoice", async () => {
     const s = await seedLine();
-    const { waiting, results } = await holdLine(s.orderItemId, [partial(s), partial(s)]);
-    expect(waiting).toBe(2); // both really reached the bump before either committed
+    const { chain, results } = await holdLineChain(s.orderItemId, [partial(s), partial(s)]);
+    expect(chain).toBe(1); // the scenario really ran (A on T2, B behind A)
 
     const ok = results.filter((r) => r.ok);
     const refused = results.filter((r) => !r.ok) as Array<{ ok: false; e: any }>;
@@ -278,8 +342,27 @@ describeDb("partial invoices: concurrent partials never over-bill a line (#2070,
     expect(refused[0].e).toBeInstanceOf(ConflictException);
 
     const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
-    expect(Number(line.invoicedQty)).toBe(96); // pre-fix: 192
-    expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(1); // pre-fix: 2
+    expect(Number(line.invoicedQty)).toBe(96); // CAS replaced by an increment: 192
+    expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(1); // ... 2
+  });
+
+  it("the invoicedQty CAS itself (SA-523): two bumps off the SAME stale read - the second is refused 409, invoicedQty stays 96", async () => {
+    const s = await seedLine();
+    const stale = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
+    const bump = () =>
+      tenantCtx.run(s.tenantId, () =>
+        prisma.tenantTransaction((tx: any) =>
+          bumpInvoicedQtyCas(
+            tx,
+            [{ orderItemId: s.orderItemId, qty: 96 }],
+            new Map([[s.orderItemId, stale]]),
+          ),
+        ),
+      );
+    await bump();
+    await expect(bump()).rejects.toBeInstanceOf(ConflictException);
+    const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
+    expect(Number(line.invoicedQty)).toBe(96); // an unconditional increment: 192, no refusal
   });
 
   it("the line is CANCELLED while the partial waits: 409, nothing billed, no invoice", async () => {
