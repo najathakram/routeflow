@@ -25,6 +25,8 @@ export interface CounterShipLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** POS-3 per-line note; rides onto the draft line's `note` (trimmed, omitted when empty). */
+  note?: string;
 }
 
 export interface CounterShipCustomer {
@@ -43,6 +45,7 @@ function freshTempId(productId: string): string {
 }
 
 function toDraftLine(l: CounterShipLine): DraftLineItem {
+  const note = l.note?.trim();
   const priceType = l.priceType ?? "STANDARD";
   return {
     tempId: freshTempId(l.productId),
@@ -58,6 +61,7 @@ function toDraftLine(l: CounterShipLine): DraftLineItem {
     ...(l.boxes != null ? { boxes: l.boxes } : {}),
     ...(l.pieces != null ? { pieces: l.pieces } : {}),
     ...(l.category ? { category: l.category } : {}),
+    ...(note ? { note } : {}),
   };
 }
 

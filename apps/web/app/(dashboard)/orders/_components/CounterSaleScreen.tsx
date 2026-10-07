@@ -572,11 +572,16 @@ export function CounterSaleScreen() {
         </p>
         <ul className="divide-y text-sm">
           {lines.map((l) => (
-            <li key={l.tempId} className="flex justify-between py-1">
+            <li key={l.tempId} className="py-1">
               <span>
                 {l.name} {isBoxedLine(l) ? "× " : ""}
                 {lineQtyLabel(l)}
               </span>
+              {l.note?.trim() ? (
+                <p className="break-words text-xs text-navy/70" data-testid="receipt-line-note">
+                  {l.note.trim()}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>

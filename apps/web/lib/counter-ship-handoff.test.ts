@@ -136,6 +136,26 @@ describe("counterCartToDraftPayload", () => {
   });
 });
 
+describe("POS-3 line note on the ship hand-off", () => {
+  it("carries a line note onto the draft line, trimmed; omitted when empty or absent", () => {
+    const noted = { ...CASE_LINE, note: "  no ice  " };
+    const blank = { ...PLAIN_LINE, note: "   " };
+    const p = counterCartToDraftPayload(
+      [noted, blank, { ...PLAIN_LINE, productId: "p-x" }],
+      CUSTOMER,
+    );
+    expect(p.lineItems[0].note).toBe("no ice");
+    expect(p.lineItems[1]).not.toHaveProperty("note");
+    expect(p.lineItems[2]).not.toHaveProperty("note");
+  });
+
+  it("keeps the no cost / margin pin green with a note on the line", () => {
+    const dto = counterShipDraftInput([{ ...CASE_LINE, note: "fragile" }], CUSTOMER);
+    expect(JSON.stringify(dto)).toContain("fragile");
+    expect(JSON.stringify(dto)).not.toMatch(/cost|margin/i);
+  });
+});
+
 describe("the parked draft carries no cost or margin data", () => {
   const keys = (v: unknown, out: string[] = []): string[] => {
     if (Array.isArray(v)) v.forEach((x) => keys(x, out));

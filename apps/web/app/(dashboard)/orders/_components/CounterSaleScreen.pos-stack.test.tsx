@@ -202,4 +202,18 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     await waitFor(() => expect(total()).toHaveTextContent("$5.00"));
     expect(screen.getByTestId("line-note")).toHaveTextContent("no ice");
   });
+
+  it("the receipt shows a line's note as muted text under the line", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await scan("WATER");
+    click("Add a note to Cola");
+    fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: " no ice " } });
+    click("Exact");
+    fireEvent.click(completeBtn());
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    const notes = screen.getAllByTestId("receipt-line-note");
+    expect(notes).toHaveLength(1); // only the noted line
+    expect(notes[0]).toHaveTextContent("no ice");
+  });
 });
