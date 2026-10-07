@@ -25,6 +25,7 @@ import {
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
+  COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
@@ -792,6 +793,7 @@ export function CounterSaleScreen() {
         >
           <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
           {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
+          {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
           <div className="flex flex-wrap items-center gap-3">
             {heldCorrupt ? (
               <Button variant="secondary" onClick={resetSale}>
