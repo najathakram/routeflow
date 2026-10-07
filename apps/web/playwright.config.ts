@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "path";
 import { requireBaseUrl } from "./lib/e2e-setup-guard";
+import { isLocalOnlyLane } from "./lib/local-fulfilment-guard";
 
 /**
  * Playwright configuration for full Chrome UI coverage against Railway.
@@ -492,6 +493,14 @@ export default defineConfig({
     {
       name: "shell-skip-link-motion",
       testMatch: /66-shell-skip-link-motion\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B1219: a single fuzzy scan match asks "Did you mean ...?" in Create Order (spec 70).
+    {
+      name: "scan-did-you-mean",
+      testMatch: /70-scan-did-you-mean\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -990,5 +999,31 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
+    // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
+    // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
+    // and this is not GitHub Actions (the spec also refuses on its own: lib/local-fulfilment-guard.ts).
+    ...(isLocalOnlyLane(process.env)
+      ? [
+          {
+            name: "counter-ship-handoff",
+            testMatch: /71-counter-ship-handoff\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "counter-pos-stack",
+            testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+        ]
+      : []),
   ],
 });

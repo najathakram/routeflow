@@ -204,9 +204,19 @@ const bottleLevel = {
 const boxed = {
   notFound: false,
   archived: false,
-  // a multi-match / shared-code scan is a picker-style pick: it STARTS PENDING on the default unit (SA-626a)
-  ambiguous: true,
-  product: { id: "prod-1", name: "Widget", pricePerUnit: "24", unit: "Case", unitsPerBox: 12 },
+  // a SHARED-code scan (box + unit rows, here codes 110-112 on a 12-pack) STARTS PENDING on the default unit (SA-626a/#2784);
+  // a multi-match no longer does - B1219 sends it to the picker instead of adding the first row
+  product: {
+    id: "prod-1",
+    name: "Widget",
+    pricePerUnit: "24",
+    unit: "Case",
+    unitsPerBox: 12,
+    barcodes: ["110", "111", "112"].flatMap((code) => [
+      { code, level: "BOX" },
+      { code, level: "UNIT" },
+    ]),
+  },
 };
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
 
@@ -372,7 +382,7 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
 
   const scanOther = async () => {
     // a plain (NOT shared-code, not ambiguous) scan of the same product: it maps to a DIFFERENT level than the default
-    mockResolveProductByCode.mockResolvedValue({ ...boxed, ambiguous: false });
+    mockResolveProductByCode.mockResolvedValue({ ...boxed });
     await act(async () => {
       capturedOnScan!("222");
     });

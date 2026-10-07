@@ -22,6 +22,7 @@ import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.inte
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
+import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
 import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -103,10 +104,8 @@ const NONCE_TTL_SECS = 600; // 10 minutes
 
 // B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
 // other field) to attach their Google identity to someone else's account. The key is
-// HKDF-derived from JWT_SECRET (same isolation pattern as STORAGE_URL_SIGNING_SECRET)
-// — no new secret to provision.
-const OAUTH_STATE_HKDF_INFO = "routeflow-oauth-state-v1";
-const OAUTH_STATE_KEY_LEN = 32;
+// derived from JWT_SECRET by the shared helper (common/derived-jwt-key.ts) — no new secret to
+// provision.
 
 @Injectable()
 export class GoogleOAuthService {
@@ -127,20 +126,11 @@ export class GoogleOAuthService {
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
 
-    const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
-    if (!jwtSecret) {
-      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
-      // publicly-known key — fail closed instead of silently signing state with it.
-      throw new Error("JWT_SECRET is required to sign OAuth state");
-    }
-    this.stateSigningKey = Buffer.from(
-      crypto.hkdfSync(
-        "sha256",
-        jwtSecret,
-        Buffer.alloc(0),
-        OAUTH_STATE_HKDF_INFO,
-        OAUTH_STATE_KEY_LEN,
-      ),
+    // B349 round 1: a missing or short secret fails closed (the helper throws) rather than
+    // deriving the state-signing key from a guessable value.
+    this.stateSigningKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.oauthState,
+      configService.get<{ secret: string }>("jwt")?.secret ?? "",
     );
 
     if (!clientId || !clientSecret) {

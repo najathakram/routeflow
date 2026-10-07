@@ -1,6 +1,7 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { handleMutationError } from "@/lib/mutation-error-toast";
 import { PickupCompleteDialog } from "./PickupCompleteDialog";
 import { PickupHandOverDialog } from "./PickupHandOver";
 
@@ -10,6 +11,11 @@ import { PickupHandOverDialog } from "./PickupHandOver";
  * rules are the till's (validatePayment, change, check number); a payment that was not recorded is
  * retried under the SAME key.
  */
+let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useOptionalAuth: () => ({ user: authUser }),
+}));
 const get = jest.fn();
 const post = jest.fn();
 jest.mock("@/lib/api-client", () => ({
@@ -62,6 +68,8 @@ const confirm = () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.sessionStorage.clear();
+  authUser = { id: "u-a", tenantSlug: "acme" };
   post.mockResolvedValue(result());
 });
 
@@ -421,5 +429,126 @@ describe("PickupHandOverDialog — the held key survives close and reopen", () =
     await send();
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+});
+
+describe("PickupHandOverDialog — the held key survives a reload (sessionStorage)", () => {
+  const order = { id: "o1", orderNumber: "ORD-1", total: 25, invoices: [], customer: {} } as never;
+  const fresh = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return (
+      <QueryClientProvider client={qc}>
+        <PickupHandOverDialog order={order} open onClose={() => undefined} />
+      </QueryClientProvider>
+    );
+  };
+  const send = async () => {
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+  };
+  const keyOf = (i: number) => post.mock.calls[i][2].headers["Idempotency-Key"];
+  const stored = () =>
+    Object.keys(window.sessionStorage).filter((k) => k.startsWith("rf.pickup.heldKey:"));
+
+  it("unknown outcome, remount (reload): the retry carries the SAME key", async () => {
+    post.mockRejectedValueOnce(new Error("Network Error"));
+    const first = render(fresh());
+    await send();
+    await screen.findByRole("alert");
+    expect(stored()).toEqual(["rf.pickup.heldKey:acme:u-a:o1"]);
+    first.unmount();
+    render(fresh());
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("a known outcome clears the stored key", async () => {
+    post.mockRejectedValueOnce(new Error("Network Error"));
+    const first = render(fresh());
+    await send();
+    await screen.findByRole("alert");
+    expect(stored()).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    confirm();
+    await screen.findByRole("button", { name: "Done" });
+    expect(stored()).toHaveLength(0);
+    first.unmount();
+    render(fresh());
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(3));
+    expect(keyOf(2)).not.toBe(keyOf(0));
+  });
+
+  it("a garbage stored value is ignored (a new key) and storage failures never throw", async () => {
+    window.sessionStorage.setItem("rf.pickup.heldKey:acme:u-a:o1", "{not json");
+    render(fresh());
+    await send();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(keyOf(0)).toEqual(expect.any(String));
+  });
+
+  it("with no known tenant or user nothing is stored", async () => {
+    authUser = { id: "u-a", tenantSlug: null };
+    post.mockRejectedValueOnce(new Error("Network Error"));
+    render(fresh());
+    await send();
+    await screen.findByRole("alert");
+    expect(stored()).toHaveLength(0);
+  });
+});
+
+describe("PickupCompleteDialog — the global error toast", () => {
+  const toast = jest.fn();
+  const mountWithToast = () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+      mutationCache: new MutationCache({
+        onError: (error, _v, _c, mutation) =>
+          handleMutationError(error, mutation, toast, { push: jest.fn() }),
+      }),
+    });
+    return render(
+      <QueryClientProvider client={qc}>
+        <PickupCompleteDialog
+          open
+          onClose={() => undefined}
+          orderId="o1"
+          total={25}
+          invoices={[]}
+          isWalkIn={false}
+        />
+      </QueryClientProvider>,
+    );
+  };
+
+  it.each([
+    "PICKUP_PAYMENT_REQUIRED",
+    "COUNTER_TENDER_SHORT",
+    "PICKUP_KEY_CONFLICT",
+    "PICKUP_INVOICE_MISSING",
+    "WALK_IN_OPEN_CREDIT",
+    "WALK_IN_NO_ACCOUNT",
+    "COUNTER_CHECK_NUMBER_REQUIRED",
+    "PICKUP_NOT_READY",
+    "PICKUP_ONLY",
+  ])("%s: the dialog's own copy shows and NO global toast fires", async (code) => {
+    toast.mockClear();
+    post.mockRejectedValueOnce({ response: { status: 409, data: { code } } });
+    mountWithToast();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    await screen.findByRole("alert");
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("an unhandled 500 keeps the existing global toast", async () => {
+    toast.mockClear();
+    post.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    mountWithToast();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    await screen.findByRole("alert");
+    expect(toast).toHaveBeenCalledTimes(1);
   });
 });

@@ -30,6 +30,8 @@ export function useCustomers(search?: string) {
 
 export interface CustomerDetail {
   id: string;
+  /** The tenant's system walk-in customer (counter sales); it cannot be deleted. */
+  isWalkIn?: boolean | null;
   businessName: string;
   contactName: string;
   phone?: string;

@@ -80,7 +80,11 @@ describe("StripeConnectService", () => {
         { provide: CONNECT_OAUTH_PROVIDER, useValue: mockOauth },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue(STRIPE_CONFIG) },
+          useValue: {
+            get: jest.fn((k: string) =>
+              k === "jwt" ? { secret: "stripe-connect-spec-secret-0123456789" } : STRIPE_CONFIG,
+            ),
+          },
         },
         { provide: JwtService, useValue: mockJwt },
       ],
@@ -213,7 +217,13 @@ describe("StripeConnectService", () => {
   // ─── completeOAuth — jti single-use + curated error codes (invariant 12) ──
 
   describe("completeOAuth", () => {
-    const statePayload = { purpose: "stripe-connect", tid: "tenant-1", by: "alice", jti: "jti-1" };
+    const statePayload = {
+      purpose: "stripe-connect",
+      tid: "tenant-1",
+      by: "alice",
+      jti: "jti-1",
+      aud: "stripe-connect-state",
+    };
 
     it("consumes the jti once — a replay of the same state finds nothing to consume and is rejected", async () => {
       mockJwt.verifyAsync.mockResolvedValue(statePayload);

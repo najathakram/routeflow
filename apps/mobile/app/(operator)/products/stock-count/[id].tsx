@@ -20,6 +20,9 @@ import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { archivedMessage, resolveProductByCode } from "../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../lib/use-scan-match-picker";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
@@ -82,6 +85,8 @@ export default function StockCountSessionScreen() {
   modeRef.current = defaultMode;
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [createSheet, setCreateSheet] = useState<{ code?: string } | null>(null);
@@ -278,6 +283,20 @@ export default function StockCountSessionScreen() {
         },
       };
     }
+    const decision = decideScanResult(res, "stock");
+    if (decision.kind !== "add") {
+      // B1220: a lone fuzzy match or 2+ matches write nothing until the counter confirms / picks.
+      const qty = qtyRef.current;
+      if (
+        runScanDecision(decision, (p) => addCountedProduct(p as any, qty), confirm, {
+          pick: matchPicker.open,
+          onPromptChange: setScanPromptOpen,
+        })
+      ) {
+        promptShownRef.current = true;
+        return { feedback: { kind: "error", text: promptText(decision) } };
+      }
+    }
     const product = res.product as any;
     const existing = rowsRef.current.find((r) => r.productId === product.id);
     const newTotal = (existing?.counted ?? 0) + qtyRef.current;
@@ -285,9 +304,13 @@ export default function StockCountSessionScreen() {
     return { feedback: { kind: "added", text: `${product.name} — now ${newTotal}` } };
   };
 
+  const promptShownRef = useRef(false);
   const wrappedHandleScanned = async (code: string): Promise<ScanOutcome> => {
     const outcome = await handleScanned(code);
-    scanHaptic(outcome?.feedback?.kind === "error" ? "error" : "added");
+    const prompted = promptShownRef.current;
+    promptShownRef.current = false;
+    // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+    scanHaptic(prompted ? "info" : outcome?.feedback?.kind === "error" ? "error" : "added");
     return outcome;
   };
 
@@ -565,8 +588,10 @@ export default function StockCountSessionScreen() {
       <BarcodeFab
         continuous
         onScanned={wrappedHandleScanned}
+        paused={scanPromptOpen}
         hidden={pickerOpen || reviewOpen || !!createSheet || !!attachCode}
       />
+      <ScanMatchPickerSheet {...matchPicker.props} />
 
       <ProductPickerSheet
         visible={pickerOpen}

@@ -3,6 +3,7 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../../config/configuration";
+import { BUYER_ACCESS_AUDIENCE, hasForeignAudience } from "../../auth/session-token";
 import { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
 
 @Injectable()
@@ -18,6 +19,9 @@ export class BuyerJwtStrategy extends PassportStrategy(Strategy, "buyer-jwt") {
 
   async validate(payload: BuyerJwtPayload) {
     if (!payload?.sub || payload.type !== "BUYER") {
+      throw new UnauthorizedException("Invalid buyer token");
+    }
+    if (hasForeignAudience(payload, BUYER_ACCESS_AUDIENCE)) {
       throw new UnauthorizedException("Invalid buyer token");
     }
     return {
