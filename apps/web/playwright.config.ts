@@ -188,6 +188,18 @@ export default defineConfig({
       },
     },
 
+    // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
+    // /dashboard layout shift with every read delayed 2 s; read-only.
+    {
+      name: "dashboard-cls",
+      testMatch: /69-dashboard-cls\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── CSV export then and there ──────────────────────────────────────────────
     // Products export popover, per-card analytics CSVs, product insights export;
     // every endpoint mocked. Self-skips on builds predating each control.
