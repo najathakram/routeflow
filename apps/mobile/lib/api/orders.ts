@@ -3,6 +3,10 @@ import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
 import type {
   ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
   CancelImpact,
   CustomerPriceHistory,
   LineComponentView,
@@ -675,5 +679,26 @@ export function useOrderTracking(orderId: string, orderStatus?: string) {
     enabled: !!orderId && orderStatus === "OUT_FOR_DELIVERY",
     refetchInterval: 30_000,
     staleTime: 20_000,
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) — mirrors web's hooks. Online-only (not offline-queued). ───
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => invalidateOrderCaches(qc),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order; `url` is null when nothing was includable. */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult, Error, string[]>({
+    mutationFn: (orderIds) =>
+      apiClient
+        .post("/orders/packing-slips", { orderIds } satisfies PackingSlipsRequest)
+        .then((r) => r.data),
   });
 }
