@@ -289,6 +289,66 @@ export function writeAutoPrint(on: boolean): void {
   }
 }
 
+// ─── Pickup complete (order ahead, "Picked up") ───────────────────────────────────────────────────────────
+
+/**
+ * What is left to collect at the hand-over, BEFORE the call: the sum of the server's per-invoice `balanceDue` over the
+ * order's live (not VOID / WRITTEN_OFF) invoices; with no invoice yet, the order total. The order payload carries no paid figure, so
+ * the dialog reads each invoice's detail for `balanceDue`. Cents via `roundMoney`; the server still judges the real
+ * balance (it never over-collects), this only decides whether to ask for a tender.
+ */
+/** Invoices that owe nothing and are never collected on: VOID and WRITTEN_OFF. */
+export const PICKUP_DEAD_INVOICE: ReadonlySet<string> = new Set(["VOID", "WRITTEN_OFF"]);
+
+export function pickupBalanceDue(
+  orderTotal: number,
+  invoices: ReadonlyArray<{ status: string; total: number; balanceDue?: number }>,
+): number {
+  const live = invoices.filter((inv) => !PICKUP_DEAD_INVOICE.has(inv.status));
+  if (live.length === 0) return roundMoney(orderTotal);
+  return roundMoney(live.reduce((sum, inv) => sum + (inv.balanceDue ?? inv.total), 0));
+}
+
+export const PICKUP_NOT_READY_COPY =
+  "This order isn't ready for pickup yet. Confirm it and mark it ready first.";
+export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
+export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
+
+export const PICKUP_PAYMENT_REQUIRED_COPY =
+  "A balance is due on this order now. Take payment to finish.";
+export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
+export const PICKUP_KEY_CONFLICT_COPY = "Already picked up. Record any payment on the invoice.";
+export const PICKUP_INVOICE_MISSING_COPY =
+  "The order may be picked up, but its invoice isn't ready yet. Retry to finish.";
+export const PICKUP_WALK_IN_CREDIT_COPY =
+  "This walk-in has open credit. Resolve it on the customer before handing over.";
+
+/** The API error code of a failed pickup-complete call, if any. */
+export function pickupErrorCode(err: unknown): string | undefined {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Fixed copy by error code; the server's own message is never shown. */
+export function pickupCompleteErrorCopy(err: unknown): string {
+  const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
+    ?.response;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
+    return PICKUP_PAYMENT_REQUIRED_COPY;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT) return PICKUP_TENDER_SHORT_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_KEY_CONFLICT) return PICKUP_KEY_CONFLICT_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_INVOICE_MISSING)
+    return PICKUP_INVOICE_MISSING_COPY;
+  if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
+  if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
+  if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
+    return PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT;
+  if (res?.data?.code === API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED)
+    return PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED;
+  return PICKUP_GENERIC_COPY;
+}
+
 /**
  * The ONE held attempt (Idempotency-Key + body + the cart the clerk rang), kept in sessionStorage while its outcome is
  * UNKNOWN so leaving the screen and coming back restores the locked sale with the same key. Per tab; every access is guarded.
