@@ -106,4 +106,81 @@ describe("RfInvoiceBuilder", () => {
     await builder.build("tenant-acme", "MONTHLY");
     expect(Object.keys(prisma)).toEqual(["tenantAddon"]);
   });
+  describe("MUST-2: the period window drives the month multiplier", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const START = new Date("2026-10-12T00:00:00.000Z");
+    const win = (days: number) => ({
+      periodStart: START,
+      periodEnd: new Date(START.getTime() + days * DAY),
+    });
+    const run = async (days: number, cycle: "MONTHLY" | "ANNUAL" = "MONTHLY") => {
+      const { builder } = make({ addons: [addon({ priceSnapshot: 19.99, quantity: 2 })] });
+      const r = await builder.build("tenant-acme", cycle, win(days));
+      if (!r.ok) throw new Error("expected a draft");
+      return r;
+    };
+
+    it("a 30-day window is 1x", async () => {
+      const r = await run(30);
+      expect(r.lines.map((l) => l.amount)).toEqual([149, 39.98]);
+      expect(r.total).toBe(188.98);
+      expect(r.needsReview).toBe(false);
+      expect(r.irregularPeriod).toBe(false);
+    });
+
+    it("pin: BLD-1's exact fixture (19.995 x 2) through a 30-day window equals its no-window result", async () => {
+      const { builder } = make({ addons: [addon({ priceSnapshot: 19.995, quantity: 2 })] });
+      const plain = await builder.build("tenant-acme", "MONTHLY");
+      const windowed = await builder.build("tenant-acme", "MONTHLY", win(30));
+      if (!plain.ok || !windowed.ok) throw new Error("expected drafts");
+      // cyclePrice rounds the unit (19.995 -> 20.00) BEFORE x qty x months on both paths.
+      expect(windowed.lines.map((l) => l.amount)).toEqual([149, 40]);
+      expect(windowed.total).toBe(189);
+      expect(windowed.lines).toEqual(plain.lines);
+      expect(windowed.total).toBe(plain.total);
+    });
+
+    it("a 90-day (quarterly) window is 3x, rounded per line", async () => {
+      const r = await run(90);
+      expect(r.lines.map((l) => l.amount)).toEqual([447, 119.94]);
+      expect(r.lines[0]).toMatchObject({ quantity: 3, unitAmount: 149 });
+      expect(r.lines[1]).toMatchObject({ quantity: 6, unitAmount: 19.99 });
+      expect(r.total).toBe(566.94);
+      expect(r.needsReview).toBe(false);
+    });
+
+    it("a 180-day window is 6x", async () => {
+      const r = await run(180);
+      expect(r.lines.map((l) => l.amount)).toEqual([894, 239.88]);
+      expect(r.total).toBe(1133.88);
+      expect(r.needsReview).toBe(false);
+    });
+
+    it("a 45-day window is not a whole number of months: still issued, needsReview + irregular", async () => {
+      const r = await run(45);
+      expect(r.needsReview).toBe(true);
+      expect(r.irregularPeriod).toBe(true);
+      expect(r.lines[0].amount).toBe(149); // periodMonths rounds 1.48 to 1; never guessed higher
+    });
+
+    it("an ANNUAL window is not multiplied; 365 and 366 days are regular, 400 days needsReview", async () => {
+      for (const d of [365, 366]) {
+        const r = await run(d, "ANNUAL");
+        expect(r.lines[0].amount).toBe(1490);
+        expect(r.needsReview).toBe(false);
+        expect(r.irregularPeriod).toBe(false);
+      }
+      const odd = await run(400, "ANNUAL");
+      expect(odd.lines[0].amount).toBe(1490);
+      expect(odd.needsReview).toBe(true);
+      expect(odd.irregularPeriod).toBe(true);
+    });
+
+    it("no window (legacy callers) is 1x and regular", async () => {
+      const { builder } = make();
+      const r = await builder.build("tenant-acme", "MONTHLY");
+      if (!r.ok) throw new Error("expected a draft");
+      expect(r.irregularPeriod).toBe(false);
+    });
+  });
 });

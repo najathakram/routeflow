@@ -204,7 +204,7 @@ export class RfInvoiceIssuerService {
     });
     if (already) return { status: "exists" };
 
-    const draft = await this.builder.build(sub.tenantId, sub.cycle);
+    const draft = await this.builder.build(sub.tenantId, sub.cycle, window);
     if (!draft.ok) {
       await this.raiseOnce(
         sub.tenantId,
@@ -213,6 +213,15 @@ export class RfInvoiceIssuerService {
         `No RouteFlow invoice was issued for the period starting ${periodKey.slice(0, 10)}: the tenant's price cannot be resolved. ${draft.message}`,
       );
       return { status: "no_price" };
+    }
+
+    if (draft.irregularPeriod) {
+      await this.raiseOnce(
+        sub.tenantId,
+        RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
+        periodKey,
+        `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
+      );
     }
 
     try {
