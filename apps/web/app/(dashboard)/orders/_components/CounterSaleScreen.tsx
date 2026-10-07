@@ -50,6 +50,7 @@ import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterReturnAction } from "./CounterReturnAction";
 
 interface PickedCustomer {
   id: string;
@@ -493,6 +494,7 @@ export function CounterSaleScreen() {
         />
         <div className="flex flex-wrap gap-2 print:hidden">
           <Button onClick={() => window.print()}>Print</Button>
+          <CounterReturnAction orderId={receipt.orderId} />
           <Button variant="secondary" onClick={resetSale}>
             New sale
           </Button>

@@ -93,6 +93,18 @@ export interface CaptureInlineReturnRequest {
   reason?: ReturnReason;
   notes?: string;
   photoUrls?: string[];
+  /** POS-4b: what the customer gets back. Omitted = STORE_CREDIT (today's behaviour). REFUND mints no credit note;
+   *  the client then POSTs /returns/:id/refund. */
+  resolution?: InlineReturnResolution;
+}
+
+export type InlineReturnResolution = "STORE_CREDIT" | "REFUND";
+export type InlineReturnRefundTender = "CASH" | "CARD" | "CHECK";
+
+/** POST /returns/:id/refund body (POS-4b). 409 REFUND_AMOUNT_CHANGED / RETURN_ALREADY_RESOLVED, 403. */
+export interface RefundInlineReturnRequest {
+  tender: InlineReturnRefundTender;
+  expectedAmount: number;
 }
 
 // ─── Request: inlineReturn embedded on order create/edit (#2406) ───────────────
@@ -160,6 +172,16 @@ export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown {
   /** Per-productId sub-breakdown — same shape as the top-level totals, scoped to one
    *  requested item. */
   productBreakdown: Record<string, InlineReturnQuoteBreakdown>;
+}
+
+/** POS-4b: refund eligibility the quote will carry once the API ships it. Kept OUT of
+ *  `InlineReturnQuoteResponse` (pinned to the engine's real shape by the API parity spec) until then;
+ *  web reads it as `InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>`. */
+export interface InlineReturnRefundEligibility {
+  canRefund: boolean;
+  paidInFull: boolean;
+  paidMethods: InlineReturnRefundTender[];
+  customerIsWalkIn: boolean;
 }
 
 // ─── Response: what POST /returns/inline/capture (and approve/reject/cancel) return ────
