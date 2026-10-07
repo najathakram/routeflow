@@ -105,7 +105,11 @@ export function createWorld(opts: WorldOptions = {}) {
     writes: [] as string[],
   };
 
-  function makeDelegates(inTx: boolean) {
+  // ONE set of delegates serves both the bare client and the transaction client, so a spec can
+  // assert on / reject a call whichever way the service reaches it; only the event log knows
+  // whether a transaction is open.
+  let inTx = false;
+  function makeDelegates() {
     const log = (e: string) => {
       if (inTx) lockState.events.push(e);
     };
@@ -192,7 +196,7 @@ export function createWorld(opts: WorldOptions = {}) {
     };
   }
 
-  const base = makeDelegates(false);
+  const base = makeDelegates();
   const prisma: any = {
     ...base,
     getTenantId: jest.fn(() => tenantId),
@@ -203,11 +207,12 @@ export function createWorld(opts: WorldOptions = {}) {
     }),
     tenantTransaction: jest.fn(async (fn: (tx: any) => Promise<unknown>) => {
       calls.txOpened += 1;
+      inTx = true;
       lockState.events.push("tx:open");
       const rowsBefore = new Map([...state.rows].map(([k, v]) => [k, { ...v }]));
       const auditsBefore = [...state.audits];
       try {
-        const out = await fn(makeDelegates(true));
+        const out = await fn(base);
         lockState.events.push("tx:commit");
         return out;
       } catch (e) {
@@ -215,6 +220,8 @@ export function createWorld(opts: WorldOptions = {}) {
         state.audits = auditsBefore;
         lockState.events.push("tx:rollback");
         throw e;
+      } finally {
+        inTx = false;
       }
     }),
   };

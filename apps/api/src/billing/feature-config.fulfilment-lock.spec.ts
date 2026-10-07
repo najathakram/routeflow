@@ -68,6 +68,7 @@ describe("set() / clear() take the lock for the two fulfilment keys only", () =>
       expect(lockState.held.has(`fulfilment-settings:${TENANT_ID}`)).toBe(true);
     });
     await w.featureConfig.set(TENANT_ID, "fulfilment_model", "ship", "console", "sa-1");
+    expect(lockState.held.size).toBe(0); // and the lock is released afterwards
     expect.assertions(3);
   });
 
