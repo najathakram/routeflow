@@ -465,6 +465,7 @@ export class AuthService {
     } catch {
       // Links issued before per-purpose keys were signed with the session secret and carry no
       // audience; they stay valid for their own 24h and nothing else is accepted that way.
+      // remove in PR-4a (token audience required), added 2026-10-07
       try {
         payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
         if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");

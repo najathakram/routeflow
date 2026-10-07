@@ -156,6 +156,14 @@ describe("email-verify token keys and audience", () => {
     );
   });
 
+  it("refuses a legacy raw-secret link for an already-ACTIVE user (eligibility still runs)", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ ...user, status: "ACTIVE" });
+    await expect(verify(jwt.sign(claims, { expiresIn: "24h" }))).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
   it("refuses a legacy-shaped raw-secret token whose type is not email_verify", async () => {
     await refused(jwt.sign({ ...claims, type: "other" }, { expiresIn: "24h" }));
   });

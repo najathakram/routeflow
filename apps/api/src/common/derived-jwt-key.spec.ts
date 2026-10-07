@@ -40,6 +40,11 @@ describe("derivedJwtKey", () => {
     ).toBe(false);
   });
 
+  it("accepts a 32-character secret and refuses a 31-character one", () => {
+    expect(derivedJwtKey("email-verify-v1", "a".repeat(32))).toHaveLength(32);
+    expect(() => derivedJwtKey("email-verify-v1", "a".repeat(31))).toThrow(/JWT_SECRET/);
+  });
+
   it("freezes the label set", () => {
     expect(DERIVED_JWT_LABELS).toEqual({
       oauthState: "routeflow-oauth-state-v1",
