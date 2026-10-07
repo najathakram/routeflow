@@ -31,3 +31,21 @@ export function assertReplaySameCart(
   );
   if (incoming !== norm(live, true)) throw cartMismatchConflict(existing.id);
 }
+
+/**
+ * Is this P2002 the (tenantId, idempotencyKey) unique index? Prisma reports the violated columns in
+ * `meta.target` on the native engine, but with the pg DRIVER ADAPTER (what runs here) `meta.target` is
+ * absent and the index name sits in `meta.driverAdapterError.cause.constraint.index` - matching only
+ * `target` made the race loser's P2002 escape create() as a raw 500 instead of a replay.
+ */
+export function isIdempotencyKeyViolation(e: unknown): boolean {
+  const meta = (e as { meta?: Record<string, any> } | null)?.meta;
+  const hay = [
+    meta?.target,
+    meta?.driverAdapterError?.cause?.constraint?.index,
+    meta?.driverAdapterError?.cause?.originalMessage,
+  ]
+    .flat()
+    .map((x) => String(x ?? "").toLowerCase());
+  return hay.some((h) => h.includes("idempotencykey"));
+}

@@ -225,8 +225,21 @@ describe("CreateOrderModal - one order per attempt (BUG-A)", () => {
     await flush();
     expect(orderPosts()).toHaveLength(1);
     expect(keyOf(0)).toEqual(expect.any(String));
-    expect(keyOf(0).length).toBeGreaterThan(8);
+    expect(keyOf(0)).toMatch(/^[\x21-\x7e]{1,128}$/); // the server's header rule: 1-128 printable, no spaces
     expect(createBtn()).toBeDisabled();
+  });
+
+  it("a double Enter in the form sends at most ONE POST /orders (no regression)", async () => {
+    post.mockImplementation(() => new Promise(() => {}));
+    await openWithLine();
+    const notes = screen.getByPlaceholderText("Special instructions, delivery notes…");
+    fireEvent.keyDown(notes, { key: "Enter" });
+    fireEvent.keyDown(notes, { key: "Enter" });
+    const form = notes.closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    await flush();
+    expect(orderPosts().length).toBeLessThanOrEqual(1);
   });
 
   it("a double click on Save as Draft is latched too", async () => {

@@ -107,3 +107,41 @@ describe("OrdersService.create - an Idempotency-Key replay must be a replay of t
     expect(onReplay).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("isIdempotencyKeyViolation - the pg driver adapter's P2002 shape", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { isIdempotencyKeyViolation } = require("./replay-same-cart");
+  it("matches the native engine's meta.target", () => {
+    expect(
+      isIdempotencyKeyViolation({
+        code: "P2002",
+        meta: { target: ["tenantId", "idempotencyKey"] },
+      }),
+    ).toBe(true);
+  });
+  it("matches the driver adapter's constraint index (no meta.target) - the live shape", () => {
+    expect(
+      isIdempotencyKeyViolation({
+        code: "P2002",
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Order_tenantId_idempotencyKey_key" } },
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+  it("does not match the order-number constraint", () => {
+    expect(
+      isIdempotencyKeyViolation({
+        code: "P2002",
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Order_tenantId_orderNumber_key" } },
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(isIdempotencyKeyViolation(new Error("x"))).toBe(false);
+  });
+});

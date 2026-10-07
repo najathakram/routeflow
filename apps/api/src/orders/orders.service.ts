@@ -99,7 +99,7 @@ import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-s
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
-import { assertReplaySameCart } from "./replay-same-cart";
+import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
@@ -2123,14 +2123,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // return the order IT just created instead of retrying (retrying
           // would mint a fresh order number and create a genuine duplicate,
           // exactly what the key exists to prevent).
-          const target = e?.meta?.target;
-          const hitIdempotencyConstraint =
-            idempotencyKey != null &&
-            (Array.isArray(target)
-              ? target.some((t: unknown) => String(t).toLowerCase().includes("idempotencykey"))
-              : String(target ?? "")
-                  .toLowerCase()
-                  .includes("idempotencykey"));
+          const hitIdempotencyConstraint = idempotencyKey != null && isIdempotencyKeyViolation(e);
           if (hitIdempotencyConstraint) {
             // B215: same table-then-column lookup as the pre-check above, so the row that won
             // the race is found whether it was stamped on the column or written to the table.
