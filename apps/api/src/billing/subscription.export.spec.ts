@@ -156,6 +156,16 @@ describe("SubscriptionService.getExport (B1187)", () => {
     ]);
   });
 
+  it("absent addons/flags fail closed to [] (absent => [])", async () => {
+    const { svc } = build([], []);
+    jest.spyOn(svc, "getSubscription").mockResolvedValue({
+      planKey: "GROWTH",
+      stripeSubId: "sub_x",
+    } as never);
+    const out = await svc.getExport(TENANT);
+    expect(out.subscription).toEqual({ planKey: "GROWTH", flags: [], addons: [] });
+  });
+
   it("non-array addons/flags fail closed to []", async () => {
     const { svc } = build([], []);
     jest.spyOn(svc, "getSubscription").mockResolvedValue({

@@ -163,7 +163,7 @@ describeDb("B1187 — billing export projection (real Postgres)", () => {
       "number",
       "status",
     ]);
-    expect(out.subscription).toEqual({ planKey: "GROWTH" });
+    expect(out.subscription).toEqual({ planKey: "GROWTH", flags: [], addons: [] });
     const first = out.billingEvents.find((e) => e.type === "plan.changed" && e.actor === "you")!;
     expect(first.payload).toEqual({ fromPlan: "STARTER", toPlan: "GROWTH" });
   });
