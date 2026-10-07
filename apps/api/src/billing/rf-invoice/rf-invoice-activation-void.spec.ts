@@ -88,7 +88,7 @@ describe("voidCoveredRfInvoices (manual activation auto-void)", () => {
     const rows = [row({})];
     const tx = fakeTx(rows);
     const out = await run(tx);
-    expect(out).toEqual({ voided: ["inv-1"] });
+    expect(out).toEqual({ voided: ["inv-1"], flagged: [] });
     expect(rows[0]).toMatchObject({
       status: "VOID",
       voidedAt: NOW,
