@@ -5,6 +5,7 @@ import {
   piecesPerQtyOf,
   loadLineCredits,
   loadOrderPool,
+  pooledTakeRefusal,
   type HeadroomLine,
 } from "./line-credit-headroom";
 
@@ -361,8 +362,7 @@ describe("SA-727a: headroom CLAMPS at 0 - a legacy line both refunded and credit
     expect(c.items.every((i) => i.amount >= 0 && i.qty >= 0)).toBe(true);
     expect(c.amount).toBe(0);
   });
-  it("pooledTakeRefusal: the pool's remaining is 0, never negative", async () => {
-    const { pooledTakeRefusal } = await import("./line-credit-headroom");
+  it("pooledTakeRefusal: the pool's remaining is 0, never negative", () => {
     const pool = { invoiceCount: 2, lines: [A, B], credited: over };
     const r = pooledTakeRefusal(pool, "pa", { amount: 1, qty: 0.1 });
     expect(r).toMatchObject({ remainingAmount: 0, remainingQty: 0 });
