@@ -104,6 +104,25 @@ async function main() {
     },
   });
 
+  // ─── Account admin (TENANT_ADMIN) ───────────────────────────────────────────────
+  // The seeded `admin` above is an OPERATOR. The account-admin endpoints (staff, SMTP / AI key,
+  // data import, billing export, ...) are TENANT_ADMIN-only, so QA / smoke / e2e callers of those
+  // log in as this user instead. Additive: nothing existing changes. Local seed password, same as
+  // `admin` (the seed refuses non-local databases).
+  await prisma.user.upsert({
+    where: { tenantId_username: { tenantId, username: "tenantadmin" } },
+    update: { password: adminHash },
+    create: {
+      tenantId,
+      email: "tenant.admin@routeflow.dev",
+      username: "tenantadmin",
+      password: adminHash,
+      role: "TENANT_ADMIN",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+    },
+  });
+
   // ─── Add-ons ────────────────────────────────────────────────────────────────
   // This tenant seeds drivers, routes and delivery orders below, so it must carry
   // the matching entitlements — otherwise the AddonGuard 403s the very features we
