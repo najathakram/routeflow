@@ -82,7 +82,15 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
 
   it("the existing appliedCreditNotes sync keeps its OWN Serializable tx, outside the order tx (SA-221 change 1)", () => {
     // SA-706 MUST 2: create() hands the credit tx to the shared helper (Order lock first, retried).
-    expect(at("syncAndSettleOrderCredits(")).toBeGreaterThan(commit());
+    // B1201: via syncCreateCredits. It is called ONLY from the tail: a keyed replay never writes credits.
+    expect(body.split("syncCreateCredits(").length - 1).toBe(1);
+    expect(body.indexOf("syncCreateCredits(")).toBeGreaterThan(commit());
+    const firstReplayExit = body.indexOf("replayAfterCheck(");
+    expect(body.slice(0, body.lastIndexOf("replayAfterCheck(") + 200)).not.toContain(
+      "syncCreateCredits(",
+    );
+    expect(firstReplayExit).toBeGreaterThan(-1);
+    expect(methodBody("syncCreateCredits")).toContain("syncAndSettleOrderCredits(");
     const helper = methodBody("syncAndSettleOrderCredits");
     expect(helper).toContain('isolationLevel: "Serializable"');
     expect(helper.indexOf("lockOrderRow(")).toBeLessThan(

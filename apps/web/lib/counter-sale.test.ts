@@ -464,6 +464,13 @@ describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
       }),
     ).toBe("That sale reference was already used. Ring the sale again.");
   });
+  it("B1209: 400 COUNTER_TENDER_SHORT is fixed copy and a DEFINITIVE refusal (nothing was written, the key is released)", () => {
+    const err = {
+      response: { status: 400, data: { code: "COUNTER_TENDER_SHORT", message: "raw server text" } },
+    };
+    expect(counterSaleErrorCopy(err)).toBe("A walk-in customer must pay the full balance.");
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
+  });
 });
 
 describe("held attempt: minimal customer, validated read", () => {

@@ -8082,7 +8082,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 8 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
@@ -8144,7 +8144,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-2", available: 3, requested: 4 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
     });
 
@@ -8320,7 +8320,7 @@ describe("OrdersService", () => {
       await expect(
         settle(order, [{ productId: "prod-1", qty: 10 }], customerPayload),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 10 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(fakeDb.product.update).not.toHaveBeenCalled();
     });

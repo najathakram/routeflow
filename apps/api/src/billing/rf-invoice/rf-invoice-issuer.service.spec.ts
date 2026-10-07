@@ -366,6 +366,20 @@ describe("RfInvoiceIssuerService", () => {
     expect(audits.filter((a) => a.action === "RF_INVOICE_IRREGULAR_PERIOD")).toHaveLength(1);
   });
 
+  it("A2: a failed create leaves NO irregular-period notice (it says 'was issued')", async () => {
+    const { svc, audits, invoices } = make({
+      subs: [sub()],
+      draft: { ...DRAFT, needsReview: true, irregularPeriod: true },
+      createHook: () => {
+        throw new Error("boom");
+      },
+    });
+    const summary = await svc.runIssueDue(NOW);
+    expect(summary.failed).toBe(1);
+    expect(invoices).toHaveLength(0);
+    expect(audits.filter((a) => a.action === "RF_INVOICE_IRREGULAR_PERIOD")).toHaveLength(0);
+  });
+
   it("SA722-1: two concurrent issues of one period -> ONE row; the loser's period-index P2002 is absorbed", async () => {
     let attempts = 0;
     const { svc, invoices, audits } = make({

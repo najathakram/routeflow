@@ -55,6 +55,7 @@ export class RfInvoiceBuilder {
 
     const { months, irregular } = windowMonths(cycle, window);
     const planUnit = roundMoney(cycle === "ANNUAL" ? resolved.annual : resolved.monthly);
+    // Unit first, then x months - the same rounding order as the add-on rule below.
     const planAmount = roundMoney(planUnit * months);
     const lines: RfInvoiceLine[] = [
       {

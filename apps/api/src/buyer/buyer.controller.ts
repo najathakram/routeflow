@@ -214,7 +214,7 @@ export class BuyerController {
     // findAll runs as an OPERATOR pseudo-user, so the service-layer customer
     // redaction never fires — strip upsell bases and project the customer-facing allowlist here at
     // the buyer boundary.
-    return { ...result, data: result.data.map(toCustomerOrder) };
+    return { ...result, data: result.data.map((o) => toCustomerOrder(o)) };
   }
 
   @Get("invoices")
