@@ -282,7 +282,7 @@ export function CounterSaleScreen() {
     if (customer === null) return; // waiting for the pick
     void runShip(customer, lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines]);
+  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines, createSale.isPending]);
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -303,10 +303,15 @@ export function CounterSaleScreen() {
   const undoRef = React.useRef<RemovedLine | null>(null);
   undoRef.current = undo;
   const undoTimerRef = React.useRef<number | null>(null);
+  // The countdown resumes only when BOTH the pointer and the keyboard focus have left the bar.
+  const undoHoverRef = React.useRef(false);
+  const undoFocusRef = React.useRef(false);
   const dropUndo = React.useCallback(() => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoTimerRef.current = null;
     undoLeftRef.current = UNDO_MS;
+    undoHoverRef.current = false;
+    undoFocusRef.current = false;
     setUndo(null);
   }, []);
   // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
@@ -912,10 +917,23 @@ export function CounterSaleScreen() {
               undo &&
                 "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
             )}
-            onMouseEnter={pauseUndo}
-            onMouseLeave={resumeUndo}
-            onFocus={pauseUndo}
-            onBlur={resumeUndo}
+            onMouseEnter={() => {
+              undoHoverRef.current = true;
+              pauseUndo();
+            }}
+            onMouseLeave={() => {
+              undoHoverRef.current = false;
+              if (!undoFocusRef.current) resumeUndo();
+            }}
+            onFocus={() => {
+              undoFocusRef.current = true;
+              pauseUndo();
+            }}
+            onBlur={(e) => {
+              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return; // focus moved within the bar
+              undoFocusRef.current = false;
+              if (!undoHoverRef.current) resumeUndo();
+            }}
           >
             {undo ? (
               <>

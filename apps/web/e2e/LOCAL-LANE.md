@@ -229,7 +229,7 @@ back (the API caches modes briefly), and fails with the observed and expected va
 layout, Complete & show receipt) is on the `local:e2e` allow-list right after 71 and is registered under the same local-only
 condition. It reuses 71's helper to turn the counter on and restores the tenant's fulfilment config in `afterAll`; it needs
 `npm run local:sa` for the same reason. It creates a throwaway tier-2 customer and a throwaway product (tier-2 price differs)
-on the approved test tenant through the operator API and deletes both again, so the "Prices updated for ... (<tier>)" note
+on the approved test tenant through the operator API and soft-retires both again (the product inactive, the customer INACTIVE; nothing is deleted), so the "Prices updated for ... (<tier>)" note
 is always asserted, never skipped. It rings one real counter sale on that tenant.
 
 ## Spec 73 (`counter-register-look`): same lane, same rules as 71

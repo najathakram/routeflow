@@ -189,6 +189,56 @@ describe("POS-3 remove with Undo", () => {
     expect(itemNames()).toHaveLength(1);
   });
 
+  it("mouse-leave does NOT resume the countdown while focus is still inside the bar; it resumes when hover AND focus are gone", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(1); // let the scan-field refocus (0 ms) run BEFORE focus goes into the bar
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    const undoBtn = screen.getByRole("button", { name: UNDO });
+    fireEvent.mouseEnter(bar);
+    act(() => undoBtn.focus());
+    fireEvent.mouseLeave(bar); // the pointer is gone, the keyboard focus is not
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    act(() => undoBtn.blur()); // now both are gone: the 5 s window runs again
+    act(() => {
+      jest.advanceTimersByTime(4900);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    act(() => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+  });
+
+  it("blur does NOT resume while the pointer is still over the bar", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(1); // let the scan-field refocus (0 ms) run BEFORE focus goes into the bar
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    const undoBtn = screen.getByRole("button", { name: UNDO });
+    fireEvent.mouseEnter(bar);
+    act(() => undoBtn.focus());
+    act(() => undoBtn.blur());
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
+    fireEvent.mouseLeave(bar);
+    act(() => {
+      jest.advanceTimersByTime(5100);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+  });
+
   it("Complete & show receipt during the undo window posts the cart WITHOUT the removed line", async () => {
     await buildCart();
     click("Remove Cola");

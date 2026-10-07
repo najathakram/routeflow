@@ -289,6 +289,26 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("a pending ship continues once a sale POST that held it back ends (a clean 4xx writes nothing)", async () => {
+    const scanDone = deferred<unknown>();
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    resolveHook = () => scanDone.promise;
+    const field = screen.getByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    fireEvent.click(shipBtn()); // armed while the scan is still resolving: the hand-off waits
+    salePending = true; // a sale POST is in flight when the scan lands
+    scanDone.resolve({ product: COLA, source: "sku" });
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(createDraft).not.toHaveBeenCalled(); // never both rung up AND parked
+    salePending = false; // the POST failed cleanly (4xx): nothing was written
+    fireEvent.click(screen.getByRole("button", { name: "Card" })); // any re-render reads the flag
+    await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?resumeDraft=d-1"));
+  });
+
   it("the Ship button is disabled while the sale POST is pending", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
