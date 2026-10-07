@@ -77,6 +77,7 @@ const scan = async (text: string) => {
   fireEvent.submit(field.closest("form")!);
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
 };
+const UNDO = /^Undo: put back /;
 const click = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
 
 /** Cola x2 (first line, plain) and Water 1 box + 3 pcs (second line, boxed). */
@@ -148,7 +149,7 @@ describe("POS-3 remove with Undo", () => {
     click("Remove Cola");
     const bar = screen.getByRole("status", { name: "Removed item" });
     expect(bar).toHaveTextContent("Line removed.");
-    expect(within(bar).getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: UNDO })).toBeInTheDocument();
     expect(itemNames()).toHaveLength(1);
     expect(itemNames()[0]).toMatch(/Water/);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$15.00");
@@ -157,8 +158,8 @@ describe("POS-3 remove with Undo", () => {
   it("Undo restores the line exactly (qty, boxes/pieces, price) in its position", async () => {
     await buildCart();
     click("Remove Cola");
-    click("Undo");
-    expect(screen.queryByRole("status", { name: "Removed item" })).toBeNull();
+    click(UNDO);
+    expect(screen.getByRole("status", { name: "Removed item" })).toBeEmptyDOMElement();
     const names = itemNames();
     expect(names).toHaveLength(2);
     expect(names[0]).toMatch(/Cola · × 2/);
@@ -167,7 +168,7 @@ describe("POS-3 remove with Undo", () => {
 
     // a boxed line, removed from the END, comes back with its box/piece split intact
     click("Remove Water");
-    click("Undo");
+    click(UNDO);
     expect(itemNames()[1]).toMatch(/Water · 1 box \+ 3 pcs/);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$20.00");
   });
@@ -179,12 +180,12 @@ describe("POS-3 remove with Undo", () => {
     act(() => {
       jest.advanceTimersByTime(4900);
     });
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     act(() => {
       jest.advanceTimersByTime(200);
     });
-    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
-    expect(screen.queryByRole("status", { name: "Removed item" })).toBeNull();
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+    expect(screen.getByRole("status", { name: "Removed item" })).toBeEmptyDOMElement();
     expect(itemNames()).toHaveLength(1);
   });
 
@@ -197,15 +198,15 @@ describe("POS-3 remove with Undo", () => {
     const { dto } = mutateAsync.mock.calls[0][0];
     expect(dto.items).toEqual([{ productId: "p-water", boxes: 1, pieces: 3, qty: 15 }]);
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });
 
   it("a second removal makes the first final (one bar, for the latest line)", async () => {
     await buildCart();
     click("Remove Cola");
     click("Remove Water");
-    expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(1); // ONE slot
-    click("Undo");
+    expect(screen.getAllByRole("button", { name: UNDO })).toHaveLength(1); // ONE slot
+    click(UNDO);
     expect(itemNames()).toHaveLength(1);
     expect(itemNames()[0]).toMatch(/Water/);
   });
@@ -267,7 +268,7 @@ describe("POS-3 layout and touch targets", () => {
     }
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
-    for (const name of ["Add a box to Water", "Remove Water", "Undo", "Cash", "Exact"]) {
+    for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
       expect(screen.getByRole("button", { name }).className).toMatch(/min-w-\[44px\]/);
     }
     const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
@@ -318,7 +319,7 @@ describe("POS-3 line notes", () => {
     click("Add a note to Cola");
     fireEvent.change(noteBox("Cola"), { target: { value: "no ice" } });
     click("Remove Cola");
-    click("Undo");
+    click(UNDO);
     expect(screen.getByTestId("line-note")).toHaveTextContent("no ice");
   });
 });
@@ -329,7 +330,7 @@ describe("POS-3 undo: merge, keyboard, one slot", () => {
     click("Remove Cola");
     await scan("COLA"); // a fresh Cola x1
     expect(itemNames().some((n) => /Cola · × 1/.test(n))).toBe(true);
-    click("Undo");
+    click(UNDO);
     const colas = itemNames().filter((n) => /Cola/.test(n));
     expect(colas).toHaveLength(1);
     expect(colas[0]).toMatch(/Cola · × 3/);
@@ -342,17 +343,17 @@ describe("POS-3 undo: merge, keyboard, one slot", () => {
     const field = screen.getByLabelText("Scan or search items");
     fireEvent.change(field, { target: { value: "abc" } });
     fireEvent.keyDown(field, { key: "z", ctrlKey: true });
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument();
     fireEvent.change(field, { target: { value: "" } });
     fireEvent.keyDown(field, { key: "z", metaKey: true });
-    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
     expect(itemNames()[0]).toMatch(/Cola · × 2/);
   });
 
   it("Undo is a real button in the tab order, right after the cart", async () => {
     await buildCart();
     click("Remove Cola");
-    expect(screen.getByRole("button", { name: "Undo" }).tabIndex).toBe(0);
+    expect(screen.getByRole("button", { name: UNDO }).tabIndex).toBe(0);
     expect(screen.getByRole("list", { name: "Items" }).nextElementSibling).toBe(
       screen.getByTestId("line-undo-bar"),
     );
@@ -364,20 +365,20 @@ describe("POS-3 lines are frozen while the sale POST is in flight", () => {
     await buildCart();
     click("Add a note to Cola");
     click("Remove Water"); // leaves an Undo showing
-    for (const n of ["Remove one Cola", "Add one Cola", "Remove Cola", "Undo"]) {
+    for (const n of ["Remove one Cola", "Add one Cola", "Remove Cola", UNDO]) {
       expect(screen.getByRole("button", { name: n })).toBeEnabled();
     }
     pending = true;
     click("Card"); // any state change re-reads the in-flight flag
-    for (const n of ["Remove one Cola", "Add one Cola", "Remove Cola", "Undo"]) {
+    for (const n of ["Remove one Cola", "Add one Cola", "Remove Cola", UNDO]) {
       expect(screen.getByRole("button", { name: n })).toBeDisabled();
     }
     expect(screen.getByRole("button", { name: /note (to|on) Cola/ })).toBeDisabled();
     expect(screen.getByLabelText("Note for Cola")).toBeDisabled();
     fireEvent.keyDown(screen.getByLabelText("Scan or search items"), { key: "z", ctrlKey: true });
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument(); // Ctrl+Z is frozen too
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // Ctrl+Z is frozen too
     pending = false;
     click("Cash");
-    expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: UNDO })).toBeEnabled();
   });
 });

@@ -1,4 +1,6 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { cartTotals } from "./counter-sale";
+import { draftSummary } from "./drafts";
 import {
   counterCartToDraftPayload,
   counterShipDraftInput,
@@ -133,6 +135,27 @@ describe("counterCartToDraftPayload", () => {
     const before = JSON.stringify(lines);
     counterCartToDraftPayload(lines, CUSTOMER);
     expect(JSON.stringify(lines)).toBe(before);
+  });
+});
+
+describe("the ship draft totals what the counter totalled", () => {
+  it("a boxed line (1 box + 3 pcs) plus a plain line: draft total (priced like Create Order) == counter total", () => {
+    const boxed: SaleLine = {
+      ...CASE_LINE,
+      unitPrice: 12,
+      qty: 27,
+      unitsPerBox: 24,
+      boxes: 1,
+      pieces: 3,
+      priceType: "STANDARD",
+    };
+    const cart = [boxed, PLAIN_LINE];
+    const counter = cartTotals(cart, 0).total;
+    const dto = counterShipDraftInput(cart, CUSTOMER);
+    const parked = draftSummary({ ...(dto as any), id: "d1", kind: "ORDER" }).total;
+    expect(roundMoney(parked)).toBe(counter);
+    expect(counter).toBe(roundMoney(12 + (3 / 24) * 12 + 4 * 2.5)); // 1 box + 3/24 of a box, then 4 x 2.50
+    expect(counter).not.toBe(roundMoney(27 * 12 + 4 * 2.5)); // never qty x box price
   });
 });
 

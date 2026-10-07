@@ -111,7 +111,7 @@ const pickAcme = () => {
 const undoRemoved = () =>
   fireEvent.click(
     within(screen.getByRole("status", { name: "Removed item" })).getByRole("button", {
-      name: "Undo",
+      name: /^Undo: put back /,
     }),
   );
 const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });
@@ -215,5 +215,62 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     const notes = screen.getAllByTestId("receipt-line-note");
     expect(notes).toHaveLength(1); // only the noted line
     expect(notes[0]).toHaveTextContent("no ice");
+  });
+
+  it("after the re-price Undo the customer stays and a line scanned LATER keeps that customer's tier", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    pickAcme();
+    await waitFor(() => expect(total()).toHaveTextContent("$2.00"));
+    await scan("WATER"); // scanned after the pick: tier 2 = 9.00
+    await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
+    click("Undo"); // prices only
+    await waitFor(() => expect(colaRow()).toHaveTextContent("$2.50"));
+    expect(screen.getByText("Acme Cafe")).toBeInTheDocument();
+    expect(total()).toHaveTextContent("$11.50"); // cola back to 2.50, the later water line keeps 9.00
+  });
+
+  it("the customer pick, Use Walk-in and the re-price Undo are disabled while the sale POST is pending", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    pickAcme();
+    await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    const result = screen.getAllByRole("button", { name: "Acme Cafe" });
+    pending = true;
+    click("Card"); // any state change re-reads the flag
+    expect(screen.getByLabelText("Find a customer")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Use Walk-in customer" })).toBeDisabled();
+    expect(
+      within(screen.getByTestId("counter-reprice-note")).getByRole("button", { name: "Undo" }),
+    ).toBeDisabled();
+    for (const r of result) expect(r).toBeDisabled();
+  });
+
+  it("the scan field is disabled during the POST", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    pending = true;
+    click("Card");
+    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+  });
+
+  it("an outcome-unknown cart is never re-priced: a restored held attempt keeps its prices", async () => {
+    mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
+    const view = renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    pickAcme();
+    await waitFor(() => expect(total()).toHaveTextContent("$2.00"));
+    click("Exact");
+    fireEvent.click(completeBtn());
+    await screen.findByTestId("counter-outcome-unknown");
+    view.unmount();
+    // the customer's tiers change under the held sale: it must NOT re-price
+    pricesFor = async () => ({ data: [{ productId: "p-cola", pricingTier: 3 }] });
+    renderWithProviders(<CounterSaleScreen />);
+    await screen.findByTestId("counter-outcome-unknown");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(total()).toHaveTextContent("$2.00");
+    expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
   });
 });

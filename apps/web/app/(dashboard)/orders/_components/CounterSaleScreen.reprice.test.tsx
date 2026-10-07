@@ -119,7 +119,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.00")); // tier 2: 2.00 + 9.00
     expect(screen.getByTestId("counter-reprice-note")).toHaveTextContent(
-      "Prices updated for Acme Cafe.",
+      "Prices updated for Acme Cafe (Tier 2).",
     );
     expect(get).toHaveBeenCalledWith("/customers/c-acme/prices");
   });
@@ -140,7 +140,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     await waitFor(() => expect(total()).toHaveTextContent("$14.50"));
     expect(screen.getByTestId("counter-reprice-note")).toHaveTextContent(
-      "Prices updated for Walk-in customer.",
+      "Prices updated for Walk-in customer (Tier 1).",
     );
     expect(completeBtn()).not.toBeDisabled();
   });
@@ -201,20 +201,19 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     expect(completeBtn()).not.toBeDisabled();
   });
 
-  it("Undo restores the previous prices and customer; Dismiss just hides the note", async () => {
+  it("Undo reverts the PRICES only (the customer stays); Dismiss just hides the note", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scanBoth();
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(total()).toHaveTextContent("$14.50"));
-    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    expect(screen.getByText("Acme Cafe")).toBeInTheDocument(); // still the customer on the sale
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
-    pickAcme();
-    await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
+    expect(completeBtn()).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
-    expect(total()).toHaveTextContent("$11.00");
   });
 
   it("the sale request never carries a client price: the server prices by customer", async () => {
