@@ -34,7 +34,7 @@ import { BadRequestException } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
-import { norm } from "../orders/unit-label-norm";
+import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
   categoryTaxSnapshotOf,
@@ -111,9 +111,8 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     used.add(row.id);
     // SA-070 / VU-4a: an ABSENT unitLabel keeps the row's unit; only an explicit other label (null, "", the
     // pack's, another unit) LEAVES it, and then the old factor is not the line's pack (Case -> Box).
-    const rowUnit = norm(row.unitLabel ?? "");
     const leftUnit =
-      rowUnit !== "" && item.unitLabel !== undefined && norm(item.unitLabel ?? "") !== rowUnit;
+      norm(row.unitLabel ?? "") !== "" && !keepsHeldUnit(item.unitLabel, row.unitLabel);
     const productChanged = (item.productId ?? null) !== (row.productId ?? null) || leftUnit;
     const held = item.unitLabel === undefined ? { ...item, unitLabel: row.unitLabel } : item;
     out[i] = {
