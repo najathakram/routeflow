@@ -17,6 +17,8 @@ export function isStaffSessionPayload(payload: unknown): boolean {
 
 export const STAFF_ACCESS_AUDIENCE = "staff-access";
 export const BUYER_ACCESS_AUDIENCE = "buyer-access";
+export const STAFF_REFRESH_AUDIENCE = "staff-refresh";
+export const BUYER_REFRESH_AUDIENCE = "buyer-refresh";
 
 /**
  * True when the token names an audience and that audience is not `realm`. A token with no `aud`
