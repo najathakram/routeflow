@@ -63,6 +63,11 @@ import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 // the Name cell, email + credits live on the customer detail page). Consumed by Table via
 // `columnDef.meta.className` on both th and td.
 const HIDE_BELOW_SM = { className: "hidden sm:table-cell" };
+// Tighter cell padding on a phone so Name + Business + Receivables fit 390px.
+// The empty state sits in a td that spans every column, which can be wider than a phone; pin it to
+// the scrollport's left edge at a viewport-bound width so its text and buttons stay on screen.
+const EMPTY_FIT = "sticky left-0 w-[calc(100vw-5rem)] max-w-full";
+const TIGHT_BELOW_SM = { className: "px-2 sm:px-4" };
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -446,6 +451,7 @@ export default function CustomersPage() {
         : []),
       {
         accessorKey: "contactName",
+        meta: TIGHT_BELOW_SM,
         header: () => <SortHeader col="contactName">Name</SortHeader>,
         cell: ({ row }) => {
           const c = row.original;
@@ -499,6 +505,7 @@ export default function CustomersPage() {
       },
       {
         accessorKey: "businessName",
+        meta: TIGHT_BELOW_SM,
         header: () => <SortHeader col="businessName">Business Name</SortHeader>,
         cell: ({ row }) => {
           const name = row.original.businessName ?? "";
@@ -511,7 +518,7 @@ export default function CustomersPage() {
               .join("") || "—";
           return (
             <div className="flex items-center gap-2.5">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-600">
+              <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 sm:flex text-[10px] font-semibold text-brand-600">
                 {initials}
               </span>
               <span className="text-navy/80">{name}</span>
@@ -553,6 +560,7 @@ export default function CustomersPage() {
       },
       {
         id: "receivables",
+        meta: TIGHT_BELOW_SM,
         header: () => <SortHeader col="receivables">Receivables</SortHeader>,
         cell: ({ row }) => {
           const val = row.original.receivables ?? 0;
@@ -1020,6 +1028,7 @@ export default function CustomersPage() {
             emptyState={
               removedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No removed customers"
                   description="Nothing is in the trash right now."
@@ -1035,6 +1044,7 @@ export default function CustomersPage() {
                 />
               ) : unassignedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No unassigned customers"
                   description="Every customer is already assigned to a route."
@@ -1050,6 +1060,7 @@ export default function CustomersPage() {
                 />
               ) : search || statusFilter || typeFilter || tagFilter || regulatedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No matching customers"
                   description="No customers match your current search and filters."
@@ -1080,6 +1091,7 @@ export default function CustomersPage() {
                 />
               ) : (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No customers yet"
                   description="Add your first customer to start taking orders and sending invoices."
