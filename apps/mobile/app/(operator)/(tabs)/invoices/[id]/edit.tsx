@@ -44,6 +44,7 @@ import {
   packFromOwnSplit,
   type SellLevel,
 } from "@routeflow/pricing";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -281,9 +282,12 @@ export default function EditInvoiceScreen() {
           { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
         )
       ) {
-        return decision.kind === "add"
-          ? { feedback: { kind: "added", text: `${decision.product.name} added` } }
-          : { feedback: { kind: "error", text: promptText(decision) } };
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
