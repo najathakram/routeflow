@@ -479,7 +479,7 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
 
   it("4. pages: limit 3 walks the whole day with no repeat or gap; summary only on page 1", async () => {
     const want = expected();
-    const pages = [];
+    const pages: Awaited<ReturnType<typeof read>>[] = [];
     for (let page = 1; page <= Math.ceil(want.rowKeys.length / 3); page += 1) {
       pages.push(await read({ page, limit: 3 }));
     }

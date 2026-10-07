@@ -181,7 +181,9 @@ const METHOD_ORDER: TodaysSaleMethod[] = ["CASH", "CARD", "CHECK", "OTHER", "STO
 /** A stored payment method as the till names it: CASH / CARD / CHECK, a credit application, anything else. */
 export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
   if (prismaMethod === "CREDIT_NOTE" || prismaMethod === "ADVANCE") return "STORE_CREDIT";
-  return counterMethodOf(prismaMethod) ?? "OTHER";
+  const method = counterMethodOf(prismaMethod);
+  // ON_ACCOUNT is not money taken at the till; anything the till does not name is OTHER.
+  return method && method !== "ON_ACCOUNT" ? method : "OTHER";
 }
 
 function resolutionOf(r: TodayOrderRecord["returns"][number]): TodaysSaleReturnResolution {
