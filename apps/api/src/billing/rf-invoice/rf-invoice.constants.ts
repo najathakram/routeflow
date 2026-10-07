@@ -62,6 +62,9 @@ export const RF_INVOICE_REMINDER_STAGES = [
   { trigger: "d14", days: 14 },
 ] as const;
 
+/** A reminder stage may still be sent this many days after its stage day (a missed cron); then it is skipped for good. */
+export const RF_INVOICE_REMINDER_CATCHUP_DAYS = 3;
+
 /** A manual resend of one invoice is refused for this long after the previous send. */
 export const RF_INVOICE_SEND_COOLDOWN_MS = 10 * 60 * 1000;
 /** Most invoices one bulk resend accepts. */

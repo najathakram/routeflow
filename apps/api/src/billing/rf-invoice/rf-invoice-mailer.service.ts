@@ -13,6 +13,7 @@ import { writeAdminNotice } from "../manual-invoice-notice";
 import { BillingNotificationService } from "../billing-notification.service";
 import {
   RF_INVOICE_AUDIT_ACTIONS,
+  RF_INVOICE_REMINDER_CATCHUP_DAYS,
   RF_INVOICE_REMINDER_STAGES,
   RF_INVOICE_SEND_COOLDOWN_MS,
   RF_INVOICE_SEND_MAX_IDS,
@@ -213,10 +214,16 @@ export class RfInvoiceMailerService {
     if (mode !== "live") return summary;
 
     const today = dayStart(now);
+    const lastStage = RF_INVOICE_REMINDER_STAGES[RF_INVOICE_REMINDER_STAGES.length - 1];
     const rows = await this.prisma.rfInvoice.findMany({
       where: {
         status: "OPEN",
-        dueDate: { lt: new Date(today.getTime() + DAY_MS) },
+        dueDate: {
+          gte: new Date(
+            today.getTime() - (lastStage.days + RF_INVOICE_REMINDER_CATCHUP_DAYS) * DAY_MS,
+          ),
+          lt: new Date(today.getTime() + DAY_MS),
+        },
         tenant: rfInvoiceTenantScope(rfInvoiceTestTenantSlugs()),
       },
       select: SEND_SELECT,
@@ -225,9 +232,11 @@ export class RfInvoiceMailerService {
     for (const row of rows as any[]) {
       if (paysByCard(row)) continue;
       const daysAfter = Math.round((today.getTime() - dayStart(row.dueDate).getTime()) / DAY_MS);
-      // Catch-up without spam: only the HIGHEST stage reached is tried (its claim key makes it once),
-      // so a missed day is made up but a lower stage is never sent after a higher one.
-      const stage = [...RF_INVOICE_REMINDER_STAGES].reverse().find((s) => daysAfter >= s.days);
+      // Bounded catch-up: a stage is live from its stage day to CATCHUP_DAYS after it (a missed cron is
+      // made up), then skipped for good. Only the highest live stage is tried and its claim key makes it once.
+      const stage = [...RF_INVOICE_REMINDER_STAGES]
+        .reverse()
+        .find((s) => daysAfter >= s.days && daysAfter <= s.days + RF_INVOICE_REMINDER_CATCHUP_DAYS);
       if (!stage) continue;
       summary.considered++;
       try {
