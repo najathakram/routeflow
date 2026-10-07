@@ -20,6 +20,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
+import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 
 const RESERVED_SLUGS = new Set([
@@ -240,29 +241,26 @@ export class TenantsService {
    * the email". Returns whether a send was attempted and delivered, for callers
    * that want to log/test — never expose this boolean to the client.
    *
-   * KNOWN PRE-EXISTING LIMITATION (flagged in review of PR #778, not introduced
-   * or fixed by this PR): the `status: "INACTIVE"` filter below targets ANY
-   * INACTIVE user, not only a self-signup admin genuinely pending
-   * verification — the same status is written by UsersService.changeStatus
-   * (admin deactivation) and BillingCronService's seat-cap enforcement.
-   * Combined with verifyEmailAndLogin (auth.service.ts), this endpoint can
-   * mint a fresh 24h verify link — and thus a path back to ACTIVE — for a
-   * deliberately deactivated staff member, since the account's own inbox is
-   * always reachable by its own former holder. `UserStatus`
-   * (prisma/schema/tenancy.prisma) has no column distinguishing "never
-   * verified" from "deliberately deactivated," so this cannot be closed
-   * safely without a schema discriminator (e.g. a nullable `emailVerifiedAt`
-   * column or a distinct `PENDING_VERIFICATION` status) — proposed as a
-   * follow-up bug, not attempted here.
+   * Only an account eligible for the verification link (verification-link-eligibility.ts)
+   * is sent one; every other case returns the same silent false.
    */
   async resendVerification(email: string): Promise<boolean> {
     const user = await this.prisma.user.findFirst({
-      where: { email: email.toLowerCase().trim(), status: "INACTIVE", deletedAt: null },
+      where: {
+        email: email.toLowerCase().trim(),
+        status: "INACTIVE",
+        role: "TENANT_ADMIN",
+        lastLoginAt: null,
+        deletedAt: null,
+      },
       include: { tenant: { select: { id: true, name: true, slug: true } } },
     });
 
     // Silent return to prevent email enumeration
     if (!user || !user.tenant) return false;
+    // The same eligibility test the link itself is checked against; a refused class gets the
+    // same silent answer as an unknown address.
+    if (!(await mayUseVerificationLink(this.prisma, user))) return false;
 
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
