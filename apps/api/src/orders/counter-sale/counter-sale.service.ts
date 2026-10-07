@@ -28,6 +28,7 @@ import {
 import {
   allocateOldestFirst,
   assertPaymentShape,
+  assertWalkInTenderCoversTotal,
   type CounterPaymentMethod,
   planCounterPayment,
   toPrismaMethod,
@@ -139,6 +140,10 @@ export class CounterSaleService {
       {
         fulfillPath: FulfillPath.PICKUP,
         counterSale: true,
+        // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
+        beforeWrite: walkIn
+          ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
+          : undefined,
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
         onReplay: (existing) => {

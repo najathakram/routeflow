@@ -17,6 +17,7 @@ import {
 import { Card, Input, cn } from "@routeflow/ui/web";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
+import { BuyerOversellCard } from "./BuyerOversellCard";
 
 /**
  * Settings hub — the grouped-card landing for /settings (full-hub redesign). Every
@@ -50,6 +51,7 @@ const RESTRICTIONS_ITEM: HubItem = {
 };
 
 const ROUTE_DEFAULTS_HREF = "#route-defaults";
+const OVERSELL_HREF = "#out-of-stock-ordering";
 
 const GROUPS: HubGroup[] = [
   {
@@ -110,6 +112,11 @@ const GROUPS: HubGroup[] = [
         label: "Route defaults",
         desc: "Service time, start time, speed & depot location",
         href: ROUTE_DEFAULTS_HREF,
+      },
+      {
+        label: "Out-of-stock ordering",
+        desc: "Let customers order items that are out of stock",
+        href: OVERSELL_HREF,
       },
       {
         label: "Batch invoice import",
@@ -219,15 +226,23 @@ function HubLink({ item }: { item: HubItem }) {
 }
 
 /** The card shows exactly when its hub item is listed: same label + description + group title. */
-function routeDefaultsMatches(q: string): boolean {
-  const group = GROUPS.find((g) => g.items.some((it) => it.href === ROUTE_DEFAULTS_HREF))!;
-  const item = group.items.find((it) => it.href === ROUTE_DEFAULTS_HREF)!;
+function cardMatches(href: string, q: string): boolean {
+  const group = GROUPS.find((g) => g.items.some((it) => it.href === href))!;
+  const item = group.items.find((it) => it.href === href)!;
   // Per field, like the hub's own filter — a query spanning two fields matches neither.
   return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+
+  // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
+  // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
+  // to scroll to until now, so bring the card into view once it is mounted.
+  React.useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
+  }, []);
 
   const canShow = React.useCallback(
     (item: HubItem) => (item.show === "admin" ? isAdmin : true),
@@ -345,9 +360,15 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || routeDefaultsMatches(q)) && (
+      {(!q || cardMatches(ROUTE_DEFAULTS_HREF, q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
+        </div>
+      )}
+
+      {(!q || cardMatches(OVERSELL_HREF, q)) && (
+        <div id="out-of-stock-ordering" className="max-w-3xl">
+          <BuyerOversellCard canEdit={isAdmin} />
         </div>
       )}
 

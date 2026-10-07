@@ -80,7 +80,7 @@ export async function emitAddonDelta(
   await events.emit(
     d.tenantId,
     type,
-    { sku: d.sku, ...(d.payload ?? {}) },
+    { ...(d.payload ?? {}), sku: d.sku },
     { amountDelta, actorId: d.actorId, tx },
   );
   return amountDelta;

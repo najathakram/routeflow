@@ -6,7 +6,9 @@
  * same line, since both ultimately bill what the server will charge.
  */
 import {
+  SHIPS_WHEN_RESTOCKED,
   alertIdSet,
+  backorderNote,
   behaviorLabel,
   computeTileChip,
   deriveTilePrice,
@@ -292,5 +294,30 @@ describe("behaviorLabel", () => {
 
   it("no cadence, enough orders → Bought Nx", () => {
     expect(behaviorLabel(estimate({ orderCount: 5, cadenceDays: null }))).toBe("Bought 5x");
+  });
+});
+
+describe("OOS PR2: canBackorder on the tile", () => {
+  const oos = (canBackorder?: boolean) => ({ stockStatus: "OUT_OF_STOCK" as const, canBackorder });
+
+  it("out of stock + canBackorder: Add (not Notify me) and the note", () => {
+    expect(tileCta(oos(true), 0)).toBe("add");
+    expect(backorderNote(oos(true))).toBe(SHIPS_WHEN_RESTOCKED);
+    expect(SHIPS_WHEN_RESTOCKED).toBe("Ships when restocked");
+  });
+
+  it.each([[false], [undefined]])(
+    "out of stock + canBackorder %p (unknown fails closed): Notify me, no note",
+    (can) => {
+      expect(tileCta(oos(can), 0)).toBe("notify");
+      expect(backorderNote(oos(can))).toBeNull();
+    },
+  );
+
+  it("an item in the cart is the stepper whatever canBackorder says; in stock is Add with no note", () => {
+    expect(tileCta(oos(false), 2)).toBe("stepper");
+    expect(tileCta({ stockStatus: "IN_STOCK", canBackorder: true }, 0)).toBe("add");
+    expect(backorderNote({ stockStatus: "IN_STOCK", canBackorder: true })).toBeNull();
+    expect(backorderNote({ stockStatus: "LOW", canBackorder: true })).toBeNull();
   });
 });
