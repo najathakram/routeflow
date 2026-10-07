@@ -3,6 +3,7 @@ import * as path from "path";
 import {
   deactivateFailureToast,
   getReactivationRefusal,
+  newCodeFields,
   reactivationResolveLabel,
 } from "./product-reactivation-refusal";
 
@@ -21,20 +22,22 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     const r = getReactivationRefusal(err({ ...holder(), message: "RAW SERVER TEXT" }));
     expect(r).toMatchObject({ kind: "HOLDERS", canResolve: true, holderIds: ["h1"] });
     expect(r && r.kind === "HOLDERS" && r.holders[0].line).toBe(
-      `Can't reactivate: the SKU "COLA-6" is now used by Cola 6pk. Change it on that product, or give this one a new SKU.`,
+      `The SKU "COLA-6" is now used by Cola 6pk.`,
     );
+    expect(r && r.kind === "HOLDERS" && r.holders[0]).toMatchObject({
+      field: "sku",
+      value: "COLA-6",
+    });
   });
 
   it.each([
-    ["unitSku", "the unit code", "a new unit code"],
-    ["barcode", "the barcode", "a new barcode"],
-  ])("%s wording", (field, what, fix) => {
+    ["unitSku", "unit code"],
+    ["barcode", "barcode"],
+  ])("%s wording", (field, what) => {
     const code = field === "barcode" ? "BARCODE_TAKEN" : "CODE_TAKEN";
     const r = getReactivationRefusal(err(holder({ code, field, value: "X1" })));
     const line = r && r.kind === "HOLDERS" ? r.holders[0].line : "";
-    expect(line).toBe(
-      `Can't reactivate: ${what} "X1" is now used by Cola 6pk. Change it on that product, or give this one ${fix}.`,
-    );
+    expect(line).toBe(`The ${what} "X1" is now used by Cola 6pk.`);
   });
 
   it("NAME_TAKEN -> a rename line, no field/value needed", () => {
@@ -64,6 +67,8 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
           productName: "",
           line: `Can't reactivate: an active product is already named "Cola 6pk". Rename one of them first.`,
           blocked: false,
+          field: "name",
+          value: "Cola 6pk",
         },
       ],
       holderIds: [],
@@ -142,6 +147,55 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
     expect(r && r.kind === "HOLDERS" && r.holders[0].productName).toBe(
       `<img src=x onerror=alert(1)> "A"`,
     );
+  });
+});
+
+describe("a blocked holder's line carries the blocked sentence (VU-2)", () => {
+  it("appends the can't-deactivate sentence", () => {
+    const r = getReactivationRefusal(err(holder({ blocked: "HAS_ACTIVE_VARIANTS" })));
+    expect(r && r.kind === "HOLDERS" && r.holders[0].line).toBe(
+      `The SKU "COLA-6" is now used by Cola 6pk. Blocked: Cola 6pk has active variants, so it can't be deactivated from here. Open it to change the code.`,
+    );
+  });
+});
+
+describe("newCodeFields — which codes the operator can replace (VU-2)", () => {
+  const ref = (...hs: Record<string, unknown>[]) =>
+    getReactivationRefusal(err({ ...hs[0], holders: hs }));
+
+  it("one SKU holder -> ['sku']", () => {
+    expect(newCodeFields(ref(holder()))).toEqual(["sku"]);
+  });
+
+  it("sku + barcode holders -> deduped, in field order", () => {
+    const r = ref(
+      holder({ code: "BARCODE_TAKEN", field: "barcode", value: "B1" }),
+      holder({ productId: "h2", productName: "Other" }),
+      holder({ field: "sku", value: "S2", productId: "h3", productName: "Third" }),
+    );
+    expect(newCodeFields(r)).toEqual(["sku", "barcode"]);
+  });
+
+  it("a blocked holder still allows a new code", () => {
+    expect(newCodeFields(ref(holder({ blocked: "HAS_ACTIVE_VARIANTS" })))).toEqual(["sku"]);
+  });
+
+  it("null when any holder is a name clash", () => {
+    const r = ref(holder(), holder({ code: "NAME_TAKEN", field: "name", productId: "h2" }));
+    expect(newCodeFields(r)).toBeNull();
+  });
+
+  it("null for a name-only refusal, a name refusal with no holder, and RETRY", () => {
+    expect(
+      newCodeFields(ref(holder({ code: "NAME_TAKEN", field: "name", value: "Cola 6pk" }))),
+    ).toBeNull();
+    expect(
+      newCodeFields(
+        getReactivationRefusal(err({ code: "NAME_TAKEN", field: "name", value: "Cola 6pk" })),
+      ),
+    ).toBeNull();
+    expect(newCodeFields({ kind: "RETRY" })).toBeNull();
+    expect(newCodeFields(null)).toBeNull();
   });
 });
 

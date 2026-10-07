@@ -41,7 +41,15 @@ function Harness({ onReactivated }: { onReactivated?: (id: string) => void }) {
   const flow = useReactivateFlow({ onReactivated });
   return (
     <>
-      <button onClick={() => flow.start("p1")}>go</button>
+      <button onClick={() => flow.start("p1", "product", "Cola 12pk")}>go</button>
+      <button
+        onClick={() => {
+          flow.start("p1", "product", "Cola 12pk");
+          flow.start("p1", "product", "Cola 12pk");
+        }}
+      >
+        double
+      </button>
       <button onClick={() => flow.askDeactivate("p1", "Cola 6pk")}>off</button>
       {flow.dialog}
     </>
@@ -66,7 +74,7 @@ describe("useReactivateFlow", () => {
     patch.mockRejectedValueOnce(conflict()).mockResolvedValueOnce({ data: {} });
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByText("go"));
-    expect(await screen.findByText(/Can't reactivate: the SKU "COLA-6"/)).toBeInTheDocument();
+    expect(await screen.findByText(/The SKU "COLA-6" is now used by/)).toBeInTheDocument();
     expect(screen.queryByText(/RAW SERVER MESSAGE/)).toBeNull();
     fireEvent.click(screen.getByText('Deactivate "Cola 6pk" and reactivate this'));
     await waitFor(() =>
@@ -76,6 +84,57 @@ describe("useReactivateFlow", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("Use a new code instead -> PATCH {isActive:true, sku} with NO deactivateHolderIds; success closes + toasts", async () => {
+    patch.mockRejectedValueOnce(conflict()).mockResolvedValueOnce({ data: {} });
+    const done = jest.fn();
+    renderWithProviders(<Harness onReactivated={done} />);
+    fireEvent.click(screen.getByText("go"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use a new code instead" }));
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "NEW-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate with new code" }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenLastCalledWith("/products/p1", { isActive: true, sku: "NEW-1" }),
+    );
+    expect(patch.mock.calls[1][1]).not.toHaveProperty("deactivateHolderIds");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(toast).toHaveBeenCalledWith({ title: "Product reactivated", variant: "success" });
+    expect(done).toHaveBeenCalledWith("p1");
+  });
+
+  it("a second CODE_TAKEN after a new code reopens the dialog with the new refusal", async () => {
+    patch.mockRejectedValueOnce(conflict()).mockRejectedValueOnce(
+      conflict({
+        value: "NEW-1",
+        productId: "h9",
+        productName: "Taken Meanwhile",
+        holders: [
+          {
+            code: "CODE_TAKEN",
+            field: "sku",
+            value: "NEW-1",
+            productId: "h9",
+            productName: "Taken Meanwhile",
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("go"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use a new code instead" }));
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "NEW-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate with new code" }));
+    expect(await screen.findByRole("link", { name: "Taken Meanwhile" })).toBeInTheDocument();
+    expect(screen.getByText(/The SKU "NEW-1" is now used by/)).toBeInTheDocument();
+  });
+
+  it("a double click sends one request", async () => {
+    patch.mockResolvedValue({ data: {} });
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("double"));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(patch).toHaveBeenCalledTimes(1);
   });
 
   it("HOLDERS_CHANGED on a resolve -> retry prompt; Try again sends a PLAIN reactivation", async () => {
