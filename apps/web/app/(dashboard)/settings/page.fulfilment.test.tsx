@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import SettingsPage from "./page";
 
 // The Fulfillment tab is dark behind the API's FULFILMENT_SELF_SERVE: `?tab=fulfilment` renders it only
@@ -73,6 +73,31 @@ describe("SettingsPage — Fulfillment tab", () => {
     );
     expect(screen.queryByText("Counter sales")).not.toBeInTheDocument();
     expect(screen.queryByText("All settings")).not.toBeInTheDocument();
+  });
+
+  it("while loading, no Fulfillment heading, skeleton or tab chrome ever shows (asserted synchronously)", () => {
+    mockTab = "fulfilment";
+    get.mockImplementation(() => new Promise(() => undefined));
+    renderWithProviders(<SettingsPage />);
+    expect(screen.queryByRole("heading", { name: "Fulfillment" })).toBeNull();
+    expect(screen.queryByTestId("fulfilment-skeleton")).toBeNull();
+    expect(screen.queryByText("All settings")).toBeNull();
+  });
+
+  it("on a load error, no Fulfillment heading or error card shows (asserted synchronously)", async () => {
+    mockTab = "fulfilment";
+    get.mockImplementation((url: string) =>
+      url === "/settings/fulfilment"
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({ data: {} }),
+    );
+    renderWithProviders(<SettingsPage />);
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(screen.queryByRole("heading", { name: "Fulfillment" })).toBeNull();
+    expect(screen.queryByText("Couldn't load your fulfillment settings.")).toBeNull();
+    expect(screen.queryByText("All settings")).toBeNull();
   });
 
   it("the bare hub never calls the endpoint and has no Fulfillment entry", async () => {
