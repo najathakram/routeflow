@@ -288,6 +288,8 @@ describe("GET /settings/fulfilment", () => {
     const w = build();
     const e = await bodyOf(w.controller.get(user("TENANT_ADMIN", { tenantId: OTHER_TENANT_ID })));
     expect(e.status).toBe(403);
+    expect(e.code).toBe(API_ERROR_CODES.FULFILMENT_TENANT_MISMATCH);
+    expect(e.code).toBe("FULFILMENT_TENANT_MISMATCH");
     expect(w.prisma.tenantFeatureConfig.findUnique).not.toHaveBeenCalled();
   });
 
@@ -531,6 +533,13 @@ describe("POST /settings/fulfilment/preview", () => {
         expect(typeof e.text).toBe("string");
         expect(e.text.length).toBeGreaterThan(10);
       }
+    });
+
+    it("the standing-orders sentence does not promise a path: a customer's saved delivery method still wins", async () => {
+      const p = await world().controller.preview({ fulfilmentModel: "ship" }, admin);
+      const text = p.effects.find((e) => e.code === "TEMPLATES_PATH_CHANGES")!.text;
+      expect(text).toMatch(/\bcan\b|\bmay\b/i);
+      expect(text).toMatch(/saved delivery method/i);
     });
 
     it("every count query is scoped to the caller's tenant", async () => {
