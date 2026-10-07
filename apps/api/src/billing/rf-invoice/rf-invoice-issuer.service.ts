@@ -6,6 +6,7 @@ import { ADMIN_AUDIT_ENTITY } from "../../platform-admin/audit-actions.constant"
 import { PrismaService } from "../../prisma/prisma.service";
 import { writeAdminNotice } from "../manual-invoice-notice";
 import { RfInvoiceBuilder } from "./rf-invoice-builder";
+import { RfInvoiceMailerService } from "./rf-invoice-mailer.service";
 import {
   RF_INVOICE_AUDIT_ACTIONS,
   RF_INVOICE_LEAD_DAYS,
@@ -85,6 +86,7 @@ export class RfInvoiceIssuerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly builder: RfInvoiceBuilder,
+    private readonly mailer: RfInvoiceMailerService,
   ) {}
 
   @LeaderCron("20 0 * * *", "billing-invoice.issueDue")
@@ -265,11 +267,22 @@ export class RfInvoiceIssuerService {
           }),
         ),
       );
+      await this.emailIssued(invoice.id, now);
       return { status: "issued", invoice };
     } catch (e) {
       if (uniqueViolationOn(e, RF_INVOICE_PERIOD_INDEX, { exact: true }))
         return { status: "exists" };
       throw e;
+    }
+  }
+
+  /** Live mode only: email the invoice just issued. A mail problem never undoes or fails the issue. */
+  private async emailIssued(invoiceId: string, now: Date): Promise<void> {
+    if (rfInvoicingMode() !== "live") return;
+    try {
+      await this.mailer.sendAuto(invoiceId, "issue", now);
+    } catch (e) {
+      this.logger.error(`issue email for ${invoiceId} failed: ${(e as Error).message}`);
     }
   }
 

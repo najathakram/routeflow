@@ -10,17 +10,23 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
+import { RfInvoiceMailerService } from "../billing/rf-invoice/rf-invoice-mailer.service";
 import {
   MarkRfInvoicePaidDto,
   RfInvoiceListQueryDto,
   RfInvoiceReasonDto,
+  SendRfInvoicesDto,
 } from "./dto/rf-invoice.dto";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
+
+/** 20 sends a minute per caller on both send routes. */
+const SEND_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
 
 /**
  * RouteFlow's own invoices to manual-pay tenants: the super-admin queue and its actions. Its own
@@ -31,7 +37,10 @@ import { RfInvoicesAdminService } from "./rf-invoices.service";
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
 @Controller("platform-admin")
 export class RfInvoicesController {
-  constructor(private readonly svc: RfInvoicesAdminService) {}
+  constructor(
+    private readonly svc: RfInvoicesAdminService,
+    private readonly mailer: RfInvoiceMailerService,
+  ) {}
 
   @Get("rf-invoices")
   @ApiOperation({ summary: "Manual-pay RouteFlow invoices: the queue" })
@@ -84,5 +93,22 @@ export class RfInvoicesController {
   @ApiOperation({ summary: "Issue the invoice that is due now for one manual-pay tenant" })
   issueForTenant(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() admin: JwtPayload) {
     return this.svc.issueForTenant(id, admin.sub);
+  }
+
+  @Post("rf-invoices/:id/send")
+  @Throttle(SEND_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Email (or re-email) one invoice to the tenant's admins" })
+  sendOne(@Param("id", ParseUUIDPipe) id: string, @CurrentUser() admin: JwtPayload) {
+    return this.mailer.sendManual(id, admin.sub);
+  }
+
+  // `send` is a literal segment: it never collides with `:id/send` (a different depth).
+  @Post("rf-invoices/send")
+  @Throttle(SEND_THROTTLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Email up to 50 invoices, one at a time; one outcome per id" })
+  sendMany(@Body() dto: SendRfInvoicesDto, @CurrentUser() admin: JwtPayload) {
+    return this.mailer.sendMany(dto.ids, admin.sub);
   }
 }

@@ -83,8 +83,14 @@ function make(
   const claims = new Set<string>();
   const prisma: any = {
     rfInvoice: {
-      findFirst: jest.fn(async ({ where }: any) => invoices.find((r) => matches(r, where)) ?? null),
-      findMany: jest.fn(async ({ where }: any) => invoices.filter((r) => matches(r, where))),
+      // copies, like the real client: a later updateMany must not rewrite a row already read
+      findFirst: jest.fn(async ({ where }: any) => {
+        const r = invoices.find((x) => matches(x, where));
+        return r ? { ...r } : null;
+      }),
+      findMany: jest.fn(async ({ where }: any) =>
+        invoices.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+      ),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const hit = invoices.filter((r) => matches(r, where));
         for (const r of hit) Object.assign(r, data);
@@ -132,7 +138,7 @@ function make(
     tenantConfig: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: any) => fn(prisma)),
   };
-  const sendPlatform = jest.fn(async () => ({
+  const sendPlatform = jest.fn(async (_mail?: any) => ({
     delivered: opts.deliver !== false,
     transport: "smtp",
   }));

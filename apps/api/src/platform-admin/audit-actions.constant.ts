@@ -73,6 +73,7 @@ export const AdminAuditAction = {
   RF_INVOICE_REOPENED: "RF_INVOICE_REOPENED",
   RF_INVOICE_VOIDED: "RF_INVOICE_VOIDED",
   RF_INVOICE_IRREGULAR_PERIOD: "RF_INVOICE_IRREGULAR_PERIOD",
+  RF_INVOICE_SENT: "RF_INVOICE_SENT",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -122,6 +123,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   RF_INVOICE_REOPENED: "RouteFlow invoice reopened",
   RF_INVOICE_VOIDED: "RouteFlow invoice voided",
   RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
+  RF_INVOICE_SENT: "RouteFlow invoice emailed",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */
