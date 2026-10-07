@@ -9,6 +9,7 @@ import { RfInvoiceBuilder } from "./rf-invoice-builder";
 import {
   RF_INVOICE_AUDIT_ACTIONS,
   RF_INVOICE_LEAD_DAYS,
+  RF_INVOICE_STALE_DAYS,
   RF_INVOICE_PERIOD_INDEX,
   rfInvoicingMode,
   type RfInvoicingMode,
@@ -52,6 +53,8 @@ export interface IssueDueSummary {
   failed: number;
   /** Tenants a period was due for but whose price cannot be resolved. */
   unpriced: string[];
+  /** Tenants skipped because their period ended long ago (rollCycles lagging); no invoice was issued. */
+  stale: string[];
 }
 
 /**
@@ -87,6 +90,7 @@ export class RfInvoiceIssuerService {
       existing: 0,
       failed: 0,
       unpriced: [],
+      stale: [],
     };
     if (mode === "off") return summary;
 
@@ -116,6 +120,17 @@ export class RfInvoiceIssuerService {
     for (const sub of subs) {
       if (!isCandidate(sub)) continue; // the query's predicate, re-checked on the row actually read
       summary.considered++;
+      if (isStale(sub, now)) {
+        // rollCycles is lagging: issuing "the next period" would invoice the past. One notice per period.
+        if (!summary.stale.includes(sub.tenantId)) summary.stale.push(sub.tenantId);
+        await this.raiseOnce(
+          sub.tenantId,
+          RF_INVOICE_AUDIT_ACTIONS.STALE_PERIOD,
+          (sub.periodEnd as Date).toISOString(),
+          `No RouteFlow invoice was issued: the subscription period ended ${(sub.periodEnd as Date).toISOString().slice(0, 10)} and has not been rolled forward.`,
+        );
+        continue;
+      }
       try {
         for (const window of await this.windowsFor(sub, now)) {
           const r = await this.issuePeriod(sub, window, now);
@@ -130,10 +145,10 @@ export class RfInvoiceIssuerService {
         );
       }
     }
-    if (summary.issued || summary.failed || summary.unpriced.length) {
+    if (summary.issued || summary.failed || summary.unpriced.length || summary.stale.length) {
       this.logger.log(
         `rf invoices (${mode}): issued ${summary.issued}, existing ${summary.existing}, ` +
-          `unpriced ${summary.unpriced.length}, failed ${summary.failed}`,
+          `unpriced ${summary.unpriced.length}, stale ${summary.stale.length}, failed ${summary.failed}`,
       );
     }
     return summary;
@@ -176,7 +191,12 @@ export class RfInvoiceIssuerService {
 
     const draft = await this.builder.build(sub.tenantId, sub.cycle);
     if (!draft.ok) {
-      await this.raiseNeedsPriceOnce(sub.tenantId, periodKey, draft.message);
+      await this.raiseOnce(
+        sub.tenantId,
+        RF_INVOICE_AUDIT_ACTIONS.NEEDS_PRICE,
+        periodKey,
+        `No RouteFlow invoice was issued for the period starting ${periodKey.slice(0, 10)}: the tenant's price cannot be resolved. ${draft.message}`,
+      );
       return { status: "no_price" };
     }
 
@@ -200,6 +220,7 @@ export class RfInvoiceIssuerService {
                 currency: draft.currency,
                 lines: draft.lines as unknown as Prisma.InputJsonValue,
                 issuedById: null,
+                needsReview: draft.needsReview,
               },
               select: { id: true, number: true },
             });
@@ -228,15 +249,15 @@ export class RfInvoiceIssuerService {
   }
 
   /**
-   * One RF_INVOICE_NEEDS_PRICE notice per (tenant, period), claimed under a transaction advisory lock so
-   * two replicas or a rerun see the first one's row. Best effort: a failure here never stops the sweep.
+   * One notice per (action, tenant, period key), claimed under a transaction advisory lock so two
+   * replicas or a rerun see the first one's row. Best effort: a failure here never stops the sweep.
    */
-  private async raiseNeedsPriceOnce(
+  private async raiseOnce(
     tenantId: string,
+    action: string,
     periodKey: string,
-    reason: string,
+    message: string,
   ): Promise<void> {
-    const action = RF_INVOICE_AUDIT_ACTIONS.NEEDS_PRICE;
     const dedupeKey = `${action}:${tenantId}:${periodKey}`;
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -251,19 +272,19 @@ export class RfInvoiceIssuerService {
           select: { id: true },
         });
         if (seen) return;
-        await writeAdminNotice(tx, {
-          tenantId,
-          action,
-          message: `No RouteFlow invoice was issued for the period starting ${periodKey.slice(0, 10)}: the tenant's price cannot be resolved. ${reason}`,
-          meta: { periodKey, dedupeKey },
-        });
+        await writeAdminNotice(tx, { tenantId, action, message, meta: { periodKey, dedupeKey } });
       });
     } catch (e) {
       this.logger.error(
-        `tenant ${tenantId}: the no-price notice could not be written: ${(e as Error).message}`,
+        `tenant ${tenantId}: the "${action}" notice could not be written: ${(e as Error).message}`,
       );
     }
   }
+}
+
+/** The subscription's period ended more than a day ago: rollCycles has not caught up. */
+function isStale(sub: IssuerSubscription, now: Date): boolean {
+  return (sub.periodEnd as Date).getTime() < now.getTime() - RF_INVOICE_STALE_DAYS * DAY_MS;
 }
 
 /** The cron query's predicate, applied again to each row read. */

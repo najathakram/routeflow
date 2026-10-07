@@ -275,6 +275,41 @@ describe("RfInvoiceIssuerService", () => {
     expect(second.unpriced).toEqual(["tenant-acme"]);
   });
 
+  it("CRON-6: a period that ended 10 days ago (rollCycles lagging) -> no invoice, ONE stale notice per period", async () => {
+    const stale = sub({
+      periodStart: new Date(NOW.getTime() - 40 * DAY),
+      periodEnd: new Date(NOW.getTime() - 10 * DAY),
+    });
+    const { svc, invoices, audits } = make({ subs: [stale] });
+    const first = await svc.runIssueDue(NOW);
+    const second = await svc.runIssueDue(NOW);
+    expect(invoices).toHaveLength(0);
+    expect(audits.filter((a) => a.action === "RF_INVOICE_STALE_PERIOD")).toHaveLength(1);
+    expect(first.stale).toEqual(["tenant-acme"]);
+    expect(second.stale).toEqual(["tenant-acme"]);
+    expect(first.issued).toBe(0);
+  });
+
+  it("CRON-6: a period that ended less than a day ago is not stale", async () => {
+    const fresh = sub({
+      periodStart: new Date(NOW.getTime() - 30.5 * DAY),
+      periodEnd: new Date(NOW.getTime() - 0.5 * DAY),
+    });
+    const { svc, invoices } = make({ subs: [fresh] });
+    const r = await svc.runIssueDue(NOW);
+    expect(r.stale).toEqual([]);
+    expect(invoices).toHaveLength(1);
+  });
+
+  it("an add-on line priced at null is persisted as needsReview on the row (and false otherwise)", async () => {
+    const yes = make({ subs: [sub()], draft: { ...DRAFT, needsReview: true } });
+    await yes.svc.runIssueDue(NOW);
+    expect(yes.invoices[0].needsReview).toBe(true);
+    const no = make({ subs: [sub()] });
+    await no.svc.runIssueDue(NOW);
+    expect(no.invoices[0].needsReview).toBe(false);
+  });
+
   it("SA722-1: two concurrent issues of one period -> ONE row; the loser's period-index P2002 is absorbed", async () => {
     let attempts = 0;
     const { svc, invoices, audits } = make({

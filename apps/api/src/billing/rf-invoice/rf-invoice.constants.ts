@@ -34,6 +34,7 @@ export interface RfInvoiceLine {
 export const RF_INVOICE_AUDIT_ACTIONS = {
   ISSUED: AdminAuditAction.RF_INVOICE_ISSUED,
   NEEDS_PRICE: AdminAuditAction.RF_INVOICE_NEEDS_PRICE,
+  STALE_PERIOD: AdminAuditAction.RF_INVOICE_STALE_PERIOD,
 } as const;
 
 /**
@@ -54,3 +55,6 @@ export function rfInvoicingMode(
 
 /** Issue the next period this many days before it starts. */
 export const RF_INVOICE_LEAD_DAYS = 7;
+
+/** A subscription whose period ended more than this many days ago is stale (rollCycles lagging): never invoiced. */
+export const RF_INVOICE_STALE_DAYS = 1;

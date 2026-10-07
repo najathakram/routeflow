@@ -66,11 +66,11 @@ export class RfInvoiceBuilder {
         lines.push(addonLine(row, quantity, 0, 0));
         continue;
       }
-      const price = Number(row.priceSnapshot);
-      // Monthly multiplies the raw price (a half-cent snapshot rounds once, on the line); annual
-      // multiplies the whole-cent 10-month price.
-      const amount = roundMoney((cycle === "ANNUAL" ? cyclePrice(price, cycle) : price) * quantity);
-      lines.push(addonLine(row, quantity, cyclePrice(price, cycle), amount));
+      // ONE formula for both cycles, the same as manual-activation-addons.ts (cycleAmount): the invoice
+      // must equal what the other billing paths charge.
+      const unit = cyclePrice(Number(row.priceSnapshot), cycle);
+      const amount = roundMoney(unit * quantity);
+      lines.push(addonLine(row, quantity, unit, amount));
     }
 
     const total = roundMoney(lines.reduce((sum, l) => sum + l.amount, 0));

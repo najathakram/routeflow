@@ -31,6 +31,7 @@ const ADMIN_ONLY = [
   "voidReason",
   "periodKey",
   "pdfKey",
+  "needsReview",
 ];
 
 const FULL_ROW: Record<string, unknown> = {
@@ -60,6 +61,7 @@ const FULL_ROW: Record<string, unknown> = {
   sendCount: 2,
   voidedAt: null,
   voidReason: null,
+  needsReview: true,
 };
 
 function deepKeys(v: unknown, out = new Set<string>()): Set<string> {

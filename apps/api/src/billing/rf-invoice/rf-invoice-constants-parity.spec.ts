@@ -40,6 +40,10 @@ describe("rf-invoice constants parity", () => {
   it("issue / needs-price audit codes are registered with their exact labels", () => {
     expect(RF_INVOICE_AUDIT_ACTIONS.ISSUED).toBe("RF_INVOICE_ISSUED");
     expect(RF_INVOICE_AUDIT_ACTIONS.NEEDS_PRICE).toBe("RF_INVOICE_NEEDS_PRICE");
+    expect(RF_INVOICE_AUDIT_ACTIONS.STALE_PERIOD).toBe("RF_INVOICE_STALE_PERIOD");
+    expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_STALE_PERIOD).toBe(
+      "RouteFlow invoice not issued (stale period)",
+    );
     expect(AdminAuditAction.RF_INVOICE_ISSUED).toBe("RF_INVOICE_ISSUED");
     expect(AdminAuditAction.RF_INVOICE_NEEDS_PRICE).toBe("RF_INVOICE_NEEDS_PRICE");
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_ISSUED).toBe("RouteFlow invoice issued");

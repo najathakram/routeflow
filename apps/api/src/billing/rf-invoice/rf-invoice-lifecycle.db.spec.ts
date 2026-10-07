@@ -29,7 +29,9 @@ const row = (over: Record<string, unknown> = {}) => ({
 
 describe("RfInvoice manual lifecycle (DB)", () => {
   beforeAll(async () => {
-    const t = await prisma.tenant.create({ data: { name: "Acme Wholesale (test)", slug: SLUG } });
+    const t = await prisma.tenant.create({
+      data: { name: "Acme Wholesale (test)", slug: SLUG, class: "TEST" },
+    });
     tenantId = t.id;
   });
   afterAll(async () => {
@@ -40,7 +42,13 @@ describe("RfInvoice manual lifecycle (DB)", () => {
 
   it("DB-1: the new columns exist with their defaults, and (tenantId, periodKey) is unique", async () => {
     const a = await prisma.rfInvoice.create({ data: row() as any });
-    expect(a).toMatchObject({ currency: "USD", sendCount: 0, paidAt: null, voidedAt: null });
+    expect(a).toMatchObject({
+      currency: "USD",
+      sendCount: 0,
+      needsReview: false,
+      paidAt: null,
+      voidedAt: null,
+    });
     let err: unknown;
     await prisma.rfInvoice.create({ data: row() as any }).catch((e) => (err = e));
     expect(uniqueViolationOn(err, RF_INVOICE_PERIOD_INDEX, { exact: true })).toBe(true);

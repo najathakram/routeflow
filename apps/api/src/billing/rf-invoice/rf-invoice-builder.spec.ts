@@ -37,13 +37,16 @@ const addon = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("RfInvoiceBuilder", () => {
-  it("BLD-1: monthly plan line + add-on 19.995 x 2 -> [149.00, 39.99], total 188.99", async () => {
+  it("BLD-1: monthly plan line + add-on 19.995 x 2 -> [149.00, 40.00], total 189.00", async () => {
     const { builder } = make({ addons: [addon({ priceSnapshot: 19.995, quantity: 2 })] });
     const r = await builder.build("tenant-acme", "MONTHLY");
     if (!r.ok) throw new Error("expected a draft");
-    expect(r.lines.map((l) => l.amount)).toEqual([149, 39.99]);
+    // One formula for both cycles, matching manual-activation-addons.ts (cycleAmount =
+    // roundMoney(cyclePrice(price, cycle) * qty)): cyclePrice rounds 19.995 to 20.00 first, so the
+    // line is 40.00 - the invoice must equal what the other billing paths charge.
+    expect(r.lines.map((l) => l.amount)).toEqual([149, 40]);
     expect(r.lines.map((l) => l.kind)).toEqual(["PLAN", "ADDON"]);
-    expect(r.total).toBe(188.99);
+    expect(r.total).toBe(189);
     expect(r.needsReview).toBe(false);
     expect(r.currency).toBe("USD");
   });
