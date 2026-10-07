@@ -48,6 +48,7 @@ import {
   TENDER_OPTIONS,
   handBackLine,
   refundErrorKind,
+  TERMINAL_REFUND_ERRORS,
   type RefundErrorKind,
 } from "./refund-copy";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
@@ -315,7 +316,8 @@ export function RecordInlineReturnDialog({
           </Button>
         )}
         renderQuoteActions={() =>
-          showChoice && (refundError === "failed" || refundError === "resolved") ? (
+          showChoice &&
+          (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
             refundError === "failed" && saved ? (
               <Button loading={refunding} onClick={() => saved && doRetry(saved)}>
                 Retry refund

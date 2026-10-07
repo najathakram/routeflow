@@ -301,5 +301,34 @@ describe("refund flow", () => {
     captureOk();
     await screen.findByText("You don't have permission to refund this return.");
     expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+    // terminal: no retry, and no confirm that would capture again
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^return & refund/i })).toBeNull();
+    // the footer Close (the modal X also carries aria-label "Close")
+    expect(
+      screen.getAllByRole("button", { name: "Close" }).some((b) => b.textContent === "Close"),
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "REFUND_NEEDS_PAID_INVOICE",
+      "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
+    ],
+    ["RETURN_REFUNDED_CASH", "This return was already refunded. Nothing more was refunded."],
+    ["RETURN_NOT_REFUNDABLE", "There's nothing to refund on this return."],
+  ])("409 %s shows fixed copy, no retry, Close only", async (code, copy) => {
+    refundReturn.mockRejectedValue(apiErr(409, code));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(copy);
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+    // the footer Close (the modal X also carries aria-label "Close")
+    expect(
+      screen.getAllByRole("button", { name: "Close" }).some((b) => b.textContent === "Close"),
+    ).toBe(true);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
   });
 });

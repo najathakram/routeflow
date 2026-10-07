@@ -75,10 +75,11 @@ export function useCaptureInlineReturn() {
 }
 
 /**
- * POS-4b: POST /returns/:id/refund — pay a REFUND-resolution capture back. Plain call (not a hook) so
+ * POS-4b: POST /returns/inline/:id/refund — pay a REFUND-resolution capture back (the standard
+ * POST /returns/:id/refund refuses an inline return). Plain call (not a hook) so
  * the dialog can re-POST ONLY the refund on a retry; the capture's own cache invalidation already ran.
  * Errors: 409 REFUND_AMOUNT_CHANGED, 409 RETURN_ALREADY_RESOLVED, 403.
  */
 export function refundReturn(id: string, body: RefundInlineReturnRequest): Promise<unknown> {
-  return apiClient.post(`/returns/${id}/refund`, body).then((r) => r.data);
+  return apiClient.post(`/returns/inline/${id}/refund`, body).then((r) => r.data);
 }

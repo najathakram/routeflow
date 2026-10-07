@@ -101,10 +101,12 @@ export interface CaptureInlineReturnRequest {
 export type InlineReturnResolution = "STORE_CREDIT" | "REFUND";
 export type InlineReturnRefundTender = "CASH" | "CARD" | "CHECK";
 
-/** POST /returns/:id/refund body (POS-4b). 409 REFUND_AMOUNT_CHANGED / RETURN_ALREADY_RESOLVED, 403. */
+/** POST /returns/inline/:id/refund body (POS-4b). 409 REFUND_AMOUNT_CHANGED / RETURN_ALREADY_RESOLVED /
+ *  REFUND_NEEDS_PAID_INVOICE / RETURN_REFUNDED_CASH / RETURN_NOT_REFUNDABLE, 403. */
 export interface RefundInlineReturnRequest {
   tender: InlineReturnRefundTender;
   expectedAmount: number;
+  reason?: string;
 }
 
 // ─── Request: inlineReturn embedded on order create/edit (#2406) ───────────────
