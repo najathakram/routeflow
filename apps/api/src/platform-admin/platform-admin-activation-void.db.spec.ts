@@ -1,6 +1,8 @@
 // PR4a DB-4 - DB-backed (the *.db.spec.ts lane; run by the prover on the compose DB, never by the builder).
 // The manual activation and the auto-void of the OPEN invoices it covers land or roll back as ONE transaction.
-// The tenant is a throwaway e2e-* slug of class TEST; every row is removed in afterAll.
+// Every test gets its OWN throwaway e2e-* tenant (class TEST, status TRIAL), removed in afterEach, so no test
+// can see another's activation. A class-TEST tenant never crosses into the paying set, so the billing-event
+// emit is NOT reached; the post-void failure is injected on the activation's last in-tx write instead.
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -17,8 +19,11 @@ let prisma: PrismaClient;
 let svc: PlatformAdminService;
 let tenantId: string;
 let emit: jest.Mock;
+const tenantIds: string[] = [];
+// When set, the activation's marker audit row (its LAST in-transaction write, after the void) throws.
+let failMarker = false;
 let createdVersionId: string | undefined; // only a version this spec created is ever deleted
-const SLUG = `e2e-rfinv4a-${Date.now()}`;
+const SLUG_BASE = `e2e-rfinv4a-${Date.now()}`;
 const ACTOR_DTO = { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" };
 let seq = 0;
 
@@ -49,15 +54,66 @@ const voidAudits = () =>
   });
 const subRow = () => prisma.tenantSubscription.findUnique({ where: { tenantId } });
 
+/**
+ * The real client, except that while `failMarker` is set the activation's transaction throws when it writes
+ * the TENANT_MANUAL_ACTIVATION_MARKER audit row - the last write of the transaction, strictly after the
+ * subscription upsert and the void. Everything else is delegated untouched (methods bound to their owner).
+ */
+function failingMarkerPrisma(real: PrismaClient): PrismaClient {
+  const bound = (o: any) =>
+    new Proxy(o, {
+      get: (t, k) => (typeof t[k] === "function" ? t[k].bind(t) : t[k]),
+    });
+  const wrapTx = (tx: any) =>
+    new Proxy(tx, {
+      get: (t, k) => {
+        if (k === "auditLog") {
+          return new Proxy(t.auditLog, {
+            get: (a, m) =>
+              m === "create"
+                ? (args: any) => {
+                    if (
+                      failMarker &&
+                      args?.data?.action === AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER
+                    ) {
+                      throw new Error("injected: activation marker write failed");
+                    }
+                    return a.create(args);
+                  }
+                : typeof a[m] === "function"
+                  ? a[m].bind(a)
+                  : a[m],
+          });
+        }
+        return typeof t[k] === "function" ? t[k].bind(t) : t[k];
+      },
+    });
+  return new Proxy(real as any, {
+    get: (t, k) => {
+      if (k === "$transaction") {
+        return (fn: any, opts?: any) =>
+          typeof fn === "function"
+            ? t.$transaction((tx: any) => fn(wrapTx(tx)), opts)
+            : t.$transaction(fn, opts);
+      }
+      const v = t[k];
+      return typeof v === "function" ? v.bind(t) : v && typeof v === "object" ? bound(v) : v;
+    },
+  }) as PrismaClient;
+}
+
+async function cleanupTenant(id: string) {
+  await prisma.auditLog.deleteMany({ where: { tenantId: id } });
+  await prisma.billingEvent.deleteMany({ where: { tenantId: id } });
+  await prisma.rfInvoice.deleteMany({ where: { tenantId: id } });
+  await prisma.tenantSubscription.deleteMany({ where: { tenantId: id } });
+  await prisma.tenant.deleteMany({ where: { id } });
+}
+
 describeDb("manual activation auto-void (DB)", () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
-    assertTestTenant(SLUG);
-    const t = await prisma.tenant.create({
-      data: { name: "Acme Wholesale (test)", slug: SLUG, class: "TEST", status: "TRIAL" },
-    });
-    tenantId = t.id;
     // Hermetic (a fresh CI database has no seeded catalog): reuse a PUBLISHED PlanVersion when one exists,
     // otherwise create a throwaway one as the FK target for TenantSubscription.planVersionId.
     let version = await prisma.planVersion.findFirst({ where: { status: "PUBLISHED" } });
@@ -81,7 +137,7 @@ describeDb("manual activation auto-void (DB)", () => {
     // planCatalogService, proration, entitlementsService, billingEventService, meterService,
     // tenantStatusGuard, auditService, mrrService, tenantMirror, featureOverrides, planTransition.
     const deps = {
-      prisma,
+      prisma: failingMarkerPrisma(prisma),
       jwtService: {},
       config: { get: jest.fn() },
       emailService: {},
@@ -115,15 +171,23 @@ describeDb("manual activation auto-void (DB)", () => {
       ...(Object.values(deps) as unknown as ConstructorParameters<typeof PlatformAdminService>),
     );
   });
+  beforeEach(async () => {
+    failMarker = false;
+    const slug = `${SLUG_BASE}-${tenantIds.length}`;
+    assertTestTenant(slug);
+    const t = await prisma.tenant.create({
+      data: { name: "Acme Wholesale (test)", slug, class: "TEST", status: "TRIAL" },
+    });
+    tenantId = t.id;
+    tenantIds.push(t.id);
+  });
+  afterEach(async () => {
+    failMarker = false;
+    if (tenantId) await cleanupTenant(tenantId);
+  });
   afterAll(async () => {
     try {
-      if (tenantId) {
-        await prisma.auditLog.deleteMany({ where: { tenantId } });
-        await prisma.billingEvent.deleteMany({ where: { tenantId } });
-        await prisma.rfInvoice.deleteMany({ where: { tenantId } });
-        await prisma.tenantSubscription.deleteMany({ where: { tenantId } });
-        await prisma.tenant.deleteMany({ where: { id: tenantId } });
-      }
+      for (const id of tenantIds) await cleanupTenant(id); // idempotent: a straggler only
       if (createdVersionId) {
         await prisma.planVersion.deleteMany({ where: { id: createdVersionId } });
       }
@@ -137,15 +201,19 @@ describeDb("manual activation auto-void (DB)", () => {
     const inv = await coveredInvoice();
     const paid = await coveredInvoice();
     await prisma.rfInvoice.update({ where: { id: paid.id }, data: { status: "PAID" } });
-    emit.mockRejectedValueOnce(new Error("activation failed after the void"));
+    failMarker = true; // the marker write comes after the subscription upsert AND the void
 
     await expect(
       svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a"),
-    ).rejects.toThrow("activation failed after the void");
+    ).rejects.toThrow("injected: activation marker write failed");
 
     expect(await statusOf(inv.id)).toBe("OPEN");
     expect(await voidAudits()).toBe(0);
     expect(await subRow()).toBeNull(); // the subscription write rolled back too
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status).toBe(
+      "TRIAL",
+    );
+    expect(await statusOf(paid.id)).toBe("PAID");
   });
 
   it("a void failure rolls the activation back (a colliding void periodKey -> unique violation)", async () => {
@@ -170,11 +238,9 @@ describeDb("manual activation auto-void (DB)", () => {
     expect((await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status).toBe(
       "TRIAL",
     );
-    await prisma.rfInvoice.deleteMany({ where: { tenantId, status: "VOID" } });
   });
 
   it("success: the covered OPEN invoice is VOID with its reason + audit in the same commit; PAID untouched", async () => {
-    await prisma.rfInvoice.deleteMany({ where: { tenantId } });
     const open = await coveredInvoice();
     const paid = await coveredInvoice();
     await prisma.rfInvoice.update({ where: { id: paid.id }, data: { status: "PAID" } });
@@ -190,8 +256,8 @@ describeDb("manual activation auto-void (DB)", () => {
     expect(await voidAudits()).toBe(1);
     expect((await subRow())?.externalPayment).toBe(true);
   });
+
   it("a partially overlapping OPEN invoice stays OPEN, is flagged needsReview, with exactly one notice", async () => {
-    // a fresh tenant state: roll back to TRIAL-less renewal is fine, the partial case only needs the window
     const startsBefore = new Date(Date.now() - 5 * DAY);
     const partial = await prisma.rfInvoice.create({
       data: {
