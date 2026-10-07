@@ -1146,14 +1146,13 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
           lifecycle: "ga",
           settings: [],
         },
-        // SA-671 M1: not available until the counter-sale work lands — no PICKUP order can be
-        // written yet (the enum value is not on master), so no tenant may be SET to a mode whose
-        // methods are PICKUP. A tenant already storing one keeps it (resolveEffective ignores
-        // `available`); only new writes are refused. The counter-sale work flips these to true.
-        pickup: { label: "In store only", available: false, lifecycle: "proposed", settings: [] },
+        // SA-671 M1 lifted (pickup mode API): PICKUP orders can be written (counter sale, order-ahead
+        // pickup), so a tenant may now be SET to an in-store mode. A STORED mode that the registry
+        // marks UNAVAILABLE would derive as unset (deriveFulfilmentCapability, SA-666a/b).
+        pickup: { label: "In store only", available: true, lifecycle: "proposed", settings: [] },
         pickup_ship: {
           label: "In store + shipping",
-          available: false,
+          available: true,
           lifecycle: "proposed",
           settings: [],
         },

@@ -7,7 +7,12 @@ import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type InvoiceStatus, type OrderTrackingResponse } from "@routeflow/types";
+import {
+  isTrackingLive,
+  type FulfilmentMethod,
+  type InvoiceStatus,
+  type OrderTrackingResponse,
+} from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
@@ -386,6 +391,8 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
       forceNew?: boolean;
+      /** order ahead: the buyer's pickup / ship choice; omitted = the server's own default */
+      fulfillPath?: FulfilmentMethod;
     }) =>
       // B1094: the same cart carries the same key, so a double click / timeout retry applies once.
       buyerApiClient

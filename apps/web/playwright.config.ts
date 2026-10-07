@@ -942,5 +942,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // #3168: batch ship + packing slips. Every endpoint is mocked (no tenant writes); WITHOUT THIS
+    // ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "batch-ship",
+      testMatch: /48-batch-ship\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

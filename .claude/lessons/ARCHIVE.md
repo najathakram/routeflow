@@ -3509,3 +3509,29 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
   (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
   (Archived 2026-10-06 whole and verbatim to make room at cap: L-242 is guarded by apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts (isCustomLine in hydrateBuyerDraft), with no citation outside the code-map and bug-history bookkeeping.)
+
+### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
+
+- **Symptom:** a CREDIT_NOTE-method payment (`status: PAID`) rendered/counted as cash everywhere
+  a "Paid"/"received" figure was shown — invoice totals, PDF, buyer portal, mobile, every
+  bookkeeping cash-flow figure.
+- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
+  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
+  questions, so every consumer answered both with the same number.
+- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
+  stays in, since its application is the only place cash is ever recorded) — but
+  balance/status/outstanding figures keep the FULL confirmed total, since a credit note or
+  advance genuinely settles what's owed. Two questions, two filters, ONE shared predicate.**
+- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
+  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile import
+  — never re-derive either filter at a second site.
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-143 is guarded by the shared `@routeflow/pricing` payment predicates that api, web and mobile import; least-cited and fully guarded.)
+
+### L-263 · 2026-10-05 · tooling · a plain `npm ci` rewrites the SHARED `core.hooksPath`, silently switching off hooks in other worktrees (#3199)
+
+- **Symptom:** after a worktree ran `npm ci`, a push from another worktree ran no pre-push verify at all and #3199 went out unverified; nothing printed, git treats a missing hooks directory as "no hooks".
+- **Root cause:** `prepare` runs `husky`, which sets `core.hooksPath = .husky/_` (relative) in the one repo config every worktree shares; a worktree without its own `.husky/_` then has no hooks, instead of the absolute fleet shim. A one-time restore at session start does not hold: any later `npm ci` in any worktree resets it.
+- **Lesson:** **Install a worktree with `npm ci --ignore-scripts` and build `packages/*` by hand; after ANY `npm ci` or `npx husky`, and before every push, run `git config core.hooksPath` and restore the absolute shim (`git config core.hooksPath <main checkout>/.git/husky-shim/_`) if it reads `.husky/_`. A push that printed no verify output did not verify.**
+- **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-263 is guarded by `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); least-cited and fully guarded.)
+
