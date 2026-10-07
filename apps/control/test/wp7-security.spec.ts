@@ -10,6 +10,7 @@ import type { Harness } from "./helpers/start-server";
 import { buildPrivateDist } from "./helpers/build-dist";
 import type { PrivateDist } from "./helpers/build-dist";
 import { scaled } from "./helpers/platform";
+import { emptyHistogram, uploadWithRetry } from "./helpers/upload-retry";
 
 jest.setTimeout(scaled(60_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -319,28 +320,24 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     live();
     const base = live();
     const socks: net.Socket[] = [];
-    let sent = 0;
+    const hist = emptyHistogram();
+    const head = post();
     await Promise.all(
-      Array.from(
-        { length: 200 },
-        () =>
-          new Promise<void>((resolve) => {
-            const s = net.connect(port, "127.0.0.1");
-            socks.push(s);
-            s.on("error", () => resolve());
-            s.on("connect", () => {
-              s.write(post());
-              s.write(part, () => {
-                sent++;
-                resolve();
-              });
-            });
-          }),
-      ),
+      Array.from({ length: 200 }, async () => {
+        const s = await uploadWithRetry(port, head, part, hist);
+        if (s) socks.push(s);
+      }),
     );
+    const sent = socks.length;
     await sleep(500); // let the server read everything the kernel buffered
     const grown = live() - base;
     socks.forEach((s) => s.destroy());
+    if (sent !== 200) console.error("B941 upload failures by class:", JSON.stringify(hist));
+    else if (Object.keys(hist["retried-client-transient"]).length)
+      console.log(
+        "B941 retried client-transient:",
+        JSON.stringify(hist["retried-client-transient"]),
+      );
     expect(sent).toBe(200); // every upload really reached the server, so the reading means something
     expect(grown).toBeLessThan(50 * 1024 * 1024);
   });
