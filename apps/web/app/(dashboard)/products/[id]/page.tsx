@@ -1406,7 +1406,7 @@ export default function ProductDetailPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Details
                 </h3>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
                   {isEditing ? (
                     <>
                       <button
