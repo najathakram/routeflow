@@ -914,7 +914,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // POS-7a: the SAME gate as the dashboard/orders Counter sale button (always|optional -> shown; off/loading -> hidden).
-  const { showButton: counterEnabled } = useCounterSaleGate();
+  const { showButton: counterEnabled } = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   // RO-1: dashboard-wide read-only banner, fed by the same query as the billing page.
@@ -953,12 +955,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
     if (!isStaff) return base;
 
-    // POS-7a: "Counter" leaf right after the Orders group; nothing else moves.
+    // POS-7a: "Counter" is the FIRST child of the Orders group (above All Orders): the single-active
+    // matcher then lights only Counter on /orders/counter-sale; nothing else moves.
     if (counterEnabled) {
-      base = base.flatMap((entry): NavEntry[] =>
+      base = base.map((entry): NavEntry =>
         entry.kind === "group" && entry.label === "Orders"
-          ? [entry, { kind: "leaf", label: "Counter", href: "/orders/counter-sale", icon: Store }]
-          : [entry],
+          ? {
+              ...entry,
+              children: [
+                { kind: "leaf", label: "Counter", href: "/orders/counter-sale", icon: Store },
+                ...entry.children,
+              ],
+            }
+          : entry,
       );
     }
 

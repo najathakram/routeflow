@@ -138,7 +138,7 @@ describe("POS-7a counter entry", () => {
     ]);
   });
 
-  it("shows Counter -> /orders/counter-sale in sidebar and drawer, right after Orders, nothing else changed", () => {
+  it("shows Counter -> /orders/counter-sale in sidebar and drawer, first child of Orders, nothing else changed", () => {
     renderShell();
     const before = navLabels("sidebar-aside");
     cleanup();
@@ -152,7 +152,8 @@ describe("POS-7a counter entry", () => {
     const after = navLabels("sidebar-aside");
     expect(after.filter((l) => l !== "Counter")).toEqual(before);
     expect(after.length).toBe(before.length + 1);
-    expect(after.indexOf("Counter")).toBe(after.indexOf("All Orders") + 1);
+    expect(after.indexOf("Counter")).toBe(after.indexOf("Orders") + 1);
+    expect(after.indexOf("All Orders")).toBe(after.indexOf("Counter") + 1);
   });
 
   it("g t goes to the counter when enabled", () => {

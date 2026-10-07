@@ -81,9 +81,12 @@ const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
 const COUNTER_COMMAND_IDS = ["act-counter-sale"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
+  const { user } = useAuth();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
-  const { showButton: counterEnabled } = useCounterSaleGate();
+  const { showButton: counterEnabled } = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   return React.useMemo(
     () =>
       [
