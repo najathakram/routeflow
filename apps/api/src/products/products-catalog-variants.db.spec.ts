@@ -231,4 +231,40 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       });
     });
   });
+
+  describe("B1214: a UPC-A and its EAN-13 form are one barcode", () => {
+    const UPC = "036000291452";
+    it("the second claimant of the other spelling is a 409 BARCODE_TAKEN", async () => {
+      const tenantId = await seedTenant("gtin");
+      await inTenant(tenantId, () =>
+        service.create(
+          { name: "Acme One", unit: "each", pricePerUnit: "1.00", barcode: UPC } as never,
+          {
+            actorId: null,
+          },
+        ),
+      );
+      const err = await inTenant(tenantId, () =>
+        service.create(
+          { name: "Acme Two", unit: "each", pricePerUnit: "1.00", barcode: `0${UPC}` } as never,
+          { actorId: null },
+        ),
+      ).catch((e: unknown) => e);
+      expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: "BARCODE_TAKEN",
+      });
+    });
+
+    it("two concurrent creates of the two spellings: exactly one wins", async () => {
+      const tenantId = await seedTenant("gtin-race");
+      const mk = (name: string, barcode: string) =>
+        inTenant(tenantId, () =>
+          service.create({ name, unit: "each", pricePerUnit: "1.00", barcode } as never, {
+            actorId: null,
+          }),
+        );
+      const results = await Promise.allSettled([mk("Race A", UPC), mk("Race B", `0${UPC}`)]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    });
+  });
 });
