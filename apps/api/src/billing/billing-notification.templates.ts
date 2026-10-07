@@ -304,7 +304,7 @@ export interface RfInvoiceEmailInput {
   periodEnd: Date | null;
   dueDate: Date | null;
   lines: unknown;
-  /** Whole UTC days past the due date; read only by a `manual` resend (the stage kinds imply their own). */
+  /** Whole UTC days past the due date; read by a `manual` resend and a late `issue` email (the stage kinds imply their own). */
   overdueDays?: number;
 }
 
@@ -351,7 +351,8 @@ function rfLines(raw: unknown): RfEmailLine[] {
 function overdueDaysFor(kind: RfInvoiceEmailKind, inv: RfInvoiceEmailInput): number {
   if (kind === "d7") return 7;
   if (kind === "d14") return 14;
-  if (kind === "manual") return Math.max(0, Math.floor(inv.overdueDays ?? 0));
+  // manual resend, or an issue email for an invoice issued after its due date: the days so far
+  if (kind === "manual" || kind === "issue") return Math.max(0, Math.floor(inv.overdueDays ?? 0));
   return 0;
 }
 

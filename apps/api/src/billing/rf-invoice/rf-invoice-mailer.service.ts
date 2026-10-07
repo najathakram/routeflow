@@ -38,6 +38,7 @@ const SEND_SELECT = {
   periodStart: true,
   periodEnd: true,
   dueDate: true,
+  issuedAt: true,
   lines: true,
   lastSentAt: true,
   tenant: { select: { subscription: { select: { stripeSubId: true } } } },
@@ -175,7 +176,7 @@ export class RfInvoiceMailerService {
     if (rfInvoicingMode() !== "live") return;
     try {
       const row = await this.prisma.rfInvoice.findFirst({
-        where: { id: invoiceId },
+        where: { id: invoiceId, tenant: rfInvoiceTenantScope(rfInvoiceTestTenantSlugs()) },
         select: SEND_SELECT,
       });
       if (!row || row.status !== "OPEN" || paysByCard(row)) return;
@@ -238,6 +239,13 @@ export class RfInvoiceMailerService {
         .reverse()
         .find((s) => daysAfter >= s.days && daysAfter <= s.days + RF_INVOICE_REMINDER_CATCHUP_DAYS);
       if (!stage) continue;
+      // The issue email already told the tenant where the invoice stands: a stage whose day was at or before
+      // the day the invoice was issued is covered by it (a same-day d0 would double up), later stages still fire.
+      if (
+        row.issuedAt &&
+        dayStart(row.issuedAt).getTime() >= dayStart(row.dueDate).getTime() + stage.days * DAY_MS
+      )
+        continue;
       summary.considered++;
       try {
         if (await this.sendAutoRow(row, stage.trigger, now)) summary.sent++;

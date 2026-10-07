@@ -26,7 +26,7 @@ const isUniqueViolation = (e: unknown): boolean =>
   !!e && typeof e === "object" && (e as { code?: string }).code === "P2002";
 
 /** What one RF-invoice email attempt came to; `skipped` = an auto kind already claimed. */
-export interface RfInvoiceSendResult {
+export interface RfInvoiceDeliveryResult {
   status: "sent" | "no_recipients" | "failed" | "skipped";
   /** Admins who accepted the mail: a COUNT, never an address. */
   recipients: number;
@@ -181,7 +181,7 @@ export class BillingNotificationService {
       businessName: string,
       dateFor: (d: Date) => string,
     ) => BillingEmailTemplate,
-  ): Promise<RfInvoiceSendResult> {
+  ): Promise<RfInvoiceDeliveryResult> {
     try {
       const won = await this.claim(tenantId, milestone, key);
       if (!won) return { status: "skipped", recipients: 0 };
@@ -211,7 +211,7 @@ export class BillingNotificationService {
   async sendRfInvoice(
     invoice: RfInvoiceEmailInput & { id: string; tenantId: string },
     kind: RfInvoiceEmailKind,
-  ): Promise<RfInvoiceSendResult> {
+  ): Promise<RfInvoiceDeliveryResult> {
     const build = (_admin: AdminContact, businessName: string) =>
       rfInvoiceEmail(kind, invoice, businessName);
     if (kind === "manual") {
