@@ -217,3 +217,8 @@ filter, `playwright.config.ts` registers the project only when `PLAYWRIGHT_BASE_
 `true`; the spec also calls `assertLocalFulfilmentTarget` (localhost web + API, provably local DB, approved test tenant)
 before any write and throws otherwise. It needs the local super-admin: run `npm run local:sa` once after `local:up`
 (credentials stay in the gitignored `local-assets/local-sa.env`, never in a committed file).
+
+Ordering and teardown: the project is registered **last** in `playwright.config.ts` and listed **last** in `local:e2e`, so
+nothing else runs against the tenant while its fulfilment config is changed. The teardown restores the DB rows, then polls
+the operator's `GET /tenants/me/features` (not the DB) for up to 60 s until the API reads the pre-run modes and capability
+back (the API caches modes briefly), and fails with the observed and expected values if it never does.

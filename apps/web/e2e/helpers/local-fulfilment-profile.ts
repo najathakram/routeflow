@@ -70,6 +70,9 @@ export async function restoreFulfilmentConfig(
   t: LocalFulfilmentTarget,
   snap: FulfilmentSnapshot,
 ): Promise<boolean> {
+  // LOCAL-ONLY direct-DB write (lead-accepted): withDb() calls assertLocalFulfilmentTarget first (local web + API + DB, not
+  // CI, and assertTestTenant on the slug), it touches this one test tenant's rows only, and the read-back below asserts the
+  // result is identical to the snapshot.
   await withDb(t, async (c) => {
     await c.query("BEGIN");
     try {
@@ -128,5 +131,48 @@ export async function applyBusinessProfile(
       reason: "local e2e spec 71 (restored afterwards)",
     },
     accessToken,
+  );
+}
+
+/** The tenant's fulfilment modes + derived capability as the OPERATOR's API reports them (the real, cached read path). */
+export async function readApiCapability(t: LocalFulfilmentTarget): Promise<unknown> {
+  assertLocalFulfilmentTarget(t);
+  const headers = { "content-type": "application/json", "x-tenant-slug": t.tenantSlug as string };
+  const login = await fetch(`${t.apiUrl}/api/v1/auth/login`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ username: "admin", password: "Admin@123" }), // the seeded e2e operator (e2e/helpers/constants.ts)
+  });
+  if (!login.ok) throw new Error(`operator login -> ${login.status}`);
+  const { accessToken } = (await login.json()) as { accessToken: string };
+  const res = await fetch(`${t.apiUrl}/api/v1/tenants/me/features`, {
+    headers: { ...headers, authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`GET /tenants/me/features -> ${res.status}`);
+  const f = (await res.json()) as any;
+  return {
+    fulfilment_model: f.modes?.fulfilment_model,
+    counter_sales: f.modes?.counter_sales,
+    capability: f.capabilities?.fulfilment,
+  };
+}
+
+/** Polls the API until its capability read equals `expected` (the pre-run read), up to `timeoutMs`; fails loudly otherwise. */
+export async function waitForApiCapability(
+  t: LocalFulfilmentTarget,
+  expected: unknown,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const want = JSON.stringify(expected);
+  const deadline = Date.now() + timeoutMs;
+  let seen = "";
+  for (;;) {
+    seen = JSON.stringify(await readApiCapability(t));
+    if (seen === want) return;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error(
+    `the API still reports the spec's fulfilment config ${timeoutMs / 1000}s after the restore.\n  observed: ${seen}\n  expected: ${want}`,
   );
 }

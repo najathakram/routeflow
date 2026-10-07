@@ -497,24 +497,6 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
-    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
-    // LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
-    // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
-    // and this is not GitHub Actions (the spec also refuses on its own: lib/local-fulfilment-guard.ts).
-    ...(isLocalOnlyLane(process.env)
-      ? [
-          {
-            name: "counter-ship-handoff",
-            testMatch: /71-counter-ship-handoff\.spec\.ts/,
-            dependencies: ["setup"],
-            use: {
-              ...devices["Desktop Chrome"],
-              storageState: path.join(AUTH_DIR, "operator.json"),
-            },
-          },
-        ]
-      : []),
-
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
@@ -1009,5 +991,22 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
+    // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
+    // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
+    // and this is not GitHub Actions (the spec also refuses on its own: lib/local-fulfilment-guard.ts).
+    ...(isLocalOnlyLane(process.env)
+      ? [
+          {
+            name: "counter-ship-handoff",
+            testMatch: /71-counter-ship-handoff\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+        ]
+      : []),
   ],
 });

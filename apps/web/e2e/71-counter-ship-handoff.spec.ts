@@ -21,9 +21,11 @@ import { apiBase, operatorAccessToken } from "./helpers/api";
 import {
   applyBusinessProfile,
   localTarget,
+  readApiCapability,
   restoreFulfilmentConfig,
   snapshotFulfilmentConfig,
   type FulfilmentSnapshot,
+  waitForApiCapability,
 } from "./helpers/local-fulfilment-profile";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
@@ -34,17 +36,22 @@ const VIEWPORTS = [
 ] as const;
 
 let before: FulfilmentSnapshot | null = null;
+let capabilityBefore: unknown = null;
 const target = () => localTarget(apiBase(BASE));
 
 test.beforeAll(async () => {
   before = await snapshotFulfilmentConfig(target()); // read first: nothing is written until this succeeds
+  capabilityBefore = await readApiCapability(target()); // what the API reports before the spec touches anything
   await applyBusinessProfile(target(), before, "in_store_shipping_retailer");
 });
 
 test.afterAll(async () => {
+  test.setTimeout(120_000); // the capability poll below may take up to 60 s
   if (!before) return;
   const restored = await restoreFulfilmentConfig(target(), before);
   expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
+  // The API caches modes for a short time: wait until IT reads the pre-run state back (fails loudly with observed vs expected).
+  await waitForApiCapability(target(), capabilityBefore, 60_000);
 });
 
 for (const vp of VIEWPORTS) {
