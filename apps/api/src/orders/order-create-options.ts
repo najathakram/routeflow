@@ -12,6 +12,8 @@ import type { SourceLines } from "./source-line";
  *    it is resuming, not creating. The key lookup itself does NOT filter on Order.counterSale (keys are
  *    client UUIDs per tenant, a pre-existing property), so the counter POST's onReplay guard is what
  *    refuses a key that belongs to an ordinary staff/buyer order. Existing callers pass neither.
+ *  - `beforeWrite` (B1209): called with the SERVER-computed order total right after pricing and before any
+ *    stock lock or transaction (never on a replay, never for a draft); a throw refuses with nothing written.
  */
 export interface CreateOrderOptions {
   skipAutoMerge?: boolean;
@@ -20,4 +22,5 @@ export interface CreateOrderOptions {
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
   onReplay?: (order: { id: string; status?: string; counterSale?: boolean }) => void;
+  beforeWrite?: (priced: { total: number }) => void | Promise<void>;
 }
