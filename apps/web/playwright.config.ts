@@ -476,6 +476,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B1219: a single fuzzy scan match asks "Did you mean ...?" in Create Order (spec 70).
+    {
+      name: "scan-did-you-mean",
+      testMatch: /70-scan-did-you-mean\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
