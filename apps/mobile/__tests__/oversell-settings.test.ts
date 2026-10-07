@@ -95,7 +95,9 @@ describe("OOS PR2: what customers see about backordered items", () => {
     expect(VISIBILITY_COPY.hide).toBe(
       "Hide it: the item looks in stock and customers see nothing about backorders",
     );
-    expect(VISIBILITY_COPY.needsSwitch).toBe("Turn on out-of-stock ordering to choose this.");
+    expect(VISIBILITY_COPY.needsSwitch).toBe(
+      "This applies when out-of-stock ordering is on for a customer.",
+    );
     expect(VISIBILITY_COPY.savedShow).toBe(
       "Customers will see that backordered items ship when restocked",
     );

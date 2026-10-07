@@ -203,7 +203,15 @@ describe("BuyerOversellCard: what customers see about backordered items (OOS PR2
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it("while out-of-stock ordering is OFF the choice is disabled and says why", () => {
+  it("the choice always says when it applies (out-of-stock ordering on for a customer)", () => {
+    loaded("backorder", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    expect(
+      screen.getByText("This applies when out-of-stock ordering is on for a customer."),
+    ).toBeInTheDocument();
+  });
+
+  it("while out-of-stock ordering is OFF the choice is disabled and says when it applies", () => {
     loaded("off", 0, "show");
     renderWithProviders(<BuyerOversellCard canEdit />);
     expect(radio(/^Hide it/)).toBeDisabled();

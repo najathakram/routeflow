@@ -127,9 +127,7 @@ function OversellSection() {
               <Text style={[styles.switchHint, { flex: 1 }]}>{label}</Text>
             </Pressable>
           ))}
-          {!oversellIsOn(data.buyerOversell) && (
-            <Text style={styles.switchHint}>{VISIBILITY_COPY.needsSwitch}</Text>
-          )}
+          <Text style={styles.switchHint}>{VISIBILITY_COPY.needsSwitch}</Text>
           {!canEdit && <Text style={styles.switchHint}>{OVERSELL_COPY.readOnly}</Text>}
         </>
       )}

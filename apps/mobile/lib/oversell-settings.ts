@@ -26,7 +26,7 @@ export const VISIBILITY_COPY = {
   title: "What customers see about backordered items",
   show: 'Show it: the item says "Ships when restocked" and the order is tagged',
   hide: "Hide it: the item looks in stock and customers see nothing about backorders",
-  needsSwitch: "Turn on out-of-stock ordering to choose this.",
+  needsSwitch: "This applies when out-of-stock ordering is on for a customer.",
   savedShow: "Customers will see that backordered items ship when restocked",
   savedHide: "Customers will no longer see anything about backorders",
   saveFailed: "Couldn't save what customers see about backordered items",

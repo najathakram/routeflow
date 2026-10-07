@@ -31,7 +31,7 @@ export const OVERSELL_COPY = {
   visibilityTitle: "What customers see about backordered items",
   visibilityShow: 'Show it: the item says "Ships when restocked" and the order is tagged',
   visibilityHide: "Hide it: the item looks in stock and customers see nothing about backorders",
-  visibilityNeedsSwitch: "Turn on out-of-stock ordering to choose this.",
+  visibilityNeedsSwitch: "This applies when out-of-stock ordering is on for a customer.",
   savedShow: "Customers will see that backordered items ship when restocked",
   savedHide: "Customers will no longer see anything about backorders",
   visibilitySaveFailed: "Couldn't save what customers see about backordered items",
@@ -140,7 +140,7 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
                 <span>{label}</span>
               </label>
             ))}
-            {!on && <p className="text-xs text-navy/55">{OVERSELL_COPY.visibilityNeedsSwitch}</p>}
+            <p className="text-xs text-navy/55">{OVERSELL_COPY.visibilityNeedsSwitch}</p>
           </fieldset>
           {!canEdit && <p className="text-xs text-navy/55">{OVERSELL_COPY.readOnly}</p>}
           {overrides > 0 && (
