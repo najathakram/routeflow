@@ -10,6 +10,8 @@ import { useCreateVendorBill } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { useProducts } from "../../../lib/api/products";
 import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
+import { confirm } from "../../../lib/confirm";
+import { decideScanResult, runScanDecision } from "../../../lib/scan-suggestion";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
@@ -271,10 +273,18 @@ function LineItemRow({
         showToast(archivedMessage(result.product));
         return;
       }
-      if (!result.notFound && result.product) {
-        setSearch(result.product.name);
-        onUpdate(index, linePrefillFor(result.product));
+      const decision = decideScanResult(result, "add");
+      const link = (p: PickableProduct) => {
+        setSearch(p.name);
+        onUpdate(index, linePrefillFor(p));
         setShowSugs(false);
+      };
+      if (decision.kind === "confirm-suggestion") {
+        runScanDecision(decision, link, confirm);
+        return;
+      }
+      if (!result.notFound && result.product) {
+        link(result.product);
         return;
       }
     } catch {

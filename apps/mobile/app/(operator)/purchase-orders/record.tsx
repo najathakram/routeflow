@@ -12,6 +12,8 @@ import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { showToast } from "../../../lib/toast";
 import { archivedMessage, resolveProductByCode } from "../../../lib/barcode-resolve";
+import { confirm } from "../../../lib/confirm";
+import { decideScanResult, runScanDecision } from "../../../lib/scan-suggestion";
 import type { AdminProduct } from "../../../lib/api/admin";
 import { nextUnitCost } from "../../../lib/purchase-receive-logic";
 
@@ -82,6 +84,11 @@ export default function QuickReceiveScreen() {
       const result = await resolveProductByCode<AdminProduct>(trimmed);
       if (result.archived) {
         showToast(archivedMessage(result.product));
+        return;
+      }
+      const decision = decideScanResult(result, "stock");
+      if (decision.kind === "confirm-suggestion") {
+        runScanDecision(decision, (p) => applyPickedProduct(p), confirm);
         return;
       }
       if (!result.notFound) {

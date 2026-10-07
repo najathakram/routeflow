@@ -25,6 +25,8 @@ import { ISO_DAY_OPTIONS, validateTemplateForm } from "../../../../../lib/order-
 import { showToast } from "../../../../../lib/toast";
 import { hasUnsavedStandingOrder } from "../../../../../lib/discard-guard";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { confirm } from "../../../../../lib/confirm";
+import { decideScanResult, runScanDecision } from "../../../../../lib/scan-suggestion";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import type { AdminProduct } from "../../../../../lib/api/admin";
 
@@ -90,6 +92,11 @@ export default function NewStandingOrderScreen() {
       const result = await resolveProductByCode<AdminProduct>(trimmed);
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
+      }
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "confirm-suggestion") {
+        runScanDecision(decision, (p) => addLine(p), confirm);
+        return { feedback: { kind: "error", text: `Confirm: ${decision.message}` } };
       }
       if (!result.notFound) {
         addLine(result.product);

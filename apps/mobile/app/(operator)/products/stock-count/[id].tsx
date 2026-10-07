@@ -20,6 +20,7 @@ import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { archivedMessage, resolveProductByCode } from "../../../../lib/barcode-resolve";
+import { decideScanResult, runScanDecision } from "../../../../lib/scan-suggestion";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
@@ -277,6 +278,13 @@ export default function StockCountSessionScreen() {
           action: { label: "Options", onPress: () => showUnknownBarcodeOptions(trimmed) },
         },
       };
+    }
+    const decision = decideScanResult(res, "stock");
+    if (decision.kind === "confirm-suggestion") {
+      // B1220: a lone fuzzy match writes nothing until the counter confirms.
+      const qty = qtyRef.current;
+      runScanDecision(decision, (p) => addCountedProduct(p as any, qty), confirm);
+      return { feedback: { kind: "error", text: `Confirm: ${decision.message}` } };
     }
     const product = res.product as any;
     const existing = rowsRef.current.find((r) => r.productId === product.id);

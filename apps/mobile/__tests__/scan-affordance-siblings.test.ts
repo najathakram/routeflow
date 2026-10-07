@@ -54,7 +54,7 @@ describe("purchase-orders/record.tsx scan affordance (REG-B264)", () => {
     expect(onSelectBlock).toMatch(/applyPickedProduct\(p\)/);
     // Two CALLS (the declaration reads `applyPickedProduct = (`, not
     // `applyPickedProduct(`, so it doesn't match this pattern itself).
-    expect((stripComments(source).match(/applyPickedProduct\(/g) ?? []).length).toBe(2);
+    expect((stripComments(source).match(/applyPickedProduct\(/g) ?? []).length).toBe(3);
   });
 
   it("REG-B264: the FAB hides while either picker sheet is open", () => {
@@ -189,7 +189,7 @@ describe("customers/[id]/standing-orders/new.tsx scan affordance (REG-B266)", ()
     expect(onSelectBlock).toMatch(/addLine\(product\)/);
     // Two CALLS (the declaration reads `addLine = (`, not `addLine(`, so it
     // doesn't match this pattern itself).
-    expect((stripComments(source).match(/addLine\(/g) ?? []).length).toBe(2);
+    expect((stripComments(source).match(/addLine\(/g) ?? []).length).toBe(3);
   });
 
   it("REG-F1: onScanned returns a ScanOutcome on every path — continuous mode needs feedback per scan, not a toast", () => {

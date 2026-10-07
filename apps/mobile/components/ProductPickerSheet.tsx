@@ -18,6 +18,8 @@ import { levelsForScan } from "../lib/wedge-scan";
 import { useAdminProductSearch } from "../lib/use-product-search";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { archivedMessage, resolveProductByCode } from "../lib/barcode-resolve";
+import { confirm } from "../lib/confirm";
+import { decideScanResult, runScanDecision } from "../lib/scan-suggestion";
 import { showToast } from "../lib/toast";
 import { apiClient } from "../lib/api-client";
 
@@ -113,6 +115,18 @@ export function ProductPickerSheet({
         // an archived product to `onSelect` commits it. Name it instead; the
         // "No product" toast below would be a lie.
         showToast(archivedMessage(result.product));
+        return;
+      }
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "confirm-suggestion") {
+        runScanDecision(
+          decision,
+          (p) => {
+            const scanned = p as AdminProduct & { unitsPerBox?: number | null };
+            pick(scanned, resolveScanSellLevel(scanned, levelsForScan(trimmed, scanned)));
+          },
+          confirm,
+        );
         return;
       }
       if (!result.notFound) {

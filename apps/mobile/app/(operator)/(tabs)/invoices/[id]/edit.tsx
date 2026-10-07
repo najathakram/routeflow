@@ -21,11 +21,12 @@ import {
 } from "../../../../../lib/api/admin";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { decideScanResult, runScanDecision } from "../../../../../lib/scan-suggestion";
 import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
-import { alertInfo } from "../../../../../lib/confirm";
+import { alertInfo, confirm } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -265,6 +266,15 @@ export default function EditInvoiceScreen() {
       const result = await resolveProductByCode<AdminProduct>(trimmed);
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
+      }
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "confirm-suggestion") {
+        runScanDecision(
+          decision,
+          (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
+          confirm,
+        );
+        return { feedback: { kind: "error", text: `Confirm: ${decision.message}` } };
       }
       if (!result.notFound) {
         addCatalogLine(
