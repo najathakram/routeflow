@@ -88,7 +88,7 @@ function make(
     aggregate: jest.fn(async () => ({ _count: { _all: 0 }, _sum: { amount: null } })),
     updateMany: jest.fn(async ({ where, data }: any) => {
       const row = invoices.find((r) => matches(r, { id: where.id }));
-      if (opts.racer && row && row.status === "OPEN") opts.racer(row);
+      if (opts.racer && row) opts.racer(row);
       const hit = invoices.filter((r) => matches(r, where));
       for (const r of hit) Object.assign(r, data);
       return { count: hit.length };
@@ -556,7 +556,7 @@ describe("API-5 mark-paid conflicts (CAS)", () => {
   it("VOID -> 409 VOIDED", async () => {
     const t = make({ invoices: [inv({ status: "VOID" })] });
     const e = await thrown(t.svc.markPaid("inv-1", { method: "CASH" }, ADMIN, NOW));
-    expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_VOIDED);
+    expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
     expect(body(e).row.status).toBe("VOID");
   });
 
@@ -574,7 +574,7 @@ describe("API-5 mark-paid conflicts (CAS)", () => {
   it("a race lost to a void reports VOIDED", async () => {
     const t = make({ invoices: [inv()], racer: (row) => Object.assign(row, { status: "VOID" }) });
     const e = await thrown(t.svc.markPaid("inv-1", { method: "CASH" }, ADMIN, NOW));
-    expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_VOIDED);
+    expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
   });
 });
 
@@ -618,7 +618,7 @@ describe("API-8 reopen and void", () => {
     expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_NOT_PAID);
     const b = make({ invoices: [inv({ status: "VOID" })] });
     const f = await thrown(b.svc.reopen("inv-1", { reason: "again" }, ADMIN, NOW));
-    expect(body(f).code).toBe(API_ERROR_CODES.RF_INVOICE_VOIDED);
+    expect(body(f).code).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
   });
 
   it("void: OPEN -> VOID, frees the period key, audits", async () => {
@@ -647,7 +647,7 @@ describe("API-8 reopen and void", () => {
     const b = make({ invoices: [inv({ status: "VOID" })] });
     expect(
       body(await thrown(b.svc.voidInvoice("inv-1", { reason: "oops" }, ADMIN, NOW))).code,
-    ).toBe(API_ERROR_CODES.RF_INVOICE_VOIDED);
+    ).toBe(API_ERROR_CODES.RF_INVOICE_IS_VOID);
   });
 
   it("a legacy row with no period key voids without inventing one", async () => {

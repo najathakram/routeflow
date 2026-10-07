@@ -117,7 +117,9 @@ describe("SEC-2 only a platform super-admin reaches any route", () => {
         ? request(app.getHttpServer()).get(url)
         : request(app.getHttpServer()).post(url);
     if (t) r.set("Authorization", `Bearer ${t}`);
-    return verb === "POST" ? r.send({ method: "CASH", reason: "a reason" }) : r;
+    if (verb !== "POST") return r;
+    if (path.endsWith("mark-paid")) return r.send({ method: "CASH" });
+    return path.endsWith("issue") ? r.send({}) : r.send({ reason: "a reason" });
   };
 
   beforeAll(async () => {

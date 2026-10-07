@@ -93,6 +93,8 @@ export interface RfInvoiceSummary {
   viewCounts: Record<RfInvoiceView, number>;
   /** Manual-pay tenants whose price cannot be resolved, so no invoice could be issued. */
   unpricedTenants: { tenantId: string; name: string; slug: string }[];
+  /** Manual-pay tenants whose subscription period ended over a day ago and was never rolled: no invoice is issued for them. */
+  staleTenants: { tenantId: string; name: string; slug: string }[];
   mode: "off" | "silent" | "live";
 }
 
