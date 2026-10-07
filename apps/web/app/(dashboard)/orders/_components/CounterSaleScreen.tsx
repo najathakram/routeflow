@@ -15,6 +15,7 @@ import type {
 import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { setCounterCartHasLines } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -171,6 +172,11 @@ export function CounterSaleScreen() {
     [],
   );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
+  React.useEffect(() => {
+    setCounterCartHasLines(hasLines);
+    return () => setCounterCartHasLines(false);
+  }, [hasLines]);
   // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
   const lineLocked = locked || createSale.isPending;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.

@@ -1015,6 +1015,15 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          {
+            name: "counter-register-look",
+            testMatch: /73-counter-register-look\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
         ]
       : []),
   ],

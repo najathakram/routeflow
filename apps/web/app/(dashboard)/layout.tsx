@@ -57,6 +57,9 @@ import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { RegisterHeader } from "@/components/RegisterHeader";
+import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
+import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -485,9 +488,12 @@ function expiryLabel(a: ExpiringAuthorization): string {
 function Header({
   onOpenPalette,
   onOpenMobileNav,
+  showCounterPref,
 }: {
   onOpenPalette: () => void;
   onOpenMobileNav: () => void;
+  /** POS-7: staff with the counter on get the "Open the counter on this device" menu item. */
+  showCounterPref: boolean;
 }) {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
@@ -508,6 +514,7 @@ function Header({
   const { data: pendingApprovals = [] } = usePendingPortalApprovals({ enabled: isStaffRole });
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
+  const counterPref = useOpenCounterPref();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -778,6 +785,18 @@ function Header({
                 <UserIcon className="h-4 w-4 text-navy/70" />
                 {t("menu.profile")}
               </DropdownMenu.Item>
+              {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
+              {showCounterPref && counterPref.available && (
+                <DropdownMenu.CheckboxItem
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  checked={counterPref.on}
+                  onCheckedChange={counterPref.set}
+                >
+                  <Store className="h-4 w-4 text-navy/70" />
+                  <span className="flex-1">Open the counter on this device</span>
+                  {counterPref.on && <Check className="h-4 w-4 text-accent-deep" />}
+                </DropdownMenu.CheckboxItem>
+              )}
               {/* Drive mode — one tap toggle to the field run layout for admins/operators
                   who can act as a driver (canActAsDriver; capability enforced server-side
                   by RolesGuard). Turning it on swaps layout only — no logout, permission
@@ -1070,6 +1089,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     return false;
   });
   const pathname = usePathname();
+  // POS-7: register mode is route-derived. The rail is the existing 64 px collapsed mode; "peek" expands it temporarily
+  // and NEVER touches `collapsed` or rf-sidebar-collapsed, so leaving the counter restores the saved state untouched.
+  const register = isRegisterPath(pathname);
+  const [peek, setPeek] = React.useState(false);
+  React.useEffect(() => setPeek(false), [register]);
+  React.useEffect(() => {
+    if (!register) recordPreviousPath(pathname);
+  }, [register, pathname]);
+  const railCollapsed = register ? !peek : collapsed;
   const toggle = () =>
     setCollapsed((v) => {
       const next = !v;
@@ -1103,6 +1131,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   useRealtimeUpdates();
 
   const shellRouter = useRouter();
+  // POS-7: landing at exactly /dashboard with "Open the counter on this device" on opens the counter (once per session).
+  useCounterLanding({
+    pathname,
+    isStaff: isStaff && !!user,
+    counterEnabled,
+    replace: shellRouter.replace,
+  });
 
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
@@ -1198,19 +1233,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         data-testid="sidebar-aside"
         className={cn(
           "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out motion-reduce:transition-none motion-reduce:duration-0 lg:flex",
-          collapsed ? "lg:w-16" : "lg:w-60",
+          railCollapsed ? "lg:w-16" : "lg:w-60",
         )}
       >
         {/* Logo */}
         <div
           className={cn(
             "flex h-16 shrink-0 items-center border-b border-white/10 px-3",
-            collapsed ? "justify-center" : "gap-3",
+            railCollapsed ? "justify-center" : "gap-3",
           )}
         >
           <TenantLogo
             className="h-8 w-8"
-            showName={!collapsed}
+            showName={!railCollapsed}
             nameClassName="text-lg font-bold text-white truncate"
             tone="light"
           />
@@ -1218,20 +1253,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <SidebarNav navStructure={navStructure} collapsed={collapsed} pathname={pathname} />
+          <SidebarNav navStructure={navStructure} collapsed={railCollapsed} pathname={pathname} />
         </nav>
 
         {/* Collapse toggle */}
         <div className="shrink-0 border-t border-white/10 p-2">
           <button
-            onClick={toggle}
+            onClick={register ? () => setPeek((v) => !v) : toggle}
             className={cn(
               "flex w-full items-center rounded-lg px-3 py-2.5 text-white/60 transition-colors motion-reduce:transition-none hover:bg-white/10 hover:text-white",
-              collapsed ? "justify-center" : "gap-3",
+              railCollapsed ? "justify-center" : "gap-3",
             )}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={
+              register
+                ? railCollapsed
+                  ? "Peek navigation"
+                  : "Hide navigation"
+                : collapsed
+                  ? "Expand sidebar"
+                  : "Collapse sidebar"
+            }
           >
-            {collapsed ? (
+            {railCollapsed ? (
               <ChevronRight className="h-5 w-5 shrink-0" />
             ) : (
               <>
@@ -1299,10 +1342,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             compact
           />
         )}
-        <Header
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-        />
+        {register ? (
+          <RegisterHeader onOpenMobileNav={() => setMobileNavOpen(true)} />
+        ) : (
+          <Header
+            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+            showCounterPref={isStaff && counterEnabled}
+          />
+        )}
         {/* pb-24 reserves 96px of clearance below page content so the
             floating PwaInstallPrompt (fixed bottom-4) and similar
             bottom-anchored UI never sit on top of bottom-aligned form

@@ -68,7 +68,11 @@ jest.mock("@/lib/hooks/useNotifications", () => ({
 jest.mock("@/lib/drive-mode", () => ({
   useDriveMode: () => ({ driveMode: false, setDriveMode: jest.fn() }),
 }));
-jest.mock("@/lib/presence-cookies", () => ({ setLastPortalCookie: jest.fn() }));
+jest.mock("@/lib/presence-cookies", () => ({
+  setLastPortalCookie: jest.fn(),
+  hasOpPresence: () => true,
+  hasBuyerPresence: () => false,
+}));
 jest.mock("@/components/TenantLogo", () => ({ TenantLogo: () => <span>logo</span> }));
 jest.mock("@/components/CommandPalette", () => ({
   CommandPalette: () => null,

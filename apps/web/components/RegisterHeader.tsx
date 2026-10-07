@@ -1,0 +1,106 @@
+"use client";
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Menu } from "lucide-react";
+import { Avatar, Button, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
+import { useTenant } from "@/components/tenant-provider";
+import { getCounterCartHasLines, subscribeCounterCart } from "@/lib/counter-cart-signal";
+import { readExitTarget } from "@/lib/register-mode";
+import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
+
+/**
+ * POS-7: the slim header the shell shows in register mode (on the counter screen only). Exit counter is the FIRST
+ * focusable control; the clerk and the store name follow. When the cart has lines, Exit asks "Discard this sale?" first
+ * (Keep selling is the default, Escape keeps the cart). Only this Exit is guarded - nav links are not.
+ */
+export function RegisterHeader({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
+  const { user } = useAuth();
+  const { branding } = useTenant();
+  const router = useRouter();
+  const hasLines = React.useSyncExternalStore(
+    subscribeCounterCart,
+    getCounterCartHasLines,
+    () => false,
+  );
+  const [asking, setAsking] = React.useState(false);
+  const keepRef = React.useRef<HTMLButtonElement>(null);
+  const leave = () => {
+    setAsking(false);
+    router.push(readExitTarget());
+  };
+  const storeName = branding?.businessName ?? "RouteFlow";
+
+  return (
+    <header
+      data-testid="register-header"
+      className="flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4"
+    >
+      <button
+        type="button"
+        onClick={() => (hasLines ? setAsking(true) : leave())}
+        className={cn(
+          TAP_TARGET,
+          "gap-2 rounded-lg px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-raised",
+        )}
+      >
+        <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+        Exit counter
+      </button>
+      <button
+        type="button"
+        onClick={onOpenMobileNav}
+        className={cn(
+          TAP_TARGET,
+          "rounded-lg text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy lg:hidden",
+        )}
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+      <p
+        data-testid="register-store"
+        className="min-w-0 flex-1 truncate text-base font-semibold text-navy"
+      >
+        {storeName}
+      </p>
+      <div className="flex items-center gap-2">
+        <Avatar name={user?.username ?? ""} size="sm" />
+        <span data-testid="register-clerk" className="text-sm font-medium text-navy">
+          {user?.username}
+        </span>
+      </div>
+
+      <Modal
+        open={asking}
+        onClose={() => setAsking(false)}
+        title="Discard this sale?"
+        className={DIALOG_FIT}
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          keepRef.current?.focus();
+        }}
+        footer={
+          <>
+            <Button
+              ref={keepRef}
+              variant="secondary"
+              className={DIALOG_FOOTER_BUTTON}
+              onClick={() => setAsking(false)}
+            >
+              Keep selling
+            </Button>
+            <Button variant="danger" className={DIALOG_FOOTER_BUTTON} onClick={leave}>
+              Discard
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-navy/70">
+          The items in this sale have not been completed. Leaving now clears the cart.
+        </p>
+      </Modal>
+    </header>
+  );
+}
