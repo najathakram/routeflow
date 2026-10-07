@@ -42,6 +42,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
   countCreditableInvoices,
@@ -969,6 +970,11 @@ export class InlineReturnsService {
    * transaction with its own claim/restock instead of a separate later step). Returns the
    * minted credit note (for the caller's post-commit gateway emit), or `null` if `amount` is
    * not worth minting.
+   *
+   * Lock contract (SA-706c): the caller holds the Return AND the carrying Order (FOR UPDATE)
+   * before this runs — the intent insert below takes KEY SHARE on the Order and settle upgrades
+   * it. Every entry: captureInTx (its first statement locks the Order), issueCredit() and
+   * approve() (`lockOrderRow` right after the Return lock).
    */
   private async issueCreditInTx(
     tx: any,
@@ -1089,6 +1095,8 @@ export class InlineReturnsService {
       // cancel() (or a racing issue) already moved this return out of RECEIVED/no-CN/no-hold —
       // "cancel between re-read and link ⇒ no CN": mint nothing.
       if (!fresh || fresh.status !== "RECEIVED" || fresh.creditNoteId || fresh.holdReason) return;
+      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
+      await lockOrderRow(tx, tenantId, fresh.orderId);
 
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
@@ -1173,6 +1181,8 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
+      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
+      await lockOrderRow(tx, tenantId, fresh.orderId);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
