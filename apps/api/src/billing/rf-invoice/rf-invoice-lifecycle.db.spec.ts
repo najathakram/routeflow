@@ -1,11 +1,18 @@
 // PR1 DB-1 / DB-3 - DB-backed (the *.db.spec.ts lane; run by the prover on the compose DB, never here).
 // Tenants are throwaway e2e-* slugs; every row is removed in afterAll.
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
+import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { RF_INVOICE_PERIOD_INDEX } from "./rf-invoice.constants";
 import { RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
 import { uniqueViolationOn } from "../../common/prisma-unique";
 
-const prisma = new PrismaClient();
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
+
+let pool: Pool;
+let prisma: PrismaClient;
 const SLUG = `e2e-rfinv-${Date.now()}`;
 const NOW = new Date("2026-10-07T00:20:00.000Z");
 let tenantId: string;
@@ -27,17 +34,28 @@ const row = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe("RfInvoice manual lifecycle (DB)", () => {
+describeDb("RfInvoice manual lifecycle (DB)", () => {
   beforeAll(async () => {
+    pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) } as any);
+    assertTestTenant(SLUG);
     const t = await prisma.tenant.create({
       data: { name: "Acme Wholesale (test)", slug: SLUG, class: "TEST" },
     });
     tenantId = t.id;
   });
+  // Runs even when a test failed early: every step is independent and tenant-scoped.
   afterAll(async () => {
-    await prisma.rfInvoice.deleteMany({ where: { tenantId } });
-    await prisma.tenant.delete({ where: { id: tenantId } });
-    await prisma.$disconnect();
+    try {
+      if (tenantId) {
+        await prisma.auditLog.deleteMany({ where: { tenantId } });
+        await prisma.rfInvoice.deleteMany({ where: { tenantId } });
+        await prisma.tenant.deleteMany({ where: { id: tenantId } });
+      }
+    } finally {
+      await prisma?.$disconnect();
+      await pool?.end();
+    }
   });
 
   it("DB-1: the new columns exist with their defaults, and (tenantId, periodKey) is unique", async () => {
