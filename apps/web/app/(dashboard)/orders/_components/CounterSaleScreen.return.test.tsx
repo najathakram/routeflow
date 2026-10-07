@@ -17,7 +17,16 @@ jest.mock("@/lib/barcode-resolve", () => ({
     source: "sku",
   }),
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [] } }),
+  useCustomerPrices: () => ({
+    data: [],
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
 }));
@@ -57,7 +66,7 @@ it("the receipt mounts the return action for the sale's order", async () => {
   fireEvent.submit(field.closest("form")!);
   await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "$20" }));
-  fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+  fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
   await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
   expect(screen.getByRole("button", { name: "Return items for o1" })).toBeInTheDocument();
   // POS-4b: the entry sits BETWEEN Print and New sale.

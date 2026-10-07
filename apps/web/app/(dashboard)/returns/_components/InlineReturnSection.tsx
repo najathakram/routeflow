@@ -14,6 +14,7 @@ import * as React from "react";
 import { Button, Input, Select, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useOrder } from "@/lib/api/orders";
 import { useProducts } from "@/lib/api/products";
 import { useInlineReturnQuote } from "@/lib/api/inline-returns";
@@ -223,19 +224,23 @@ export function InlineReturnSection({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
+  // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
+  const addScanned = (product: any) => {
+    const created = !linesRef.current.some((l) => l.productId === product.id);
+    setLines(
+      (prev) =>
+        applyReturnScan<SectionLine>(prev, product, (base) => ({
+          ...base,
+          lineKey: crypto.randomUUID(),
+        })).lines,
+    );
+    setProductSearch("");
+    return { created };
+  };
   const scanHandlerRef = useScanCodeHandler({
-    addLineItem: (product) => {
-      const created = !linesRef.current.some((l) => l.productId === product.id);
-      setLines(
-        (prev) =>
-          applyReturnScan<SectionLine>(prev, product, (base) => ({
-            ...base,
-            lineKey: crypto.randomUUID(),
-          })).lines,
-      );
-      setProductSearch("");
-      return { created };
-    },
+    addLineItem: (product) => addScanned(product),
+    onSuggestion: (matches) => setScanMatches(matches),
     onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
     toast,
   });
@@ -448,6 +453,18 @@ export function InlineReturnSection({
                 title="Scan barcode"
               />
             </div>
+            {scanMatches.length > 0 && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  matches={scanMatches}
+                  onConfirm={(product) => {
+                    setScanMatches([]);
+                    addScanned(product);
+                  }}
+                  onCancel={() => setScanMatches([])}
+                />
+              </div>
+            )}
             {productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
                 {productResults!.data

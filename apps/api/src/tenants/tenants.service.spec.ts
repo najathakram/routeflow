@@ -80,7 +80,7 @@ describe("TenantsService", () => {
           useValue: {
             get: jest.fn((key: string) => {
               if (key === "WEB_URL") return "https://app.test";
-              if (key === "jwt.secret") return "test-secret";
+              if (key === "jwt.secret") return "test-jwt-secret-0123456789-abcdefghijklmnop";
               return undefined;
             }),
           },
