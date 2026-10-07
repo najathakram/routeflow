@@ -52,6 +52,8 @@ const open = async () => {
       return Promise.resolve({ data: { transactions: [], creditExposure: 0 } });
     if (url === "/customers/c1/routes")
       return Promise.resolve({ data: [{ id: "r1", name: "Route A", isActive: true }] });
+    // The customer's out-of-stock override card reads the policy registry (GET /policies).
+    if (url === "/policies") return Promise.resolve({ data: { policies: [] } });
     return Promise.resolve({ data: [] });
   });
   render(

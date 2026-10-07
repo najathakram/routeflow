@@ -8,15 +8,19 @@ import { CUSTOMER_ORDER_ITEM_FIELDS } from "../common/staff-only-fields";
  * it; no restock job or cron rewrites it; a buyer never sees it.
  */
 const SRC = join(__dirname, "..");
+// Path separators differ by OS (the pre-push runs on Windows): compare everything with forward slashes.
+const posix = (p: string): string => p.replace(/\\/g, "/");
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
     return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : [];
   });
-const files = walk(SRC).filter((f) => !/\.(spec|test)\.ts$/.test(f) && !f.includes("/testing/"));
+const files = walk(SRC).filter(
+  (f) => !/\.(spec|test)\.ts$/.test(f) && !posix(f).includes("/testing/"),
+);
 const mentions = files
   .filter((f) => readFileSync(f, "utf8").includes("backorderedPieces"))
-  .map((f) => relative(SRC, f))
+  .map((f) => posix(relative(SRC, f)))
   .sort();
 
 describe("backorderedPieces stays informational", () => {
@@ -51,7 +55,8 @@ describe("backorderedPieces stays informational", () => {
     // orders.service.ts hosts crons too; its three mentions are pinned line-by-line above.
     const jobs = files.filter(
       (f) =>
-        !f.endsWith("orders/orders.service.ts") && readFileSync(f, "utf8").includes("@LeaderCron("),
+        !posix(f).endsWith("orders/orders.service.ts") &&
+        readFileSync(f, "utf8").includes("@LeaderCron("),
     );
     expect(jobs.length).toBeGreaterThan(0);
     for (const f of jobs) expect(readFileSync(f, "utf8")).not.toContain("backorderedPieces");
