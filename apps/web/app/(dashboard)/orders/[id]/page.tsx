@@ -38,7 +38,8 @@ import {
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
-import { orderLineName } from "@/lib/product-display";
+import { displayProductName, orderLineName } from "@/lib/product-display";
+import { sellableFlat } from "@/lib/product-search-groups";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
@@ -516,6 +517,9 @@ export interface EditItemState {
   /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
    *  mirrors the server's stored `priceType`, not otherwise read on this page. */
   priceType?: PriceType;
+  /** A line ADDED here starts on the product's default selling unit (the row's OrderLineUnitPicker
+   *  applies it once the ladder is known, exactly like Create Order); setLineUnit consumes it. */
+  startOnDefaultUnit?: boolean;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -947,6 +951,13 @@ function CommissionEditModal({
 interface SubstituteOption {
   id: string;
   name: string;
+  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is never offered (B1215 C7). */
+  kind?: string | null;
+  variantName?: string | null;
+  parentProductId?: string | null;
+  parent?: { name: string } | null;
+  variants?: SubstituteOption[];
+  unit?: string;
   sku?: string;
   pricePerUnit: number;
   unitsPerBox?: number | null;
@@ -971,7 +982,13 @@ function SubstitutePicker({
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data } = useProducts({ search: debouncedSearch || undefined, isActive: true });
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedSearch || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const options = sellableFlat<SubstituteOption>(data?.data ?? []);
 
   return (
     <div className="mt-2 rounded-lg border border-surface-border bg-white shadow-md">
@@ -986,10 +1003,10 @@ function SubstitutePicker({
         />
       </div>
       <div className="max-h-48 overflow-y-auto">
-        {data?.data?.length === 0 && (
+        {data?.data && options.length === 0 && (
           <p className="px-3 py-2 text-sm text-navy/70">No products found.</p>
         )}
-        {data?.data?.map((p: SubstituteOption) => (
+        {options.map((p: SubstituteOption) => (
           <button
             key={p.id}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
@@ -999,8 +1016,9 @@ function SubstitutePicker({
             }}
           >
             <div>
-              <span className="font-medium text-navy">{p.name}</span>
+              <span className="font-medium text-navy">{displayProductName(p)}</span>
               {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+              {p.unit && <span className="ml-2 text-xs text-navy/70">{p.unit}</span>}
             </div>
             <span className="text-xs text-navy">{formatMoney(p.pricePerUnit)}</span>
           </button>
@@ -1094,8 +1112,10 @@ export function EditableLineItems({
     scanCode: addTermIsScanCode ? addSearch.trim() : undefined,
     limit: 20,
     isActive: true,
+    includeVariants: true,
   });
-  const products: any[] = (productsData as any)?.data ?? [];
+  // A family's variants stand in for it; the family itself is never a line (B1215 C7).
+  const products: any[] = sellableFlat<any>((productsData as any)?.data ?? []);
 
   // Auto-focus the scan input when the component mounts (edit mode opened) so a
   // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
@@ -1123,7 +1143,12 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level?: scan.SellLevel, explicit?: scan.SellLevel) {
+  function addProduct(
+    p: any,
+    level?: scan.SellLevel,
+    explicit?: scan.SellLevel,
+    startOnDefaultUnit?: boolean,
+  ) {
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
@@ -1150,7 +1175,14 @@ export function EditableLineItems({
           : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd(
-        scan.buildNewLine(p, { newId, startPrice, base, unitScan, special: isSpecialTierFor(p) }),
+        scan.buildNewLine(p, {
+          newId,
+          startPrice,
+          base,
+          unitScan,
+          special: isSpecialTierFor(p),
+          startOnDefaultUnit,
+        }),
       );
       setScrollToId(newId);
     }
@@ -1192,7 +1224,11 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product, ...scan.scanArgsForHit(code, result.product));
+        addProduct(
+          result.product,
+          ...scan.scanArgsForHit(code, result.product),
+          scan.scanCodeIsShared(code, result.product),
+        );
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU
@@ -1232,6 +1268,7 @@ export function EditableLineItems({
     if (!current) return;
     update(id, {
       unitLabel: option.value,
+      startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
       unitsPerBox: option.factorToBase,
       boxSplit: false,
@@ -1370,7 +1407,7 @@ export function EditableLineItems({
                   value={item.qty}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v > 0) update(item.id, { qty: v });
+                    if (!isNaN(v) && v > 0) update(item.id, { qty: v, startOnDefaultUnit: false });
                   }}
                 />
                 <scan.SplitLineHint item={item} />
@@ -1405,6 +1442,7 @@ export function EditableLineItems({
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
+                  startOnDefaultUnit={item.startOnDefaultUnit}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
               )}
@@ -1581,7 +1619,7 @@ export function EditableLineItems({
                 update(item.id, {
                   substituteProductId: p.id,
                   productId: p.id,
-                  productName: p.name,
+                  productName: displayProductName(p),
                   // The customer's contracted price for the SUBSTITUTE, over its
                   // list price as the strikethrough base — same split mobile's
                   // buildSubstituteLine stores. Pinning both to list made every
@@ -1644,10 +1682,10 @@ export function EditableLineItems({
                   <button
                     type="button"
                     disabled={!pricingReady}
-                    onMouseDown={() => addProduct(p)}
+                    onMouseDown={() => addProduct(p, undefined, undefined, true)}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2 disabled:opacity-50"
                   >
-                    <span className="font-medium text-navy">{p.name}</span>
+                    <span className="font-medium text-navy">{displayProductName(p)}</span>
                     <span className="text-xs text-navy/70">{p.unit}</span>
                   </button>
                 </li>
