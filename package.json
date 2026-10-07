@@ -43,7 +43,7 @@
     "local:test:smtp": "node scripts/local-env.mjs --smtp-specs -- \"npm run test:smtp -w apps/api\"",
     "local:validate:features": "node scripts/local-env.mjs --proof-stack --smoke --smtp-specs -- \"npm run feature-smoke && npm run test:smtp -w apps/api\"",
     "local:sa": "node scripts/local-env.mjs --db -- \"node scripts/local-super-admin.mjs\"",
-    "local:e2e": "node scripts/local-env.mjs --proof-stack --e2e -- \"npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths --project=create-order-escape --project=boxed-order-entry --project=order-edit-pricing --project=payment-truth --project=destructive-guards --project=cancelled-edit-banner --project=lite-locked-route-ux --project=shell-skip-link-motion --project=customers-list-ux --workers=1\"",
+    "local:e2e": "node scripts/local-env.mjs --proof-stack --e2e -- \"npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths --project=create-order-escape --project=boxed-order-entry --project=order-edit-pricing --project=payment-truth --project=destructive-guards --project=cancelled-edit-banner --project=lite-locked-route-ux --project=shell-skip-link-motion --project=customers-list-ux --project=dashboard-cls --workers=1\"",
     "local:e2e:all": "node scripts/local-env.mjs --proof-stack --e2e -- \"npm --prefix apps/web run test:e2e -- --workers=1\"",
     "local:proof-stack": "node scripts/local-env.mjs --proof-stack -- \"node -e 0\"",
     "local:logs": "docker compose --profile app logs -f api web",
