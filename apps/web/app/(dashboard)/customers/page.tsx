@@ -67,7 +67,7 @@ const HIDE_BELOW_SM = { className: "hidden sm:table-cell" };
 // The empty state sits in a td that spans every column, which can be wider than a phone; pin it to
 // the scrollport's left edge at a viewport-bound width so its text and buttons stay on screen.
 const EMPTY_FIT = "sticky left-0 w-[calc(100vw-5rem)] max-w-full";
-const TIGHT_BELOW_SM = { className: "px-2 sm:px-4" };
+const TIGHT_BELOW_SM = { className: "px-2 sm:px-4 whitespace-normal sm:whitespace-nowrap" };
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -458,7 +458,7 @@ export default function CustomersPage() {
           const tagList = c.tagAssignments ?? [];
           const hasSecondary = Boolean(c.phone) || tagList.length > 0;
           return (
-            <div className="min-w-0 max-w-[5rem] sm:max-w-none">
+            <div className="min-w-0 max-w-[4.5rem] sm:max-w-none">
               <Link
                 href={`/customers/${c.id}`}
                 onClick={(e) => {
