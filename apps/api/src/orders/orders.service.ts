@@ -3118,6 +3118,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
@@ -3167,13 +3168,11 @@ export class OrdersService implements OnApplicationBootstrap {
           unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
-        // Customer/Driver path: replace items by productId. A4: a DRIVER diff
-        // payload skips this branch entirely — it merges below like an operator
-        // edit (with prices already stripped), so untouched lines survive.
+        // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
+        // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
-        // SA-696a (decided, fail closed): this non-diff path recreates every line, so new line ids. On an
-        // order with the carrier that holds an unlisted line, settleStockForEdit reads that as a removal and
-        // refuses NO_REDUCE even when nothing changed; nothing is written.
+        // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
+        // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
         if (
           (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
           !isDiffPayload
@@ -3242,6 +3241,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
+          lineIdentity = "recreated";
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3468,11 +3468,9 @@ export class OrdersService implements OnApplicationBootstrap {
           };
 
           if (replaceAll) {
-            // SA-696a (decided, fail closed): replace-all recreates every line (new ids), so on an order with
-            // the carrier that holds an unlisted line it is refused NO_REDUCE even when nothing changed.
-            // Replace-all: client sends the full item list. Delete existing items then
-            // re-create, honoring any per-line price override and any boxes/pieces
-            // split (boxed products use BOX-price proration).
+            // SA-696a (decided, fail closed): recreates every line (new ids), so a carrier order with an unlisted
+            // line is refused NO_REDUCE even when nothing changed. Replace-all: the client sends the full list;
+            // delete then re-create, honoring per-line price overrides and boxes/pieces splits (BOX proration).
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
@@ -3526,6 +3524,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -4223,6 +4222,7 @@ export class OrdersService implements OnApplicationBootstrap {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
             blockCredits: carrierLocked,
+            lineIdentity,
           });
           creditGate = () =>
             assertWithinCreditLimit(
