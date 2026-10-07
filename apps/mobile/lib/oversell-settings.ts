@@ -9,14 +9,14 @@ import type { InventoryBuyerOversellMode } from "@routeflow/types";
  *  - toasts are fixed copy (never the server's text).
  */
 export const OVERSELL_COPY = {
-  section: "Ordering",
+  section: "Out-of-stock ordering",
   label: "Let customers order items that are out of stock",
   hint:
     "When on, a customer's order can take an item's stock below zero and the order is a " +
     "backorder. Staff can always order items that are out of stock.",
   readOnly: "Only an admin can change this setting.",
   loadFailed: "Couldn't load the out-of-stock ordering setting.",
-  saveFailed: "Couldn't save the out-of-stock ordering setting.",
+  saveFailed: "Couldn't save the out-of-stock ordering setting",
   savedOn: "Customers can now order items that are out of stock",
   savedOff: "Customers can no longer order items that are out of stock",
 } as const;

@@ -33,8 +33,13 @@ export function customerOversellView(
   const entry = res?.policies.find((p) => p.key === OVERSELL_POLICY_KEY);
   if (!entry) return null;
   const tenantRow = entry.active.find((r) => r.scopeType === "TENANT");
+  // The server skips a CUSTOMER row whose value is not a known mode (it falls through to the business
+  // setting), so such a row reads as "inherit" here, never as a made-up "don't allow".
   const customerRow = entry.active.find(
-    (r) => r.scopeType === "CUSTOMER" && r.scopeId === customerId,
+    (r) =>
+      r.scopeType === "CUSTOMER" &&
+      r.scopeId === customerId &&
+      (r.value === "backorder" || r.value === "off"),
   );
   const tenant = decide(tenantRow ? tenantRow.value : entry.default);
   const override: OversellOverride = customerRow ? decide(customerRow.value) : "inherit";

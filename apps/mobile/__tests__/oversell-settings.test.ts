@@ -55,6 +55,12 @@ describe("OVERSELL_COPY", () => {
     expect(OVERSELL_COPY.hint).toMatch(/Staff can always/);
   });
 
+  it("matches the web card: the same section title and the same save-failed copy", () => {
+    expect(OVERSELL_COPY.section).toBe("Out-of-stock ordering");
+    expect(OVERSELL_COPY.saveFailed).toBe("Couldn't save the out-of-stock ordering setting");
+    expect(OVERSELL_COPY.label).toBe("Let customers order items that are out of stock");
+  });
+
   it("the toasts are fixed strings (no server text channel)", () => {
     for (const k of ["loadFailed", "saveFailed", "savedOn", "savedOff"] as const) {
       expect(typeof OVERSELL_COPY[k]).toBe("string");

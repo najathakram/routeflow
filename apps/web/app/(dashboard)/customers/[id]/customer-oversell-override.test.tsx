@@ -62,13 +62,27 @@ describe("customerOversellView (pure)", () => {
     });
   });
 
-  it('only the exact value "backorder" is allow, for the tenant and for the customer', () => {
+  it('only the exact value "backorder" is allow; a tenant value that is not a mode reads as deny', () => {
     const v = customerOversellView(
-      policies([row("TENANT", "backorder"), row("CUSTOMER", "yes", CUSTOMER)]) as never,
+      policies([row("TENANT", "backorder"), row("CUSTOMER", "off", CUSTOMER)]) as never,
       CUSTOMER,
     );
     expect(v).toEqual({ tenant: "allow", override: "deny", differs: true });
+    expect(customerOversellView(policies([row("TENANT", "yes")]) as never, CUSTOMER)?.tenant).toBe(
+      "deny",
+    );
   });
+
+  it.each(["yes", "BACKORDER", "", null, 1])(
+    "a customer row with an invalid value (%j) is skipped by the server, so it reads as inherit, never deny",
+    (bad) => {
+      const v = customerOversellView(
+        policies([row("TENANT", "backorder"), row("CUSTOMER", bad, CUSTOMER)]) as never,
+        CUSTOMER,
+      );
+      expect(v).toEqual({ tenant: "allow", override: "inherit", differs: false });
+    },
+  );
 
   it("another customer's row never applies; an override equal to the business setting does not differ", () => {
     expect(
