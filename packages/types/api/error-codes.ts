@@ -454,6 +454,8 @@ export const API_ERROR_CODES = {
   PICKUP_PAYMENT_REQUIRED: "PICKUP_PAYMENT_REQUIRED",
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
+  /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
+  TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

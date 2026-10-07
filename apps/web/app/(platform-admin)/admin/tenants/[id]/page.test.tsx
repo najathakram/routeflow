@@ -87,6 +87,7 @@ const OVERRIDES_REGISTRY_OPTION_FIXTURE = REGISTRY_FIXTURE.map((r) => ({
 }));
 
 const mockPost = jest.fn();
+const mockSetImpersonation = jest.fn();
 const mockProfilePreview = jest.fn();
 const mockProfileApply = jest.fn();
 let fulfilmentModeValue = "delivery";
@@ -125,6 +126,11 @@ jest.mock("@/lib/admin-api", () => ({
   },
 }));
 
+// Back-office P2: Impersonate records WHICH tenant it started from, so Exit can return there.
+jest.mock("@/lib/impersonation", () => ({
+  setImpersonation: (...args: unknown[]) => mockSetImpersonation(...args),
+}));
+
 // B857: the plan controls read the published catalog (GET /billing/plans via fetchPlanCatalog).
 const mockFetchPlanCatalog = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
@@ -134,7 +140,6 @@ jest.mock("@/lib/api/platform-pricing", () => ({
 }));
 
 jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
-jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
 
 async function gotoSetupTab() {
   render(<TenantDetailPage />);
@@ -195,10 +200,15 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
           effect: "GRANT",
           kind: "COMP",
           reason: "Pilot waiver",
-          expiresAt: null,
+          // P2: a comp starts at 30 days, never permanent by omission.
+          expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         },
       ],
     });
+    const previewed = mockPreview.mock.calls[0][1].overrides[0].expiresAt as string;
+    const days = (new Date(previewed).getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(29.9);
+    expect(days).toBeLessThan(30.1);
     expect(mockPost).not.toHaveBeenCalled();
 
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
@@ -215,7 +225,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
         effect: "GRANT",
         kind: "COMP",
         reason: "Pilot waiver",
-        expiresAt: null,
+        expiresAt: previewed,
       },
     );
     const [, sentPayload] = mockPost.mock.calls[0];
@@ -407,7 +417,23 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     ).toBeInTheDocument();
   });
 
-  it("Extend Trial on an ACTIVE tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
+  it("Impersonate remembers the source tenant ID (only the id, never a URL) for Exit", async () => {
+    mockAdmin = ADMIN;
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme (acme)?" });
+    post().mockResolvedValueOnce({
+      data: { accessToken: "tok.en.x", impersonatedUser: { username: "acme_admin" } },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Impersonate" }));
+    await waitFor(() => expect(mockSetImpersonation).toHaveBeenCalledTimes(1));
+    expect(mockSetImpersonation).toHaveBeenCalledWith("tok.en.x", "acme", "acme_admin", TENANT_ID);
+  });
+
+  it("Extend Trial on a SUSPENDED tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
@@ -415,7 +441,7 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
     expect(
       within(dialog).getByText(
-        /Acme \(acme\) is Active\. Extending the trial changes its status to Trial until /,
+        /Acme \(acme\) is Suspended\. Extending the trial changes its status to Trial until /,
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -437,6 +463,41 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     expect(
       await screen.findByText("Trial extended. It ends October 21, 2026."),
     ).toBeInTheDocument();
+  });
+
+  it("Extend Trial on an ACTIVE tenant is off, with the reason on screen (the server refuses it too)", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    const btn = screen.getByRole("button", { name: "Extend Trial" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-describedby", "extend-trial-hint");
+    expect(document.getElementById("extend-trial-hint")).toHaveTextContent(
+      "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+    );
+    fireEvent.click(btn);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls(/extend-trial$/)).toHaveLength(0);
+  });
+
+  it("a race: the server's coded refusal reads the fixed Active-tenant copy, never its raw text", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
+    post().mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED", message: "raw internal wording" },
+      },
+    });
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme (acme)?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Extend Trial" }));
+    expect(
+      await screen.findByText(
+        "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw internal wording/)).toBeNull();
   });
 
   it("Extend Trial on a TRIAL tenant: the dialog states the end date and says nothing about a status change", async () => {
@@ -485,13 +546,48 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("Delete Tenant is visible and ENABLED for a tenant that is not suspended (pinned: no dimming)", async () => {
+  it.each(["ACTIVE", "TRIAL", "READ_ONLY"])(
+    "Delete Tenant is visible but DIM for a %s tenant, with the reason on screen (P2 flips the P1 enabled pin)",
+    async (status) => {
+      tenantOverrides = { status };
+      render(<TenantDetailPage />);
+      await screen.findByText("Quick Actions");
+      const del = screen.getByRole("button", { name: "Delete Tenant" });
+      expect(del).toBeDisabled();
+      expect(del).toHaveAttribute("aria-describedby", "delete-tenant-hint");
+      expect(document.getElementById("delete-tenant-hint")).toHaveTextContent(
+        "Only a suspended tenant can be deleted. Suspend it first, then delete.",
+      );
+      fireEvent.click(del);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(client().delete).not.toHaveBeenCalled();
+    },
+  );
+
+  it("Delete Tenant is enabled once the tenant is SUSPENDED, and the suspend-first line is gone", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     expect(screen.getByRole("button", { name: "Delete Tenant" })).toBeEnabled();
+    expect(document.getElementById("delete-tenant-hint")).toBeNull();
+  });
+
+  it("N5: while a Suspend is in flight the Suspend button is disabled (its busy key is the real one)", async () => {
+    let release: (v: unknown) => void = () => {};
+    client().patch.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const dialog = await screen.findByRole("dialog", { name: 'Suspend "Acme (acme)"?' });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(statusPatches()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toBeDisabled());
+    release({ data: {} });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toBeEnabled());
   });
 
   it("Delete: the type-the-slug dialog gates the button; DELETE is sent once and the page navigates away", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
@@ -510,6 +606,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("a server refusal shows FIXED copy inside the dialog, which stays open; no navigation", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     client().delete.mockRejectedValueOnce({
       response: { status: 400, data: { message: "Tenant must be SUSPENDED (internal state 7)" } },
     });
@@ -527,11 +624,16 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal state 7/)).toBeNull();
+    // N4: ONE message (inside the dialog), not a second banner on the page behind it.
+    expect(
+      screen.getAllByText("Only a suspended tenant can be deleted. Suspend it first, then delete."),
+    ).toHaveLength(1);
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   it("Escape closes the delete dialog and sends nothing", async () => {
+    tenantOverrides = { status: "SUSPENDED" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.click(screen.getByRole("button", { name: "Delete Tenant" }));
@@ -542,6 +644,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("Extend Trial: days cleared / 0 / over 365 block Confirm with a plain line and send nothing", async () => {
+    tenantOverrides = { status: "TRIAL" };
     render(<TenantDetailPage />);
     await screen.findByText("Quick Actions");
     fireEvent.change(screen.getByLabelText("Days"), { target: { value: "" } });
@@ -558,6 +661,7 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
   });
 
   it("a failed Extend Trial shows fixed copy, not the server's text", async () => {
+    tenantOverrides = { status: "TRIAL" };
     (superAdminClient.post as unknown as jest.Mock).mockRejectedValueOnce({
       response: { data: { message: "prisma: unique constraint failed" } },
     });

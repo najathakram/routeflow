@@ -283,6 +283,11 @@ export const API_ERROR_CODES = {
   PICKUP_PAYMENT_REQUIRED: "PICKUP_PAYMENT_REQUIRED",
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
+  /**
+   * An ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH): that would turn a paying
+   * tenant into a trial. 409; suspend or change the plan instead.
+   */
+  TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
