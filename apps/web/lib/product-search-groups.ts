@@ -79,7 +79,7 @@ export function groupSearchRows<T extends PickerRow>(
       expandedIds.add(parentId);
     }
     if (!parent.variants?.some((v) => v.id === r.id)) {
-      parent.variants = [...(parent.variants ?? []), r];
+      (parent as PickerRow).variants = [...(parent.variants ?? []), r];
     }
   }
   return {
