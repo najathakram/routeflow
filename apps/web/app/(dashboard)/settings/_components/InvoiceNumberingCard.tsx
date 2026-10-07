@@ -100,8 +100,13 @@ export function InvoiceNumberingCard({
     }
   };
 
+  // A ref, not state: a second click in the same tick must not reach the PUT before React re-renders
+  // the dialog's Confirm button as loading/disabled.
+  const confirmingRef = React.useRef(false);
+
   const handleConfirm = async () => {
-    if (!pending) return;
+    if (!pending || confirmingRef.current) return;
+    confirmingRef.current = true;
     setSaving(true);
     try {
       const saved = await apiClient
@@ -132,6 +137,7 @@ export function InvoiceNumberingCard({
     } finally {
       setPending(null);
       setSaving(false);
+      confirmingRef.current = false;
     }
   };
 
@@ -211,7 +217,7 @@ export function InvoiceNumberingCard({
         title="Change the invoice prefix?"
         description={
           pending
-            ? `The next invoice will be numbered ${pending.preview}. Existing invoices keep their current numbers.`
+            ? `Next invoice: ${pending.preview} (currently ${row?.preview ?? "unknown"}). Existing invoices keep their numbers.`
             : undefined
         }
         confirmLabel="Confirm"

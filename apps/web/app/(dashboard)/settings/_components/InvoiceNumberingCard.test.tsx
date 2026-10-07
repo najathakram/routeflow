@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { InvoiceNumberingCard } from "./InvoiceNumberingCard";
 
 // B1188: Settings > Invoicing "Save Numbering" PATCHed /settings {invoicePrefix, paymentDueDays},
@@ -191,7 +191,7 @@ describe("InvoiceNumberingCard (B1188)", () => {
     expect(putCalls()).toHaveLength(0);
   });
 
-  it("surfaces the server's 409 message when the sequence moved, and shows no success", async () => {
+  it("a 409 shows the fixed stale-sequence copy (never the server text) and no success", async () => {
     mockPut.mockRejectedValue({
       response: {
         status: 409,
@@ -208,5 +208,41 @@ describe("InvoiceNumberingCard (B1188)", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/numbering saved/i)).not.toBeInTheDocument();
+  });
+
+  it("the confirm shows the NEW next number and the CURRENT format, in the exact sentence", async () => {
+    renderWithProviders(<Harness />);
+    await typePrefix("NEW-");
+    await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
+    expect(
+      await screen.findByText(
+        "Next invoice: NEW-0042 (currently INV-0007). Existing invoices keep their numbers.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("a double click on Confirm sends ONE PUT", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    mockPut.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderWithProviders(<Harness />);
+    await typePrefix("NEW-");
+    await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
+    const confirm = await screen.findByRole("button", { name: /^confirm$/i });
+    // Two clicks in ONE tick (before React re-renders the button as loading): only the ref guard
+    // can stop the second one.
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+    await userEvent.click(confirm);
+    expect(putCalls()).toHaveLength(1);
+    release({ data: { ...numberingRows[0], prefix: "NEW-", preview: "NEW-0042" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^confirm$/i })).toBeNull());
+    expect(putCalls()).toHaveLength(1);
   });
 });
