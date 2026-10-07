@@ -69,8 +69,8 @@ export function nextFlash(prev: ScanFlash | null | undefined, id: string): ScanF
 }
 
 /**
- * "cs" (case) rather than the document-facing "boxes + pcs" of
- * `formatQtySplit`: the tray is operator-facing selling UI, where the Case/Unit
+ * "bx" (box) rather than the document-facing "boxes + pcs" of
+ * `formatQtySplit`: the tray is operator-facing selling UI, where the Box/Piece
  * vocabulary applies, and it has to stay glanceable in a narrow row.
  */
 function formatTrayQty(boxes: number | null, pieces: number | null, qty: number): string {

@@ -394,7 +394,7 @@ export function ProductForm({
           label="Price per unit"
           hint={
             isBoxed
-              ? `This is the box price. A loose piece costs price ÷ pieces-per-box.${
+              ? `This is the box price. A single piece costs price ÷ pieces per box.${
                   perUnitPreview != null ? ` ≈ $${perUnitPreview.toFixed(2)} / unit` : ""
                 }`
               : undefined

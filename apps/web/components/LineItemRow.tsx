@@ -420,7 +420,7 @@ export function LineItemRow({
           }
           className="col-start-1 row-start-2 m-0 flex min-w-0 flex-col gap-0.5 border-0 p-0 sm:min-w-[190px]"
         >
-          {/* Case | Unit sell-by toggle — UI-only; the payload always
+          {/* Box | Piece sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
             <button

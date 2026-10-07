@@ -22,6 +22,18 @@ const W = "apps/web/";
 const D = `${W}app/(dashboard)/`;
 
 const CHANGED: Pin[] = [
+  // VU-1 review (W54): the read-only PO lines header follows the editable tables ("Cost").
+  {
+    file: `${D}inventory/_components/PurchaseOrderReadOnlyLines.tsx`,
+    mustNotContain: [">Unit Cost<"],
+    mustContain: [">Cost<"],
+  },
+  // VU-1 review: "pc" for exactly one piece also in the e2e literal.
+  {
+    file: `${W}e2e/62-scan-level.spec.ts`,
+    mustNotContain: ['"1 pcs total"'],
+    mustContain: ['"1 pc total"'],
+  },
   {
     file: `${W}components/LineItemRow.tsx`,
     mustNotContain: [
@@ -195,7 +207,6 @@ const KEEP: Array<{ file: string; mustContain: string[] }> = [
     mustContain: ['"case" | "unit"', 'aria-label="Unit price"'],
   },
   { file: `${W}components/LineItemRowReadOnly.tsx`, mustContain: ["formatQtySplit"] },
-  { file: `${D}inventory/_components/PurchaseOrderReadOnlyLines.tsx`, mustContain: ["Unit Cost"] },
   {
     file: `${D}inventory/_components/PurchaseOrderLinesTable.tsx`,
     mustContain: ['aria-label="Unit cost"'],

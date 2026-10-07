@@ -1887,7 +1887,7 @@ export default function NewInvoicePage() {
                           });
                         }}
                       />
-                      {/* Case | Unit sell-by toggle — UI-only; the payload always
+                      {/* Box | Piece sell-by toggle — UI-only; the payload always
                           carries {qty, boxes, pieces} regardless of the mode. */}
                       {item.unitsPerBox && item.unitsPerBox > 1 && (
                         <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">

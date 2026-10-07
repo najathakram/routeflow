@@ -62,7 +62,7 @@ const asInput = (n: number) => (n > 0 ? String(n) : "");
 
 /**
  * The tray's typed qty (in pieces) onto the line; 0 or less removes it. SA-561: a BOXED line goes
- * back through the pack split (`normalizeBoxesPieces`), so "2 cs + 3" stepped once is "2 cs + 4",
+ * back through the pack split (`normalizeBoxesPieces`), so "2 bx + 3" stepped once is "2 bx + 4",
  * never "52 pieces"; a non-boxed line stays plain pieces.
  */
 export function setReturnLineQty(

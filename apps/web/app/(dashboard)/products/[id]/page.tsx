@@ -1715,7 +1715,7 @@ export default function ProductDetailPage() {
                   {/* Regulated type, item type and the regulatory units of measure
                       deliberately do NOT live in this grid — they are filing
                       vocabulary, not catalog fields, and sitting next to the plain
-                      "Unit of Measure"/"Units per case" inputs made the two easy to
+                      "Unit of Measure"/"Pieces per box" inputs made the two easy to
                       confuse. They render in the Regulatory reporting card below. */}
                   <InfoRow
                     label="Unit of Measure"

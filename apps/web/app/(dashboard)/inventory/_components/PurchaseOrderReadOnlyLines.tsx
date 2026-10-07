@@ -21,7 +21,7 @@ export function PurchaseOrderReadOnlyLines({
           <tr>
             <th className="px-3 py-2 text-left font-medium">Product</th>
             <th className="px-3 py-2 text-right font-medium">Qty</th>
-            <th className="px-3 py-2 text-right font-medium">Unit Cost</th>
+            <th className="px-3 py-2 text-right font-medium">Cost</th>
             <th className="px-3 py-2 text-right font-medium">Received</th>
             <th className="px-3 py-2 text-right font-medium">Subtotal</th>
           </tr>
