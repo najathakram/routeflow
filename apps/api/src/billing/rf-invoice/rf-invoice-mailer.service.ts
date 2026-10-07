@@ -39,7 +39,11 @@ const SEND_SELECT = {
   dueDate: true,
   lines: true,
   lastSentAt: true,
+  tenant: { select: { subscription: { select: { stripeSubId: true } } } },
 } as const;
+
+/** A tenant that has since moved to a card subscription is no longer chased by the automatic emails. */
+const paysByCard = (row: any): boolean => !!row?.tenant?.subscription?.stripeSubId;
 
 export interface RemindSummary {
   mode: ReturnType<typeof rfInvoicingMode>;
@@ -173,7 +177,7 @@ export class RfInvoiceMailerService {
         where: { id: invoiceId },
         select: SEND_SELECT,
       });
-      if (!row || row.status !== "OPEN") return;
+      if (!row || row.status !== "OPEN" || paysByCard(row)) return;
       await this.sendAutoRow(row, kind, now);
     } catch (e) {
       this.logger.error(
@@ -199,9 +203,9 @@ export class RfInvoiceMailerService {
   }
 
   /**
-   * d0 / d7 / d14 reminders for OPEN invoices of PRODUCTION tenants (plus the test allowlist), on the exact
-   * UTC day after the due date. Claim-keyed "<number>:<stage>", so a rerun sends nothing, and nothing is ever
-   * sent after d14. Flag only: no consequence follows a reminder.
+   * d0 / d7 / d14 reminders for OPEN invoices of PRODUCTION tenants (plus the test allowlist), at the highest stage reached
+   * (UTC days after the due date). Claim-keyed "<number>:<stage>", so a rerun sends nothing, and nothing
+   * more follows d14. Tenants now paying by card are skipped. Flag only: no consequence follows a reminder.
    */
   async runRemind(now: Date): Promise<RemindSummary> {
     const mode = rfInvoicingMode();
@@ -209,22 +213,21 @@ export class RfInvoiceMailerService {
     if (mode !== "live") return summary;
 
     const today = dayStart(now);
-    const lastStage = RF_INVOICE_REMINDER_STAGES[RF_INVOICE_REMINDER_STAGES.length - 1];
     const rows = await this.prisma.rfInvoice.findMany({
       where: {
         status: "OPEN",
-        dueDate: {
-          gte: new Date(today.getTime() - lastStage.days * DAY_MS),
-          lt: new Date(today.getTime() + DAY_MS),
-        },
+        dueDate: { lt: new Date(today.getTime() + DAY_MS) },
         tenant: rfInvoiceTenantScope(rfInvoiceTestTenantSlugs()),
       },
       select: SEND_SELECT,
       orderBy: { dueDate: "asc" },
     });
     for (const row of rows as any[]) {
+      if (paysByCard(row)) continue;
       const daysAfter = Math.round((today.getTime() - dayStart(row.dueDate).getTime()) / DAY_MS);
-      const stage = RF_INVOICE_REMINDER_STAGES.find((s) => s.days === daysAfter);
+      // Catch-up without spam: only the HIGHEST stage reached is tried (its claim key makes it once),
+      // so a missed day is made up but a lower stage is never sent after a higher one.
+      const stage = [...RF_INVOICE_REMINDER_STAGES].reverse().find((s) => daysAfter >= s.days);
       if (!stage) continue;
       summary.considered++;
       try {
