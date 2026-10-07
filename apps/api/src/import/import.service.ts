@@ -562,6 +562,10 @@ export class ImportService {
     // earlier row just created, while the preview — which wrote nothing — planned two creates).
     const claimedZohoIds = new Map<string, number>();
     const claimedNames = new Map<string, { row: number; zohoContactId: string | null }>();
+    // The walk-in customer's name and Customer ID are reserved: a row carrying either is skipped.
+    const walkIn = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
     const claimedCustomerIds = new Map<string, number>();
     let rowNumber = 0;
 
@@ -623,6 +627,14 @@ export class ImportService {
       };
       if (zohoContactId && claimedZohoIds.has(zohoContactId)) {
         skipContact(`duplicate of row ${claimedZohoIds.get(zohoContactId)}`);
+        continue;
+      }
+      if (
+        walkIn?.isWalkIn === true &&
+        ((zohoContactId && zohoContactId === walkIn.zohoContactId) ||
+          normalizeNameKey(name) === normalizeNameKey(walkIn.businessName))
+      ) {
+        skipContact(`Row ${rowNumber} skipped: this name is reserved for walk-in sales.`);
         continue;
       }
 

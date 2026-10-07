@@ -90,38 +90,62 @@ describe("ImportService.importContacts: the walk-in customer is never matched", 
     addresses: [],
     contactPersons: [],
   };
-  // The lookup honours the walk-in exclusion exactly as the database would: an ordinary customer query
-  // returns the row, a query carrying the isWalkIn filter does not.
-  const excludes = (args: any) => JSON.stringify(args?.where ?? {}).includes("isWalkIn");
+  // The lookups honour the walk-in exclusion the way the database would: an ordinary customer query
+  // returns the row, a query carrying the isWalkIn exclusion does not, and the walk-in lookup finds it.
+  const excludes = (args: any) =>
+    JSON.stringify(args?.where ?? {}).includes("isWalkIn") && args?.where?.isWalkIn !== true;
+  const RESERVED = "Row 1 skipped: this name is reserved for walk-in sales.";
+
+  beforeEach(() => {
+    prisma.customer.findFirst.mockImplementation((async (args: any) =>
+      args?.where?.isWalkIn === true
+        ? WALK_IN
+        : excludes(args)
+          ? null
+          : args?.where?.zohoContactId === "ZC-1"
+            ? WALK_IN
+            : null) as any);
+    prisma.customer.findMany.mockImplementation((async (args: any) =>
+      excludes(args) ? [] : [WALK_IN]) as any);
+  });
 
   const walkInEmailWrites = () =>
     prisma.customer.update.mock.calls.filter(
       ([a]: any[]) => a?.where?.id === "walk-1" && a?.data && "email" in a.data,
     );
 
-  it("a row carrying the walk-in's business name leaves its email unchanged", async () => {
-    prisma.customer.findMany.mockImplementation((async (args: any) =>
-      excludes(args) ? [] : [WALK_IN]) as any);
-
-    const res = await service.importContacts(
+  it("a row carrying the walk-in's business name is skipped with a row error", async () => {
+    const res: any = await service.importContacts(
       Buffer.from("Customer Name,Email\nCounter Sales,other@acme.example\n"),
       "user-1",
     );
 
     expect(walkInEmailWrites()).toHaveLength(0);
-    // With no match the row is an ordinary new customer.
-    expect(res.created).toBe(1);
+    expect(res.created).toBe(0);
+    expect(res.skipped).toBe(1);
+    expect(res.skippedRows[0]).toMatchObject({ row: 1, reason: RESERVED });
+    expect(res.errors.join("\n")).toContain(RESERVED);
   });
 
-  it("a row carrying the walk-in's Customer ID leaves its email unchanged", async () => {
-    prisma.customer.findFirst.mockImplementation((async (args: any) =>
-      excludes(args) ? null : WALK_IN) as any);
-
-    await service.importContacts(
+  it("a row carrying the walk-in's Customer ID is skipped with a row error", async () => {
+    const res: any = await service.importContacts(
       Buffer.from("Customer ID,Customer Name,Email\nZC-1,Renamed Shop,other@acme.example\n"),
       "user-1",
     );
 
+    expect(walkInEmailWrites()).toHaveLength(0);
+    expect(res.created).toBe(0);
+    expect(res.skippedRows[0]).toMatchObject({ row: 1, reason: RESERVED });
+  });
+
+  it("other rows in the same file still import", async () => {
+    const res: any = await service.importContacts(
+      Buffer.from("Customer Name,Email\nCounter Sales,a@acme.example\nShop Two,b@acme.example\n"),
+      "user-1",
+    );
+
+    expect(res.created).toBe(1);
+    expect(res.skipped).toBe(1);
     expect(walkInEmailWrites()).toHaveLength(0);
   });
 });
