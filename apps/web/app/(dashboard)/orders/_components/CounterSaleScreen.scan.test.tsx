@@ -389,3 +389,65 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
     await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
   });
 });
+
+describe("pay guard: a sale never posts without the last scanned item", () => {
+  const completeBtns = () => [
+    screen.getByRole("button", { name: "Complete sale" }),
+    screen.getByRole("button", { name: /Complete & next sale/ }),
+  ];
+
+  it("(a) scan then immediately Pay: no POST until the lookup resolves, and the POST includes that line", async () => {
+    const reply = deferred<unknown>();
+    barcodeFor["200000000001"] = () => reply.promise;
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("200000000001");
+    expect(screen.getByTestId("counter-scan-busy")).toHaveTextContent("Adding scanned items");
+    completeBtns().forEach((b) => expect(b).toBeDisabled());
+    // the Enter key in the tender field must not post either
+    const tender = screen.getByLabelText("Amount tendered");
+    fireEvent.change(tender, { target: { value: "20" } });
+    fireEvent.keyDown(tender, { key: "Enter" });
+    fireEvent.click(completeBtns()[0]);
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    reply.resolve(COLA);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await waitFor(() => expect(completeBtns()[0]).toBeEnabled());
+    expect(screen.queryByTestId("counter-scan-busy")).toBeNull();
+    fireEvent.click(completeBtns()[0]);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([{ productId: "p-cola", qty: 1 }]);
+  });
+
+  it("(b) a scan whose lookup errors keeps Pay blocked until it is Retried or Skipped", async () => {
+    let healthy = false;
+    barcodeFor["200000000001"] = () =>
+      healthy ? COLA : Promise.reject({ response: { status: 503, data: {} } });
+    renderWithProviders(<CounterSaleScreen />);
+    const alert = await (async () => {
+      await scan("200000000001");
+      return screen.findByTestId("counter-scan-error");
+    })();
+    completeBtns().forEach((b) => expect(b).toBeDisabled());
+    fireEvent.click(within(alert).getByRole("button", { name: "Skip this scan" }));
+    await waitFor(() => expect(completeBtns()[0]).toBeEnabled());
+
+    await scan("200000000001");
+    const alert2 = await screen.findByTestId("counter-scan-error");
+    completeBtns().forEach((b) => expect(b).toBeDisabled());
+    healthy = true;
+    fireEvent.click(within(alert2).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await waitFor(() => expect(completeBtns()[0]).toBeEnabled());
+  });
+
+  it("an open picker blocks Pay until a product is chosen or the picker is cancelled", async () => {
+    listFor["COLA"] = () => [COLA, CHIPS];
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    const picker = await screen.findByTestId("counter-scan-picker");
+    completeBtns().forEach((b) => expect(b).toBeDisabled());
+    fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(completeBtns()[0]).toBeEnabled());
+  });
+});

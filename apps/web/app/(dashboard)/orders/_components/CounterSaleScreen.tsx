@@ -223,6 +223,10 @@ export function CounterSaleScreen() {
       setLines((prev) => addScannedProduct(prev, product, level, n, customer?.pricingTier ?? 1)),
   });
 
+  const scanBusy = scan.waiting > 0;
+  const scanBusyRef = React.useRef(false);
+  scanBusyRef.current = scanBusy;
+
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (locked) return;
@@ -367,6 +371,8 @@ export function CounterSaleScreen() {
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
+    // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
+    if (!retry && scanBusyRef.current) return;
     submittingRef.current = true;
     try {
       if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
@@ -866,14 +872,23 @@ export function CounterSaleScreen() {
         </div>
       ) : null}
 
+      {scanBusy ? (
+        <p role="status" className="text-sm text-navy/70" data-testid="counter-scan-busy">
+          Adding scanned items…
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => void completeSale(false)} disabled={createSale.isPending || locked}>
+        <Button
+          onClick={() => void completeSale(false)}
+          disabled={createSale.isPending || locked || scanBusy}
+        >
           Complete sale
         </Button>
         <Button
           variant="secondary"
           onClick={() => void completeSale(true)}
-          disabled={createSale.isPending || locked}
+          disabled={createSale.isPending || locked || scanBusy}
         >
           Complete &amp; next sale
         </Button>
