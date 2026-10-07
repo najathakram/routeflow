@@ -31,6 +31,16 @@ export interface SaleLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** POS-2: the product's tier columns when the line was added, so a customer pick can re-price it (display only). */
+  tierPrices?: {
+    pricePerUnit?: unknown;
+    priceTier2?: unknown;
+    priceTier3?: unknown;
+    priceTier4?: unknown;
+    priceTier5?: unknown;
+  };
+  /** The clerk priced this line by hand: a customer pick never overwrites it (POS-5 sets it). Default false. */
+  priceEdited?: boolean;
 }
 
 /**
@@ -67,6 +77,13 @@ export function addScannedProduct(
       unit: product.unit ?? "each",
       priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
       ...(product.category ? { category: String(product.category) } : {}),
+      tierPrices: {
+        pricePerUnit: product.pricePerUnit,
+        priceTier2: product.priceTier2,
+        priceTier3: product.priceTier3,
+        priceTier4: product.priceTier4,
+        priceTier5: product.priceTier5,
+      },
       ...(qty ? { qty: qty.qty, boxes: qty.boxes ?? 0, pieces: qty.pieces ?? 0 } : born),
     },
   ];

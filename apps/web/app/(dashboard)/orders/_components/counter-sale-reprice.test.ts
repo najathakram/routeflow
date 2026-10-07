@@ -8,6 +8,7 @@ const line = (o: Partial<SaleLine>): SaleLine => ({
   name: "Item",
   unitPrice: 10,
   qty: 1,
+  priceType: "STANDARD",
   tierPrices: tiers,
   ...o,
 });
