@@ -39,25 +39,27 @@ async function discoverFuzzyTerm(page: Page): Promise<{ term: string; name: stri
   for (const p of products) {
     const name = String(p?.name ?? "");
     if (!p?.isActive || name.length < 8) continue;
-    const term = name.slice(2, 8).trim();
-    if (term.length < 4 || /^\d{8,14}$/.test(term)) continue;
-    const exact = await get(`/products/barcode/${encodeURIComponent(term)}`);
-    if (exact.status() !== 404) continue;
-    const res = await get("/products", {
-      scanCode: term,
-      limit: "20",
-      includeVariants: "true",
-    });
-    const rows: any[] = ((await res.json()) as any)?.data ?? [];
-    const lc = term.toLowerCase();
-    const isExact = rows.some(
-      (r) =>
-        String(r.sku ?? "").toLowerCase() === lc ||
-        String(r.unitSku ?? "").toLowerCase() === lc ||
-        (r.barcodes ?? []).some((b: any) => String(b?.code ?? "").toLowerCase() === lc),
-    );
-    const sellable = rows.filter((r) => r.isActive !== false);
-    if (!isExact && sellable.length === 1) return { term, name: String(sellable[0].name) };
+    for (let at = 0; at + 6 <= name.length; at++) {
+      const term = name.slice(at, at + 6).trim();
+      if (term.length < 5 || /^\d{8,14}$/.test(term)) continue;
+      const exact = await get(`/products/barcode/${encodeURIComponent(term)}`);
+      if (exact.status() !== 404) continue;
+      const res = await get("/products", {
+        scanCode: term,
+        limit: "20",
+        includeVariants: "true",
+      });
+      const rows: any[] = ((await res.json()) as any)?.data ?? [];
+      const lc = term.toLowerCase();
+      const isExact = rows.some(
+        (r) =>
+          String(r.sku ?? "").toLowerCase() === lc ||
+          String(r.unitSku ?? "").toLowerCase() === lc ||
+          (r.barcodes ?? []).some((b: any) => String(b?.code ?? "").toLowerCase() === lc),
+      );
+      const sellable = rows.filter((r) => r.isActive !== false);
+      if (!isExact && sellable.length === 1) return { term, name: String(sellable[0].name) };
+    }
   }
   throw new Error(
     "No seeded product has a name fragment with exactly one fuzzy hit - run e2e-seed.js",
