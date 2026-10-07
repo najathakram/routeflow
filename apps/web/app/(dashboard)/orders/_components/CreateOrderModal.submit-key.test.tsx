@@ -369,6 +369,20 @@ describe("CreateOrderModal - the key survives refusals after an unknown outcome"
     expect(keyOf(1)).toBe(keyOf(0));
   });
 
+  it("B1201: a 503 ORDER_SAVED_CREDITS_PENDING (saved, credits pending) keeps the key for the resubmit", async () => {
+    post
+      .mockRejectedValueOnce({
+        response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "o1" } },
+      })
+      .mockResolvedValue({ data: { id: "o1" } });
+    await openWithLine();
+    fireEvent.click(createBtn());
+    await flush();
+    await retry();
+    expect(orderPosts()).toHaveLength(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
   it("closing the modal after an unknown outcome warns the order may have gone through", async () => {
     post.mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"));
     mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];

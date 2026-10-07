@@ -106,6 +106,7 @@ import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
 import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { savedCreditsPending } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
@@ -1553,6 +1554,7 @@ export class OrdersService implements OnApplicationBootstrap {
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
         assertReplaySameCart(existing, dto);
+        await this.syncCreateCredits(existing.id, customerId, appliedCreditNotes); // B1201: heal
         options.onReplay?.(existing);
         return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
       }
@@ -2130,6 +2132,7 @@ export class OrdersService implements OnApplicationBootstrap {
             }
             if (existing) {
               assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
+              await this.syncCreateCredits(existing.id, customerId, appliedCreditNotes); // B1201
               options.onReplay?.(existing);
               return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
             }
@@ -2192,9 +2195,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // id, then settle (a harmless no-op until an invoice exists — settle bails
     // early when the order has no invoices yet). Short, dedicated Serializable tx
     // — NOT inside the stock/create transaction above.
-    if (appliedCreditNotes !== undefined) {
-      await this.syncAndSettleOrderCredits(order.id, customerId, appliedCreditNotes);
-    }
+    await this.syncCreateCredits(order.id, customerId, appliedCreditNotes);
 
     return order;
   }
@@ -4383,6 +4384,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
+  }
+
+  private async syncCreateCredits(orderId: string, cId: string, notes?: AppliedCreditNoteDto[]) {
+    if (notes === undefined) return;
+    await savedCreditsPending(orderId, () => this.syncAndSettleOrderCredits(orderId, cId, notes));
   }
 
   /**
