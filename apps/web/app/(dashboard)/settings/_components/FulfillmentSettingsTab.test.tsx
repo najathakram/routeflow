@@ -315,7 +315,7 @@ describe("changing the delivery method", () => {
     );
   });
 
-  it("carrier orders in transit: says so and offers Review Again", async () => {
+  it("carrier orders in transit: fixed copy and a Review orders link to the shipped carrier orders", async () => {
     post.mockResolvedValue({ data: previewFor() });
     patch.mockRejectedValue(
       axiosError(409, { code: "FULFILMENT_CARRIER_IN_TRANSIT", message: "x", count: 2 }),
@@ -324,9 +324,17 @@ describe("changing the delivery method", () => {
     fireEvent.click(radio(/^By carrier/));
     fireEvent.click(review());
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Change" }));
-    expect(await screen.findByText(/2 orders are with the carrier/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review Again" }));
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByText(
+        "2 orders are still with the carrier. Try again once they're delivered.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review orders" })).toHaveAttribute(
+      "href",
+      "/orders?fulfillPath=SHIP&status=OUT_FOR_DELIVERY",
+    );
+    expect(screen.queryByRole("button", { name: "Review Again" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Change" })).not.toBeInTheDocument();
   });
 
   it("own delivery without a plan: the fixed sentence and a Plan & Billing link", async () => {
