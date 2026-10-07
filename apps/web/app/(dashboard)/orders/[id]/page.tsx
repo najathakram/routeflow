@@ -32,7 +32,6 @@ import {
   Button,
   Card,
   Modal,
-  Select,
   cn,
   TAP_TARGET,
   useToast,
@@ -61,6 +60,9 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   OrderInlineReturnsSection,
@@ -139,7 +141,6 @@ import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
-import { fulfilPathOptions } from "@/lib/fulfil-path-options";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -1800,6 +1801,20 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
+  const statusLabel = useOrderStatusLabel();
+  const staffFulfilment = useStaffFulfilment();
+  // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
+  // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
+  const [fulfilRowPinned, setFulfilRowPinned] = React.useState(false);
+  React.useEffect(() => setFulfilRowPinned(false), [id]);
+  const orderFulfillPath = order?.fulfillPath;
+  React.useEffect(() => {
+    if (
+      orderFulfillPath &&
+      !staffFulfilment.formMethods.includes(orderFulfillPath as "ROUTE" | "SHIP")
+    )
+      setFulfilRowPinned(true);
+  }, [orderFulfillPath, staffFulfilment.formMethods]);
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -1871,7 +1886,7 @@ export default function OrderDetailPage() {
         onError: (err: any) =>
           toast({
             title: "Could not update fulfillment",
-            description: codedToastCopy(err) ?? err?.response?.data?.message,
+            description: fulfillPathErrorCopy(err),
             variant: "error",
           }),
       },
@@ -2474,7 +2489,10 @@ export default function OrderDetailPage() {
                 Urgent
               </span>
             )}
-            <Badge status={localStatus as BadgeStatus} />
+            <OrderStatusBadge
+              status={localStatus as BadgeStatus}
+              fulfillPath={order?.fulfillPath}
+            />
             <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
@@ -2535,7 +2553,7 @@ export default function OrderDetailPage() {
           {!canEdit && order?.editWindow?.closedReason && !isEditing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
               {order.editWindow.closedReason === "DISPATCHED"
-                ? "Out for delivery — editing closed"
+                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
                 : "Order cancelled — editing closed"}
             </span>
           )}
@@ -2723,8 +2741,7 @@ export default function OrderDetailPage() {
                   </Button>
                   {order.fulfillPath === "SHIP" && (
                     <p className="text-[11px] text-navy/50">
-                      Sets the order to Out for Delivery — the customer is notified it&apos;s on the
-                      way.
+                      {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
                     </p>
                   )}
                 </div>
@@ -3304,35 +3321,18 @@ export default function OrderDetailPage() {
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
-              {access.fulfillmentPath && (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-navy/70">Fulfillment</dt>
-                  <dd className="flex flex-col items-end gap-0.5">
-                    <div className="w-40">
-                      <Select
-                        options={fulfilPathOptions(order.fulfillPath)}
-                        value={order.fulfillPath}
-                        disabled={fulfillPathLocked || patchFulfillPath.isPending}
-                        title={
-                          fulfillPathLocked
-                            ? "Fulfillment path can only be changed while the order is open"
-                            : undefined
-                        }
-                        onChange={(e) => {
-                          const fulfillPath = e.target.value as "ROUTE" | "SHIP";
-                          if (order.fulfillPath === "PICKUP") return setPendingPath(fulfillPath);
-                          applyFulfillPath(fulfillPath);
-                        }}
-                      />
-                    </div>
-                    {order.fulfillPath === "SHIP" && (
-                      <span className="text-[11px] text-navy/50">
-                        Ships via carrier — won&apos;t appear on delivery routes.
-                      </span>
-                    )}
-                  </dd>
-                </div>
-              )}
+              {access.fulfillmentPath &&
+                (staffFulfilment.choice ||
+                  fulfilRowPinned ||
+                  !(staffFulfilment.formMethods as string[]).includes(order.fulfillPath)) && (
+                  <OrderFulfilmentRow
+                    orderId={order.id}
+                    fulfillPath={order.fulfillPath}
+                    locked={fulfillPathLocked}
+                    offered={staffFulfilment.formMethods}
+                    onLeavePickup={setPendingPath}
+                  />
+                )}
               {order.orderDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Order date</dt>
@@ -3650,6 +3650,7 @@ export default function OrderDetailPage() {
         onConfirm={handleDemote}
         loading={updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
+        fulfillPath={order?.fulfillPath}
       />
 
       {/* Send invoice modal — shown after marking order as delivered */}

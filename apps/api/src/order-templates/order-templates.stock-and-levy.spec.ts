@@ -125,7 +125,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [deps, , stockLines, isStaffRole] = mockDecrementStockForSale.mock.calls[0];
       expect(deps).toEqual(expect.objectContaining({ tenantId: "test-tenant" }));
-      expect(stockLines).toEqual([{ productId: "p1", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p1", qty: 3 }]);
       // An unattended cron run must never abort on insufficient stock — the staff/operator
       // posture (warn + oversell), never the customer/driver hard-block.
       expect(isStaffRole).toBe(true);
@@ -155,8 +155,8 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
       expect(stockLines).toEqual([
-        { productId: "p1", qty: 2 },
-        { productId: "p2", qty: 4 },
+        { id: undefined, position: 0, productId: "p1", qty: 2 },
+        { id: undefined, position: 1, productId: "p2", qty: 4 },
       ]);
     });
 
@@ -262,7 +262,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       await gatedService.generateOrder("t1");
 
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
-      expect(stockLines).toEqual([{ productId: "p-std", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p-std", qty: 3 }]);
     });
   });
 

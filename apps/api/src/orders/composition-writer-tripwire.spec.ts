@@ -26,6 +26,11 @@ const REGISTRY: Record<string, Entry> = {
   "orders/orders.service.ts::approveChangeRequestAtStop": { kind: "order" },
   "order-templates/order-templates.service.ts::createOrderFromTemplate": { kind: "order" },
   "invoices/invoices.service.ts::recomputeOrderFromInvoices": { kind: "order" },
+  "orders/backorder-marker-writes.ts::writeValues": {
+    kind: "exempt",
+    reason:
+      "SA-714 R1: writes only OrderItem.backorderedPieces (an informational tag) — no qty, price or composition column",
+  },
   "invoices/invoices.service.ts::create": {
     kind: "exempt",
     reason: "manual invoice lines carry no order provenance and are never composed",

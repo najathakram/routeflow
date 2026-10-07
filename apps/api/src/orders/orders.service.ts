@@ -161,13 +161,14 @@ import {
   decrementStockForSale,
   restoreStockForReopen,
   settleStockForEdit,
-  STOCK_LINE_UNIT_SELECT,
+  STOCK_SALE_LINE_SELECT,
   STOCK_SETTLE_SELECT,
   type StockArgs,
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -176,6 +177,7 @@ import {
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
+import { captureMarkerCarry } from "./backorder-marker-writes";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
@@ -388,8 +390,6 @@ export class OrdersService implements OnApplicationBootstrap {
       urgent,
       page = 1,
       limit = 20,
-      deliveryDateFrom,
-      deliveryDateTo,
       fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
@@ -433,12 +433,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
     // key at all (every existing order stays visible either way).
     if (fulfillPath) where.fulfillPath = fulfillPath;
-    if (deliveryDateFrom || deliveryDateTo) {
-      where.requestedDeliveryDate = {
-        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
-        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
-      };
-    }
+    Object.assign(where, dateAndShipmentFilters(query));
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().order.findMany({
@@ -854,6 +849,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -1102,6 +1098,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -2047,12 +2044,14 @@ export class OrdersService implements OnApplicationBootstrap {
               // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
               // as a non-draft create(), so it calls the identical helper (no
               // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, allowOversell, {
+              const markers = await this.decrementStockForSale(tx, stockLines, allowOversell, {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
                 customerFacing: user.role === UserRole.CUSTOMER,
               });
+              for (const li of stockLines)
+                Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 });
             }
 
             const created = await tx.order.create({
@@ -2473,7 +2472,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const activeItems: Array<StockLineUnits & { productId: string | null; qty: any }> =
               await tx.orderItem.findMany({
                 where: { orderId: id, status: { not: "CANCELLED" } },
-                select: { productId: true, qty: true, ...STOCK_LINE_UNIT_SELECT },
+                select: STOCK_SALE_LINE_SELECT,
               });
             // The Lane R check ran outside this tx: a product added since (a concurrent draft
             // edit) was never judged — roll back (the claim above included) and promote again.
@@ -2837,7 +2836,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // re-decrements nothing — era consistency, not a regression).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: { productId: true, qty: true, deliveredQty: true, ...STOCK_LINE_UNIT_SELECT },
+          select: STOCK_SALE_LINE_SELECT,
         });
 
         // Revert cancelled line items back to PENDING
@@ -3097,6 +3096,7 @@ export class OrdersService implements OnApplicationBootstrap {
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
+        let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
@@ -3502,6 +3502,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
             lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
@@ -4201,6 +4202,7 @@ export class OrdersService implements OnApplicationBootstrap {
             allowOversell,
             blockCredits: carrierLocked,
             lineIdentity,
+            markerCarry,
           });
           creditGate = () =>
             assertWithinCreditLimit(
