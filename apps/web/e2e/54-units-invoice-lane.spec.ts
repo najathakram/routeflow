@@ -39,9 +39,13 @@ async function openBuilder(page: Page, basis: RegExp) {
   await page.getByText(CUSTOMER_NAME, { exact: true }).first().click();
 }
 async function addFixtureProduct(page: Page) {
+  // A picker tap (the suggestion list), which starts a new line on the product's default selling unit.
   const scan = page.getByPlaceholder(/scan barcode, or type product name/i);
-  await scan.fill(SKU);
-  await scan.press("Enter");
+  await scan.fill(PRODUCT_NAME);
+  await page
+    .getByRole("listbox")
+    .getByRole("button", { name: new RegExp(SKU, "i") })
+    .click();
   await expect(page.locator(`input[value="${PRODUCT_NAME}"]`)).toBeVisible();
 }
 const picker = (page: Page) => page.getByRole("combobox", { name: `Sell ${PRODUCT_NAME} by` });
