@@ -27,23 +27,6 @@
 - **Guard:** none automated. Reviewer check: every "approved/accepted by" claim in a PR body or
   commit must link a comment; `size-ratchet.spec.ts` already refuses raises that exceed headroom.
 
-### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
-
-- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
-  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
-  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
-  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
-  gate, a vendor verdict accepted without checking its inferred components) landed on master and
-  needed fix-forward PRs plus a manual prod re-seed.
-- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
-  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
-- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
-  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
-  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
-  REVIEW line newer than the last commit reviewed, holds the merge.**
-- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
-  this PR" before each merge (no code guard).
-
 ### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
 
 - **Symptom:** two related false "unlanded" verdicts, same underlying mistake. (1) PR #857/B502
@@ -154,19 +137,6 @@
 - **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
   (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
   `fleet-status.mjs` prints the board's comment count and warns at 2,300.
-
-### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
-
-- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
-  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
-  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
-- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
-  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
-- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
-  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
-  Never interpolate such text into a command line.**
-- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
-  the Mac mini only, with no railway CLI or link on the MacBook.
 
 ### L-244 · 2026-09-29 · process · a merge reads every ruling posted after the last PASS, not only the PASS (#2678)
 
@@ -403,6 +373,20 @@
 - **Lesson:** **After each local proof run, prune dangling images and trim the VM disk; never let the VM fill mid-build. Check VM free space before a rebuild, not host free space.**
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 
+### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
+
+- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
+- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
+- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
+- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
+
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
+
 ## testing
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
@@ -512,6 +496,13 @@
 - **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
 - **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
 
+### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
+
+- **Symptom:** a push carried a campaign report listing only a handful of specs, and turbo's cached test replay did not rewrite it; a scoped run of `app/(dashboard)/...` matched nothing and looked green.
+- **Root cause:** `npx jest <spec>` in a workspace overwrites that workspace's report with the partial run, a cached replay writes nothing, and a path pattern is a REGEX, so unescaped parentheses match no file.
+- **Lesson:** **After any scoped jest run, regenerate the full workspace report before pushing. Escape or avoid regex characters in a path pattern and check the `Tests:` count is plausible before trusting a pass.**
+- **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
+
 ## domain
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
@@ -539,20 +530,6 @@
 - **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the status-change
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
-
-### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
-
-- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
-  green paid state — the number was right but its color-coding read non-zero.
-- **Root cause:** the balance summed three independently-derived floats before subtracting from
-  total; the color-coding ran on that raw sum, where a sub-cent float remnant survives `Math.max`
-  and still reads non-zero. `roundMoney` was applied only at display-formatting time.
-- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
-  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never
-  only where it's formatted for display.**
-- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
-  `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
-  `applyAdvancePaymentToInvoiceLocked` (#814), same class.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
@@ -608,22 +585,26 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
-### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
-
-- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
-- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
-- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
-- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
-- **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
-  screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
-- **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
-
 ### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
 
 - **Symptom:** after the named add-on call sites were routed through the new single ledger writer, `subscribe()` still booked add-ons with its own emit on the old live-catalog formula. Only the run's final review caught it.
 - **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
+
+### L-277 · 2026-10-07 · domain · a scan resolves through the exact-code ladder, never `data[0]` of a fuzzy search
+
+- **Symptom:** a scanned code added a different product, or a duplicate, because the first row of a contains-style search was taken as the match.
+- **Root cause:** a fuzzy or prefix search returns several rows ordered by name; the first is not the product that owns the code.
+- **Lesson:** **Resolve a scan through the exact-code ladder (SKU, barcode, exact code) and use a fuzzy hit only when it is the sole result and the user confirms it; an ambiguous hit opens a picker.**
+- **Guard:** `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`.
+
+### L-278 · 2026-10-07 · domain · a queued lookup in front of a money action blocks the action until the queue drains
+
+- **Symptom:** a counter sale was paid while a scan was still resolving, and the lookup's line landed after the total was taken.
+- **Root cause:** scans resolve asynchronously one at a time, but Pay read the cart as it stood, not as it would be.
+- **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
+- **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
 
 ## security
 
@@ -671,15 +652,3 @@
 - **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
   index 0) or verifying the served commit sha directly.
 
-### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
-
-- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
-  nothing — a selector that matches zero elements raised no error.
-- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
-  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
-  no longer existed and the query silently returned an empty set.
-- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
-  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
-  change can rename.**
-- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
-  via `getByTestId`.

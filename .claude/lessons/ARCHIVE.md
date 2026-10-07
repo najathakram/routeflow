@@ -3624,3 +3624,75 @@ citations, closed-out with its own post-init assertion guard).
   `git merge-base <branch> master`, never `master` directly, and warns when two open PRs' diffs
   touch the same file.
   (Archived 2026-10-07 whole and verbatim to make room at cap: L-195 is fully guarded (the merge session's live post-deploy verification caught this one, plus the   pre-existing e2e T13 opacity assertion. Propose: the landing t...); least-cited.)
+
+### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
+
+- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
+  nothing — a selector that matches zero elements raised no error.
+- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
+  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
+  no longer existed and the query silently returned an empty set.
+- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
+  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
+  change can rename.**
+- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
+  via `getByTestId`.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-212 is fully guarded (#1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it via `getByTestId`.) and is among the least-cited active entries.)
+
+### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
+
+- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
+  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
+  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
+  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
+  gate, a vendor verdict accepted without checking its inferred components) landed on master and
+  needed fix-forward PRs plus a manual prod re-seed.
+- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
+  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
+- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
+  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
+  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
+  REVIEW line newer than the last commit reviewed, holds the merge.**
+- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
+  this PR" before each merge (no code guard).
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-209 is fully guarded (landing-coordinator routine step "read the coordination issue for REVIEW lines on this PR" before each merge (no code guard).) and is among the least-cited active entries.)
+
+### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
+
+- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
+  green paid state — the number was right but its color-coding read non-zero.
+- **Root cause:** the balance summed three independently-derived floats before subtracting from
+  total; the color-coding ran on that raw sum, where a sub-cent float remnant survives `Math.max`
+  and still reads non-zero. `roundMoney` was applied only at display-formatting time.
+- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
+  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never
+  only where it's formatted for display.**
+- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
+  `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
+  `applyAdvancePaymentToInvoiceLocked` (#814), same class.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-170 is fully guarded (`invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s `applyAdvancePaymentToInvoiceLocked` (#814)) and is among the least-cited active entries.)
+
+### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
+
+- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
+  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
+  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
+- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
+  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
+- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
+  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
+  Never interpolate such text into a command line.**
+- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
+  the Mac mini only, with no railway CLI or link on the MacBook.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-241 is fully guarded (the lane brief rule (write bodies to a file first); production commands are owner-run on the Mac mini only, with no railway CLI or link on the MacBook.) and is among the least-cited active entries.)
+
+### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
+
+- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
+- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
+- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
+- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
+- **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
+  screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
+- **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-222 is fully guarded (`next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).) and is among the least-cited active entries.)

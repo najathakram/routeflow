@@ -127,3 +127,10 @@
 {"id":"B1203","batch":"F49","tier":"T1","state":"already-fixed","pr":3256,"proof":null,"evidence":"W17 train, master b22689aa8: submit latch + idempotency key on plain create (#3256 1ccecffe2)"}
 {"id":"B1186","batch":"F49","tier":"T2","state":"already-fixed","pr":3257,"proof":null,"evidence":"W17 train, master b22689aa8: P2002 readers handle the driver-adapter error shape (#3257 f0cee49e9)"}
 {"id":"B1052","batch":"F49","tier":"T1","state":"already-fixed","pr":3213,"proof":null,"evidence":"W17 train, master b22689aa8: credit-note settlement locked against concurrent double-spend (#3213 217dbdcca)"}
+{"id":"B1187","batch":"F49","tier":"T3","state":"already-fixed","pr":3270,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha 0f390093a318201186bb46c80b62948803c364fe"}
+{"id":"B1188","batch":"F49","tier":"T2","state":"already-fixed","pr":3268,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha 20385500ba6bccf5b7371cc0494683ef81a3a89d"}
+{"id":"B1201","batch":"F49","tier":"T2","state":"already-fixed","pr":3273,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha 7c55a3efda8890f999b16d441c91f50cedb69c83"}
+{"id":"B1206","batch":"F49","tier":"T1","state":"already-fixed","pr":3279,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha a14627e853878817cde3df53b97ef22f58efbf9a"}
+{"id":"B1207","batch":"F49","tier":"T1","state":"already-fixed","pr":3279,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha a14627e853878817cde3df53b97ef22f58efbf9a"}
+{"id":"B1208","batch":"F49","tier":"T1","state":"already-fixed","pr":3279,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha a14627e853878817cde3df53b97ef22f58efbf9a"}
+{"id":"B1209","batch":"F49","tier":"T2","state":"already-fixed","pr":3279,"proof":null,"evidence":"landed in W18/W18b, master a14627e85, squash sha a14627e853878817cde3df53b97ef22f58efbf9a"}
