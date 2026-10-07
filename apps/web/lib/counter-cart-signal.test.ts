@@ -1,4 +1,6 @@
 import {
+  guardCounterLeave,
+  getCounterLeaveNotice,
   getCounterCartBusy,
   setCounterCartBusy,
   getCounterCartHasLines,
@@ -46,5 +48,16 @@ describe("counter cart signal", () => {
     setCounterCartBusy(false);
     expect(fn).toHaveBeenCalledTimes(2);
     off();
+  });
+
+  it("guardCounterLeave blocks and raises the notice only while busy; settling clears the notice", () => {
+    expect(guardCounterLeave()).toBe(false);
+    expect(getCounterLeaveNotice()).toBe(false);
+    setCounterCartBusy(true);
+    expect(guardCounterLeave()).toBe(true);
+    expect(getCounterLeaveNotice()).toBe(true);
+    setCounterCartBusy(false);
+    expect(getCounterLeaveNotice()).toBe(false);
+    expect(guardCounterLeave()).toBe(false);
   });
 });

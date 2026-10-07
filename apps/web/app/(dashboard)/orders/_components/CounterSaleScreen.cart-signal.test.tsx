@@ -122,4 +122,25 @@ describe("POS-7 cart signal", () => {
     view.unmount();
     expect(getCounterCartBusy()).toBe(false);
   });
+
+  it("asks the browser to confirm leaving (beforeunload) only while busy", async () => {
+    const view = renderWithProviders(<CounterSaleScreen />);
+    const unload = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(unload()).toBe(false);
+    pending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(unload()).toBe(true));
+    pending = false;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(unload()).toBe(false));
+    pending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(unload()).toBe(true));
+    view.unmount();
+    expect(unload()).toBe(false);
+  });
 });

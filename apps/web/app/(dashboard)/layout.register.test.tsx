@@ -29,12 +29,20 @@ let mockGate = { showButton: true };
 const mockLogout = jest.fn();
 const mockSetPalette = jest.fn();
 let mockDriveMode = false;
+const mockSetDriveMode = jest.fn();
+const BLOCKED = /A sale is in progress\. Wait for the receipt or check its status before leaving\./;
 jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => mockGate }));
 jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
-    user: { id: "u1", role: mockRole, username: "ada.clerk", email: "a@example.com" },
+    user: {
+      id: "u1",
+      role: mockRole,
+      username: "ada.clerk",
+      email: "a@example.com",
+      canActAsDriver: true,
+    },
     logout: mockLogout,
   }),
 }));
@@ -70,7 +78,7 @@ jest.mock("@/lib/hooks/useNotifications", () => ({
   }),
 }));
 jest.mock("@/lib/drive-mode", () => ({
-  useDriveMode: () => ({ driveMode: mockDriveMode, setDriveMode: jest.fn() }),
+  useDriveMode: () => ({ driveMode: mockDriveMode, setDriveMode: mockSetDriveMode }),
 }));
 jest.mock("@/lib/presence-cookies", () => ({
   setLastPortalCookie: jest.fn(),
@@ -129,6 +137,7 @@ beforeEach(() => {
   mockGate = { showButton: true };
   mockLogout.mockClear();
   mockSetPalette.mockClear();
+  mockSetDriveMode.mockClear();
   mockDriveMode = false;
   client = createTestQueryClient();
   setItemKeys = [];
@@ -335,6 +344,108 @@ describe("Exit is blocked while a sale is being recorded", () => {
     act(() => setCounterCartBusy(true));
     fireEvent.click(discard);
     expect(mockPush).not.toHaveBeenCalled();
+  });
+});
+
+describe("every other way to leave is blocked while a sale is being recorded", () => {
+  const busyCounter = () => {
+    const view = mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    act(() => setCounterCartBusy(true));
+    return view;
+  };
+  const openMenu = () => {
+    const trigger = within(registerHeader()).getByLabelText("Open user menu");
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  };
+  const press = (...keys: string[]) => keys.forEach((key) => fireEvent.keyDown(window, { key }));
+
+  it("Sign out does nothing but explain", async () => {
+    busyCounter();
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Sign out/i }));
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+  });
+
+  it("Profile (Settings) does not navigate", async () => {
+    busyCounter();
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Profile/i }));
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+  });
+
+  it("the drive-mode toggle does nothing", async () => {
+    busyCounter();
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Drive mode/i }));
+    expect(mockSetDriveMode).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("a g shortcut does not navigate", () => {
+    busyCounter();
+    press("g", "c");
+    press("g", "s");
+    press("g", "h");
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+  });
+
+  it("a rail link click is cancelled", () => {
+    busyCounter();
+    const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(false); // preventDefault was called
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+  });
+
+  it("a drawer link click is cancelled", () => {
+    busyCounter();
+    fireEvent.click(within(registerHeader()).getByLabelText("Open navigation menu"));
+    const link = screen
+      .getByTestId("sidebar-drawer-aside")
+      .querySelector('a[href="/customers"]') as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(false);
+  });
+
+  it("the banner goes away once the sale settles", () => {
+    busyCounter();
+    press("g", "c");
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+    act(() => setCounterCartBusy(false));
+    expect(screen.queryByText(BLOCKED)).toBeNull();
+  });
+
+  it("Exit looks disabled while busy", () => {
+    busyCounter();
+    expect(screen.getByRole("button", { name: "Exit counter" }).className).toContain(
+      "aria-disabled:opacity-50",
+    );
+  });
+
+  it("NOT busy: Sign out, Profile, g shortcuts and rail links all work as before", async () => {
+    mount(COUNTER);
+    press("g", "c");
+    expect(mockPush).toHaveBeenCalledWith("/customers");
+    const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(true);
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Profile/i }));
+    expect(mockPush).toHaveBeenCalledWith("/settings");
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Sign out/i }));
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(BLOCKED)).toBeNull();
+  });
+
+  it("off the counter the shell behaves exactly as before", async () => {
+    mount("/orders");
+    press("g", "c");
+    expect(mockPush).toHaveBeenCalledWith("/customers");
+    const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(true);
   });
 });
 
