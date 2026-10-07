@@ -9,6 +9,11 @@ import { useCartStore } from "../../../store/cartStore";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import {
+  BUYER_ORDER_CONFLICT_COPY,
+  BUYER_ORDER_CONFLICT_NO_ID_COPY,
+  buyerOrderConflict,
+} from "../../../lib/buyer-order-conflict";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
@@ -83,7 +88,23 @@ export default function CartScreen() {
           showToast("Order placed");
           router.replace(`/(customer)/orders/${order.id}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          // The key already made an order: fixed copy, with an "Open order" action when its id is known.
+          const existing = buyerOrderConflict(e);
+          if (existing?.orderId) {
+            const id = existing.orderId;
+            confirm(
+              "Order already placed",
+              BUYER_ORDER_CONFLICT_COPY,
+              () => router.replace(`/(customer)/orders/${id}`),
+              { confirmText: "Open order" },
+            );
+          } else if (existing) {
+            showToast(BUYER_ORDER_CONFLICT_NO_ID_COPY);
+          } else {
+            showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          }
+        },
       },
     );
   };
