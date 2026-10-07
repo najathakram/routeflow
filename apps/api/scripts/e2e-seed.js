@@ -95,6 +95,10 @@ const TENANT_SLUG = assertTestTenant("e2e-routeflow", "e2e-seed");
 // by the x-tenant-slug header/cookie the login flow already sets), so the SAME
 // loginAsOperator() helper works unmodified against either tenant.
 const LITE_TENANT_SLUG = assertTestTenant("qa-lite", "e2e-seed");
+// PKG-8: a standing tenant WITH the recurring_routes add-on, so the dashboard's Routes/Drivers cards
+// and panels can be measured (69-dashboard-cls.spec.ts). e2e-routeflow also has the add-on, but
+// 69 needs a SECOND tenant whose last-known routes access differs per user. Local stack only.
+const DASHBOARD_ROUTES_TENANT_SLUG = assertTestTenant("qa-dashboard-routes", "e2e-seed");
 const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";
@@ -1013,9 +1017,52 @@ async function seedQaLiteTenant() {
   console.log("✅ qa-lite seed complete.\n");
 }
 
+/**
+ * Idempotent seed for `qa-dashboard-routes` (PKG-8): an ACTIVE tenant with the `recurring_routes`
+ * add-on granted through the same TenantAddon row ensureAddon writes for e2e-routeflow, plus the
+ * shared `admin` operator. assertTestTenant runs at module load (above), before any write.
+ */
+async function seedQaDashboardRoutesTenant() {
+  assertTestTenant(DASHBOARD_ROUTES_TENANT_SLUG, "e2e-seed qa-dashboard-routes");
+  let tenant = await prisma.tenant.findUnique({ where: { slug: DASHBOARD_ROUTES_TENANT_SLUG } });
+  if (!tenant) {
+    console.log(`Creating tenant "${DASHBOARD_ROUTES_TENANT_SLUG}"...`);
+    tenant = await prisma.tenant.create({
+      data: {
+        slug: DASHBOARD_ROUTES_TENANT_SLUG,
+        name: "QA Dashboard Routes",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      },
+    });
+    await prisma.tenantConfig.create({
+      data: { tenantId: tenant.id, businessName: "QA Dashboard Routes" },
+    });
+  }
+  const op = await prisma.user.findFirst({
+    where: { tenantId: tenant.id, username: OPERATOR_USERNAME },
+  });
+  if (!op) {
+    await prisma.user.create({
+      data: {
+        email: "admin@qa-dashboard-routes.test",
+        username: OPERATOR_USERNAME,
+        password: await bcrypt.hash(OPERATOR_PASSWORD, 10),
+        role: "OPERATOR",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId: tenant.id,
+      },
+    });
+  }
+  await ensureAddon(tenant.id, RECURRING_ROUTES_ADDON);
+  console.log(`✅ ${DASHBOARD_ROUTES_TENANT_SLUG} ready (recurring_routes add-on active).\n`);
+}
+
 bootstrap()
   .then(main)
   .then(seedQaLiteTenant)
+  .then(seedQaDashboardRoutesTenant)
   .catch((e) => {
     // Print the WHOLE error: Prisma wraps connection failures in an
     // "Invalid invocation" whose .message can be empty, hiding the cause.
