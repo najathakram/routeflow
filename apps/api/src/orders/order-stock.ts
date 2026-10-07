@@ -56,6 +56,7 @@ export const STOCK_LINE_UNIT_SELECT = {
 } as const;
 /** The held-line select a cancel/demote settle reads: the line, its delivery, and its unit fields. */
 export const STOCK_SETTLE_SELECT = {
+  id: true,
   productId: true,
   qty: true,
   deliveredQty: true,
@@ -234,6 +235,127 @@ function unlistedLineDeltas(
 }
 
 /**
+ * B1050 (SA-703): per-line booking. `deliveredQty` is never rewritten by an edit, so a line can sit
+ * with qty < delivered; delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
+ * says how the final lines relate to the held ones (`lineIdentity`):
+ *  - "stable" (default; an in-place diff edit): a line is the SAME line when both sides carry the same
+ *    NON-NULL id (undefined never matches). C_after = Σ matched max(q, d) + Σ removed held d + Σ new q;
+ *    a struck delivered line stays booked (its d) and never nets against a new line of the product.
+ *  - "recreated" (the deleteMany + re-create paths: operator replaceAll, CUSTOMER/DRIVER non-diff):
+ *    ids are fresh, so nothing can match; C_after = max(Σ final q, Σ held d), the pooled behaviour.
+ * C_before = Σ held max(q, d) either way; the counter moves by C_after − C_before. No credit cap.
+ */
+export type BookedParts = { fixed: number; perPack: number };
+type BookedTerm = {
+  bucket: "matched" | "unmatched";
+  side: "before" | "after";
+  a: BookedParts;
+  b?: BookedParts;
+};
+type BookedLine = StockLineUnits & {
+  id?: string;
+  productId?: string | null;
+  qty: any;
+  deliveredQty?: any;
+};
+const ZERO_PARTS: BookedParts = { fixed: 0, perPack: 0 };
+const plusParts = (x: BookedParts, y: BookedParts): BookedParts => ({
+  fixed: x.fixed + y.fixed,
+  perPack: x.perPack + y.perPack,
+});
+/** `qty` of one line as Parts: `fixed` pieces, or the raw `perPack` qty only the live pack can size. */
+const partsOf = (li: StockLineUnits, qty: unknown): BookedParts =>
+  needsLivePack(li)
+    ? { fixed: 0, perPack: Number(qty) || 0 }
+    : { fixed: toPieces(li, qty, undefined), perPack: 0 };
+const piecesOfParts = (x: BookedParts, pack: unknown): number =>
+  Math.round((x.fixed + toPieces({ boxes: null }, x.perPack, pack)) * 1000) / 1000;
+const termPieces = (t: BookedTerm, pack: unknown): number => {
+  const a = piecesOfParts(t.a, pack);
+  return t.b ? Math.max(a, piecesOfParts(t.b, pack)) : a;
+};
+
+export type LineIdentity = "stable" | "recreated";
+
+/** The booked-qty terms of ONE product's lines (held = non-cancelled pre-edit lines, final = post-edit). */
+export function bookedTerms(
+  held: BookedLine[],
+  final: BookedLine[],
+  identity: LineIdentity = "stable",
+): BookedTerm[] {
+  const finalById = new Map<string, BookedLine>();
+  if (identity === "stable")
+    for (const f of final) if (f.id != null && !finalById.has(f.id)) finalById.set(f.id, f);
+  const matchedFinal = new Set<BookedLine>();
+  const terms: BookedTerm[] = [];
+  let heldD = ZERO_PARTS;
+  let finalQ = ZERO_PARTS;
+  for (const h of held) {
+    const d = partsOf(h, h.deliveredQty ?? 0);
+    const f = h.id != null ? finalById.get(h.id) : undefined;
+    terms.push({ bucket: f ? "matched" : "unmatched", side: "before", a: partsOf(h, h.qty), b: d });
+    if (f && !matchedFinal.has(f)) {
+      matchedFinal.add(f);
+      terms.push({ bucket: "matched", side: "after", a: partsOf(f, f.qty), b: d });
+    } else if (identity === "stable") {
+      terms.push({ bucket: "unmatched", side: "after", a: d }); // removed: delivered stays booked
+    } else {
+      heldD = plusParts(heldD, d);
+    }
+  }
+  for (const f of final) {
+    if (matchedFinal.has(f)) continue;
+    if (identity === "stable")
+      terms.push({ bucket: "unmatched", side: "after", a: partsOf(f, f.qty) });
+    else finalQ = plusParts(finalQ, partsOf(f, f.qty));
+  }
+  if (identity === "recreated")
+    terms.push({ bucket: "unmatched", side: "after", a: finalQ, b: heldD });
+  return terms;
+}
+
+/**
+ * Shared by the stock settle and the read-only reconciliation report: one product's booked pieces,
+ * `matched` and `unmatched` kept as SEPARATE buckets (never folded), each with its before/after.
+ */
+export function bookedPieces(
+  held: BookedLine[],
+  final: BookedLine[],
+  livePack?: unknown,
+  identity: LineIdentity = "stable",
+) {
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
+  const out = { matched: { before: 0, after: 0 }, unmatched: { before: 0, after: 0 } };
+  for (const t of bookedTerms(held, final, identity))
+    out[t.bucket][t.side] += termPieces(t, livePack);
+  return {
+    matched: { before: r3(out.matched.before), after: r3(out.matched.after) },
+    unmatched: { before: r3(out.unmatched.before), after: r3(out.unmatched.after) },
+    before: r3(out.matched.before + out.unmatched.before),
+    after: r3(out.matched.after + out.unmatched.after),
+  };
+}
+
+/**
+ * The effective delta as Parts with NO pack read (the short circuit before any lock), or null when a
+ * max cannot be decided without the live pack — that product is then locked and read.
+ */
+function effectiveDeltaParts(terms: BookedTerm[]): BookedParts | null {
+  let delta = ZERO_PARTS;
+  for (const t of terms) {
+    let v = t.a;
+    if (t.b) {
+      if (t.a.fixed >= t.b.fixed && t.a.perPack >= t.b.perPack) v = t.a;
+      else if (t.b.fixed >= t.a.fixed && t.b.perPack >= t.a.perPack) v = t.b;
+      else return null;
+    }
+    const sign = t.side === "after" ? 1 : -1;
+    delta = plusParts(delta, { fixed: sign * v.fixed, perPack: sign * v.perPack });
+  }
+  return delta;
+}
+
+/**
  * P5-08b + WP1 stock settle — validates the delta between the order's
  * pre-edit line set and the edited (post-edit) active line set, THEN
  * applies it to `Product.currentStock`.
@@ -249,10 +371,12 @@ function unlistedLineDeltas(
  *   - a product whose requested qty EXCEEDS its held qty needs the increase
  *     validated against currentStock (same guard as before), then that
  *     increase decremented;
- *   - a product whose requested qty is LESS than held (line reduced,
- *     removed, or zeroed) returns the difference to currentStock, CLAMPED
- *     to the undelivered remainder (`held − deliveredQty`) — delivered
- *     goods are gone and never come back via an edit. This is new; the
+ *   - a product whose booked qty FALLS (line reduced, removed, or zeroed)
+ *     returns the difference to currentStock. Booked qty is per line
+ *     `max(qty, deliveredQty)` (B1050 / SA-703, see `bookedTerms`): delivered
+ *     goods are gone and never come back via an edit, and an edit below
+ *     delivered neither credits nor, on the way back up, decrements them a
+ *     second time. There is no pooled per-product cap. This is new; the
  *     pre-refactor version only validated increases, it never wrote
  *     anything.
  * Held/requested are compared over the UNION of product ids on both sides
@@ -270,7 +394,7 @@ function unlistedLineDeltas(
  * B703 (SA-136b): every quantity — held, delivered, requested — is converted to
  * PIECES per line (`linePieceQty`, the line's own pack snapshot first, the
  * product's live pack as the fallback) before anything is summed, so the delta,
- * the undelivered cap, the counter write and the SALE row are all in the unit
+ * the booked qty, the counter write and the SALE row are all in the unit
  * `currentStock` counts. (It used to compare each line's stored unit — boxes for
  * a box-unaware line — against a piece counter.)
  *
@@ -323,7 +447,7 @@ export async function settleStockForEdit(
    * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
-  opts?: { allowOversell?: boolean; blockCredits?: boolean },
+  opts?: { allowOversell?: boolean; blockCredits?: boolean; lineIdentity?: LineIdentity },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -332,14 +456,13 @@ export async function settleStockForEdit(
   // deltas, so a reduction anywhere wins a mix. Checked before any lock or write.
   const unlistedDeltas = opts?.blockCredits ? unlistedLineDeltas(heldItems, finalActiveItems) : [];
 
-  // Qty the order already holds per product (pre-edit, non-cancelled lines),
-  // plus — over the SAME line set — how much of it has already gone out the
-  // door. Delivered goods are physically gone: an edit that shrinks or drops
-  // a delivered line must NOT put them back on the shelf. This mirrors the
-  // at-door precedent, where a CHANGE_QTY/REMOVE_ITEM request against a line
-  // with deliveredQty > 0 is refused outright (LINE_ALREADY_DELIVERED,
-  // ~:4205) — the operator edit path allows the edit but credits back only
-  // the UNDELIVERED remainder.
+  // Qty the order already holds per product (pre-edit, non-cancelled lines), as RAW parts (what the
+  // carrier refusal reads); the counter itself moves by the BOOKED delta (`bookedTerms`, B1050): each
+  // line books max(qty, deliveredQty). Delivered goods are physically gone: an edit that shrinks or
+  // drops a delivered line must NOT put them back on the shelf. This mirrors the at-door precedent, where
+  // a CHANGE_QTY/REMOVE_ITEM request against a line with deliveredQty > 0 is refused outright
+  // (LINE_ALREADY_DELIVERED, ~:4205) — the operator edit path allows the edit but credits back only
+  // what the line's delivered floor frees.
   //
   // B703 (SA-136b): all three sums end up in PIECES. Per product each is `fixed` (lines sized without
   // the live pack: box-split, Units, or their own pack snapshot) plus `perPack` (the raw
@@ -359,16 +482,23 @@ export async function settleStockForEdit(
     m.set(li.productId as string, cur);
   };
   const heldParts = new Map<string, Parts>();
-  const deliveredParts = new Map<string, Parts>();
+  const heldLines = new Map<string, BookedLine[]>();
+  const finalLines = new Map<string, BookedLine[]>();
+  const group = (m: Map<string, BookedLine[]>, li: BookedLine) =>
+    m.set(li.productId as string, [...(m.get(li.productId as string) ?? []), li]);
   for (const li of heldItems ?? []) {
     if (li.productId && li.status !== "CANCELLED") {
       add(heldParts, li, li.qty);
-      add(deliveredParts, li, li.deliveredQty ?? 0);
+      group(heldLines, li);
     }
   }
   // Qty the edit requests per product (post-edit active line set).
   const requestedParts = new Map<string, Parts>();
-  for (const li of finalActiveItems) if (li.productId) add(requestedParts, li, li.qty);
+  for (const li of finalActiveItems) {
+    if (!li.productId) continue;
+    add(requestedParts, li, li.qty);
+    group(finalLines, li);
+  }
 
   // Delta per product over the UNION of both sides — a product present only
   // in `held` (its line was removed/zeroed in the edit) still gets an entry
@@ -382,11 +512,27 @@ export async function settleStockForEdit(
   // value.
   const round3 = (n: number) => Math.round(n * 1000) / 1000;
   const zero: Parts = { fixed: 0, perPack: 0 };
-  const touched = [...new Set([...heldParts.keys(), ...requestedParts.keys()])].filter((id) => {
+  const productIds = [...new Set([...heldParts.keys(), ...requestedParts.keys()])];
+  // RAW touched: requested − held changed (what the carrier refusal reads). EFFECTIVE touched
+  // (B1050): C_after − C_before changed (what the counter moves by). The effective short circuit
+  // runs only AFTER the carrier refusal's inputs are settled (SA-703 M5): a with-carrier order locks
+  // the union so the refusal is computed from the RAW deltas, never from the effective ones.
+  const rawTouched = productIds.filter((id) => {
     const h = heldParts.get(id) ?? zero;
     const r = requestedParts.get(id) ?? zero;
     return round3(r.fixed - h.fixed) !== 0 || round3(r.perPack - h.perPack) !== 0;
   });
+  const terms = new Map(
+    productIds.map((id) => [
+      id,
+      bookedTerms(heldLines.get(id) ?? [], finalLines.get(id) ?? [], opts?.lineIdentity),
+    ]),
+  );
+  const effTouched = productIds.filter((id) => {
+    const d = effectiveDeltaParts(terms.get(id)!);
+    return d == null || round3(d.fixed) !== 0 || round3(d.perPack) !== 0;
+  });
+  const touched = opts?.blockCredits ? [...new Set([...rawTouched, ...effTouched])] : effTouched;
   if (touched.length === 0) {
     if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
     return;
@@ -408,25 +554,28 @@ export async function settleStockForEdit(
     const pack = products.find((p: any) => p.id === id)?.unitsPerBox;
     return round3(fixed + toPieces({ boxes: null }, perPack, pack));
   };
-  const held = new Map<string, number>();
-  const deliveredHeld = new Map<string, number>();
   const requested = new Map<string, number>();
+  const rawDeltas: number[] = [];
   const deltas = new Map<string, number>();
   for (const id of touched) {
-    held.set(id, pieces(heldParts, id));
-    deliveredHeld.set(id, pieces(deliveredParts, id));
     requested.set(id, pieces(requestedParts, id));
-    const delta = round3(requested.get(id)! - held.get(id)!);
+    const raw = round3(requested.get(id)! - pieces(heldParts, id));
+    if (raw !== 0) rawDeltas.push(raw);
+    const pack = products.find((p: any) => p.id === id)?.unitsPerBox;
+    const delta = round3(
+      terms
+        .get(id)!
+        .reduce((sum, t) => sum + (t.side === "after" ? 1 : -1) * termPieces(t, pack), 0),
+    );
     if (delta !== 0) deltas.set(id, delta);
-  }
-  if (deltas.size === 0) {
-    if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
-    return;
   }
   // B1082 (B2) + SA-696: a carrier order WITH the carrier has a fixed line set. A removal / decrease would
   // put its stock back on the shelf while the parcel is still out (returns go through the return flow);
-  // an add / increase would grow a shipment that already left (extra items are a new order).
-  if (opts?.blockCredits) carrierLineSetRefusal([...deltas.values(), ...unlistedDeltas]);
+  // an add / increase would grow a shipment that already left (extra items are a new order). Computed
+  // from the RAW deltas + the unlisted lines', BEFORE the effective delta can short-circuit (SA-703 M5).
+  if (opts?.blockCredits && rawDeltas.length + unlistedDeltas.length > 0)
+    carrierLineSetRefusal([...rawDeltas, ...unlistedDeltas]);
+  if (deltas.size === 0) return;
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
@@ -485,15 +634,12 @@ export async function settleStockForEdit(
     }
   }
 
-  // Apply: an increase decrements currentStock by the delta; a
-  // decrease/removal increments back only the UNDELIVERED portion of what
-  // the order held. Delivered goods never come back through an edit — the
-  // at-door path makes the same call by refusing the change outright
-  // (LINE_ALREADY_DELIVERED, ~:4205); crediting a delivered line's full qty
-  // would invent inventory that physically left the warehouse. Cap =
-  // max(0, held − deliveredHeld); a fully-delivered line's cap is 0, so it
-  // is skipped entirely (no write at all). B562 PR-2: every write appends its
-  // SALE movement (−increase / +credit), `stockAfter` from the update's own row.
+  // Apply the BOOKED delta (B1050): a rise decrements currentStock by it; a fall increments back what
+  // the per-line `max(qty, deliveredQty)` floor frees. Delivered goods never come back through an edit —
+  // the at-door path makes the same call by refusing the change outright (LINE_ALREADY_DELIVERED,
+  // ~:4205); crediting a delivered line's full qty would invent inventory that physically left. No
+  // pooled cap: the floor is already inside the delta. B562 PR-2: every write appends its SALE
+  // movement (−increase / +credit), `stockAfter` from the update's own row.
   const saleRow = (productId: string, quantity: number, updated: { currentStock: any }) =>
     recordSaleMovement(db, {
       productId,
@@ -512,13 +658,9 @@ export async function settleStockForEdit(
       await saleRow(productId, -delta, updated);
       continue;
     }
-    // Held and delivered are both pieces (above), so the cap is too.
-    const undelivered = Math.max(
-      0,
-      round3((held.get(productId) ?? 0) - (deliveredHeld.get(productId) ?? 0)),
-    );
-    const credit = Math.min(-delta, undelivered);
-    if (credit <= 0) continue;
+    // B1050: the delta already nets the delivered floor per line (max(q, d)), so a decrease credits
+    // exactly what it frees — no pooled per-product cap.
+    const credit = -delta;
     const updated = await db.product.update({
       where: { id: productId },
       data: { currentStock: { increment: credit } },
@@ -543,11 +685,17 @@ export async function restoreStockForReopen(
   >,
 ): Promise<void> {
   if (cancelledLines.length === 0) return;
-  const held = cancelledLines.map((li) => {
+  // B1050: held and requested are the SAME lines, matched by index (the cancelled rows carry no
+  // usable id here), so each books max(qty, delivered) against the delivered floor it already holds.
+  const held = cancelledLines.map((li, i) => {
     const delivered = Number(li.deliveredQty ?? 0);
-    return { ...li, qty: delivered, deliveredQty: delivered, status: "PENDING" };
+    return { ...li, id: `reopen:${i}`, qty: delivered, deliveredQty: delivered, status: "PENDING" };
   });
-  const requested = cancelledLines.map((li) => ({ ...li, qty: Number(li.qty) }));
+  const requested = cancelledLines.map((li, i) => ({
+    ...li,
+    id: `reopen:${i}`,
+    qty: Number(li.qty),
+  }));
   await settleStockForEdit(
     deps,
     tx,

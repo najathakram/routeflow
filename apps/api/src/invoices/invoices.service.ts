@@ -48,6 +48,7 @@ import {
   matchEditLines,
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
@@ -2948,13 +2949,11 @@ export class InvoicesService {
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below —
-      // totalConfirmed sums three separately-computed floats (cash + credit +
-      // advance), so an invoice fully settled by a mix of methods can leave a
-      // sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...) doesn't
-      // catch, rendering a red "Balance Due $0.00" on an otherwise-settled
-      // invoice. fmt() rounds for DISPLAY but this raw value drives the color/
-      // isOverdue logic directly.
+      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below — totalConfirmed sums
+      // three separately-computed floats (cash + credit + advance), so an invoice fully settled by
+      // a mix of methods can leave a sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...)
+      // doesn't catch, rendering a red "Balance Due $0.00" on an otherwise-settled invoice. fmt()
+      // rounds for DISPLAY but this raw value drives the color/isOverdue logic directly.
       const balanceDue = isSettled
         ? 0
         : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
@@ -2982,7 +2981,7 @@ export class InvoicesService {
     });
 
     return {
-      data: computedData,
+      data: customerInvoiceList(computedData, user?.role === UserRole.CUSTOMER),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -3046,6 +3045,7 @@ export class InvoicesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
+      if (inv.status === InvoiceStatus.DRAFT) throw new NotFoundException("Invoice not found");
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
@@ -3053,7 +3053,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    return {
+    return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
@@ -3061,7 +3061,7 @@ export class InvoicesService {
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
-    };
+    });
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {

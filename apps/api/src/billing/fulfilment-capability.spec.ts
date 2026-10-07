@@ -29,7 +29,8 @@ describe("deriveFulfilmentCapability — the one capability answer", () => {
     ["delivery", ["ROUTE"], "ROUTE", "order"],
     ["ship", ["SHIP"], "SHIP", "order"],
     ["both", ["ROUTE", "SHIP"], "ROUTE", "order"],
-    // pickup / pickup_ship are unavailable (SA-666) and derive as unset: see fulfil-path-resolver.spec.ts
+    ["pickup", ["PICKUP"], "PICKUP", "counter"],
+    ["pickup_ship", ["PICKUP", "SHIP"], "PICKUP", "counter"],
   ] as const)(
     "%s offers %j, default %s, staff opens as %s (portal mirrors)",
     (mode, methods, def, opens) => {
@@ -47,9 +48,8 @@ describe("deriveFulfilmentCapability — the one capability answer", () => {
       for (const counterSales of COUNTER_SALES_MODE_VALUES) {
         for (const fleet of [false, true]) {
           const c = derive(mode, counterSales, fleet);
-          // SA-666a: pickup / pickup_ship are unavailable in the registry, so they derive as unset
-          // (never in-store) until the counter flow lands.
-          const inStore = false;
+          // SA-666b: pickup / pickup_ship are available in the registry, so they are in-store.
+          const inStore = mode === "pickup" || mode === "pickup_ship";
           expect(c.counter).toBe(inStore ? "always" : counterSales === "on" ? "optional" : "off");
           expect(c.consistent).toBe(!((mode === "delivery" || mode === "both") && !fleet));
           // fleet is the modules' answer, echoed untouched: no mode turns it on or off

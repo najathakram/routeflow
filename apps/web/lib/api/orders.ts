@@ -1,8 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+import { fetchPdfBlob } from "../fetch-pdf-blob";
 import type {
   ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
   CancelImpact,
   CustomerPriceHistory,
   InlineReturnLinesRequest,
@@ -35,10 +40,12 @@ export interface Order {
     phone?: string | null;
     mobile?: string | null;
     email?: string | null;
+    /** a walk-in customer cannot be charged on account (the pickup hand-over's tender rules) */
+    isWalkIn?: boolean | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
-  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
-  fulfillPath: "ROUTE" | "SHIP";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -638,5 +645,31 @@ export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) ───────────────────────────────────────
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order. Resolves the signed URL and its bytes (printable). */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult & { blob: Blob | null }, Error, string[]>({
+    mutationFn: async (orderIds) => {
+      const res = await apiClient
+        .post<PackingSlipsResult>("/orders/packing-slips", {
+          orderIds,
+        } satisfies PackingSlipsRequest)
+        .then((r) => r.data);
+      const blob = res.url ? await fetchPdfBlob(res.url, apiClient) : null;
+      return { ...res, blob };
+    },
   });
 }

@@ -21,7 +21,6 @@ import {
   unavailableModes,
   type BusinessProfileState,
 } from "./business-profiles";
-import * as featureRegistry from "./feature-registry";
 import { FEATURE_REGISTRY } from "./feature-registry";
 import { FLAG_KEYS } from "./plan-catalog.constants";
 import { deriveFulfilmentCapability } from "./fulfilment-capability";
@@ -133,7 +132,7 @@ describe("business profile registry", () => {
       key: "in_store_retailer",
       label: "In-store retailer",
       description: expect.any(String),
-      available: false,
+      available: true,
       modes: { fulfilment_model: "pickup", counter_sales: "on" },
       grants: [],
       denies: FLEET_MODULES,
@@ -150,16 +149,14 @@ describe("business profile registry", () => {
     }
   });
 
-  it("today: delivery and shipping are available; both in-store profiles are not (pickup modes wait for the counter-sale work)", () => {
+  it("every profile is available: the in-store profiles too, now that the pickup modes are (registry flip)", () => {
     expect(BUSINESS_PROFILES.map((p) => [p.key, toBusinessProfileSummary(p).available])).toEqual([
       ["delivery_distributor", true],
       ["shipping_wholesaler", true],
-      ["in_store_retailer", false],
-      ["in_store_shipping_retailer", false],
+      ["in_store_retailer", true],
+      ["in_store_shipping_retailer", true],
     ]);
-    expect(unavailableModes(profile("in_store_shipping_retailer"))).toEqual([
-      { key: "fulfilment_model", mode: "pickup_ship" },
-    ]);
+    expect(unavailableModes(profile("in_store_shipping_retailer"))).toEqual([]);
     expect(unavailableModes(profile("shipping_wholesaler"))).toEqual([]);
   });
 });
@@ -194,69 +191,18 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
     expect(cap).toMatchObject({ ...expected, consistent: true, fleet });
   });
 
-  // SA-666a/b: the in-store modes are UNAVAILABLE in the registry today (no counter flow), so a
-  // stored pickup / pickup_ship derives as unset (ROUTE + SHIP, staff opens an order) while
-  // counter_sales "on" still offers the optional counter. The registry is as shipped here.
+  // SA-666a/b, post-flip: the in-store modes are AVAILABLE in the registry as shipped, so a stored
+  // pickup / pickup_ship derives the in-store capability (the registry is read, never stubbed here).
   it.each([
-    ["in_store_retailer", "pickup"],
-    ["in_store_shipping_retailer", "pickup_ship"],
-  ])(
-    "%s (%s, registry unavailable today) derives as unset with an optional counter",
-    (key, mode) => {
-      const p = profile(key);
-      expect(p.modes.fulfilment_model).toBe(mode);
-      expect(p.modes.counter_sales).toBe("on");
-      expect(
-        FEATURE_REGISTRY.find((r) => r.key === "fulfilment_model")!.config!.modes[mode],
-      ).toMatchObject({ available: false });
-      expect(
-        deriveFulfilmentCapability({
-          mode: p.modes.fulfilment_model,
-          counterSales: p.modes.counter_sales!,
-          fleet: false,
-        }),
-      ).toEqual({
-        methods: ["ROUTE", "SHIP"],
-        staffDefault: "ROUTE",
-        staffOpensAs: "order",
-        portalMethods: [],
-        portalDefault: null,
-        counter: "optional",
-        fleet: false,
-        consistent: true,
-      });
-    },
-  );
-});
-
-// The twin of the cases above with the registry mode stubbed AVAILABLE: what the same profiles
-// derive once the counter-sale work flips the pickup modes on (no production-code change).
-describe("no second resolver — the in-store profiles once the registry offers pickup", () => {
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  function stubPickupAvailable() {
-    const real = featureRegistry.featureDefByKey;
-    return jest.spyOn(featureRegistry, "featureDefByKey").mockImplementation((key: string) => {
-      const def = real(key);
-      if (key !== "fulfilment_model" || !def?.config) return def;
-      const modes = Object.fromEntries(
-        Object.entries(def.config.modes).map(([m, v]) => [
-          m,
-          m === "pickup" || m === "pickup_ship" ? { ...v, available: true } : v,
-        ]),
-      );
-      return { ...def, config: { ...def.config, modes } };
-    });
-  }
-
-  it.each([
-    ["in_store_retailer", ["PICKUP"]],
-    ["in_store_shipping_retailer", ["PICKUP", "SHIP"]],
-  ])("%s derives the in-store capability when pickup is available", (key, methods) => {
-    stubPickupAvailable();
+    ["in_store_retailer", "pickup", ["PICKUP"]],
+    ["in_store_shipping_retailer", "pickup_ship", ["PICKUP", "SHIP"]],
+  ])("%s (%s, registry available) derives the in-store capability", (key, mode, methods) => {
     const p = profile(key);
+    expect(p.modes.fulfilment_model).toBe(mode);
+    expect(p.modes.counter_sales).toBe("on");
+    expect(
+      FEATURE_REGISTRY.find((r) => r.key === "fulfilment_model")!.config!.modes[mode],
+    ).toMatchObject({ available: true });
     expect(
       deriveFulfilmentCapability({
         mode: p.modes.fulfilment_model,

@@ -115,6 +115,8 @@
   "POST /order-templates/:p/items",
   "POST /orders/:p/change-requests",
   "POST /orders/:p/reopen",
+  "POST /orders/batch-ship",
+  "POST /orders/packing-slips",
   "POST /orders/sell",
   "POST /products",
   "POST /products/:p/images",

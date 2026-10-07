@@ -38,10 +38,16 @@ import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+// Pickup mode: POST /orders/:id/pickup-complete hands an order-ahead PICKUP order over at the till.
+import { PickupCompleteController } from "./counter-sale/pickup-complete.controller";
+import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
 import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
 } from "./counter-sale/fulfilment-capability-reader";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
+import { StorageModule } from "../storage/storage.module";
 
 @Module({
   imports: [
@@ -67,15 +73,19 @@ import {
     // DefaultFulfilmentCapabilityReader needs AddonService (FeatureConfigService is global, and
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
+    StorageModule,
   ],
-  controllers: [OrdersController, CounterSaleController],
+  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
   providers: [
     OrdersService,
     ChangeRequestsService,
     PolicyOversellReader,
     CounterSaleService,
+    PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
+    OrderBatchShipService,
+    PackingSlipService,
   ],
   exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
 })

@@ -36,9 +36,9 @@ export function deriveFulfilmentCapability(input: {
   fleet: boolean;
 }): FulfilmentCapability {
   const { fleet } = input;
-  // SA-666a: a stored mode the registry marks UNAVAILABLE (pickup, pickup_ship until the counter flow
-  // lands) is treated as unset, read from the registry (no second constant): a tenant that already
-  // holds one keeps today's behavior instead of an order path nothing can create.
+  // SA-666a: a stored mode the registry marks UNAVAILABLE is treated as unset, read from the registry
+  // (no second constant): such a tenant keeps today's behavior instead of an order path nothing can
+  // create. pickup / pickup_ship are available now, so they derive their in-store capability.
   const available = featureDefByKey("fulfilment_model")?.config?.modes[input.mode]?.available;
   const def = available === false ? undefined : BY_MODE[input.mode];
   const methods: FulfilmentMethod[] = def ? [...def.methods] : ["ROUTE", "SHIP"];
@@ -58,6 +58,15 @@ export function deriveFulfilmentCapability(input: {
     fleet,
     consistent: !(needsFleet && !fleet),
   };
+}
+
+/**
+ * The capability a STORED `fulfilment_model` alone implies (counter sales unset, fleet assumed held): the
+ * order-path resolver (`orders/fulfil-path-resolver.ts`) asks only "which methods does this mode offer?".
+ * It goes through the ONE derivation here, so no other module derives a capability of its own.
+ */
+export function capabilityForMode(mode: string): FulfilmentCapability {
+  return deriveFulfilmentCapability({ mode, counterSales: "unset", fleet: true });
 }
 
 /**
