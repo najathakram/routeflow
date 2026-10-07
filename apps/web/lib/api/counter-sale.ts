@@ -45,6 +45,7 @@ export function useCreateCounterSale() {
  * (`replayed: true`), 404 COUNTER_SALE_NOT_FOUND = never written. A mutation (an imperative, on-demand check), not a cache.
  */
 export function useCounterSaleByKey() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
       idempotencyKey,
@@ -60,6 +61,8 @@ export function useCounterSaleByKey() {
           { params: { method } },
         )
         .then((r) => r.data),
+    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["orders"] }),
   });
 }
 

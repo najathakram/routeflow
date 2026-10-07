@@ -1,5 +1,6 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
+import { displayProductName } from "@/lib/product-display";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
@@ -176,5 +177,104 @@ export function buildCounterReceipt(input: {
     tenderedAsEntered,
     change,
     changeAsEntered,
+  };
+}
+
+/** What a reprint reads from the order (`GET /orders/:id`); only the fields a receipt line needs. */
+export interface ReprintOrderLike {
+  orderNumber: string;
+  total: number;
+  lineItems: ReadonlyArray<{
+    id: string;
+    name?: string | null;
+    product?: {
+      name: string;
+      variantName?: string | null;
+      parentProductId?: string | null;
+      parent?: { name: string } | null;
+    } | null;
+    qty: number;
+    unitPrice: number;
+    unitsPerBox?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+    status?: string;
+  }>;
+}
+
+/** What a reprint reads from the Today's-sales row: the invoice and tender facts the order does not carry. */
+export interface ReprintSaleFacts {
+  invoiceId: string;
+  invoiceNumber: string;
+  paid: number;
+  balanceDue: number;
+  methods: readonly CounterSalePaymentMethod[];
+  soldAt: string | Date;
+}
+
+/**
+ * The reprint's receipt model, built from the stored order. Same shape (and same line math) as `buildCounterReceipt`; the
+ * differences are the facts that are never stored: no Tendered, no Change. The date is the sale's own time, not "now".
+ */
+export function receiptModelFromOrder(input: {
+  order: ReprintOrderLike;
+  sale: ReprintSaleFacts;
+  cashier?: string | null;
+  profile: ReceiptBusinessProfile | null | undefined;
+}): CounterReceiptModel {
+  const { order, sale, profile } = input;
+  const rows = order.lineItems
+    .filter((l) => l.status !== "CANCELLED")
+    .map((l) => {
+      const base = clean(l.product ? displayProductName(l.product) : l.name) || clean(l.name);
+      const line: ReceiptLineInput = {
+        tempId: l.id,
+        name: base || "Item",
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        unitsPerBox: l.unitsPerBox ?? undefined,
+        boxes: l.boxes ?? undefined,
+        pieces: l.pieces ?? undefined,
+      };
+      return {
+        key: line.tempId,
+        name: line.name,
+        detail: lineDetail(line),
+        total: computeLineSubtotal({
+          unitPrice: line.unitPrice,
+          qty: line.qty,
+          boxes: line.boxes,
+          pieces: line.pieces,
+          unitsPerBox: line.unitsPerBox,
+        }),
+      };
+    });
+  const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const tenders = sale.methods.filter((m) => m !== "ON_ACCOUNT");
+  const hasTender = tenders.length > 0;
+  const onAccount = !hasTender && sale.balanceDue > 0;
+  const soldAt = sale.soldAt instanceof Date ? sale.soldAt : new Date(sale.soldAt);
+  return {
+    header: receiptHeader(profile),
+    orderNumber: order.orderNumber,
+    invoiceNumber: sale.invoiceNumber,
+    invoiceId: sale.invoiceId,
+    dateLabel: soldAt.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+    lines: rows,
+    cashier: clean(input.cashier) || null,
+    subtotal,
+    adjustment: roundMoney(order.total - subtotal),
+    total: order.total,
+    paid: sale.paid,
+    balanceDue: sale.balanceDue,
+    onAccount,
+    paymentNotRecorded: false,
+    showPaid: hasTender,
+    showBalance: onAccount || sale.balanceDue > 0,
+    methodLabel: hasTender ? tenders.map((m) => METHOD_LABEL[m]).join(" + ") : null,
+    tendered: null,
+    tenderedAsEntered: false,
+    change: null,
+    changeAsEntered: false,
   };
 }
