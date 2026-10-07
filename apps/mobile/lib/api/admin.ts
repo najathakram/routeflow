@@ -7,8 +7,10 @@ import {
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type {
+  InventorySettings,
   LineComponentView,
   OrderCancelBlockedReason,
+  UpdateInventorySettingsRequest,
   TripEligibilityRow,
   TripOrigin,
 } from "@routeflow/types";
@@ -1200,6 +1202,22 @@ export function useUpdateBusinessSettings() {
   return useMutation<BusinessSettings, Error, BusinessSettings>({
     mutationFn: (data) => apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+/** GET/PATCH /settings/inventory — the business-wide out-of-stock ordering setting. */
+export function useInventorySettings() {
+  return useQuery<InventorySettings>({
+    queryKey: ["inventory-settings"],
+    queryFn: () => apiClient.get("/settings/inventory").then((r) => r.data),
+  });
+}
+
+export function useUpdateInventorySettings() {
+  const qc = useQueryClient();
+  return useMutation<InventorySettings, Error, UpdateInventorySettingsRequest>({
+    mutationFn: (data) => apiClient.patch("/settings/inventory", data).then((r) => r.data),
+    onSuccess: (saved) => qc.setQueryData(["inventory-settings"], saved),
   });
 }
 

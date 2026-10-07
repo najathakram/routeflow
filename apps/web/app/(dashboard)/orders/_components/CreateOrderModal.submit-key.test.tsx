@@ -426,6 +426,87 @@ describe("CreateOrderModal - the key already made an order (SA-715)", () => {
   });
 });
 
+describe("CreateOrderModal - saved, credits not applied (B1201)", () => {
+  const COPY =
+    "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockCustomerPrices = [];
+  });
+  const fillAndCreate = async (onClose: jest.Mock, onViewOrder: jest.Mock) => {
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    renderWithProviders(<CreateOrderModal isOpen onClose={onClose} onViewOrder={onViewOrder} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    capturedOnScan!("111");
+    await screen.findByText("Widget p1");
+    fireEvent.click(createBtn());
+    await flush();
+  };
+
+  it("a 503 ORDER_SAVED_CREDITS_PENDING opens the saved order with the exact copy and never resubmits", async () => {
+    post.mockRejectedValue({
+      response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "ord-88" } },
+    });
+    const onClose = jest.fn();
+    const onViewOrder = jest.fn();
+    await fillAndCreate(onClose, onViewOrder);
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-88"));
+    expect(onClose).toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: COPY }));
+    expect(orderPosts()).toHaveLength(1);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/press create again/i);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/nothing was saved/i);
+    expect(document.body.textContent).not.toMatch(/nothing was saved/i);
+  });
+
+  it("the coded 503 is a KNOWN outcome: closing raises no 'may have gone through' warning and the next open mints a fresh key", async () => {
+    post
+      .mockRejectedValueOnce({
+        response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "ord-90" } },
+      })
+      .mockResolvedValue({ data: { id: "o2" } });
+    const onViewOrder = jest.fn();
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    const fill = async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      await screen.findByText("Widget p1");
+      fireEvent.click(createBtn());
+      await flush();
+    };
+    const { rerender } = renderWithProviders(
+      <CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={onViewOrder} />,
+    );
+    await fill();
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-90"));
+    mockToast.mockClear();
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} onViewOrder={onViewOrder} />);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/may have gone through/i);
+    rerender(<CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={onViewOrder} />);
+    await fill();
+    expect(orderPosts()).toHaveLength(2);
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it("a replay response carrying creditsPending (lost response) shows the same copy and opens the order", async () => {
+    post.mockResolvedValue({ data: { id: "ord-89", creditsPending: true } });
+    const onViewOrder = jest.fn();
+    await fillAndCreate(jest.fn(), onViewOrder);
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-89"));
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: COPY }));
+  });
+});
+
 describe("useCreateOrderSubmitKey - lifecycle", () => {
   it("a plain cart edit with nothing in flight and no unknown outcome mints a new key", () => {
     const { result } = renderHook(() => useCreateOrderSubmitKey(true));

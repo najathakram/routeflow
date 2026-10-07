@@ -73,6 +73,9 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       const impersonateBtn = row.getByRole("button", { name: "Impersonate" });
       if (await impersonateBtn.count()) {
         await impersonateBtn.click();
+        // The row action only opens a confirmation (cancel is focused first); the session starts here.
+        const confirm = page.getByRole("dialog", { name: /^Impersonate / });
+        await confirm.getByRole("button", { name: "Impersonate" }).click();
       } else {
         const imp = await (
           await page.request.post(`${api}/platform-admin/tenants/${tenant.id}/impersonate`, {
@@ -138,6 +141,32 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       await page.request
         .delete(`${api}/auth/sessions/${protectedSessionId}`, { headers: adminHeaders })
         .catch(() => null);
+      await logout(page);
+    }
+  });
+
+  test("back office P1: the Impersonate confirm opens with Cancel focused; Escape closes it and no impersonation starts", async ({
+    page,
+  }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+    try {
+      await loginAsSuperAdmin(page);
+      await page.goto("/admin/tenants");
+      await page.getByPlaceholder("Search by slug or name...").fill(TENANT_SLUG);
+      const row = page.getByRole("row", { name: new RegExp(TENANT_SLUG) }).first();
+      const impersonateBtn = row.getByRole("button", { name: "Impersonate" });
+      test.skip((await impersonateBtn.count()) === 0, "e2e tenant row has no Impersonate action");
+
+      await impersonateBtn.click();
+      const dialog = page.getByRole("dialog", { name: /^Impersonate / });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(page).toHaveURL(/\/admin\/tenants/);
+      expect(await page.evaluate(() => localStorage.getItem("impersonationToken"))).toBeNull();
+    } finally {
       await logout(page);
     }
   });

@@ -29,15 +29,11 @@ const WATER_CASE = {
 };
 const ONE_PACK = { id: "p-one", name: "Single", pricePerUnit: 1, unit: "each", unitsPerBox: 1 };
 let productFor: Record<string, unknown> = {};
-jest.mock("@/lib/api/products", () => ({
-  useProducts: (params: { search?: string; scanCode?: string }, opts?: { enabled?: boolean }) => {
-    const key = params?.scanCode ?? params?.search ?? "";
-    const p = productFor[key];
-    return {
-      data: opts?.enabled && p ? { data: [p] } : opts?.enabled ? { data: [] } : undefined,
-      isFetching: false,
-    };
-  },
+// A scan resolves through the shared exact-code ladder (B1207); the fixtures answer by exact code.
+jest.mock("@/lib/barcode-resolve", () => ({
+  ...jest.requireActual("@/lib/barcode-resolve"),
+  resolveProductByCode: async (code: string) =>
+    productFor[code] ? { product: productFor[code], source: "sku" } : { notFound: true },
 }));
 let customersFor: unknown[] = [];
 jest.mock("@/lib/api/customers", () => ({
@@ -187,7 +183,7 @@ describe("CounterSaleScreen", () => {
       await finishSale();
       await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
     });
-    it("on + Complete & next sale: prints once, BEFORE the reset", async () => {
+    it("on + Complete & next sale: prints the RECEIPT once, then resets", async () => {
       window.localStorage.setItem("rf.counterSale.autoPrint", "1");
       renderWithProviders(<CounterSaleScreen />);
       await waitFor(() =>
@@ -196,11 +192,15 @@ describe("CounterSaleScreen", () => {
       await scan("012345678905");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
       fireEvent.click(screen.getByRole("button", { name: "$20" }));
-      printSpy.mockImplementation(() => {
-        expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"); // not reset yet
+      // D6: the RECEIPT is on screen when it prints (not the sale screen), and the reset follows the print.
+      let receiptShown = false;
+      printSpy.mockImplementationOnce(() => {
+        receiptShown = screen.queryByTestId("counter-sale-receipt") !== null;
       });
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
       await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
+      expect(receiptShown).toBe(true);
+      await waitFor(() => expect(screen.getByText("No items yet.")).toBeInTheDocument());
     });
     it("off: print is never called by the sale", async () => {
       renderWithProviders(<CounterSaleScreen />);

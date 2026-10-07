@@ -252,6 +252,9 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
     return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
+  // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
+    return PICKUP_TENDER_SHORT_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
   if (status === 409)

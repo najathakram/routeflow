@@ -898,7 +898,13 @@ export class OrderTemplatesService {
         stockLines,
         allowOversell,
         // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
-        { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
+        // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
+        {
+          orderId: order.id,
+          notes: `TEMPLATE:${template.id}`,
+          performedById: null,
+          customerFacing: !unattended && !isStaffRole,
+        },
       );
       return order;
     });
