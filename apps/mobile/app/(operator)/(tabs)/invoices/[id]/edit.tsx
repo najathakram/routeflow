@@ -707,8 +707,8 @@ function LineCard({
       {line.locked ? (
         <View testID="locked-line">
           <Text style={styles.fieldHint}>
-            {line.storedBoxes} box · {line.storedPieces} pcs · $
-            {Number(line.unitPrice ?? 0).toFixed(2)}
+            {line.storedBoxes} {line.storedBoxes === 1 ? "box" : "boxes"} · {line.storedPieces}{" "}
+            {line.storedPieces === 1 ? "pc" : "pcs"} · ${Number(line.unitPrice ?? 0).toFixed(2)}
             {" — set the box and piece count for this line to edit it."}
           </Text>
           <View style={styles.fieldRow}>

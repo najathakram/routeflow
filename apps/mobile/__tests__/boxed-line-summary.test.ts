@@ -11,12 +11,20 @@ describe("boxedLineSummary", () => {
   it("formats boxes + pcs with the prorated subtotal", () => {
     // (2 + 1/6) box-equivalents × $12/case = $26.00
     expect(boxedLineSummary({ qty: 13, boxes: 2, pieces: 1 }, 6, 12)).toBe(
-      "2 boxes + 1 pcs · $26.00",
+      "2 boxes + 1 pc · $26.00",
     );
   });
 
   it("uses the singular for one box", () => {
     expect(boxedLineSummary({ qty: 6, boxes: 1, pieces: 0 }, 6, 12)).toBe("1 box · $12.00");
+  });
+
+  it("says pc for exactly one piece, pcs otherwise", () => {
+    expect(boxedLineSummary({ qty: 1, boxes: 0, pieces: 1 }, 6, 12)).toBe("1 pc · $2.00");
+    expect(boxedLineSummary({ qty: 7, boxes: 1, pieces: 1 }, 6, 12)).toBe("1 box + 1 pc · $14.00");
+    expect(boxedLineSummary({ qty: 15, boxes: 2, pieces: 3 }, 6, 12)).toBe(
+      "2 boxes + 3 pcs · $30.00",
+    );
   });
 
   it("formats a pieces-only line", () => {
@@ -34,7 +42,7 @@ describe("boxedLineSummary", () => {
     // same raw fields — row-vs-footer agreement is the invariant that matters,
     // and this test pins it. If this ever fails with $14.00, someone made the
     // summary normalize without making the footer normalize too.
-    expect(boxedLineSummary({ qty: 7 }, 6, 12)).toBe("1 box + 1 pcs · $84.00");
+    expect(boxedLineSummary({ qty: 7 }, 6, 12)).toBe("1 box + 1 pc · $84.00");
   });
 
   it("renders the 0 placeholder for an empty line", () => {

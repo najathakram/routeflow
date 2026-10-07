@@ -118,7 +118,8 @@ const CHANGED: Pin[] = [
     ],
     mustContain: [
       "box of {upb}",
-      "box · {line.storedPieces} pcs",
+      '{line.storedBoxes === 1 ? "box" : "boxes"}',
+      '{line.storedPieces === 1 ? "pc" : "pcs"}',
       "Pieces per box",
       '" / box"',
       ">Boxes<",
@@ -142,7 +143,7 @@ const CHANGED: Pin[] = [
   {
     file: "lib/boxed-line-summary.ts",
     mustNotContain: ['"case${boxes', "} loose`"],
-    mustContain: ['"box" : "boxes"', "} pcs`"],
+    mustContain: ['"box" : "boxes"', '=== 1 ? "pc" : "pcs"'],
   },
   {
     file: "components/NewOrderScreen.tsx",
