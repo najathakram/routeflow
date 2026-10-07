@@ -46,6 +46,40 @@ test.afterAll(async () => {
   await waitForApiCapability(target(), capabilityBefore, 60_000);
 });
 
+/**
+ * A throwaway tier-2 customer and a throwaway product whose tier-2 price differs (10.00 -> 8.00), created through the operator
+ * API on the approved test tenant and deleted again, so the re-price is ALWAYS observable whatever the seed holds.
+ */
+async function makeTierFixtures(page: Page, api: string, headers: Record<string, string>) {
+  const tag = Date.now().toString(36).toUpperCase();
+  const prod = await page.request.post(`${api}/products`, {
+    headers,
+    data: {
+      name: `QA POS Tier Item ${tag}`,
+      sku: `QAPOS${tag}`,
+      unit: "each",
+      pricePerUnit: "10.00",
+      priceTier2: "8.00",
+    },
+  });
+  expect(prod.ok(), `create the tier product: ${prod.status()}`).toBeTruthy();
+  const product: any = await prod.json();
+  const cust = await page.request.post(`${api}/customers`, {
+    headers,
+    data: { businessName: `QA POS Tier2 ${tag}`, contactName: "QA POS", pricingTier: 2 },
+  });
+  expect(cust.ok(), `create the tier-2 customer: ${cust.status()}`).toBeTruthy();
+  const customer: any = await cust.json();
+  const cleanup = async () => {
+    await page.request.delete(`${api}/customers/${customer.id}`, {
+      headers,
+      params: { force: "true" },
+    });
+    await page.request.delete(`${api}/products/${product.id}`, { headers });
+  };
+  return { product, customer, cleanup };
+}
+
 async function discover(page: Page) {
   await page.goto("/orders");
   const token = await operatorAccessToken(page);
@@ -59,96 +93,106 @@ async function discover(page: Page) {
   expect(sellable.length, "the tenant needs 2 active products with a SKU").toBeGreaterThanOrEqual(
     2,
   );
-  const custRes = await page.request.get(`${api}/customers`, { headers, params: { limit: "50" } });
-  const customers: any[] = ((await custRes.json()) as any)?.data ?? [];
-  expect(customers.length, "the tenant needs at least one customer").toBeGreaterThan(0);
-  const customer = customers.find((c) => (c?.pricingTier ?? 1) > 1) ?? customers[0];
-  return { products: sellable.slice(0, 2), customer };
+  return { products: sellable.slice(0, 2), api, headers };
 }
 
 for (const vp of VIEWPORTS) {
   test.describe(`POS stack counter @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("scan, qty, note, remove + Undo, customer re-price, layout", async ({ page, context }) => {
+    test("scan, typed qty, note, remove + Undo, customer re-price, layout", async ({
+      page,
+      context,
+    }) => {
       await setTenantCookie(context, BASE);
-      const { products, customer } = await discover(page);
-      const [a, b] = products;
-      await page.goto("/orders/counter-sale");
-      const scanField = page.getByLabel("Scan or search items");
-      await expect(scanField).toBeVisible({ timeout: 15_000 });
-      const items = page.getByRole("list", { name: "Items" });
-      for (const p of [a, b]) {
-        await scanField.fill(String(p.sku));
-        await scanField.press("Enter");
+      const { products, api, headers } = await discover(page);
+      const fx = await makeTierFixtures(page, api, headers);
+      try {
+        const tierItem = fx.product;
+        const other = products[0];
+        await page.goto("/orders/counter-sale");
+        const scanField = page.getByLabel("Scan or search items");
+        await expect(scanField).toBeVisible({ timeout: 15_000 });
+        const items = page.getByRole("list", { name: "Items" });
+        for (const p of [tierItem, other]) {
+          await scanField.fill(String(p.sku));
+          await scanField.press("Enter");
+        }
+        await expect(items.getByRole("listitem")).toHaveCount(2, { timeout: 15_000 });
+
+        // layout: columns by width, never a horizontal scroll
+        const cols = await page
+          .getByTestId("counter-sale-columns")
+          .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+        if (vp.columns === 2) expect(cols).toBe(2);
+        else expect(cols).toBeLessThanOrEqual(1);
+        const overflow = () =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+        expect(await overflow(), "no horizontal overflow").toBeLessThanOrEqual(0);
+
+        // typed quantity on the tier item: 2 x 10.00 (steppers stay beside it)
+        const nameA = String(tierItem.name);
+        const qty = page.getByLabel(`Set quantity of ${nameA}`);
+        await qty.fill("2");
+        await qty.press("Enter");
+        await expect(qty).toHaveValue("2");
+        await expect(items.getByRole("listitem").filter({ hasText: nameA })).toContainText(
+          "20.00",
+          {
+            timeout: 10_000,
+          },
+        );
+        await expect(
+          page.getByRole("button", { name: `Add one ${nameA}`, exact: true }),
+        ).toBeVisible();
+
+        // note (single-line input)
+        await page.getByRole("button", { name: `Add a note to ${nameA}`, exact: true }).click();
+        const noteBox = page.getByLabel(`Note for ${nameA}`);
+        expect(await noteBox.evaluate((el) => el.tagName)).toBe("INPUT");
+        await noteBox.fill("smoke note");
+        await page.getByRole("button", { name: `Edit the note on ${nameA}`, exact: true }).click();
+        await expect(page.getByTestId("line-note")).toHaveText("smoke note");
+
+        // remove + Undo
+        const totalEl = page.getByTestId("running-total");
+        const totalWithBoth = await totalEl.textContent();
+        await page.getByRole("button", { name: `Remove ${nameA}`, exact: true }).click();
+        await expect(items.getByRole("listitem")).toHaveCount(1);
+        await page.getByRole("button", { name: `Undo: put back ${nameA}`, exact: true }).click();
+        await expect(items.getByRole("listitem")).toHaveCount(2);
+        await expect(totalEl).toHaveText(totalWithBoth ?? "");
+        await expect(page.getByTestId("line-note")).toHaveText("smoke note");
+
+        // pick the tier-2 customer: the cart re-prices (10.00 -> 8.00), UNCONDITIONALLY noted with the tier name
+        await page
+          .getByLabel("Find a customer")
+          .fill(String(fx.customer.businessName).slice(0, 12));
+        await page
+          .getByRole("button", { name: String(fx.customer.businessName) })
+          .first()
+          .click();
+        const note = page.getByTestId("counter-reprice-note");
+        await expect(note).toContainText("Prices updated for", { timeout: 15_000 });
+        await expect(note).toContainText(String(fx.customer.businessName));
+        await expect(note).toContainText(/\(.+\)\./); // "(<tier name>)."
+        await expect(page.getByTestId("counter-reprice-busy")).toHaveCount(0);
+        await expect(page.getByTestId("counter-reprice-failed")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Complete & show receipt" })).toBeEnabled();
+        await expect(page.getByTestId("line-note")).toHaveText("smoke note"); // survives the re-price
+        await expect(items.getByRole("listitem").filter({ hasText: nameA })).toContainText("16.00"); // 2 x 8.00
+
+        // the re-price Undo reverts prices only: the customer stays
+        await note.getByRole("button", { name: "Undo" }).click();
+        await expect(items.getByRole("listitem").filter({ hasText: nameA })).toContainText("20.00");
+        await expect(page.getByText(String(fx.customer.businessName)).first()).toBeVisible();
+
+        expect(await overflow(), "no horizontal overflow after the pick").toBeLessThanOrEqual(0);
+      } finally {
+        await fx.cleanup();
       }
-      await expect(items.getByRole("listitem")).toHaveCount(2, { timeout: 15_000 });
-
-      // layout: columns by width, never a horizontal scroll
-      const cols = await page
-        .getByTestId("counter-sale-columns")
-        .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-      if (vp.columns === 2) expect(cols).toBe(2);
-      else expect(cols).toBeLessThanOrEqual(1);
-      const overflow = await page.evaluate(
-        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      );
-      expect(overflow, "no horizontal overflow").toBeLessThanOrEqual(0);
-
-      // edit a qty on the first line (plain "Add one" or a boxed line's "Add a piece")
-      const totalEl = page.getByTestId("running-total");
-      const totalBefore = await totalEl.textContent();
-      await items
-        .getByRole("listitem")
-        .first()
-        .getByRole("button", { name: /^Add (one|a piece to) / })
-        .click();
-      await expect(totalEl).not.toHaveText(totalBefore ?? "");
-
-      // note
-      const nameA = String(a.name);
-      await page.getByRole("button", { name: `Add a note to ${nameA}`, exact: true }).click();
-      await page.getByLabel(`Note for ${nameA}`).fill("smoke note");
-      await page.getByRole("button", { name: `Edit the note on ${nameA}`, exact: true }).click();
-      await expect(page.getByTestId("line-note")).toHaveText("smoke note");
-
-      // remove + Undo
-      const totalWithBoth = await totalEl.textContent();
-      await page.getByRole("button", { name: `Remove ${nameA}`, exact: true }).click();
-      await expect(items.getByRole("listitem")).toHaveCount(1);
-      await page
-        .getByRole("status", { name: "Removed item" })
-        .getByRole("button", { name: "Undo" })
-        .click();
-      await expect(items.getByRole("listitem")).toHaveCount(2);
-      await expect(totalEl).toHaveText(totalWithBoth ?? "");
-      await expect(page.getByTestId("line-note")).toHaveText("smoke note");
-
-      // pick a customer: the cart re-prices (display only); Complete is never left blocked
-      await page.getByLabel("Find a customer").fill(String(customer.businessName).slice(0, 6));
-      await page
-        .getByRole("button", { name: String(customer.businessName) })
-        .first()
-        .click();
-      await expect(page.getByTestId("counter-reprice-busy")).toHaveCount(0, { timeout: 15_000 });
-      await expect(page.getByTestId("counter-reprice-failed")).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Complete & show receipt" })).toBeEnabled();
-      const note = page.getByTestId("counter-reprice-note");
-      test.info().annotations.push({
-        type: "reprice-note",
-        description: (await note.count())
-          ? ((await note.textContent()) ?? "")
-          : "none (no price changed)",
-      });
-      if ((customer.pricingTier ?? 1) > 1 && (await note.count())) {
-        await expect(note).toContainText("Prices updated");
-      }
-      await expect(page.getByTestId("line-note")).toHaveText("smoke note"); // the note survives the re-price
-
-      const overflowAfter = await page.evaluate(
-        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      );
-      expect(overflowAfter, "no horizontal overflow after the pick").toBeLessThanOrEqual(0);
     });
   });
 }
