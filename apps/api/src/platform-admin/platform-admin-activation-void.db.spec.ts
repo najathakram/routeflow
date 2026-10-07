@@ -17,6 +17,7 @@ let prisma: PrismaClient;
 let svc: PlatformAdminService;
 let tenantId: string;
 let emit: jest.Mock;
+let createdVersionId: string | undefined; // only a version this spec created is ever deleted
 const SLUG = `e2e-rfinv4a-${Date.now()}`;
 const ACTOR_DTO = { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" };
 let seq = 0;
@@ -57,8 +58,23 @@ describeDb("manual activation auto-void (DB)", () => {
       data: { name: "Acme Wholesale (test)", slug: SLUG, class: "TEST", status: "TRIAL" },
     });
     tenantId = t.id;
-    // the seeded, published catalog supplies the FK target for TenantSubscription.planVersionId
-    const version = await prisma.planVersion.findFirstOrThrow({ where: { status: "PUBLISHED" } });
+    // Hermetic (a fresh CI database has no seeded catalog): reuse a PUBLISHED PlanVersion when one exists,
+    // otherwise create a throwaway one as the FK target for TenantSubscription.planVersionId.
+    let version = await prisma.planVersion.findFirst({ where: { status: "PUBLISHED" } });
+    if (!version) {
+      // int4 column - never derive from Date.now()
+      const next =
+        ((await prisma.planVersion.aggregate({ _max: { version: true } }))._max.version ?? 0) + 1;
+      version = await prisma.planVersion.create({
+        data: {
+          version: next,
+          status: "PUBLISHED",
+          publishedAt: new Date(),
+          notes: "qa fixture - created by platform-admin-activation-void.db.spec.ts",
+        },
+      });
+      createdVersionId = version.id;
+    }
     emit = jest.fn().mockResolvedValue({});
     svc = new PlatformAdminService(
       prisma as any,
@@ -99,6 +115,9 @@ describeDb("manual activation auto-void (DB)", () => {
         await prisma.rfInvoice.deleteMany({ where: { tenantId } });
         await prisma.tenantSubscription.deleteMany({ where: { tenantId } });
         await prisma.tenant.deleteMany({ where: { id: tenantId } });
+      }
+      if (createdVersionId) {
+        await prisma.planVersion.deleteMany({ where: { id: createdVersionId } });
       }
     } finally {
       await prisma?.$disconnect();
