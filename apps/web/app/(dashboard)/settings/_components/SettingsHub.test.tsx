@@ -11,6 +11,11 @@ jest.mock("@/lib/api/restrictions-settings", () => ({
 jest.mock("./RouteDefaultsCard", () => ({
   RouteDefaultsCard: () => <div>route-defaults-card</div>,
 }));
+jest.mock("./BuyerOversellCard", () => ({
+  BuyerOversellCard: ({ canEdit }: { canEdit: boolean }) => (
+    <div>{`oversell-card-${canEdit ? "edit" : "read-only"}`}</div>
+  ),
+}));
 
 const TITLES = [
   "Business & team",
@@ -97,6 +102,31 @@ describe("SettingsHub regroup", () => {
   it("mounts the route defaults card", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+  });
+
+  it("lists Out-of-stock ordering under Orders & stock and mounts its card at the anchor", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    const link = screen
+      .getAllByRole("link")
+      .find((l) => l.getAttribute("href") === "#out-of-stock-ordering");
+    expect(link).toBeDefined();
+    expect(within(link as HTMLElement).getByText("Out-of-stock ordering")).toBeInTheDocument();
+    expect(screen.getByText("oversell-card-edit")).toBeInTheDocument();
+    expect(document.getElementById("out-of-stock-ordering")).not.toBeNull();
+  });
+
+  it("an operator sees the card too, read-only", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    expect(screen.getByText("oversell-card-read-only")).toBeInTheDocument();
+  });
+
+  it("a search that lists the Out-of-stock ordering result also shows its card; a miss hides it", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    const search = screen.getByLabelText("Search settings");
+    fireEvent.change(search, { target: { value: "out of stock" } });
+    expect(screen.getByText("oversell-card-edit")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "zzz no such setting" } });
+    expect(screen.queryByText("oversell-card-edit")).not.toBeInTheDocument();
   });
 
   it.each(["speed & depot", "service time, start time", "orders & stock"])(
