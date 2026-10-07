@@ -274,7 +274,11 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       expectResolvedBeforeTransaction(h);
       expect(h.settle).toHaveBeenCalledTimes(1);
       const args = h.settle.mock.calls[0]; // (deps, db, order, held, final, user, event, opts)
-      expect(args[7]).toEqual({ allowOversell: true, blockCredits: false });
+      expect(args[7]).toEqual({
+        allowOversell: true,
+        blockCredits: false,
+        lineIdentity: "stable",
+      });
       expect(args).not.toContain(h.reader);
       expect(h.read).not.toHaveBeenCalled();
     },
@@ -305,7 +309,11 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       );
       expect(h.read).toHaveBeenCalledTimes(1);
       expectResolvedBeforeTransaction(h);
-      expect(h.settle.mock.calls[0][7]).toEqual({ allowOversell: want, blockCredits: false });
+      expect(h.settle.mock.calls[0][7]).toEqual({
+        allowOversell: want,
+        blockCredits: false,
+        lineIdentity: "recreated", // the CUSTOMER non-diff path deletes + re-creates its lines
+      });
     },
   );
 });

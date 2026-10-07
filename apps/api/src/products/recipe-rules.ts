@@ -1,3 +1,4 @@
+import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -201,16 +202,10 @@ const RECIPE_CONSTRAINTS: ReadonlyArray<{
  */
 export function recipeUniqueViolation(e: unknown): "activeFor" | "productVersion" | null {
   if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return null;
-  const meta = (e.meta ?? {}) as {
-    target?: unknown;
-    driverAdapterError?: { cause?: { constraint?: { index?: unknown; fields?: unknown } } };
-  };
-  const candidates: Array<{ name?: string; fields?: string[] }> = [];
-  if (typeof meta.target === "string") candidates.push({ name: meta.target });
-  if (Array.isArray(meta.target)) candidates.push({ fields: meta.target.map(String) });
-  const constraint = meta.driverAdapterError?.cause?.constraint;
-  if (typeof constraint?.index === "string") candidates.push({ name: constraint.index });
-  if (Array.isArray(constraint?.fields)) candidates.push({ fields: constraint.fields.map(String) });
+  const u = uniqueViolationConstraints(e);
+  if (!u) return null;
+  const candidates: Array<{ name?: string; fields?: string[] }> = u.names.map((name) => ({ name }));
+  if (u.fields.length) candidates.push({ fields: u.fields });
   for (const spec of RECIPE_CONSTRAINTS) {
     for (const c of candidates) {
       if (c.name && spec.names.has(c.name)) return spec.which;

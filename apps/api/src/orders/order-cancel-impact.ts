@@ -1,4 +1,5 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { OrderStatus } from "@prisma/client";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
@@ -71,6 +72,22 @@ export async function lockOrderForCancel(tx: any, orderId: string): Promise<void
   });
   const blockers = cancelBlockers(locked);
   if (blockers.length > 0) throw new BadRequestException(cancelBlockedMessage(blockers));
+}
+
+/**
+ * The status read under the Order lock. B1053: a merge that committed first folded this order away — a
+ * coded 409, never a TypeError (500) on the missing row.
+ */
+export async function lockedOrderStatus(tx: any, id: string): Promise<OrderStatus> {
+  // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+  const row = await tx.order.findUnique({ where: { id }, select: { status: true } });
+  if (!row) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+      message: "This order was merged into another order — review and try again.",
+    });
+  }
+  return row.status;
 }
 
 export async function cancelImpact(deps: CancelImpactDeps, id: string) {

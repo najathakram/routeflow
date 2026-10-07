@@ -220,26 +220,35 @@
 - **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
 - **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
 
+### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
+
+- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
+- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
+- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
+- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
+
+### L-269 · 2026-10-07 · process · re-arm the visibility watchdog on a timer at least 5 minutes before its deadline, and read visibility before every merge (W15)
+
+- **Symptom:** a PR in a public CI window merged after the watchdog had already flipped the repo private, so the merge-triggered work ran against a private repo.
+- **Root cause:** the window outlived the watchdog's deadline and nothing re-armed it or re-read visibility; the lane assumed the window was still open because nobody had said otherwise.
+- **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
+- **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
+
+### L-271 · 2026-10-07 · process · a train of several PRs runs check-types and every PR's specs on the combined tree before the push
+
+- **Symptom:** squashing several PRs into one train, a later PR's guard spec failed because an earlier PR had added a new file the guard now covered; no single PR was red on its own.
+- **Root cause:** each PR was verified alone against its own base, so a cross-PR interaction (a new file meeting another PR's guard or type) was invisible until the combined tree.
+- **Lesson:** **Before pushing a train, run `check-types` and the specs of EVERY PR in the train on the combined tree, not only the last PR's; a later PR's guard can be violated by an earlier PR's new file.**
+- **Guard:** the train's pre-push list names each PR's guard specs and `npm run check-types`; cf. [[L-228]], [[L-268]].
+
+### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
+
+- **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
+- **Root cause:** the log was piped through `tail`, so the failing test's output had scrolled out of view and only trailing warnings showed.
+- **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
+- **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
+
 ## tooling
-
-### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
-
-- **Symptom:** `docs-truth.spec.ts` (in `apps/api`) hardcoded the lessons-register byte cap as a
-  second literal, mirroring `.claude/lessons/_meta.json`'s value. Editing that JSON file (a
-  docs-only change in a different part of the repo) broke this API-workspace spec and took CI
-  down repo-wide — nothing signalled that an unrelated API test would fail.
-- **Root cause:** a test asserting "doc X says N" by hardcoding N itself creates a coupling
-  invisible from either side — the doc's author has no reason to grep `apps/api` before editing
-  a `.claude/` config file, and the test's author has no reason to expect the doc to ever
-  change.
-- **Lesson:** **A test that pins a literal sourced from a prose document or config file elsewhere
-  in the repo must read that value at test time, never re-type it as a second hardcoded literal —
-  and because of this, a "docs-only" change is NOT exempt from the full verify chain whenever it
-  touches a value some other workspace's test might have pinned. Grep for the literal itself
-  (not just the file) across every workspace before treating a docs edit as safe to skip CI on.**
-- **Guard:** `docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide
-  grep-for-pinned-literals check exists — propose one in the docs-only-push exemption logic.
-- Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -325,35 +334,6 @@
   rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
 - **Recurred 2026-10-02 (landing windows D to I):** squashing a stacked parent made each child conflict add/add on the parent's own files (#3025 to #3046 to #3050; #3044 to #3045), and a merge-tree against the then-current master missed it. Before opening a window simulate the whole order: for each PR in order run `git merge-tree --write-tree <cur> <head>`, then `git commit-tree <tree> -p <cur>` as the next base; a conflict at step N means that PR is carried (master merged in, new pin) after its parent lands, never in the same window.
 
-### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
-
-- **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
-  (b) a scratch worktree junctioned to a SIBLING's `node_modules` (to dodge `npm install` under
-  disk pressure), then `git worktree remove --force` on the scratch tree cascaded a recursive
-  delete through the junction, wiping the sibling's `node_modules` and ~2,388 tracked files.
-  RECURRED 2026-09-22: a PC reviewer agent's own worktree-cleanup `git worktree remove --force`
-  followed the SAME shape into the main checkout's `node_modules/@routeflow/*` links (which
-  point back into `apps/` and `packages/`), deleting 2,814 tracked files there.
-- **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
-  not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
-  path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target.
-- **Lesson:** **Never let a junction outlive the git worktree op around it. After
-  `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
-  apps/api) at the final path. Before removing/recursively deleting ANY worktree, prove no
-  junction remains (`dir /AL` or check `LinkType`), then unlink each one individually with
-  `cmd /c rmdir <link>` (no `/s`, which recurses through it) — never a bare `rm -rf`/
-  `--force` on a tree that might still hold one. Best: never junction `node_modules` between two
-  DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
-  agents (whose job is to read, not build) should run read-only against the target checkout with
-  no worktree of their own at all.**
-- **Recurred 2026-10-03:** a reviewer's `cmd /c rmdir` of its `node_modules` junction was blocked by the harness, and the following plain `git worktree remove` still deleted THROUGH the junction, emptying the builder's live install (restored with `npm ci`). If a junction cannot be removed, NEVER remove the worktree: leave it and report the path. Better, reviewers do not junction into a builder's live install at all.
-- **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
-  `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
-  junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
-  agent prompts/instructions carry the read-only, no-worktree rule explicitly. Recovery from a
-  hit: `git ls-files --deleted -z -- <dirs> | xargs -0 git restore --`, then confirm
-  `git ls-files --deleted` is empty and diff clean before resuming any work in that checkout.
-
 ### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
 
 - **Symptom:** every push cost 2–3 failed attempts against `campaign-check`'s freshness gate.
@@ -409,19 +389,19 @@
 - **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
 - **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
 
-### L-263 · 2026-10-05 · tooling · a plain `npm ci` rewrites the SHARED `core.hooksPath`, silently switching off hooks in other worktrees (#3199)
-
-- **Symptom:** after a worktree ran `npm ci`, a push from another worktree ran no pre-push verify at all and #3199 went out unverified; nothing printed, git treats a missing hooks directory as "no hooks".
-- **Root cause:** `prepare` runs `husky`, which sets `core.hooksPath = .husky/_` (relative) in the one repo config every worktree shares; a worktree without its own `.husky/_` then has no hooks, instead of the absolute fleet shim. A one-time restore at session start does not hold: any later `npm ci` in any worktree resets it.
-- **Lesson:** **Install a worktree with `npm ci --ignore-scripts` and build `packages/*` by hand; after ANY `npm ci` or `npx husky`, and before every push, run `git config core.hooksPath` and restore the absolute shim (`git config core.hooksPath <main checkout>/.git/husky-shim/_`) if it reads `.husky/_`. A push that printed no verify output did not verify.**
-- **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
-
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
 - **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
 - **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
 - **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
 - **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
+
+### L-272 · 2026-10-07 · tooling · each local image build leaves GBs of dangling layers in a fixed-size VM disk
+
+- **Symptom:** a local proof run failed mid-build with the container VM's disk full, though the host had space.
+- **Root cause:** every full image rebuild leaves dangling layers inside a fixed-size VM disk, and nothing pruned them between proof runs.
+- **Lesson:** **After each local proof run, prune dangling images and trim the VM disk; never let the VM fill mid-build. Check VM free space before a rebuild, not host free space.**
+- **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 
 ## testing
 
@@ -525,6 +505,13 @@
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]].
 
+### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
+
+- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
+- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
+- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
+- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
+
 ## domain
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
@@ -592,23 +579,6 @@
   files that are each individually right.**
 - **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts`.
 
-### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
-
-- **Symptom:** a cron grouped pending orders by `(customerId, tenantId)` and filtered on
-  group-count > 1; a customer with one real-tenant order and one legacy null-tenant order
-  produced two separate one-row groups, both filtered out before the null-tenant branch ever
-  ran — nothing merged, nothing logged.
-- **Root cause:** the null-tenant warn lived only inside the per-group loop, downstream of the
-  count filter, so a lone null-tenant row beside a lone real-tenant row for the same customer
-  was invisible to both the merge and the log.
-- **Lesson:** **A cron or bootstrap entry point has NO ambient tenant: group the work by
-  tenantId first and run each group inside `tenantCtx.run(tenantId)`; `forTenant()` silently
-  returns the unscoped client otherwise. Rows without a tenant must be skipped AND counted,
-  never dropped silently.**
-- **Guard:** `REG-B323` — a dedicated unscoped groupBy on null tenantId runs alongside the main
-  query and counts every null-tenant customer regardless of their real-tenant group's count;
-  the sweep's return shape carries the count as `skipped`.
-
 ### L-125 · 2026-09-14 · domain · W1 billing anchor
 
 - **Symptom:** a fix for billing-period drift was about to derive each tenant's cycle anchor from
@@ -622,22 +592,6 @@
   a wrong charge date.**
 - **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
   `anchorDay` column. Sibling [[L-118]].
-
-### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
-
-- **Symptom:** a CREDIT_NOTE-method payment (`status: PAID`) rendered/counted as cash everywhere
-  a "Paid"/"received" figure was shown — invoice totals, PDF, buyer portal, mobile, every
-  bookkeeping cash-flow figure.
-- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
-  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
-  questions, so every consumer answered both with the same number.
-- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
-  stays in, since its application is the only place cash is ever recorded) — but
-  balance/status/outstanding figures keep the FULL confirmed total, since a credit note or
-  advance genuinely settles what's owed. Two questions, two filters, ONE shared predicate.**
-- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
-  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile import
-  — never re-derive either filter at a second site.
 
 ### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
 
@@ -700,26 +654,6 @@
   `git diff --name-only <base>..<merge> -- apps/api/prisma/migrations` on every landing.**
 - **Guard:** none yet — propose the merge coordinator's landing checklist running that diff as a
   hard gate, and/or folding a drift check into `post-deploy-check` itself.
-
-### L-195 · 2026-09-17 · deploy · landing a stale branch reverted #861's live fix (#862)
-
-- **Symptom:** landing PR #862 silently reverted a live P1 fix from #861 that had merged after
-  #862's branch was cut and never rebased — both PRs touched the same file in non-overlapping
-  regions.
-- **Root cause:** the landing computed a raw diff between #862's stale branch and current master
-  to isolate "its own changes" — but since #861's hunk exists on master and NOT on #862's stale
-  branch, that raw diff read #861's own fix as a REMOVAL belonging to #862 and applied it as one.
-  A byte-identity check against the stale branch can't catch this either, since the stale
-  content IS what's wrong.
-- **Lesson:** **A landing diff meant to isolate "this PR's own changes" must be taken against
-  the branch's OWN MERGE-BASE, never against current master directly. Whenever two in-flight
-  PRs touch the same file, diff them against EACH OTHER for overlapping regions first. A
-  post-deploy visual check is not a correctness check — verify the actual computed state, not a
-  screenshot that can look right for the wrong reason.**
-- **Guard:** the merge session's live post-deploy verification caught this one, plus the
-  pre-existing e2e T13 opacity assertion. Propose: the landing tool diffs against
-  `git merge-base <branch> master`, never `master` directly, and warns when two open PRs' diffs
-  touch the same file.
 
 ### L-183 · 2026-09-16 · deploy · Railway dual-service deploy status race
 

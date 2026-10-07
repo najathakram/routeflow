@@ -737,6 +737,13 @@ export class AppleOAuthService {
     tenantSlug: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair> {
+    // #2159 S1: an Apple sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() and the Google path do (best-effort; a failed stamp never blocks it).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
