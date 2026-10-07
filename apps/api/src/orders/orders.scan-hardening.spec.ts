@@ -1313,8 +1313,9 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     );
 
     // The row exists. Reporting a failure here would have the buyer place a second
-    // order for the same cart.
-    expect(result).toBe(created);
+    // order for the same cart. A CUSTOMER gets the customer-facing COPY of it
+    // (common/staff-only-fields.ts: id + status survive, customerId is not listed), so the oracle is content.
+    expect(result).toEqual({ id: "ord-new", status: "PENDING" });
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
   });

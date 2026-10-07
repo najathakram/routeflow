@@ -180,7 +180,7 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
       ]);
       expect(qtyOf(orders.get("ord-open")!)).toBe(5);
       expect(folds).toBe(1);
-      expect(a).toBe(b); // both callers are answered with the one order
+      expect(a).toEqual(b); // both callers are answered with the one order (equal customer-facing copies)
       expect(svc.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1); // the replay does no sweep
     });
 

@@ -150,6 +150,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -443,9 +444,8 @@ export class OrdersService implements OnApplicationBootstrap {
         include: {
           customer: { select: { id: true, businessName: true } },
           lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-          // P5-11: pending change-request count for the orders-list badge.
-          // Filtered relation count — additive; clients that don't know
-          // `_count` ignore it.
+          // P5-11: pending change-request count for the orders-list badge. Filtered relation count
+          // — additive; clients that don't know `_count` ignore it.
           _count: {
             select: {
               changeRequests: { where: { status: ChangeRequestStatus.PENDING } },
@@ -459,7 +459,8 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().order.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    const rows = ordersFor(user, data); // customer-facing fields only for the customer
+    return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -602,7 +603,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
-    return order;
+    return orderFor(user, order); // customer-facing fields only for the customer
   }
 
   /**
