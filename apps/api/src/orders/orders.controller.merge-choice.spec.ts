@@ -17,6 +17,8 @@ jest.mock("../notifications/notifications.service", () => ({
 import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { OrdersController } from "./orders.controller";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -70,6 +72,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
       providers: [
         { provide: OrdersService, useValue: ordersService },
         { provide: ChangeRequestsService, useValue: {} },
+        { provide: OrderBatchShipService, useValue: {} },
+        { provide: PackingSlipService, useValue: {} },
       ],
     }).compile();
 

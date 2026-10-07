@@ -688,7 +688,8 @@ describe("OrdersService.updateOrderItems — replaceAll is explicit-only (T-B198
 // ─── T-B199 (REG-B199 / R11) — denomination-aware atomic merge ─────────────
 
 describe("OrdersController.create — staff merge is denomination-aware (T-B199 / R11 / REG-B199)", () => {
-  const buildController = (ordersService: any) => new OrdersController(ordersService, {} as any);
+  const buildController = (ordersService: any) =>
+    new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
   it("folds boxes+pieces via normalizeBoxesPieces and preserves unitPrice/notes — never a flat qty sum", async () => {
     const ordersService: any = {
@@ -931,7 +932,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
     };
-    const controller = new OrdersController(ordersService, {} as any);
+    const controller = new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
     await controller.create(
       {

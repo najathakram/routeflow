@@ -113,10 +113,12 @@ export async function settleOrderInvoice(
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
-      return new ConflictException(
-        `The order was marked ${moment}, but its invoice could not be updated ` +
+      return new ConflictException({
+        code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+        message:
+          `The order was marked ${moment}, but its invoice could not be updated ` +
           `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
-      );
+      });
     }
   }
   // SA-687: the remainder create below trusts OrderItem.invoicedQty. After a replace-all edit (it
@@ -130,10 +132,12 @@ export async function settleOrderInvoice(
     }
   } catch (err: any) {
     logger.error(`Failed to check invoices for order ${id}: ${err?.message ?? err}`);
-    return new ConflictException(
-      `The order was marked ${moment}, but its invoice could not be checked ` +
+    return new ConflictException({
+      code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+      message:
+        `The order was marked ${moment}, but its invoice could not be checked ` +
         `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
-    );
+    });
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;
@@ -154,11 +158,13 @@ export async function settleOrderInvoice(
   logger.error(
     `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
   );
-  return new ConflictException(
-    `The order was marked ${moment}, but its invoice could not be created ` +
+  return new ConflictException({
+    code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+    message:
+      `The order was marked ${moment}, but its invoice could not be created ` +
       `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
       `the order page to retry — the order stays ${moment} and nothing has been billed yet.`,
-  );
+  });
 }
 
 /**
