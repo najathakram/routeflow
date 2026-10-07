@@ -421,6 +421,11 @@ export const API_ERROR_CODES = {
    * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
    */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
+  /**
+   * 409 from create(): this Idempotency-Key already created the order as a DRAFT and the new request is a real
+   * order (or the reverse). The body carries `orderId`: open that order to confirm it, never resubmit on a new key.
+   */
+  IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
 } as const;
 

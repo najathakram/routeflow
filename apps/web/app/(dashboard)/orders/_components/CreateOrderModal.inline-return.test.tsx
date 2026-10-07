@@ -325,7 +325,8 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
-    expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("idempotencyKey");
+    // BUG-A: every create carries its attempt key now (no inlineReturn => the modal's own key).
+    expect(createOrderMutate.mock.calls[0][0].idempotencyKey).toEqual(expect.any(String));
     // Re-opening starts empty — nothing from the discarded draft survives.
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
     expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();

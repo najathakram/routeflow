@@ -202,6 +202,7 @@ export class OrdersController {
                     dto.customerId!,
                     requestHash,
                     dto.inlineReturn, // #2424: the replay compares its items too
+                    { items: dto.items, status: dto.status }, // BUG-A: a column hit compares the body
                   );
                   if (replayed) {
                     const replayedOrderId = replayed.orderId;
