@@ -84,6 +84,46 @@ test.describe("customers list — 390px", () => {
     await expect(page.getByTestId("name-secondary-tag").first()).toHaveText("VIP");
   });
 
+  test("a LONG tag and select mode (checkbox column) still keep Receivables on screen", async ({
+    page,
+  }) => {
+    await page.route(LIST, async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      const r = (body.data ?? [])[0];
+      if (r) {
+        r.phone = "555-0142";
+        r.receivables = 99.5;
+        r.tagAssignments = [
+          {
+            tag: {
+              id: "tl",
+              name: "An extremely long tag name for a wholesale buyer",
+              color: "#2d5be3",
+            },
+          },
+          { tag: { id: "t2", name: "Another very long tag label here", color: "#1a7f5a" } },
+        ];
+      }
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.goto("/customers");
+    await expect(page.getByRole("heading", { name: /^customers$/i }).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await waitForDataLoaded(page);
+    await page.getByRole("button", { name: /^select$/i }).click();
+    await expect(page.getByRole("checkbox").first()).toBeVisible();
+    const header = page.getByRole("columnheader", { name: /receivables/i });
+    const box = (await header.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    await expect(page.getByTestId("receivables-cell").first()).toBeInViewport();
+    const chip = page.getByTestId("name-secondary-tag").first();
+    const cb = (await chip.boundingBox())!;
+    expect(cb.x + cb.width).toBeLessThanOrEqual(390);
+    expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
   test("C8 empty state fits the viewport and Clear search works", async ({ page }) => {
     await openList(page);
     const search = page.getByPlaceholder(/name, business or phone/i);

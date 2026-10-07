@@ -479,7 +479,7 @@ export default function CustomersPage() {
                   {c.phone && (
                     <a
                       data-testid="name-secondary-phone"
-                      href={`tel:${c.phone}`}
+                      href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}
                       onClick={(e) => e.stopPropagation()}
                       className="font-mono tabular-nums underline"
                     >
@@ -490,7 +490,7 @@ export default function CustomersPage() {
                     <span
                       key={ta.tag.id}
                       data-testid="name-secondary-tag"
-                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                      className="inline-flex max-w-[7rem] items-center truncate rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
                       style={{ backgroundColor: ta.tag.color }}
                     >
                       {ta.tag.name}
@@ -871,6 +871,7 @@ export default function CustomersPage() {
                     <button
                       onClick={() => router.push(`/customers/${item.customer.id}`)}
                       title="View customer"
+                      aria-label="View customer"
                       className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <ExternalLink className="h-4 w-4" />

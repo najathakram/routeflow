@@ -10,6 +10,8 @@ import CustomersPage from "./page";
  */
 
 let mockRows: any[] = [];
+let lastListParams: any = {};
+const mockApprovals: any[] = [];
 const push = jest.fn();
 const clearUrlFilters = jest.fn();
 const setUrlFilter = jest.fn();
@@ -34,12 +36,15 @@ jest.mock("@/lib/hooks/useUrlFilters", () => ({
 
 jest.mock("@/lib/api/customers", () => ({
   ...jest.requireActual("@/lib/api/customers"),
-  useCustomers: () => ({
-    data: stableData(),
-    isLoading: false,
-    isError: false,
-    refetch: jest.fn(),
-  }),
+  useCustomers: (params: any) => {
+    lastListParams = params;
+    return {
+      data: stableData(),
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    };
+  },
   useCustomerTags: () => ({ data: [], isLoading: false, isError: false }),
   useUpdateCustomerStatus: () => ({ mutate: jest.fn(), isPending: false }),
   useDeleteCustomer: () => ({ mutate: jest.fn(), isPending: false }),
@@ -51,7 +56,7 @@ jest.mock("@/lib/api/customers", () => ({
 
 jest.mock("@/lib/api/portal-approvals", () => ({
   ...jest.requireActual("@/lib/api/portal-approvals"),
-  usePendingPortalApprovals: () => ({ data: [], isLoading: false, isError: false }),
+  usePendingPortalApprovals: () => ({ data: mockApprovals, isLoading: false, isError: false }),
   useApprovePortalRequest: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
@@ -122,6 +127,10 @@ describe("PKG-1 customers list — F17 name link", () => {
     renderWithProviders(<CustomersPage />);
     const link = screen.getByRole("link", { name: "Ada Buyer" });
     expect(link).toHaveAttribute("href", "/customers/cA");
+    // Clicking the link lets the link navigate; the row handler must NOT also push (no double nav).
+    fireEvent.click(link);
+    expect(push).not.toHaveBeenCalled();
+    // Clicking elsewhere on the row still navigates.
     fireEvent.click(screen.getAllByRole("row")[1]);
     expect(push).toHaveBeenCalledWith("/customers/cA");
   });
@@ -169,7 +178,7 @@ describe("PKG-1 customers list — F24 columns below sm (relocation, not removal
     const lines = screen.getAllByTestId("name-secondary-line");
     expect(lines[0]).toHaveClass("sm:hidden");
     const tel = within(lines[0]).getByTestId("name-secondary-phone");
-    expect(tel).toHaveAttribute("href", "tel:555-0100");
+    expect(tel).toHaveAttribute("href", "tel:5550100");
     // tapping the phone must not open the row
     fireEvent.click(tel);
     expect(push).not.toHaveBeenCalled();
@@ -255,9 +264,12 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
     renderWithProviders(<CustomersPage />);
     fireEvent.click(screen.getByRole("button", { name: /^active$/i }));
     expect(setUrlFilter).toHaveBeenCalledWith("status", "ACTIVE");
-    fireEvent.click(
-      screen.getByRole("columnheader", { name: /receivables/i }).querySelector("button")!,
-    );
+    const th = screen.getByRole("columnheader", { name: /receivables/i });
+    expect(lastListParams.sortBy).toBeUndefined();
+    fireEvent.click(th.querySelector("button")!);
+    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "asc" });
+    fireEvent.click(th.querySelector("button")!);
+    expect(lastListParams).toMatchObject({ sortBy: "receivables", sortDir: "desc" });
   });
 
   it("Edit customer opens the editor without navigating; row checkbox + bulk bar + merge in select mode", () => {
@@ -270,8 +282,17 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
     expect(screen.getByRole("button", { name: /^merge$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /delete 2/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /deselect all/i })).toBeInTheDocument();
-    // the name link inside a selectable row must not navigate away in select mode
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+  });
+
+  it("select mode: clicking the name link toggles selection and never navigates", () => {
+    renderWithProviders(<CustomersPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^select$/i }));
+    const link = screen.getByRole("link", { name: "Ada Buyer" });
+    const notPrevented = fireEvent.click(link);
+    expect(notPrevented).toBe(false); // default (navigation) prevented
+    expect(screen.getByText(/1 customer selected/i)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("Edit customer does not navigate (it opens the editor)", () => {
@@ -291,5 +312,49 @@ describe("PKG-1 owner rule — nothing on the customers list is lost", () => {
     expect(labels).toEqual(["Restore customer", "View customer"]);
     fireEvent.click(screen.getByRole("button", { name: "Restore customer" }));
     expect(restoreMutate).toHaveBeenCalledWith({ id: "cA" });
+  });
+});
+
+describe("PKG-1 customers list — secondary line robustness", () => {
+  it("tel: href is sanitised to digits and +", () => {
+    mockRows = [row({ phone: "(555) 010-0100 ext. 2" })];
+    renderWithProviders(<CustomersPage />);
+    expect(screen.getByTestId("name-secondary-phone")).toHaveAttribute("href", "tel:55501001002");
+  });
+
+  it("long tag names truncate inside the secondary line (class pin; Playwright proves layout)", () => {
+    mockRows = [
+      row({
+        tagAssignments: [
+          {
+            tag: {
+              id: "t9",
+              name: "An extremely long tag name that must never widen the row",
+              color: "#123456",
+            },
+          },
+        ],
+      }),
+    ];
+    renderWithProviders(<CustomersPage />);
+    const chip = screen.getByTestId("name-secondary-tag");
+    expect(chip).toHaveClass("truncate");
+    expect(chip.className).toMatch(/max-w-/);
+  });
+
+  it("approvals panel View button has an accessible name", () => {
+    mockApprovals.splice(0, mockApprovals.length, {
+      id: "ap1",
+      customer: { id: "cA", contactName: "Ada Buyer", businessName: "Acme Market" },
+      buyerAccount: { email: "ada@acme.test" },
+    });
+    try {
+      renderWithProviders(<CustomersPage />);
+      const view = screen.getAllByRole("button", { name: "View customer" })[0];
+      fireEvent.click(view);
+      expect(push).toHaveBeenCalledWith("/customers/cA");
+    } finally {
+      mockApprovals.splice(0, mockApprovals.length);
+    }
   });
 });
