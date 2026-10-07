@@ -1650,8 +1650,47 @@ export class ProductsService {
       if (referencedIds.size === remaining.length) break;
     }
 
-    const softDeleteIds = remaining.filter((id) => referencedIds.has(id));
-    const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
+    let softDeleteIds = remaining.filter((id) => referencedIds.has(id));
+    let hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
+
+    // B1212: a product that still has variants is never hard-deleted. The variants' parent link is SET NULL on
+    // delete, so they would fall back to standalone products and could collide with another product of the same
+    // name (a unique violation). A parent keeps (or archives) its variants: refused while one of them stays
+    // active, archived when every variant that stays is already inactive or is archived in this same batch, and
+    // only hard-deleted when ALL its variants are hard-deleted with it.
+    const variantRows = (await this.prisma.forTenant().product.findMany({
+      where: { parentProductId: { in: remaining } },
+      select: { id: true, parentProductId: true, isActive: true },
+    })) as Array<{ id: string; parentProductId: string | null; isActive: boolean }>;
+    if (variantRows.length > 0) {
+      const hardSet = new Set(hardDeleteIds);
+      const inBatch = new Set(remaining);
+      const refused = new Set<string>();
+      const forceSoft = new Set<string>();
+      for (const v of variantRows) {
+        const parentId = v.parentProductId;
+        if (!parentId || hardSet.has(v.id)) continue; // goes away with its parent
+        const archivedHere = inBatch.has(v.id) && !hardSet.has(v.id);
+        if (v.isActive && !archivedHere) refused.add(parentId);
+        else forceSoft.add(parentId);
+      }
+      for (const id of refused) {
+        skipped.push({
+          id,
+          reason: `${nameById.get(id) ?? id} has variants that are still active; delete or archive them first`,
+        });
+      }
+      softDeleteIds = softDeleteIds.filter((id) => !refused.has(id));
+      hardDeleteIds = hardDeleteIds.filter((id) => !refused.has(id));
+      for (const id of forceSoft) {
+        if (refused.has(id) || !hardDeleteIds.includes(id)) continue;
+        hardDeleteIds = hardDeleteIds.filter((h) => h !== id);
+        softDeleteIds.push(id);
+      }
+    }
+    if (softDeleteIds.length === 0 && hardDeleteIds.length === 0) {
+      return { deleted: 0, softDeleted: 0, skipped };
+    }
 
     if (softDeleteIds.length > 0) {
       const clearTenantId = this.prisma.getTenantId();
@@ -1676,48 +1715,61 @@ export class ProductsService {
     if (hardDeleteIds.length > 0) {
       // Delete all dependent records first, then the products themselves —
       // scoped to only the reference-free ids.
-      await this.prisma.$transaction([
-        this.prisma
-          .forTenant()
-          .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma
-          .forTenant()
-          .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
-        this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
-      ]);
+      try {
+        await this.prisma.$transaction([
+          this.prisma
+            .forTenant()
+            .customerPrice.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .recurringInvoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .productMapping.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .vendorBillItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .estimateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .returnItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .purchaseOrderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .invoiceItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .orderTemplateItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .deliveryMutation.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .orderItem.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .stockLot.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma
+            .forTenant()
+            .stockMovement.deleteMany({ where: { productId: { in: hardDeleteIds } } }),
+          this.prisma.forTenant().product.deleteMany({ where: { id: { in: hardDeleteIds } } }),
+        ]);
+      } catch (e) {
+        // B1212: a unique violation (e.g. a variant orphaned by the delete colliding with a same-named product) is a
+        // coded 409 (the delete is one transaction), never an uncoded 500.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          throw new ConflictException({
+            code: API_ERROR_CODES.PRODUCT_DELETE_CONFLICT,
+            message:
+              "A product in this selection changed while it was being deleted, so the delete did not go through. Reload the list and try again.",
+          });
+        }
+        throw e;
+      }
     }
 
     // ONE coalesced event for the whole batch (clearAll delegates HERE, so it
