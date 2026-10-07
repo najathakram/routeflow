@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, within, act, waitFor } from "@testi
 import { QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/lib/i18n";
 import { createTestQueryClient } from "@/test-utils/render";
-import { setCounterCartHasLines } from "@/lib/counter-cart-signal";
+import { setCounterCartBusy, setCounterCartHasLines } from "@/lib/counter-cart-signal";
 import { resetCounterLandingForTests } from "@/lib/counter-device-pref";
 import { setImpersonation, clearImpersonation } from "@/lib/impersonation";
 import DashboardLayout from "./layout";
@@ -26,13 +26,16 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: mockReplace, prefetch: jest.fn() }),
 }));
 let mockGate = { showButton: true };
+const mockLogout = jest.fn();
+const mockSetPalette = jest.fn();
+let mockDriveMode = false;
 jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => mockGate }));
 jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
     user: { id: "u1", role: mockRole, username: "ada.clerk", email: "a@example.com" },
-    logout: jest.fn(),
+    logout: mockLogout,
   }),
 }));
 jest.mock("@/components/tenant-provider", () => ({
@@ -67,7 +70,7 @@ jest.mock("@/lib/hooks/useNotifications", () => ({
   }),
 }));
 jest.mock("@/lib/drive-mode", () => ({
-  useDriveMode: () => ({ driveMode: false, setDriveMode: jest.fn() }),
+  useDriveMode: () => ({ driveMode: mockDriveMode, setDriveMode: jest.fn() }),
 }));
 jest.mock("@/lib/presence-cookies", () => ({
   setLastPortalCookie: jest.fn(),
@@ -77,7 +80,7 @@ jest.mock("@/lib/presence-cookies", () => ({
 jest.mock("@/components/TenantLogo", () => ({ TenantLogo: () => <span>logo</span> }));
 jest.mock("@/components/CommandPalette", () => ({
   CommandPalette: () => null,
-  useCommandPalette: () => ({ open: false, setOpen: jest.fn() }),
+  useCommandPalette: () => ({ open: false, setOpen: mockSetPalette }),
 }));
 jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("@/components/DraftDock", () => ({ DraftDock: () => null }));
@@ -124,6 +127,9 @@ beforeEach(() => {
   mockPath = "/orders";
   mockRole = "OPERATOR";
   mockGate = { showButton: true };
+  mockLogout.mockClear();
+  mockSetPalette.mockClear();
+  mockDriveMode = false;
   client = createTestQueryClient();
   setItemKeys = [];
   realSetItem = Storage.prototype.setItem;
@@ -139,6 +145,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   act(() => setCounterCartHasLines(false));
+  act(() => setCounterCartBusy(false));
   clearImpersonation();
   jest.restoreAllMocks();
   localStorage.clear();
@@ -234,6 +241,100 @@ describe("slim header", () => {
     mount(COUNTER);
     fireEvent.click(within(registerHeader()).getByLabelText("Open navigation menu"));
     expect(screen.getByTestId("sidebar-drawer-aside")).toBeInTheDocument();
+  });
+});
+
+describe("shell controls survive in register mode (nothing lost)", () => {
+  const openMenu = () => {
+    const trigger = within(registerHeader()).getByLabelText("Open user menu");
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  };
+
+  it("keeps the avatar/user menu: Profile, Sign out, Language, preference are reachable", async () => {
+    mount(COUNTER);
+    openMenu();
+    expect(await screen.findByRole("menuitem", { name: /Profile/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Open the counter on this device" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Sign out/i }));
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the notifications bell", () => {
+    mount(COUNTER);
+    expect(
+      within(registerHeader()).getByRole("button", { name: "Notifications" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the palette trigger, and Cmd+K still opens the palette (the shortcut is shell-wide, not header-bound)", () => {
+    mount(COUNTER);
+    fireEvent.click(
+      within(registerHeader()).getAllByRole("button", { name: "Open command palette" })[0],
+    );
+    expect(mockSetPalette).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps the drive-mode exit pill", () => {
+    mockDriveMode = true;
+    mount(COUNTER);
+    expect(within(registerHeader()).getByTitle("Exit drive mode")).toBeInTheDocument();
+  });
+
+  it("shows the clerk (truncated, hidden below sm) via the user menu trigger", () => {
+    mount(COUNTER);
+    const clerk = screen.getByTestId("register-clerk");
+    expect(clerk).toHaveTextContent("ada.clerk");
+    expect(clerk.className).toContain("max-w-[8rem]");
+    expect(clerk.className).toContain("truncate");
+  });
+
+  it("Exit stays the first focusable control with the tools present", () => {
+    mount(COUNTER);
+    expect(registerHeader().querySelector(FOCUSABLE)).toBe(
+      screen.getByRole("button", { name: "Exit counter" }),
+    );
+  });
+});
+
+describe("Exit is blocked while a sale is being recorded", () => {
+  it("does nothing but explain while busy (no navigation, no dialog), even with lines in the cart", () => {
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    act(() => setCounterCartBusy(true));
+    const exit = screen.getByRole("button", { name: "Exit counter" });
+    expect(exit).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(exit);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.queryByText("Discard this sale?")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(/sale is in progress/i);
+  });
+
+  it("works again once the sale settles", () => {
+    mount(COUNTER);
+    act(() => setCounterCartBusy(true));
+    act(() => setCounterCartBusy(false));
+    fireEvent.click(screen.getByRole("button", { name: "Exit counter" }));
+    expect(mockPush).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("a Discard dialog that is already open cannot leave once the sale goes busy", async () => {
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    fireEvent.click(screen.getByRole("button", { name: "Exit counter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1); // control: not busy -> leaves
+    mockPush.mockClear();
+    cleanup();
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    fireEvent.click(screen.getByRole("button", { name: "Exit counter" }));
+    const discard = await screen.findByRole("button", { name: "Discard" });
+    act(() => setCounterCartBusy(true));
+    fireEvent.click(discard);
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
 

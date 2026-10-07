@@ -216,6 +216,32 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
   });
 
+  it("a removal while the pointer is over the bar does not start the countdown, even after Undo ended the first one", async () => {
+    await buildCart();
+    jest.useFakeTimers();
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    const bar = screen.getByTestId("line-undo-bar");
+    fireEvent.mouseEnter(bar);
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // hovered: paused from the start
+    click(UNDO); // ends this removal (the pointer is STILL over the bar)
+    click("Remove Cola");
+    act(() => {
+      jest.advanceTimersByTime(8000);
+    });
+    expect(screen.getByRole("button", { name: UNDO })).toBeInTheDocument(); // still hovered: still paused
+    fireEvent.mouseLeave(bar);
+    act(() => {
+      jest.advanceTimersByTime(5100);
+    });
+    expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
+  });
+
   it("blur does NOT resume while the pointer is still over the bar", async () => {
     await buildCart();
     jest.useFakeTimers();

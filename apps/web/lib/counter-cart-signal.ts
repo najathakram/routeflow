@@ -4,6 +4,7 @@
  * private to the screen and only this single fact crosses to the shell.
  */
 let hasLines = false;
+let busy = false;
 const listeners = new Set<() => void>();
 
 export function getCounterCartHasLines(): boolean {
@@ -21,4 +22,15 @@ export function subscribeCounterCart(fn: () => void): () => void {
   return () => {
     listeners.delete(fn);
   };
+}
+
+/** True while a sale or a ship draft is being recorded (or its outcome is unknown): the register's Exit must not leave. */
+export function getCounterCartBusy(): boolean {
+  return busy;
+}
+
+export function setCounterCartBusy(next: boolean): void {
+  if (next === busy) return;
+  busy = next;
+  listeners.forEach((fn) => fn());
 }

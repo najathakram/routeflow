@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { getCounterCartBusy, setCounterCartBusy } from "@/lib/counter-cart-signal";
 
 /**
  * B1210: "Ship this order instead" saves the counter cart + customer as a parked ORDER draft (POST /drafts, fulfillPath SHIP) and
@@ -160,6 +161,32 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
     reply.resolve({ id: "d-9" });
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?resumeDraft=d-9"));
     await waitFor(() => expect(lines()).toHaveLength(0));
+  });
+
+  it("a ship hand-off never navigates after the counter has been left (unmounted)", async () => {
+    const draft = deferred<{ id: string }>();
+    createDraft.mockReturnValue(draft.promise);
+    const view = renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await scan("COLA");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(shipBtn());
+    await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
+    view.unmount(); // the clerk left the counter while the draft was saving
+    draft.resolve({ id: "d-1" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("publishes busy while the ship draft is saving", async () => {
+    const view = renderWithProviders(<CounterSaleScreen />);
+    draftPending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(true));
+    draftPending = false;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(false));
+    setCounterCartBusy(false);
   });
 
   it("a double click is ONE draft", async () => {

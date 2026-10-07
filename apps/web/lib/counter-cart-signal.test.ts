@@ -1,4 +1,6 @@
 import {
+  getCounterCartBusy,
+  setCounterCartBusy,
   getCounterCartHasLines,
   setCounterCartHasLines,
   subscribeCounterCart,
@@ -6,7 +8,10 @@ import {
 
 /** POS-7: the one-bit "the counter cart has lines" store the register header reads (no React context). */
 
-afterEach(() => setCounterCartHasLines(false));
+afterEach(() => {
+  setCounterCartHasLines(false);
+  setCounterCartBusy(false);
+});
 
 describe("counter cart signal", () => {
   it("starts false, is set and cleared", () => {
@@ -28,5 +33,18 @@ describe("counter cart signal", () => {
     off();
     setCounterCartHasLines(true);
     expect(fn).toHaveBeenCalledTimes(2);
+  });
+  it("carries a busy bit beside hasLines: set, cleared, notifies on change only", () => {
+    const fn = jest.fn();
+    const off = subscribeCounterCart(fn);
+    expect(getCounterCartBusy()).toBe(false);
+    setCounterCartBusy(true);
+    setCounterCartBusy(true);
+    expect(getCounterCartBusy()).toBe(true);
+    expect(getCounterCartHasLines()).toBe(false); // independent bits
+    expect(fn).toHaveBeenCalledTimes(1);
+    setCounterCartBusy(false);
+    expect(fn).toHaveBeenCalledTimes(2);
+    off();
   });
 });

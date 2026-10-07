@@ -2,7 +2,12 @@ import * as React from "react";
 import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
-import { getCounterCartHasLines, setCounterCartHasLines } from "@/lib/counter-cart-signal";
+import {
+  getCounterCartBusy,
+  getCounterCartHasLines,
+  setCounterCartBusy,
+  setCounterCartHasLines,
+} from "@/lib/counter-cart-signal";
 
 /**
  * POS-7: the cart signal the register header reads (a line exists -> true; empty / unmounted -> false). The API is
@@ -80,7 +85,10 @@ const scan = async (text: string) => {
 };
 
 describe("POS-7 cart signal", () => {
-  afterEach(() => setCounterCartHasLines(false));
+  afterEach(() => {
+    setCounterCartHasLines(false);
+    setCounterCartBusy(false);
+  });
 
   it("is false on an empty cart, true once a line exists, false again after removing it", async () => {
     renderWithProviders(<CounterSaleScreen />);
@@ -97,5 +105,21 @@ describe("POS-7 cart signal", () => {
     await waitFor(() => expect(getCounterCartHasLines()).toBe(true));
     view.unmount();
     expect(getCounterCartHasLines()).toBe(false);
+  });
+
+  it("publishes busy while the sale POST is pending and clears it after and on unmount", async () => {
+    const view = renderWithProviders(<CounterSaleScreen />);
+    expect(getCounterCartBusy()).toBe(false);
+    pending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(true));
+    pending = false;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(false));
+    pending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(true));
+    view.unmount();
+    expect(getCounterCartBusy()).toBe(false);
   });
 });
