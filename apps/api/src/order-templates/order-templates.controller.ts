@@ -20,6 +20,7 @@ import { UserRole } from "@prisma/client";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
+import { toCustomerOrder } from "../common/staff-only-fields";
 
 @ApiTags("order-templates")
 @ApiBearerAuth()
@@ -99,7 +100,9 @@ export class OrderTemplatesController {
   @Post(":id/generate")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
-  generateOrder(@Param("id") templateId: string, @CurrentUser() user: JwtPayload) {
-    return this.service.generateOrderForUser(templateId, user);
+  async generateOrder(@Param("id") templateId: string, @CurrentUser() user: JwtPayload) {
+    const order = await this.service.generateOrderForUser(templateId, user);
+    // A CUSTOMER gets the customer-facing allowlist of the order it generated; staff get the row itself.
+    return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
   }
 }
