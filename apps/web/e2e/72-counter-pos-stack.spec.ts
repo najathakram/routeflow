@@ -49,6 +49,43 @@ const created: {
 }[] = [];
 
 async function retireThrowaways() {
+  // Belt and braces: an earlier aborted run may have left rows with OUR prefix active; retire those too (soft).
+  for (const c of created) {
+    const ctx = await pwRequest.newContext();
+    try {
+      const custs: any = await (
+        await ctx.get(`${c.api}/customers`, {
+          headers: c.headers,
+          params: { search: "QA POS Tier2", limit: "100" },
+        })
+      ).json();
+      for (const row of custs?.data ?? []) {
+        if (String(row.businessName ?? "").startsWith("QA POS Tier2 ") && row.id !== c.customerId) {
+          await ctx.patch(`${c.api}/customers/${row.id}/status`, {
+            headers: c.headers,
+            data: { status: "INACTIVE" },
+          });
+        }
+      }
+      const prods: any = await (
+        await ctx.get(`${c.api}/products`, {
+          headers: c.headers,
+          params: { search: "QA POS Tier Item", limit: "100" },
+        })
+      ).json();
+      for (const row of prods?.data ?? []) {
+        if (String(row.name ?? "").startsWith("QA POS Tier Item ") && row.id !== c.productId) {
+          await ctx.patch(`${c.api}/products/${row.id}`, {
+            headers: c.headers,
+            data: { isActive: false },
+          });
+        }
+      }
+    } finally {
+      await ctx.dispose();
+    }
+    break; // one sweep per run
+  }
   for (const c of created.splice(0)) {
     const ctx = await pwRequest.newContext();
     try {
@@ -110,10 +147,15 @@ async function makeTierFixtures(page: Page, api: string, headers: Record<string,
   const product: any = await prod.json();
   const cust = await page.request.post(`${api}/customers`, {
     headers,
-    data: { businessName: `QA POS Tier2 ${tag}`, contactName: "QA POS", pricingTier: 2 },
+    data: {
+      businessName: `QA POS Tier2 ${tag}`,
+      contactName: "QA POS",
+      username: `qa-pos-${tag.toLowerCase()}`,
+      pricingTier: 2,
+    },
   });
   expect(cust.ok(), `create the tier-2 customer: ${cust.status()}`).toBeTruthy();
-  const customer: any = await cust.json();
+  const customer: any = ((await cust.json()) as any).customer; // POST /customers wraps the row
   created.push({ api, headers, productId: product.id, customerId: customer.id });
   return { product, customer };
 }
