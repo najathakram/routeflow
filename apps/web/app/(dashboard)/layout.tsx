@@ -29,6 +29,7 @@ import {
   ShieldAlert,
   Handshake,
   BadgePercent,
+  Store,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -55,6 +56,7 @@ import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -911,6 +913,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { isLoading: addonsLoading } = useTenantAddons();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
+  // POS-7a: the SAME gate as the dashboard/orders Counter sale button (always|optional -> shown; off/loading -> hidden).
+  const { showButton: counterEnabled } = useCounterSaleGate();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   // RO-1: dashboard-wide read-only banner, fed by the same query as the billing page.
@@ -948,6 +952,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     }
 
     if (!isStaff) return base;
+
+    // POS-7a: "Counter" leaf right after the Orders group; nothing else moves.
+    if (counterEnabled) {
+      base = base.flatMap((entry): NavEntry[] =>
+        entry.kind === "group" && entry.label === "Orders"
+          ? [entry, { kind: "leaf", label: "Counter", href: "/orders/counter-sale", icon: Store }]
+          : [entry],
+      );
+    }
 
     // "Regulated Items" nav group — one child per active regulated section, each
     // opening that section's dashboard. Shown whenever the tenant has ≥1 section
@@ -1037,6 +1050,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     subscriptionStatus,
     subscriptionResolved,
     subscriptionFailed,
+    counterEnabled,
   ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -1133,6 +1147,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       } else if (sequence === "gs") {
         shellRouter.push("/settings");
         sequence = "";
+      } else if (sequence === "gt") {
+        if (counterEnabled) shellRouter.push("/orders/counter-sale");
+        sequence = "";
       } else if (sequence === "gh") {
         shellRouter.push("/dashboard");
         sequence = "";
@@ -1140,7 +1157,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter, routesAccess]);
+  }, [shellRouter, routesAccess, counterEnabled]);
 
   const SHORTCUTS = React.useMemo(
     () =>
@@ -1153,10 +1170,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         { keys: ["g", "i"], label: "Go to Invoices" },
         { keys: ["g", "f"], label: "Go to Finance" },
         { keys: ["g", "s"], label: "Go to Settings" },
+        { keys: ["g", "t"], label: "Go to Counter sale" },
         { keys: ["⌘", "K"], label: "Open Command Palette" },
         { keys: ["?"], label: "Show Keyboard Shortcuts" },
-      ].filter((s) => routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")),
-    [routesAccess],
+      ].filter(
+        (s) =>
+          (routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")) &&
+          (counterEnabled || s.label !== "Go to Counter sale"),
+      ),
+    [routesAccess, counterEnabled],
   );
 
   return (
