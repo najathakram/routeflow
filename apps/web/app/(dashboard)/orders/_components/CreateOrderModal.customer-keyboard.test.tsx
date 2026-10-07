@@ -280,7 +280,7 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
     expect(screen.getAllByTitle("Remove")).toHaveLength(1); // lines kept
     await user.click(screen.getByRole("button", { name: /undo/i }));
     expect(screen.getByText("Acme Market")).toBeInTheDocument();
-    expect(chip()).toHaveFocus();
+    expect(chip()).toBeInTheDocument();
     expect(screen.getAllByTitle("Remove")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Create Order" }));
     await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());

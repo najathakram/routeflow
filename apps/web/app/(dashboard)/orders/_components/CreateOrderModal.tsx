@@ -86,6 +86,9 @@ import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
+import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { useCustomerChangeUndo } from "./use-customer-change-undo";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
@@ -482,6 +485,7 @@ export function CreateOrderModal({
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
+    customerUndo.dismiss();
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -518,9 +522,28 @@ export function CreateOrderModal({
   // draft-persisted (see drafts.ts) — a resumed draft starts with none selected.
   const [appliedCredits, setAppliedCredits] = React.useState<CreditSelection[]>([]);
   // Credit selections are per-customer — reset whenever the operator swaps customers.
+  const customerUndo = useCustomerChangeUndo<SelectedCustomer, CreditSelection>({
+    selectedCustomer,
+    fulfillPath,
+    appliedCredits,
+    setSelectedCustomer,
+    setFulfillPath: (p) => setValue("fulfillPath", p as FormValues["fulfillPath"]),
+  });
+  const takeRestoredCredits = customerUndo.takeRestoredCredits;
   React.useEffect(() => {
-    setAppliedCredits([]);
-  }, [selectedCustomer?.id]);
+    setAppliedCredits(takeRestoredCredits()); // [] unless an Undo is restoring this customer's set
+  }, [selectedCustomer?.id, takeRestoredCredits]);
+  const [customerListOpen, setCustomerListOpen] = React.useState(true);
+  // Seeds the order's fulfilment from the customer's own default here (not in a
+  // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
+  const pickCustomer = (c: SelectedCustomer) => {
+    setSelectedCustomer(c);
+    setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
+    setCustomerSearch("");
+    setDebouncedCustomerSearch("");
+    setCustomerListOpen(true);
+    customerUndo.dismiss();
+  };
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
@@ -837,6 +860,21 @@ export function CreateOrderModal({
     addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
 
+  // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
+  // key, so a wedge scan + Enter still takes handleProductSearchEnter (barcode path).
+  const productListOpen =
+    !!productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0);
+  const productNav = useListboxNav<any>({
+    items: filteredProducts,
+    open: productListOpen,
+    onPick: (p) =>
+      p.variants?.length > 0
+        ? setExpandedParentId(expandedParentId === p.id ? null : p.id)
+        : addPicked(p),
+    resetKey: productSearch,
+    idPrefix: "product-search",
+  });
+
   const removeLineItem = (tempId: string) => {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
   };
@@ -1124,6 +1162,12 @@ export function CreateOrderModal({
     if (editingLineId) {
       event.preventDefault();
       setEditingLineId(null);
+      return;
+    }
+    // K3: Escape with the customer list OPEN closes just the list (typed text kept) — never parks a draft.
+    if (customerSearch && customerListOpen && !selectedCustomer) {
+      event.preventDefault();
+      setCustomerListOpen(false);
       return;
     }
     if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
@@ -1694,7 +1738,10 @@ export function CreateOrderModal({
         onKeyDown={(e) => {
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
           // Every other control keeps the no-Enter-submit behavior this form has always had.
-          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+          // A result row (button[role=option]) keeps its native Enter-to-pick (PKG-4 F09c).
+          const isOption =
+            e.target instanceof HTMLButtonElement && e.target.getAttribute("role") === "option";
+          if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement) && !isOption) {
             e.preventDefault();
           }
         }}
@@ -1733,64 +1780,43 @@ export function CreateOrderModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedCustomer(null)}
+                  onClick={customerUndo.change}
                   className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
                   title="Change customer"
+                  aria-label="Change customer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
             ) : (
-              <div className="relative">
-                <input
-                  type="search"
-                  placeholder="Search by business name…"
+              <>
+                <CustomerSearchPicker
+                  inputRef={customerUndo.searchInputRef}
                   value={customerSearch}
-                  onChange={(e) => {
-                    setCustomerSearch(e.target.value);
+                  onValueChange={(v) => {
+                    setCustomerSearch(v);
                     setCustomerError("");
                   }}
-                  className={cn(
-                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    customerError
-                      ? "border-danger focus:border-transparent"
-                      : "border-surface-border focus:border-transparent",
-                  )}
+                  results={filteredCustomers as SelectedCustomer[]}
+                  searched={debouncedCustomerSearch.length > 0}
+                  listOpen={customerListOpen}
+                  onListOpenChange={setCustomerListOpen}
+                  onPick={pickCustomer}
+                  error={customerError}
                 />
-                {customerError && <p className="mt-1 text-xs text-danger">{customerError}</p>}
-                {customerSearch &&
-                  (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0) && (
-                    <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                      {filteredCustomers.length === 0 && debouncedCustomerSearch.length > 0 && (
-                        <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
-                      )}
-                      {filteredCustomers.map((c: any) => (
-                        <li key={c.id}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCustomer(c);
-                              // Seed the order's fulfillment from this customer's own
-                              // default — done here (not a selectedCustomer-keyed
-                              // effect) so hydrating a parked draft's own
-                              // fulfillPath — via the same setSelectedCustomer call
-                              // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
-                              setCustomerSearch("");
-                              setDebouncedCustomerSearch("");
-                            }}
-                            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
-                          >
-                            <span className="font-medium">{c.businessName}</span>
-                            {c.contactName && (
-                              <span className="text-xs text-navy/70">{c.contactName}</span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-              </div>
+                {customerUndo.previous && (
+                  <p role="status" className="flex items-center gap-2 text-xs text-navy/70">
+                    Customer cleared ({customerUndo.previous.customer.businessName}).
+                    <button
+                      type="button"
+                      onClick={customerUndo.undo}
+                      className="font-medium text-brand-500 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </p>
+                )}
+              </>
             )}
 
             {selectedCustomer && (
@@ -1829,12 +1855,14 @@ export function CreateOrderModal({
                   // handler from ALSO running. Without this check, a real wedge scan double-adds:
                   // once via the detector (correct, +1) and once here, which (mis)treats it as a
                   // manually-typed SKU and applies whatever is in the Qty field.
+                  if (productNav.onKeyDown(e)) return;
                   if (e.key === "Enter" && !e.defaultPrevented) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
                   }
                 }}
+                {...productNav.inputProps}
                 className={cn(
                   // B596: at 390 the [search][Qty][scan] row leaves ~200px — the placeholder is one line, so it
                   // steps down a size and ellipsizes instead of being cut mid-word.
@@ -1844,31 +1872,32 @@ export function CreateOrderModal({
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              <BarcodeScannerButton
-                inputRef={productSearchRef}
-                onScan={(code) => {
-                  barcodeScanHandlerRef.current(code); // a camera scan is +1
-                }}
-                onError={(message) => toast({ variant: "error", title: message })}
-                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
-                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
-                title="Scan barcode"
-              />
+              {/* Results render BEFORE the Scan button (absolutely positioned — no visual change) so a
+                  first Tab from the search reaches result 1, like the customer search (PKG-4 F10). */}
               {productSearch &&
                 (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
-                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  <ul
+                    id={productNav.listId}
+                    role="listbox"
+                    aria-label="Products"
+                    className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
+                  >
                     {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
                       <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
                     )}
-                    {filteredProducts.map((p: any) => {
+                    {filteredProducts.map((p: any, pi: number) => {
                       const hasVariants = p.variants?.length > 0;
                       const isExpanded = expandedParentId === p.id;
                       const alreadyAdded = lineItems.some((li) => li.productId === p.id);
                       return (
                         <React.Fragment key={p.id}>
-                          <li>
+                          <li role="presentation">
                             <button
                               type="button"
+                              role="option"
+                              id={productNav.optionId(pi)}
+                              aria-selected={pi === productNav.highlight}
+                              onMouseEnter={() => productNav.setHighlight(pi)}
                               onClick={() => {
                                 if (hasVariants) {
                                   setExpandedParentId(isExpanded ? null : p.id);
@@ -1884,6 +1913,7 @@ export function CreateOrderModal({
                               }}
                               className={cn(
                                 "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
+                                pi === productNav.highlight && "bg-surface-raised",
                                 alreadyAdded && !hasVariants && "opacity-40",
                               )}
                             >
@@ -1924,9 +1954,11 @@ export function CreateOrderModal({
                             p.variants.map((v: any) => {
                               const variantAdded = lineItems.some((li) => li.productId === v.id);
                               return (
-                                <li key={v.id} className="bg-surface-raised/50">
+                                <li key={v.id} role="presentation" className="bg-surface-raised/50">
                                   <button
                                     type="button"
+                                    role="option"
+                                    aria-selected={false}
                                     onClick={() => addPicked(v)}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
@@ -1956,9 +1988,11 @@ export function CreateOrderModal({
                         </React.Fragment>
                       );
                     })}
-                    <li className="border-t border-surface-border">
+                    <li role="presentation" className="border-t border-surface-border">
                       <button
                         type="button"
+                        role="option"
+                        aria-selected={false}
                         className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
                         onClick={() => {
                           const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
@@ -1978,6 +2012,16 @@ export function CreateOrderModal({
                     </li>
                   </ul>
                 )}
+              <BarcodeScannerButton
+                inputRef={productSearchRef}
+                onScan={(code) => {
+                  barcodeScanHandlerRef.current(code); // a camera scan is +1
+                }}
+                onError={(message) => toast({ variant: "error", title: message })}
+                onOpenContinuous={scanV2 ? () => setScanScreenOpen(true) : undefined}
+                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+                title="Scan barcode"
+              />
             </div>
 
             {lineItemsError && lineItems.length === 0 && (
