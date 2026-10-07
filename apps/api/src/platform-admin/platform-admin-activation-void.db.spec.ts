@@ -76,35 +76,43 @@ describeDb("manual activation auto-void (DB)", () => {
       createdVersionId = version.id;
     }
     emit = jest.fn().mockResolvedValue({});
-    svc = new PlatformAdminService(
-      prisma as any,
-      {} as any,
-      { get: jest.fn() } as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {
+    // Named, then mapped in the constructor's order. Keep this list in step with PlatformAdminService's
+    // constructor: prisma, jwtService, config, emailService, billingService, platformPricingService,
+    // planCatalogService, proration, entitlementsService, billingEventService, meterService,
+    // tenantStatusGuard, auditService, mrrService, tenantMirror, featureOverrides, planTransition.
+    const deps = {
+      prisma,
+      jwtService: {},
+      config: { get: jest.fn() },
+      emailService: {},
+      billingService: {},
+      platformPricingService: {},
+      planCatalogService: {
         getPublishedVersion: jest.fn().mockResolvedValue({
           id: version.id,
           definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
         }),
-      } as any,
-      {} as any,
-      { invalidate: jest.fn() } as any,
-      { emit } as any,
-      {} as any,
-      { invalidate: jest.fn() } as any,
-      {} as any,
-      { priceSubscription: jest.fn().mockReturnValue(499) } as any,
-      { upsert: jest.fn().mockResolvedValue(undefined) } as any,
-      {} as any,
-      {
+      },
+      proration: {},
+      entitlementsService: { invalidate: jest.fn() },
+      billingEventService: { emit },
+      meterService: {},
+      tenantStatusGuard: { invalidate: jest.fn() },
+      // the post-commit recordAdminAction trail row; the in-tx audit rows under test go through prisma
+      auditService: { log: jest.fn().mockResolvedValue(undefined) },
+      mrrService: { priceSubscription: jest.fn().mockReturnValue(499) },
+      tenantMirror: { upsert: jest.fn().mockResolvedValue(undefined) },
+      featureOverrides: {},
+      planTransition: {
         isEnabled: jest.fn().mockResolvedValue(false),
         prepare: jest.fn(),
         onPlanChange: jest.fn(),
         transactionOptions: jest.fn().mockReturnValue(undefined),
         invalidateCaches: jest.fn(),
-      } as any,
+      },
+    };
+    svc = new PlatformAdminService(
+      ...(Object.values(deps) as unknown as ConstructorParameters<typeof PlatformAdminService>),
     );
   });
   afterAll(async () => {
