@@ -228,6 +228,17 @@ describe("RfInvoiceIssuerService", () => {
     expect(now[0].periodStart).toEqual(far.periodEnd);
   });
 
+  it("issue-now path (actor given): the period WINDOW is handed to build(), so a multi-month period is priced like the cron's", async () => {
+    const { svc, builder } = make({ subs: [] });
+    const quarter = {
+      periodStart: new Date("2026-10-12T00:00:00.000Z"),
+      periodEnd: new Date("2027-01-10T00:00:00.000Z"),
+    };
+    const r = await svc.issuePeriod(sub() as any, quarter, NOW, "sa-1");
+    expect(r.status).toBe("issued");
+    expect((builder.build as jest.Mock).mock.calls[0]).toEqual(["tenant-acme", "MONTHLY", quarter]);
+  });
+
   it("CRON-4: RF_INVOICING_MODE unset (or junk) makes ZERO reads and writes", async () => {
     for (const v of [undefined, "", "off", "banana"]) {
       if (v === undefined) delete process.env.RF_INVOICING_MODE;
