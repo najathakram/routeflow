@@ -93,6 +93,7 @@ export default function CartScreen() {
           const existing = buyerOrderConflict(e);
           if (existing?.orderId) {
             const id = existing.orderId;
+            // scan-ok: confirm-navigate — an info alert about a refused duplicate create; "Open order" is a shortcut to the order that already exists, not the confirmation of an action
             confirm(
               "Order already placed",
               BUYER_ORDER_CONFLICT_COPY,
