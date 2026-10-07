@@ -28,8 +28,8 @@ function qtySummary(line: PrefilledReturnLine): string {
   const pack = packOf(line);
   const boxes = pack ? count(line.boxes) : 0;
   const pieces = count(line.pieces);
-  if (boxes > 0 && pieces > 0) return `${boxes} cs + ${pieces}`;
-  if (boxes > 0) return `${boxes} cs`;
+  if (boxes > 0 && pieces > 0) return `${boxes} bx + ${pieces}`;
+  if (boxes > 0) return `${boxes} bx`;
   return String(pieces);
 }
 

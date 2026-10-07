@@ -28,7 +28,7 @@ export function SellByToggle({
           accessibilityState={value === opt ? { selected: true } : {}}
         >
           <Text style={[styles.text, value === opt && styles.textActive]}>
-            {opt === "case" ? "Cases" : "Units"}
+            {opt === "case" ? "Boxes" : "Pieces"}
           </Text>
         </Pressable>
       ))}

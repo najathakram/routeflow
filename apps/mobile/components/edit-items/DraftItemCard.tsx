@@ -258,23 +258,23 @@ export function DraftItemCard({
           <SellByToggle value={sellBy} onChange={onSetSellBy} />
           {sellBy === "unit" ? (
             <StepperRow
-              label={`Total ${item.unit ? `${item.unit}s` : "units"}`}
+              label="Total pieces"
               value={qty}
               onChange={onSetUnits}
-              hint={`${upb} per case`}
+              hint={`${upb} pcs per box`}
             />
           ) : (
             <>
-              <StepperRow label="Cases" value={item.boxes ?? 0} onChange={onSetBoxes} />
+              <StepperRow label="Boxes" value={item.boxes ?? 0} onChange={onSetBoxes} />
               {showLoose ? (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <View style={{ flex: 1 }}>
                     <StepperRow
-                      label="Extra loose units"
+                      label="Extra pieces"
                       value={item.pieces ?? 0}
                       onChange={onSetPieces}
                       max={upb - 1}
-                      hint={`${item.unit ?? "units"} · ${upb} per case`}
+                      hint={`${upb} pcs per box`}
                     />
                   </View>
                   {canRemoveLooseUnits(item.boxes) ? (
@@ -293,7 +293,7 @@ export function DraftItemCard({
                         backgroundColor: ios.fill,
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Remove extra units"
+                      accessibilityLabel="Remove extra pieces"
                     >
                       <Ionicons name="close" size={16} color={ios.label2} />
                     </Pressable>
@@ -314,10 +314,10 @@ export function DraftItemCard({
                     borderColor: ios.separator,
                   }}
                   accessibilityRole="button"
-                  accessibilityLabel="Add extra loose units"
+                  accessibilityLabel="Add extra pieces"
                 >
                   <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand }}>
-                    + units
+                    + pieces
                   </Text>
                 </Pressable>
               )}

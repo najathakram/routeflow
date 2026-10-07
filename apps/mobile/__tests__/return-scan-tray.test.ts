@@ -40,7 +40,7 @@ describe("#2694 returnTrayRows", () => {
       [line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "3" })],
       [],
     );
-    expect(rows[0]).toMatchObject({ qty: 51, qtySummary: "2 cs + 3", unitsPerBox: 24 });
+    expect(rows[0]).toMatchObject({ qty: 51, qtySummary: "2 bx + 3", unitsPerBox: 24 });
   });
 });
 
@@ -49,19 +49,19 @@ describe("#2694 returnTrayRows", () => {
 describe("#2694 SA-561 tray edits keep the pack split", () => {
   const cased = line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "3" });
 
-  it("'2 cs + 3' stepped +1 ⇒ '2 cs + 4'", () => {
+  it("'2 bx + 3' stepped +1 ⇒ '2 bx + 4'", () => {
     const next = stepReturnLine([cased], "cs", +1);
     expect(next[0]).toMatchObject({ boxes: "2", pieces: "4" });
-    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 cs + 4");
+    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 bx + 4");
   });
 
-  it("a typed 48 ⇒ '2 cs'", () => {
+  it("a typed 48 ⇒ '2 bx'", () => {
     const next = setReturnLineQty([cased], "cs", 48);
     expect(next[0]).toMatchObject({ boxes: "2", pieces: "" });
-    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 cs");
+    expect(returnTrayRows(next, [])[0].qtySummary).toBe("2 bx");
   });
 
-  it("stepping down across a case boundary ('2 cs' − 1 ⇒ '1 cs + 23')", () => {
+  it("stepping down across a case boundary ('2 bx' − 1 ⇒ '1 bx + 23')", () => {
     const two = line({ productId: "cs", unitsPerBox: 24, boxes: "2", pieces: "" });
     expect(stepReturnLine([two], "cs", -1)[0]).toMatchObject({ boxes: "1", pieces: "23" });
   });

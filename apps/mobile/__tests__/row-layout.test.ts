@@ -124,7 +124,7 @@ describe("textColumnWidth", () => {
       expect(miniPill).toBe(104);
     });
 
-    it("Cases + Loose steppers fit band line 1 at every supported viewport", () => {
+    it("Boxes + Extra pieces steppers fit band line 1 at every supported viewport", () => {
       for (const viewport of [320, 375, 390]) {
         const line1 = miniPill * 2 + BAND_GAP;
         expect(`${viewport}:${line1 <= bandInnerWidth(viewport)}`).toBe(`${viewport}:true`);

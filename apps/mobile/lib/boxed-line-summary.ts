@@ -37,8 +37,8 @@ export function boxedLineSummary(
   const boxes = split.boxes ?? 0;
   const pieces = split.pieces ?? 0;
   const parts: string[] = [];
-  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
-  if (pieces > 0) parts.push(`${pieces} loose`);
+  if (boxes > 0) parts.push(`${boxes} ${boxes === 1 ? "box" : "boxes"}`);
+  if (pieces > 0) parts.push(`${pieces} pcs`);
   // Raw line fields, exactly as the footer memo passes them — the two totals
   // must be byte-identical.
   const subtotal = computeLineSubtotal({

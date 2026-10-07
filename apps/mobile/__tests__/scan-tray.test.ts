@@ -109,12 +109,12 @@ describe("trayRowsFrom", () => {
   it("renders a boxed qty summary in cases plus loose units", () => {
     // 7 units of a 6-pack -> 1 case + 1 loose.
     const out = rows({ case6: { qty: 7, boxes: 1, pieces: 1 } }, ["case6"]);
-    expect(out[0].qtySummary).toBe("1 cs + 1");
+    expect(out[0].qtySummary).toBe("1 bx + 1");
   });
 
   it("drops the loose part when the boxed line is whole cases", () => {
     const out = rows({ case6: { qty: 12, boxes: 2, pieces: 0 } }, ["case6"]);
-    expect(out[0].qtySummary).toBe("2 cs");
+    expect(out[0].qtySummary).toBe("2 bx");
   });
 
   it("renders a plain count for a single-unit line", () => {
@@ -124,7 +124,7 @@ describe("trayRowsFrom", () => {
 
   it("rolls a raw boxed qty into cases for the summary", () => {
     const out = rows({ case6: { qty: 7 } }, ["case6"]);
-    expect(out[0].qtySummary).toBe("1 cs + 1");
+    expect(out[0].qtySummary).toBe("1 bx + 1");
   });
 
   it("prices a boxed line through the shared helper (loose units prorated)", () => {

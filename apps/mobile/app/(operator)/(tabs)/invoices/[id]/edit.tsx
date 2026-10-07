@@ -683,7 +683,7 @@ function LineCard({
             <Text style={styles.lineName} numberOfLines={2}>
               {line.description}
             </Text>
-            {isSplit ? <Text style={styles.lineMeta}>case of {upb}</Text> : null}
+            {isSplit ? <Text style={styles.lineMeta}>box of {upb}</Text> : null}
           </View>
         ) : (
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -707,12 +707,12 @@ function LineCard({
       {line.locked ? (
         <View testID="locked-line">
           <Text style={styles.fieldHint}>
-            {line.storedBoxes} case · {line.storedPieces} loose · $
+            {line.storedBoxes} box · {line.storedPieces} pcs · $
             {Number(line.unitPrice ?? 0).toFixed(2)}
             {" — set the box and piece count for this line to edit it."}
           </Text>
           <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Units per case</Text>
+            <Text style={styles.fieldLabel}>Pieces per box</Text>
             <TextInput
               keyboardType="number-pad"
               placeholder="e.g. 12"
@@ -735,7 +735,7 @@ function LineCard({
       ) : (
         <>
           <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
+            <Text style={styles.fieldLabel}>Price{isSplit ? " / box" : ""}</Text>
             <View style={styles.fieldInputWrap}>
               <Text style={styles.fieldCurrency}>$</Text>
               <MoneyTextInput
@@ -751,14 +751,14 @@ function LineCard({
           {isSplit ? (
             <>
               <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel}>Cases</Text>
+                <Text style={styles.fieldLabel}>Boxes</Text>
                 <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
               </View>
               {showLoose ? (
                 <View style={styles.fieldRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.fieldLabel}>Extra loose units</Text>
-                    <Text style={styles.fieldHint}>{upb} per case</Text>
+                    <Text style={styles.fieldLabel}>Extra pieces</Text>
+                    <Text style={styles.fieldHint}>{upb} pcs per box</Text>
                   </View>
                   <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
                   {canRemoveLooseUnits(line.boxes) ? (
@@ -770,7 +770,7 @@ function LineCard({
                       hitSlop={8}
                       style={styles.looseRemove}
                       accessibilityRole="button"
-                      accessibilityLabel="Remove extra units"
+                      accessibilityLabel="Remove extra pieces"
                     >
                       <Ionicons name="close" size={16} color={ios.label2} />
                     </Pressable>
@@ -782,9 +782,9 @@ function LineCard({
                   hitSlop={8}
                   style={styles.looseAdd}
                   accessibilityRole="button"
-                  accessibilityLabel="Add extra loose units"
+                  accessibilityLabel="Add extra pieces"
                 >
-                  <Text style={styles.looseAddText}>+ units</Text>
+                  <Text style={styles.looseAddText}>+ pieces</Text>
                 </Pressable>
               )}
             </>

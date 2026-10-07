@@ -276,7 +276,7 @@ export function ProductPicker({
         // filtered list the operator is reading) survives — the same rule
         // createWedgeSubmitHandler applies at wedge-submit.ts:77.
         if (looksLikeScanCode(searchTermRef.current)) clearSearch();
-        const loose = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+        const loose = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1 ? "1 pc · " : "";
         return { feedback: { kind: "added", text: `Added ${loose}${product.name}` } };
       }
       // Substitute mode: exactly one pick, so the scanner closes behind it.
@@ -354,7 +354,7 @@ export function ProductPicker({
     if (!scanGuardRef.current.offer(code, match, level)) return;
     onPickAndStay(match, level);
     clearSearch();
-    const loose = level === "UNIT" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+    const loose = level === "UNIT" && Number(match.unitsPerBox ?? 0) > 1 ? "1 pc · " : "";
     showToast(`Added ${loose}${match.name}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);

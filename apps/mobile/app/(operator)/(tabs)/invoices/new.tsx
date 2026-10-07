@@ -659,7 +659,7 @@ function InvoiceComposer({
     clearSearch();
     const label =
       level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
-        ? `Added 1 loose · ${displayName(product)}`
+        ? `Added 1 pc · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     setPendingScroll((s) => requestScroll(s, product.id));
@@ -2049,7 +2049,7 @@ function ReviewRow({
             {displayName(product)}
           </Text>
           <Text style={styles.cartRowMeta} numberOfLines={1}>
-            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
+            {isBoxed ? `box of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
         </View>
@@ -2061,7 +2061,7 @@ function ReviewRow({
       {/* Editable price — the "discounted price". Defaults to the catalog price;
           typing another value records a one-time override for this line. */}
       <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
+        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / box" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
           <MoneyTextInput
@@ -2092,16 +2092,16 @@ function ReviewRow({
 
       {isBoxed ? (
         <>
-          <StepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
+          <StepperRow label="Boxes" value={line.boxes ?? 0} onChange={onChangeBoxes} />
           {showLoose ? (
             <View style={styles.looseRow}>
               <View style={{ flex: 1 }}>
                 <StepperRow
-                  label="Extra loose units"
+                  label="Extra pieces"
                   value={line.pieces ?? 0}
                   onChange={onChangePieces}
                   max={upb - 1}
-                  hint={`${product.unit ?? "units"} · ${upb} per case`}
+                  hint={`${upb} pcs per box`}
                 />
               </View>
               {canRemoveLooseUnits(line.boxes) ? (
@@ -2113,7 +2113,7 @@ function ReviewRow({
                   hitSlop={8}
                   style={styles.looseRemove}
                   accessibilityRole="button"
-                  accessibilityLabel="Remove extra units"
+                  accessibilityLabel="Remove extra pieces"
                 >
                   <Ionicons name="close" size={16} color={ios.label2} />
                 </Pressable>
@@ -2125,9 +2125,9 @@ function ReviewRow({
               hitSlop={8}
               style={styles.looseAdd}
               accessibilityRole="button"
-              accessibilityLabel="Add extra loose units"
+              accessibilityLabel="Add extra pieces"
             >
-              <Text style={styles.looseAddText}>+ units</Text>
+              <Text style={styles.looseAddText}>+ pieces</Text>
             </Pressable>
           )}
         </>

@@ -8,19 +8,19 @@ import { boxedLineSummary } from "../lib/boxed-line-summary";
 import { computeLineSubtotal } from "@routeflow/pricing";
 
 describe("boxedLineSummary", () => {
-  it("formats cases + loose with the prorated subtotal", () => {
+  it("formats boxes + pcs with the prorated subtotal", () => {
     // (2 + 1/6) box-equivalents × $12/case = $26.00
     expect(boxedLineSummary({ qty: 13, boxes: 2, pieces: 1 }, 6, 12)).toBe(
-      "2 cases + 1 loose · $26.00",
+      "2 boxes + 1 pcs · $26.00",
     );
   });
 
-  it("uses the singular for one case", () => {
-    expect(boxedLineSummary({ qty: 6, boxes: 1, pieces: 0 }, 6, 12)).toBe("1 case · $12.00");
+  it("uses the singular for one box", () => {
+    expect(boxedLineSummary({ qty: 6, boxes: 1, pieces: 0 }, 6, 12)).toBe("1 box · $12.00");
   });
 
-  it("formats a loose-only line", () => {
-    expect(boxedLineSummary({ qty: 3, boxes: 0, pieces: 3 }, 6, 12)).toBe("3 loose · $6.00");
+  it("formats a pieces-only line", () => {
+    expect(boxedLineSummary({ qty: 3, boxes: 0, pieces: 3 }, 6, 12)).toBe("3 pcs · $6.00");
   });
 
   it("passes RAW fields to the subtotal so row and footer agree, even qty-only", () => {
@@ -34,7 +34,7 @@ describe("boxedLineSummary", () => {
     // same raw fields — row-vs-footer agreement is the invariant that matters,
     // and this test pins it. If this ever fails with $14.00, someone made the
     // summary normalize without making the footer normalize too.
-    expect(boxedLineSummary({ qty: 7 }, 6, 12)).toBe("1 case + 1 loose · $84.00");
+    expect(boxedLineSummary({ qty: 7 }, 6, 12)).toBe("1 box + 1 pcs · $84.00");
   });
 
   it("renders the 0 placeholder for an empty line", () => {
@@ -42,7 +42,7 @@ describe("boxedLineSummary", () => {
   });
 
   it("uses the resolved price it is given (override applied by the caller)", () => {
-    expect(boxedLineSummary({ qty: 6, boxes: 1, pieces: 0 }, 6, 10)).toBe("1 case · $10.00");
+    expect(boxedLineSummary({ qty: 6, boxes: 1, pieces: 0 }, 6, 10)).toBe("1 box · $10.00");
   });
 
   it("agrees with the footer's computeLineSubtotal to the cent", () => {

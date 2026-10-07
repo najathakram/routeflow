@@ -967,7 +967,7 @@ function ProductPickView({
     clearSearch();
     const label =
       level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
-        ? `Added 1 loose · ${displayName(product)}`
+        ? `Added 1 pc · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     // Only reachable from a non-sheet caller — mirrors web's scrollIntoView({block:"nearest"}).

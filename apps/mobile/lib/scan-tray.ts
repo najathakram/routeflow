@@ -78,7 +78,7 @@ function formatTrayQty(boxes: number | null, pieces: number | null, qty: number)
   const b = Math.max(0, Math.trunc(boxes ?? 0));
   const p = Math.max(0, Math.trunc(pieces ?? 0));
   if (b === 0) return String(p);
-  return p > 0 ? `${b} cs + ${p}` : `${b} cs`;
+  return p > 0 ? `${b} bx + ${p}` : `${b} bx`;
 }
 
 function catalogRow(

@@ -79,7 +79,7 @@ export const ProductRow = React.memo(function ProductRow({
             {isSpecial ? <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text> : null}
             <Text style={isSpecial ? styles.metaSpecial : undefined}>${price.toFixed(2)}</Text>
             {isBoxed
-              ? ` / case of ${upb}`
+              ? ` / box of ${upb}`
               : unitLabel
                 ? ` / ${unitLabel}`
                 : unit

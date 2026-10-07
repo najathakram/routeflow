@@ -10,7 +10,7 @@ export interface BoxedQtyBandProps {
   /** Raw line fields, exactly as the builder's footer memo passes them. */
   line: BoxedSummaryLine;
   unitsPerBox: number;
-  /** Loose-unit noun ("bottle"); falls back to "units". */
+  /** Retained for callers; the loose-pieces label is now the fixed "Extra pieces". */
   unit?: string | null;
   /**
    * RESOLVED per-case price (override else tier/catalog). Never a Product —
@@ -37,7 +37,7 @@ export interface BoxedQtyBandProps {
  * Inline qty entry for an added case-packed row. Renders as FRAGMENT children
  * of ProductRow's `band` (flexDirection row, flexWrap, gap 10):
  *
- *   line 1 — "Cases" + "Loose <unit>" mini steppers (104px pills; 218px total,
+ *   line 1 — "Boxes" + "Extra pieces" mini steppers (104px pills; 218px total,
  *            fits the 268px band at the 320px viewport floor);
  *   line 2 — summary + Edit chip, forced to wrap via flexBasis "100%" on the
  *            WRAPPER (basis on the Text alone would push the chip to line 3).
@@ -49,7 +49,6 @@ export interface BoxedQtyBandProps {
 export function BoxedQtyBand({
   line,
   unitsPerBox,
-  unit,
   unitPrice,
   productName,
   onChangeBoxes,
@@ -63,7 +62,7 @@ export function BoxedQtyBand({
     <>
       <View style={styles.control}>
         <Text style={styles.label} numberOfLines={1}>
-          Cases
+          Boxes
         </Text>
         <QtyStepper size="mini" value={line.boxes ?? 0} onChangeQty={onChangeBoxes} />
       </View>
@@ -73,7 +72,7 @@ export function BoxedQtyBand({
               control past its 104px pill or line 1 stops fitting at 320px. */}
           <View style={styles.looseLabelRow}>
             <Text style={styles.label} numberOfLines={1}>
-              {`Loose ${unit ?? "units"}`}
+              Extra pieces
             </Text>
             {canRemoveLooseUnits(line.boxes) ? (
               <Pressable
@@ -83,7 +82,7 @@ export function BoxedQtyBand({
                 }}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel="Remove extra units"
+                accessibilityLabel="Remove extra pieces"
               >
                 <Ionicons name="close-circle" size={14} color={ios.label2} />
               </Pressable>
@@ -94,7 +93,7 @@ export function BoxedQtyBand({
             value={line.pieces ?? 0}
             onChangeQty={onChangePieces}
             // Mirror the Review sheet's clamp (setLinePieces itself doesn't):
-            // a full case's worth of loose belongs in the Cases stepper.
+            // a full box's worth of pieces belongs in the Boxes stepper.
             max={unitsPerBox - 1}
           />
         </View>
@@ -104,9 +103,9 @@ export function BoxedQtyBand({
           hitSlop={8}
           style={styles.looseAdd}
           accessibilityRole="button"
-          accessibilityLabel="Add extra loose units"
+          accessibilityLabel="Add extra pieces"
         >
-          <Text style={styles.looseAddText}>+ units</Text>
+          <Text style={styles.looseAddText}>+ pieces</Text>
         </Pressable>
       )}
       <View style={styles.summaryRow}>

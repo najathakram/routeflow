@@ -146,7 +146,7 @@ export function ProductForm({
       <FormSection title="Basics">
         <FormField
           label="Variant of (optional)"
-          hint="Link this as a flavor/variety of an existing product. Variants inherit the parent's price tiers, case size, and category unless you override them."
+          hint="Link this as a flavor/variety of an existing product. Variants inherit the parent's price tiers, box size, and category unless you override them."
         >
           <Pressable style={styles.picker} onPress={() => setParentPickerOpen(true)}>
             <View style={styles.pickerInner}>
@@ -230,7 +230,7 @@ export function ProductForm({
       </FormSection>
 
       <FormSection title="Identifiers">
-        <FormField label="SKU (case code)">
+        <FormField label="SKU (box code)">
           <FormTextInput
             value={form.sku}
             onChangeText={(v) => set("sku", v)}
@@ -268,14 +268,14 @@ export function ProductForm({
         </FormField>
         <FormField
           label="Unit code"
-          hint="Code on the individual unit — printed on customer invoices. Leave blank if it matches the case code."
+          hint="Code on the individual unit — printed on customer invoices. Leave blank if it matches the box code."
         >
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
             <View style={{ flex: 1 }}>
               <FormTextInput
                 value={form.unitSku}
                 onChangeText={(v) => set("unitSku", v)}
-                placeholder="Same as case code"
+                placeholder="Same as box code"
                 autoCapitalize="characters"
               />
             </View>
@@ -298,8 +298,8 @@ export function ProductForm({
           />
         </FormField>
         <FormField
-          label="Units per case (optional)"
-          hint="Leave blank for products sold individually. Set to N if 1 case contains N loose units — orders can then be issued as cases + loose units."
+          label="Pieces per box (optional)"
+          hint="Leave blank for products sold individually. Set to N if 1 box contains N pieces — orders can then be issued as boxes + pieces."
         >
           <FormTextInput
             value={form.unitsPerBox}
@@ -394,7 +394,7 @@ export function ProductForm({
           label="Price per unit"
           hint={
             isBoxed
-              ? `This is the CASE price. A loose unit costs price ÷ units-per-case.${
+              ? `This is the box price. A loose piece costs price ÷ pieces-per-box.${
                   perUnitPreview != null ? ` ≈ $${perUnitPreview.toFixed(2)} / unit` : ""
                 }`
               : undefined

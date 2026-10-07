@@ -138,7 +138,7 @@ export function CartRow({
             {displayName(product)}
           </Text>
           <Text style={styles.cartRowMeta} numberOfLines={1}>
-            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
+            {isBoxed ? `box of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
           {/* R5/B195: an archived product is kept on the order (it is still
@@ -159,7 +159,7 @@ export function CartRow({
           unitPrice. SPECIAL (tier≠1) lines lock it (web parity: the input is
           hidden there — a tier price is the customer's permanent price). */}
       <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
+        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / box" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
           {isSpecial ? (
@@ -252,23 +252,23 @@ export function CartRow({
           </View>
           {sellBy === "unit" ? (
             <CartStepperRow
-              label={`Total ${product.unit ? `${product.unit}s` : "units"}`}
+              label="Total pieces"
               value={qty}
               onChange={onChangeUnits}
-              hint={`${upb} per case`}
+              hint={`${upb} pcs per box`}
             />
           ) : (
             <>
-              <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
+              <CartStepperRow label="Boxes" value={line.boxes ?? 0} onChange={onChangeBoxes} />
               {showLooseUnits ? (
                 <View style={styles.looseRow}>
                   <View style={{ flex: 1 }}>
                     <CartStepperRow
-                      label="Extra loose units"
+                      label="Extra pieces"
                       value={line.pieces ?? 0}
                       onChange={onChangePieces}
                       max={upb - 1}
-                      hint={`${product.unit ?? "units"} · ${upb} per case`}
+                      hint={`${upb} pcs per box`}
                     />
                   </View>
                   {canRemoveLooseUnits(line.boxes) ? (
@@ -280,7 +280,7 @@ export function CartRow({
                       hitSlop={8}
                       style={styles.looseRemove}
                       accessibilityRole="button"
-                      accessibilityLabel="Remove extra units"
+                      accessibilityLabel="Remove extra pieces"
                     >
                       <Ionicons name="close" size={16} color={ios.label2} />
                     </Pressable>
@@ -292,9 +292,9 @@ export function CartRow({
                   hitSlop={8}
                   style={styles.looseAdd}
                   accessibilityRole="button"
-                  accessibilityLabel="Add extra loose units"
+                  accessibilityLabel="Add extra pieces"
                 >
-                  <Text style={styles.looseAddText}>+ units</Text>
+                  <Text style={styles.looseAddText}>+ pieces</Text>
                 </Pressable>
               )}
             </>

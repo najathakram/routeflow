@@ -64,7 +64,7 @@ export function PackSizeSheet({
         <Text style={styles.title}>Pack size</Text>
         <Text style={styles.message}>{prompt.message}</Text>
 
-        <FormField label="Units per case">
+        <FormField label="Pieces per box">
           <FormTextInput
             value={value}
             onChangeText={setValue}
