@@ -58,7 +58,7 @@ export function useProductCategories() {
 }
 
 /** Invalidate every query whose data depends on the set of products. */
-function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["products"] });
   // Inventory overview + valuation are derived from products but keyed
   // separately — refresh them so a newly created/deleted product shows up
@@ -81,10 +81,7 @@ export function useUpdateProduct() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/products/${id}`, data).then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["products", vars.id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -106,10 +103,7 @@ export function useReactivateProduct() {
           ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
         })
         .then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["products", vars.id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -123,10 +117,7 @@ export function useDeactivateProduct() {
     meta: { localErrorToast: true },
     mutationFn: (id: string) =>
       apiClient.patch(`/products/${id}`, { isActive: false }).then((r) => r.data),
-    onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ["products", id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -306,7 +297,7 @@ export function useBulkAssignParent(options?: LocalErrorToastOption) {
       apiClient
         .post("/products/bulk-assign-parent", { parentProductId, assignments })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
