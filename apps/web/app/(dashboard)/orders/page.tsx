@@ -38,6 +38,8 @@ import { saveTripDraft } from "@/lib/trip-draft";
 import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { BatchShipActions } from "./_components/BatchShipActions";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -236,6 +238,7 @@ function PagerControls({
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");
@@ -286,6 +289,17 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
+    // A business whose staff default is the counter: "New order" OPENS AS the counter sale, unless the operator chose
+    // "Ship this order instead" (?ship=1), which falls through to the normal builder.
+    if (
+      !resume &&
+      action === "new" &&
+      counterGate.opensAsCounter &&
+      searchParams.get("ship") !== "1"
+    ) {
+      router.replace("/orders/counter-sale");
+      return;
+    }
     if (resume) {
       setResumeDraftId(resume);
     } else {
@@ -300,10 +314,12 @@ export default function OrdersPage() {
     params.delete("action");
     params.delete("resumeDraft");
     params.delete("scan");
+    params.delete("ship");
+    params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, counterGate.opensAsCounter]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -622,7 +638,20 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>New Order</Button>
+            {counterGate.showButton ? (
+              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
+                Counter sale
+              </Button>
+            ) : null}
+            <Button
+              onClick={() =>
+                counterGate.opensAsCounter
+                  ? router.push("/orders/counter-sale")
+                  : setIsCreateOpen(true)
+              }
+            >
+              New Order
+            </Button>
           </div>
         }
       />
@@ -646,6 +675,16 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          <BatchShipActions
+            orders={filtered
+              .filter((o) => selected.has(o.id))
+              .map((o) => ({
+                id: o.id,
+                orderNumber: o.orderNumber,
+                customerName: o.customer?.businessName,
+              }))}
+            onDone={exitSelectMode}
+          />
           {deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />

@@ -41,6 +41,8 @@ jest.mock("../notifications/notifications.service", () => ({
 // controller's merge branch (which imports `withAdvisoryLock` from this
 // module) runs its critical section exactly as in production, without
 // touching Postgres.
+// B1053: fold-math spec — row guard passed through (testing/merge-recheck.ts)
+jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck").pass());
 jest.mock("../common/db-locks", () => {
   class LockTimeoutError extends Error {
     constructor(
@@ -253,7 +255,7 @@ async function buildOrdersService(
   return module.get<OrdersService>(OrdersService);
 }
 
-const buildController = (svc: any) => new OrdersController(svc, {} as any);
+const buildController = (svc: any) => new OrdersController(svc, {} as any, {} as any, {} as any);
 
 const activeOrderFixture = {
   id: "ord-active",

@@ -1,6 +1,6 @@
 {
-  "mappedSha": "695a4aa4f3a112ffca806164b14c5c53e40e0c3b",
-  "generatedAt": "2026-10-06T12:00:00.000Z",
+  "mappedSha": "d349dfeb6e4d1abe3af087ee4ff8792f1d47f6f3",
+  "generatedAt": "2026-10-07T00:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1050,
-  "notes": "**2026-10-06 \u2014 window 12 and pending landings #3102, #3226, #3232, #3240, #3235 and #3223 (master `695a4aa4f`) (docs-only bookkeeping).** Late sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`, each symbol grepped at `695a4aa4f`. #3240 is a spec-only pin. `mappedSha` restamped to `695a4aa4f`. No source changed. See CHANGELOG.md."
+  "notes": "**2026-10-07 — W16 train (#3247, #3254, #3250, #3239, #3215, #3186, #3252; master `0567a7a73`) and W16b (#3258 tighten access-token validation; master `d349dfeb6`) (docs-only bookkeeping).** W16 TODO markers filled in `api/`, `web/`, `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`; W16b section added to `api/landing-2026-10-06-w4-w10.md`. `mappedSha` restamped to `d349dfeb6`. No source changed. See CHANGELOG.md."
 }

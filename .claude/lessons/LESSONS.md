@@ -220,6 +220,20 @@
 - **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
 - **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
 
+### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
+
+- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
+- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
+- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
+- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
+
+### L-269 · 2026-10-07 · process · re-arm the visibility watchdog on a timer at least 5 minutes before its deadline, and read visibility before every merge (W15)
+
+- **Symptom:** a PR in a public CI window merged after the watchdog had already flipped the repo private, so the merge-triggered work ran against a private repo.
+- **Root cause:** the window outlived the watchdog's deadline and nothing re-armed it or re-read visibility; the lane assumed the window was still open because nobody had said otherwise.
+- **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
+- **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -408,13 +422,6 @@
 - **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
 - **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
 - **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
-
-### L-263 · 2026-10-05 · tooling · a plain `npm ci` rewrites the SHARED `core.hooksPath`, silently switching off hooks in other worktrees (#3199)
-
-- **Symptom:** after a worktree ran `npm ci`, a push from another worktree ran no pre-push verify at all and #3199 went out unverified; nothing printed, git treats a missing hooks directory as "no hooks".
-- **Root cause:** `prepare` runs `husky`, which sets `core.hooksPath = .husky/_` (relative) in the one repo config every worktree shares; a worktree without its own `.husky/_` then has no hooks, instead of the absolute fleet shim. A one-time restore at session start does not hold: any later `npm ci` in any worktree resets it.
-- **Lesson:** **Install a worktree with `npm ci --ignore-scripts` and build `packages/*` by hand; after ANY `npm ci` or `npx husky`, and before every push, run `git config core.hooksPath` and restore the absolute shim (`git config core.hooksPath <main checkout>/.git/husky-shim/_`) if it reads `.husky/_`. A push that printed no verify output did not verify.**
-- **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
 
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
@@ -622,22 +629,6 @@
   a wrong charge date.**
 - **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
   `anchorDay` column. Sibling [[L-118]].
-
-### L-143 · 2026-09-15 · domain · B421 (credit-applied vs paid, full fix)
-
-- **Symptom:** a CREDIT_NOTE-method payment (`status: PAID`) rendered/counted as cash everywhere
-  a "Paid"/"received" figure was shown — invoice totals, PDF, buyer portal, mobile, every
-  bookkeeping cash-flow figure.
-- **Root cause:** the one shared confirmed-payment predicate answered "is this confirmed"
-  (status), necessary but not sufficient for "is this cash" — nothing distinguished the two
-  questions, so every consumer answered both with the same number.
-- **Lesson:** **A "paid"/"received" DISPLAY figure is cash-only (excludes CREDIT_NOTE; ADVANCE
-  stays in, since its application is the only place cash is ever recorded) — but
-  balance/status/outstanding figures keep the FULL confirmed total, since a credit note or
-  advance genuinely settles what's owed. Two questions, two filters, ONE shared predicate.**
-- **Guard:** `@routeflow/pricing`'s `splitConfirmed`/`resolveConfirmedAmounts`/
-  `RECEIVED_METHOD_FILTER`/`CASH_METHOD_FILTER` are the one implementation api/web/mobile import
-  — never re-derive either filter at a second site.
 
 ### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
 

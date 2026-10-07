@@ -18,6 +18,7 @@ import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { escapeHtml } from "../common/html-escape";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
+import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -461,25 +462,35 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Already verified — still issue tokens so clicking the link twice works smoothly.
-    // X2 fix: only INACTIVE (the legitimate self-signup-pending-verification
-    // state) may transition to ACTIVE here. This token is a 24h-lived JWT
-    // signed at signup time — if an admin SUSPENDS the account within that
-    // window (e.g. for abuse, before the owner ever verified), the still-valid
-    // link must not silently un-suspend it. Any other non-ACTIVE status is a
-    // deliberate administrative decision this token was never meant to override.
-    if (user.status !== "ACTIVE" && user.status !== "INACTIVE") {
-      throw new BadRequestException(
-        "This account is not available. Contact support if you believe this is an error.",
-      );
+    // Only a signup admin that has never signed in may be activated by this link; every other
+    // account is refused with one coded, reason-free answer (see verification-link-eligibility).
+    if (!(await mayUseVerificationLink(this.prisma, user))) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    const activeUser =
-      user.status === "ACTIVE"
-        ? user
-        : await this.prisma.user.update({
-            where: { id: user.id },
-            data: { status: "ACTIVE" },
-          });
+    // Claim the activation atomically (a second concurrent use loses) and record it in the same
+    // transaction, so a failed audit write rolls the activation back.
+    const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      const res = await tx.user.updateMany({
+        where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
+        data: { status: "ACTIVE" },
+      });
+      if (res.count !== 1) return false;
+      await tx.auditLog.create({
+        data: {
+          tenantId: user.tenantId ?? null,
+          userId: user.id,
+          action: "user.activate",
+          entityType: "User",
+          entityId: user.id,
+          meta: { reason: "email_verify" },
+        },
+      });
+      return true;
+    });
+    if (!claimed) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
+    }
+    const activeUser = { ...user, status: "ACTIVE" as const };
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);

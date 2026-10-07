@@ -13,6 +13,7 @@ import { Logger, OnModuleDestroy } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { isStaffSessionPayload } from "../auth/session-token";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -305,6 +306,8 @@ export class RouteFlowGateway
         await this.syncBuyerRooms([client]);
         return;
       }
+
+      if (!isStaffSessionPayload(payload)) throw new WsException("Invalid token");
 
       client.data.user = payload;
 

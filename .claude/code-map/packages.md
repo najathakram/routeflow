@@ -498,3 +498,16 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `api/ship-state.ts` (#3223) — NEW: `SHIPPED_ORDER_STATUSES`, `ShippedOrderStatus`, `isShippedOrderStatus(status)`; re-exported from `index.ts`; pinned to the api's shipped statuses by `orders/shipped-statuses-parity.spec.ts`.
 - `api/buyer.ts` (#3235, B1122) — NEW `BuyerInvoiceListItem` (`total`, `balanceDue`, `paidAmount`, `creditApplied`, `advanceApplied`, `isOverdue`, `customer`); contract spec `buyer/buyer-shared-types.contract.spec.ts`.
 - `api/error-codes.ts` (#3226) — +`ADDON_CHECKOUT_ITEM_UNREADABLE`, `ADDON_CHECKOUT_ITEM_MISSING`; `api/billing.ts` addon rows gain optional `trial` (the add-on runs free on the trial, billed when the card is added).
+
+## Landed 2026-10-06 (windows 13 to 16)
+
+- `api/fulfilment.ts` (#3200) — NEW `BuyerSellerCapability` (a `Pick` of the seller capability; the `GET /buyer/capabilities` payload).
+- `api/counter-sale.ts` (#3211) — NEW `COUNTER_SALE_PAYMENT_METHOD_VALUES`, `CounterSalePaymentMethod`, `CounterSaleItem`, `CounterSalePayment`, `CounterSaleRequest`, `CounterSaleResponse`; re-exported from `index.ts`. `api/routes.ts` gains the pickup-stop fields.
+- `api/error-codes.ts` (#3211, #3244) — +`ORDER_WITH_CARRIER_NO_ADD`; counter-sale family `COUNTER_SALES_DISABLED`, `COUNTER_TENDER_SHORT`, `COUNTER_CHECK_NUMBER_REQUIRED`, `COUNTER_PAYMENT_EXCEEDS_TOTAL`, `COUNTER_PAYMENT_NOT_RECORDED`, `COUNTER_SALE_{ORDER_CHANGED,KEY_CONFLICT,NOT_FOUND,INCOMPLETE,VOIDED,CHANGED,METHOD_INVALID}`, the `WALK_IN_*` codes, and `IDEMPOTENCY_KEY_{OTHER_ORDER,CART_MISMATCH,REQUIRED}`. API literals are pinned by the parity spec (L-261).
+
+## Landed 2026-10-06 (W16 train)
+
+- `api/counter-sale.ts` (#3239) — pickup-complete request and response types added beside the #3211 counter-sale ones.
+- `api/error-codes.ts` (#3250, #3239) — batch-ship and pickup-complete codes added (API literals pinned by the parity spec, L-261).
+- `api/orders.ts` (#3250) — batch-ship and packing-slip request and result types.
+- `api/buyer.ts` (#3215) — buyer response shapes narrowed to the customer-facing fields.

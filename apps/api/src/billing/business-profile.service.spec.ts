@@ -8,6 +8,7 @@
  */
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { BusinessProfileService } from "./business-profile.service";
+import { FEATURE_REGISTRY } from "./feature-registry";
 
 const T = "tenant-a";
 const DAY = 86_400_000;
@@ -102,8 +103,8 @@ describe("BusinessProfileService.list", () => {
       "in_store_retailer",
       "in_store_shipping_retailer",
     ]);
-    // availability comes from the feature registry (SA-671 M1): the pickup modes are not available
-    expect(res.profiles.map((p) => p.available)).toEqual([true, true, false, false]);
+    // availability comes from the feature registry (SA-671 M1 lifted): the pickup modes are available
+    expect(res.profiles.map((p) => p.available)).toEqual([true, true, true, true]);
   });
 });
 
@@ -281,24 +282,55 @@ describe("SA-671 M2 — driver payments is held exactly as its guard decides", (
 });
 
 describe("SA-671 M1 — an unavailable mode refuses the profile with a CODE, before any read", () => {
-  it.each(["in_store_retailer", "in_store_shipping_retailer"])("%s is refused", async (key) => {
-    const { svc, prisma, featureOverrides, featurePreview } = build();
-    const err = await svc.preview(T, key).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.getResponse()).toMatchObject({
-      code: "BUSINESS_PROFILE_UNAVAILABLE",
-      unavailable: [expect.objectContaining({ key: "fulfilment_model" })],
+  // The in-store modes are AVAILABLE in the registry now (pickup mode API), so the guard is proven by
+  // marking the live registry row unavailable for one test (restored in finally).
+  const modeRow = (mode: string) =>
+    FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes[mode] as {
+      available: boolean;
+    };
+  const withUnavailable = async (mode: string, run: () => Promise<void>) => {
+    const row = modeRow(mode);
+    row.available = false;
+    try {
+      await run();
+    } finally {
+      row.available = true;
+    }
+  };
+
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])("%s is refused while its mode is unavailable", async (key, mode) => {
+    await withUnavailable(mode, async () => {
+      const { svc, prisma, featureOverrides, featurePreview } = build();
+      const err = await svc.preview(T, key).catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "BUSINESS_PROFILE_UNAVAILABLE",
+        unavailable: [expect.objectContaining({ key: "fulfilment_model" })],
+      });
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+      expect(featureOverrides.list).not.toHaveBeenCalled();
+      expect(featurePreview.preview).not.toHaveBeenCalled();
     });
-    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
-    expect(featureOverrides.list).not.toHaveBeenCalled();
-    expect(featurePreview.preview).not.toHaveBeenCalled();
   });
 
   it("even when the tenant ALREADY stores that mode (an unchanged mode is no bypass)", async () => {
-    const { svc } = build({ modes: { fulfilment_model: "pickup", counter_sales: "on" } });
-    const err = await svc.plan(T, "in_store_retailer").catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+    await withUnavailable("pickup", async () => {
+      const { svc } = build({ modes: { fulfilment_model: "pickup", counter_sales: "on" } });
+      const err = await svc.plan(T, "in_store_retailer").catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+    });
   });
+
+  it.each(["in_store_retailer", "in_store_shipping_retailer"])(
+    "%s is NOT refused now that the registry offers its mode",
+    async (key) => {
+      const { svc } = build();
+      await expect(svc.plan(T, key)).resolves.toBeDefined();
+    },
+  );
 });
 
 describe("SA SHOULD — a MANUAL-pay add-on", () => {
