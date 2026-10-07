@@ -74,4 +74,11 @@ describe("ProductTile tap targets and Notify me", () => {
     expect(btn.className).toMatch(/\bmin-h-11\b/);
     expect(btn.className).toMatch(/\bshrink-0\b/);
   });
+
+  it("lets the price block shrink so long prices do not overflow narrow tiles", () => {
+    setup(product({ buyerPrice: 1234567.89 }));
+    const price = screen.getByText(/1,234,567\.89/);
+    const block = price.closest("p")!.parentElement!.parentElement!;
+    expect(block.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+  });
 });

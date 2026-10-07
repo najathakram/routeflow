@@ -103,7 +103,7 @@ export default function CartScreen() {
           } else if (existing) {
             showToast(BUYER_ORDER_CONFLICT_NO_ID_COPY);
           } else {
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+            showToast("Couldn't update your cart. Try again.");
           }
         },
       },

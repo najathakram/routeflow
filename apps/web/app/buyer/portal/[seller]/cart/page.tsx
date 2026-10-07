@@ -368,17 +368,28 @@ export default function BuyerCartPage() {
         <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full max-md:block md:min-w-[640px]">
-                <thead className="max-md:hidden">
-                  <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
-                    <th className="px-4 py-2.5 text-left">Product</th>
-                    <th className="px-4 py-2.5 text-center w-32">Qty</th>
-                    <th className="px-4 py-2.5 text-right w-24">Price</th>
-                    <th className="px-4 py-2.5 text-right w-24">Subtotal</th>
-                    <th className="px-4 py-2.5 w-12"></th>
+              <table role="table" className="w-full max-md:block md:min-w-[640px]">
+                <thead role="rowgroup" className="max-md:hidden">
+                  <tr
+                    role="row"
+                    className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider"
+                  >
+                    <th role="columnheader" className="px-4 py-2.5 text-left">
+                      Product
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-center w-32">
+                      Qty
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Price
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 text-right w-24">
+                      Subtotal
+                    </th>
+                    <th role="columnheader" className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border max-md:block">
+                <tbody role="rowgroup" className="divide-y divide-surface-border max-md:block">
                   {cart.items.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
@@ -386,10 +397,11 @@ export default function BuyerCartPage() {
                     const freeUnits = priced?.freeUnits ?? 0;
                     return (
                       <tr
+                        role="row"
                         key={item.productId}
                         className="hover:bg-surface-raised/50 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-4 max-md:gap-y-2 max-md:p-3"
                       >
-                        <td className="px-4 py-3 max-md:w-full max-md:p-0">
+                        <td role="cell" className="px-4 py-3 max-md:w-full max-md:p-0">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                               {item.thumbnailUrl ? (
@@ -416,7 +428,10 @@ export default function BuyerCartPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 max-md:min-w-0 max-md:flex-1 max-md:p-0">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 max-md:min-w-0 max-md:flex-1 max-md:p-0"
+                        >
                           {item.unitsPerBox && item.unitsPerBox > 0 ? (
                             // Boxes + Pieces input
                             <div className="flex flex-col items-center gap-1">
@@ -526,7 +541,10 @@ export default function BuyerCartPage() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm max-md:p-0 max-md:text-left">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm max-md:p-0 max-md:text-left"
+                        >
                           <span className="block text-[10px] uppercase tracking-wider text-navy/60 md:hidden">
                             Price
                           </span>
@@ -543,7 +561,10 @@ export default function BuyerCartPage() {
                             <span className="text-navy/70">{fmt(price)}</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm font-medium text-navy max-md:p-0 max-md:text-left">
+                        <td
+                          role="cell"
+                          className="px-4 py-3 text-right text-sm font-medium text-navy max-md:p-0 max-md:text-left"
+                        >
                           <span className="block text-[10px] font-normal uppercase tracking-wider text-navy/60 md:hidden">
                             Subtotal
                           </span>
@@ -553,10 +574,11 @@ export default function BuyerCartPage() {
                             fmt(priced?.lineSubtotal ?? 0)
                           )}
                         </td>
-                        <td className="px-4 py-3 max-md:ml-auto max-md:p-0">
+                        <td role="cell" className="px-4 py-3 max-md:ml-auto max-md:p-0">
                           <button
                             onClick={() => cart.removeItem(item.productId)}
-                            className="rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
+                            aria-label={`Remove ${item.name}`}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

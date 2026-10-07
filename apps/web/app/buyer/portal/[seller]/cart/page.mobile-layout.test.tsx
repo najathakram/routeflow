@@ -79,4 +79,24 @@ describe("buyer cart table on a narrow screen", () => {
       expect(row.querySelectorAll("button").length).toBeGreaterThan(0);
     }
   });
+
+  it("keeps table semantics under the block layout via explicit ARIA roles", () => {
+    render(<BuyerCartPage />);
+    const table = screen.getByRole("table");
+    expect(table.querySelector("thead")).toHaveAttribute("role", "rowgroup");
+    expect(table.querySelector("tbody")).toHaveAttribute("role", "rowgroup");
+    // header row + one per line
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+    expect(screen.getAllByRole("cell")).toHaveLength(10);
+  });
+
+  it("names each remove button after its product and gives it a 44px hit area", () => {
+    render(<BuyerCartPage />);
+    for (const name of ["Widget", "Gadget"]) {
+      const btn = screen.getByRole("button", { name: `Remove ${name}` });
+      expect(btn.className).toMatch(/min-h-11/);
+      expect(btn.className).toMatch(/min-w-11/);
+    }
+  });
 });

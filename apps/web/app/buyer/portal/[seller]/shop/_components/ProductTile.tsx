@@ -204,7 +204,7 @@ export function ProductTile({
         </div>
 
         <div className="flex items-end justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>
                 {fmt(priced.unitPrice)}
