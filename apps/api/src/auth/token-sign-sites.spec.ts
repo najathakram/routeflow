@@ -310,6 +310,11 @@ describe("session token admission by shape", () => {
   });
 });
 
+type DepsAfterConfig =
+  ConstructorParameters<typeof PlatformAdminService> extends [any, any, any, ...infer R]
+    ? R
+    : never;
+
 describe("the real services mint the realm audience on every session token", () => {
   const JWT = {
     secret: "mint-aud-access-secret-0123456789abcdef",
@@ -422,23 +427,7 @@ describe("the real services mint the realm audience on every session token", () 
         prisma,
         real,
         config,
-        ...(Array(15).fill({}) as [
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-          any,
-        ]),
+        ...(Array(14).fill({}) as unknown as DepsAfterConfig),
       );
       jest.spyOn(svc as any, "_findOrThrow").mockResolvedValue({ id: "t1", slug: "acme" });
       jest.spyOn(svc as any, "recordAdminAction").mockResolvedValue(undefined);

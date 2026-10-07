@@ -24,6 +24,7 @@ import {
 } from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
 import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -211,6 +212,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -218,7 +220,11 @@ export class AuthService {
       // F5-003: tag staff refresh tokens with a realm discriminator so a
       // buyer refresh token can never be replayed on the staff refresh path.
       { sub: user.id, type: "staff" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // RF-228: new-device login notification (minimum viable security measure).
@@ -276,7 +282,7 @@ export class AuthService {
   async refresh(incomingToken: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type?: string };
+    let payload: { sub: string; type?: string; aud?: unknown };
     try {
       payload = this.jwtService.verify(incomingToken, {
         secret: jwtConfig.refreshSecret,
@@ -291,6 +297,11 @@ export class AuthService {
     // (grace) so live sessions are never force-logged-out. Defense-in-depth on
     // top of the per-table hash lookup below.
     if (payload.type && payload.type !== "staff") {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+    // A refresh token that names an audience must name this realm's; one with no `aud`
+    // (minted before audiences existed) is still accepted.
+    if (hasForeignAudience(payload, STAFF_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
@@ -337,6 +348,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(newPayload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -350,7 +362,11 @@ export class AuthService {
       // (merging the two sessions); the compare-and-swap below would instead raise P2002
       // and 500 the refresh, which every client treats as a dead session.
       { sub: user.id, type: "staff", jti: crypto.randomUUID() },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // B155: rotate IN PLACE. The old code deleted the row and upserted a NEW one
@@ -760,12 +776,17 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (force-refresh)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     await this.storeRefreshToken(user.id, refreshToken, deviceInfo);

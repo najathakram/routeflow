@@ -71,6 +71,7 @@ import { escapeHtml } from "../common/html-escape";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
 @Injectable()
 export class PlatformAdminService {
@@ -1312,6 +1313,7 @@ export class PlatformAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: "15m",
     });
 
