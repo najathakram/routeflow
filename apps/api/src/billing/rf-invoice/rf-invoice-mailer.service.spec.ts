@@ -351,6 +351,71 @@ describe("RfInvoiceMailerService", () => {
     });
   });
 
+  describe("PR3 review nits (PR4a)", () => {
+    it("sendAuto reads the invoice through rfInvoiceTenantScope (defence in depth), allowlist included", async () => {
+      const a = make({ invoices: [inv("inv-1")] });
+      await a.svc.sendAuto("inv-1", "issue", NOW);
+      expect(a.prisma.rfInvoice.findFirst.mock.calls[0][0].where).toEqual({
+        id: "inv-1",
+        tenant: { class: "PRODUCTION", deletedAt: null },
+      });
+
+      process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-routeflow";
+      const b = make({ invoices: [inv("inv-1")] });
+      await b.svc.sendAuto("inv-1", "issue", NOW);
+      expect(b.prisma.rfInvoice.findFirst.mock.calls[0][0].where).toEqual({
+        id: "inv-1",
+        tenant: {
+          deletedAt: null,
+          OR: [{ class: "PRODUCTION" }, { slug: { in: ["e2e-routeflow"] } }],
+        },
+      });
+    });
+
+    it("an issue email for an invoice issued AFTER its due date carries the OVERDUE subject", async () => {
+      const { svc, sendPlatform } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(-3), issuedAt: NOW })],
+      });
+      await svc.sendAuto("inv-1", "issue", NOW);
+      expect(sendPlatform.mock.calls[0][0]).toMatchObject({
+        subject: "Reminder: RouteFlow invoice RF-2026-0001 is 3 days overdue",
+      });
+    });
+
+    it("an issue email on the due date itself keeps the plain subject, and d0 does not double up the same day", async () => {
+      const { svc, sendPlatform } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(0), issuedAt: NOW })],
+      });
+      await svc.sendAuto("inv-1", "issue", NOW);
+      expect(sendPlatform.mock.calls[0][0].subject).toMatch(/^RouteFlow invoice RF-2026-0001: /);
+      sendPlatform.mockClear();
+      const r = await svc.runRemind(NOW);
+      expect(r.sent).toBe(0);
+      expect(sendPlatform).not.toHaveBeenCalled();
+    });
+
+    it("a late-issued invoice's passed stages are covered by the issue email, but later stages still fire", async () => {
+      const { svc, sendPlatform } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(-2), issuedAt: NOW })],
+      });
+      await svc.sendAuto("inv-1", "issue", NOW);
+      sendPlatform.mockClear();
+      expect((await svc.runRemind(NOW)).sent).toBe(0); // the same day
+      expect((await svc.runRemind(new Date(NOW.getTime() + DAY))).sent).toBe(0); // d0 catch-up window
+      expect(sendPlatform).not.toHaveBeenCalled();
+      const d7 = await svc.runRemind(new Date(NOW.getTime() + 5 * DAY));
+      expect(d7.sent).toBe(1);
+      expect(sendPlatform.mock.calls[0][0].subject).toMatch(/is 7 days overdue$/);
+    });
+
+    it("an invoice issued before its due date still gets its d0 reminder", async () => {
+      const { svc } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(0), issuedAt: dueIn(-7) })],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(1);
+    });
+  });
+
   describe("issue email", () => {
     it("live: sent once under the '<number>:issued' claim, with an RF_INVOICE_SENT trigger issue audit", async () => {
       const { svc, sendPlatform, invoices, audits, prisma } = make({ invoices: [inv("inv-1")] });
