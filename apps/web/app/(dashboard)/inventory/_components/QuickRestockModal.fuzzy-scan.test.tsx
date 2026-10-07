@@ -5,8 +5,9 @@ import { QuickRestockModal } from "./QuickRestockModal";
 
 /** B1219: a single FUZZY scan match is confirmed before it selects the product to restock. */
 
+const mockRecord = jest.fn();
 jest.mock("@/lib/api/inventory", () => ({
-  useRecordPurchase: () => ({ mutate: jest.fn(), isPending: false }),
+  useRecordPurchase: () => ({ mutate: mockRecord, isPending: false }),
   usePurchaseOrders: () => ({ data: { data: [] } }),
 }));
 jest.mock("@/lib/api/vendor-bills", () => ({ useVendorBills: () => ({ data: { data: [] } }) }));
@@ -65,6 +66,31 @@ describe("QuickRestockModal - fuzzy single match (B1219)", () => {
     fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
     expect(selected()).toBeNull();
+    expect(mockRecord).not.toHaveBeenCalled();
+  });
+
+  it("2+ fuzzy hits list every match with an Apply per row; Apply selects THAT product", async () => {
+    const OTHER = { id: "p-ot", name: "Other Cola", sku: "OT-1", unit: "each", currentStock: 3 };
+    mockResolve.mockResolvedValue({
+      product: FUZZY,
+      source: "search",
+      ambiguous: true,
+      matches: [FUZZY, OTHER],
+    });
+    renderWithProviders(
+      <QuickRestockModal suppliers={[]} products={[FUZZY, OTHER]} onClose={jest.fn()} />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
+    });
+    const picker = await screen.findByRole("group", { name: /did you mean/i });
+    expect(picker).toHaveTextContent("Fuzzy Cola");
+    expect(picker).toHaveTextContent("Other Cola");
+    expect(selected()).toBeNull();
+    fireEvent.click(within(picker).getByRole("button", { name: "Apply Other Cola" }));
+    await waitFor(() => expect(selected()).not.toBeNull());
+    expect(screen.getByText(/current stock/i)).toHaveTextContent(/3/);
+    expect(mockRecord).not.toHaveBeenCalled();
   });
 
   it("an exact hit still selects at once", async () => {

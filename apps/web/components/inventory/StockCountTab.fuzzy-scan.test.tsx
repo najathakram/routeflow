@@ -7,6 +7,7 @@ import { StockCountTab } from "./StockCountTab";
 
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
 
+const mockUpsert = jest.fn();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
@@ -20,7 +21,7 @@ jest.mock("@/lib/api/stock-count", () => {
       mutateAsync: jest.fn().mockResolvedValue({ id: "session-1" }),
       isPending: false,
     }),
-    useUpsertStockCountLine: () => ({ mutate: jest.fn(), mutateAsync: jest.fn() }),
+    useUpsertStockCountLine: () => ({ mutate: mockUpsert, mutateAsync: mockUpsert }),
     useRemoveStockCountLine: () => ({ mutate: jest.fn() }),
     useCommitStockCountSession: () => ({ mutate: jest.fn(), isPending: false }),
     useDiscardStockCountSession: () => ({ mutate: jest.fn(), isPending: false }),
@@ -74,6 +75,27 @@ describe("StockCountTab - fuzzy single match (B1219)", () => {
     const picker = await screen.findByRole("group", { name: /did you mean/i });
     fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
+    expect(screen.queryByText("Fuzzy Cola")).toBeNull();
+    // No count line was written (the session itself starts first - pre-existing ensureSession()).
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("2+ fuzzy hits list every match with an Apply per row; nothing counts until one is applied", async () => {
+    const OTHER = { id: "p-ot", name: "Other Cola", sku: "OT-1", unit: "each" };
+    mockResolve.mockResolvedValue({
+      product: FUZZY,
+      source: "search",
+      ambiguous: true,
+      matches: [FUZZY, OTHER],
+    });
+    renderWithProviders(<StockCountTab />);
+    await scan("123");
+    const picker = await screen.findByRole("group", { name: /did you mean/i });
+    expect(picker).toHaveTextContent("Fuzzy Cola");
+    expect(picker).toHaveTextContent("Other Cola");
+    expect(mockUpsert).not.toHaveBeenCalled();
+    fireEvent.click(within(picker).getByRole("button", { name: "Apply Other Cola" }));
+    expect(await screen.findByText("Other Cola")).toBeInTheDocument();
     expect(screen.queryByText("Fuzzy Cola")).toBeNull();
   });
 

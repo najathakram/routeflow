@@ -28,7 +28,7 @@ describe("useScanCodeHandler — B1219 fuzzy suggestion", () => {
     const d = deps({ onSuggestion });
     const { result } = renderHook(() => useScanCodeHandler(d));
     const res = await result.current.current("12345");
-    expect(onSuggestion).toHaveBeenCalledWith(product, "12345");
+    expect(onSuggestion).toHaveBeenCalledWith([product], "12345");
     expect(d.addLineItem).not.toHaveBeenCalled();
     expect(d.onUnknownCode).not.toHaveBeenCalled();
     expect(res).toEqual({ kind: "suggested", product });
@@ -50,5 +50,33 @@ describe("useScanCodeHandler — B1219 fuzzy suggestion", () => {
     const { result } = renderHook(() => useScanCodeHandler(d));
     await result.current.current("W-1");
     expect(d.addLineItem).toHaveBeenCalled();
+  });
+
+  it("2+ fuzzy hits (ambiguous) are offered ALL together and never auto-add the first row", async () => {
+    const other = { id: "p2", name: "Gadget" };
+    mockResolve.mockResolvedValue({
+      product,
+      source: "search",
+      ambiguous: true,
+      matches: [product, other],
+    });
+    const onSuggestion = jest.fn();
+    const d = deps({ onSuggestion });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    const res = await result.current.current("12345");
+    expect(onSuggestion).toHaveBeenCalledWith([product, other], "12345");
+    expect(d.addLineItem).not.toHaveBeenCalled();
+    expect(res.kind).toBe("suggested");
+  });
+
+  it("onSuggestion is skipped when the caller says another surface owns the scan (scan screen)", async () => {
+    mockResolve.mockResolvedValue(suggestion);
+    const onSuggestion = jest.fn();
+    const d = deps({ onSuggestion, suggestionsSuppressed: () => true });
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    const res = await result.current.current("12345");
+    expect(onSuggestion).not.toHaveBeenCalled();
+    expect(d.addLineItem).not.toHaveBeenCalled();
+    expect(res.kind).toBe("suggested");
   });
 });

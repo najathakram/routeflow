@@ -121,4 +121,54 @@ describe("Create Order scan - fuzzy single match (B1219)", () => {
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
   });
+
+  it("2+ fuzzy hits list ALL matches, add nothing, and Add on a row adds THAT product", async () => {
+    const OTHER = { ...PLAIN, id: "p-other", name: "Cola Lime 12345", sku: "CL-1" };
+    mockResolveProductByCode.mockResolvedValue({
+      product: FUZZY,
+      source: "search",
+      ambiguous: true,
+      matches: [FUZZY, OTHER],
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await act(async () => typeScan("12345"));
+
+    const picker = await screen.findByRole("group", { name: /did you mean/i });
+    expect(picker).toHaveTextContent("Cola Zero 12345");
+    expect(picker).toHaveTextContent("Cola Lime 12345");
+    expect(lines()).toHaveLength(0);
+
+    fireEvent.click(within(picker).getByRole("button", { name: "Add Cola Lime 12345" }));
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(screen.getAllByText("Cola Lime 12345").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Cola Zero 12345")).toBeNull();
+  });
+
+  it("Escape cancels the picker (adds nothing) and the announcement is a polite status", async () => {
+    mockResolveProductByCode.mockResolvedValue(suggestion);
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await act(async () => typeScan("12345"));
+    const picker = await screen.findByRole("group", { name: /did you mean/i });
+    expect(within(picker).getByRole("status")).toHaveTextContent("Did you mean Cola Zero 12345?");
+
+    fireEvent.keyDown(search(), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
+    expect(lines()).toHaveLength(0);
+    expect(screen.getByPlaceholderText(/search by name, sku or scan barcode/i)).toBeInTheDocument();
+  });
+
+  it("a wedge Enter in the scan input can NEVER confirm the guess", async () => {
+    mockResolveProductByCode.mockResolvedValue(suggestion);
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await act(async () => typeScan("12345"));
+    await screen.findByRole("group", { name: /did you mean/i });
+
+    // Focus stays in the scan input; the next wedge scan's Enter is just another scan.
+    await act(async () => {
+      fireEvent.keyDown(search(), { key: "Enter" });
+      typeScan("12345");
+    });
+    expect(lines()).toHaveLength(0);
+    expect(screen.getByRole("group", { name: /did you mean/i })).toBeInTheDocument();
+  });
 });

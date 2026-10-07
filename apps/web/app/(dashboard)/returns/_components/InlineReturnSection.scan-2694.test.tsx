@@ -101,6 +101,24 @@ describe("#2694 InlineReturnSection — scan items into Returns", () => {
       expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
     });
 
+    it("2+ fuzzy hits list every match, add nothing until a row's Add", async () => {
+      const GADGET = { id: "prod-2", name: "Gadget", unit: "each", unitsPerBox: null };
+      resolveProductByCode.mockResolvedValue({
+        product: WIDGET,
+        source: "search",
+        ambiguous: true,
+        matches: [WIDGET, GADGET],
+      });
+      const states = renderSection();
+      fireEvent.click(screen.getByRole("button", { name: /scan barcode/i }));
+      const picker = await screen.findByRole("group", { name: /did you mean/i });
+      expect(picker).toHaveTextContent("Widget");
+      expect(picker).toHaveTextContent("Gadget");
+      expect(lastLines(states)).toEqual([]);
+      fireEvent.click(within(picker).getByRole("button", { name: "Add Gadget" }));
+      await waitFor(() => expect(lastLines(states)).toEqual([["prod-2", "1"]]));
+    });
+
     it("Cancel adds nothing", async () => {
       resolveProductByCode.mockResolvedValue(suggestion);
       const states = renderSection();
