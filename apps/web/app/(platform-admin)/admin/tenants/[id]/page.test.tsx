@@ -479,6 +479,31 @@ describe("Tenant detail page — Impersonate and Extend Trial ask first (back of
     expect(calls(/extend-trial$/)).toHaveLength(0);
   });
 
+  it.each(["ACTIVE", "SUSPENDED", "READ_ONLY"])(
+    "Extend Trial stays VISIBLE on a %s tenant, with a 'Not on a trial.' note (never hidden)",
+    async (status) => {
+      tenantOverrides = { status };
+      render(<TenantDetailPage />);
+      await screen.findByText("Quick Actions");
+      expect(screen.getByRole("heading", { name: "Extend Trial" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Extend Trial" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Days")).toBeInTheDocument();
+      expect(screen.getByText("Not on a trial.")).toBeInTheDocument();
+      // ACTIVE is blocked (the server refuses it); the others may still be put on a trial.
+      const btn = screen.getByRole("button", { name: "Extend Trial" });
+      if (status === "ACTIVE") expect(btn).toBeDisabled();
+      else expect(btn).toBeEnabled();
+    },
+  );
+
+  it("on a TRIAL tenant there is no 'Not on a trial.' note and Extend Trial is enabled", async () => {
+    tenantOverrides = { status: "TRIAL" };
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    expect(screen.queryByText("Not on a trial.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Extend Trial" })).toBeEnabled();
+  });
+
   it("a race: the server's coded refusal reads the fixed Active-tenant copy, never its raw text", async () => {
     tenantOverrides = { status: "SUSPENDED" };
     post().mockRejectedValueOnce({

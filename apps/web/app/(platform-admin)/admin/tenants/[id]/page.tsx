@@ -648,6 +648,11 @@ function OverviewTab({
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Extend Trial
           </h3>
+          {tenant.status !== "TRIAL" && (
+            <p id="not-on-trial-note" className="mb-3 text-sm text-slate-300">
+              Not on a trial.
+            </p>
+          )}
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400">Days</label>
             <input
