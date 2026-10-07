@@ -113,3 +113,19 @@ export function idempotencyConflictOrderId(err: unknown): string | null {
     code === IDEMPOTENCY_REPLAY_NEEDS_RECONCILE;
   return hit && r.data?.orderId ? r.data.orderId : null;
 }
+
+/** B1201: the create saved the order but its credit notes were not applied. Shown verbatim. */
+export const CREDITS_PENDING_COPY =
+  "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+
+/**
+ * B1201: 503 ORDER_SAVED_CREDITS_PENDING carries the saved order's id. The order EXISTS, so the modal
+ * opens it (credits are applied there) and never resubmits - a replay of the key does not apply credits.
+ * Returns that id, or null for any other error.
+ */
+export function creditsPendingOrderId(err: unknown): string | null {
+  const r = (err as { response?: { status?: number; data?: { code?: string; orderId?: string } } })
+    ?.response;
+  const hit = r?.status === 503 && r.data?.code === API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING;
+  return hit && r?.data?.orderId ? r.data.orderId : null;
+}

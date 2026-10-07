@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn } from "@routeflow/ui/web";
-import { getTierPrice, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -16,7 +16,6 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useCustomers } from "@/lib/api/customers";
-import { useProducts } from "@/lib/api/products";
 import {
   useCounterSaleByKey,
   useCounterSaleGate,
@@ -38,7 +37,6 @@ import {
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   newIdempotencyKey,
-  parseScanField,
   paymentMethodOptions,
   preselectFulfilment,
   quickTenderOptions,
@@ -48,18 +46,10 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
-import { mergeQtyIntoLine, newLineQty } from "./add-line-merge";
+import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
+import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { useCounterSaleScan } from "./useCounterSaleScan";
 
-interface SaleLine {
-  tempId: string;
-  productId: string;
-  name: string;
-  unitPrice: number;
-  qty: number;
-  unitsPerBox?: number;
-  boxes?: number;
-  pieces?: number;
-}
 interface PickedCustomer {
   id: string;
   businessName: string;
@@ -96,6 +86,44 @@ export const toSaleItem = (l: SaleLine): CounterSaleItem => {
     : { productId: l.productId, boxes: n.boxes, pieces: n.pieces, qty: n.qty };
 };
 
+const STEP_BTN = "rounded border px-2 py-0.5 text-xs disabled:opacity-40";
+
+/** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
+function LineStepper({
+  line,
+  locked,
+  onStep,
+}: {
+  line: SaleLine;
+  locked: boolean;
+  onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
+}) {
+  const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
+    <button
+      type="button"
+      className={STEP_BTN}
+      aria-label={label}
+      disabled={locked || stepLine(line, unit, dir) === line}
+      onClick={() => onStep(line.tempId, unit, dir)}
+    >
+      {text}
+    </button>
+  );
+  return isBoxedLine(line) ? (
+    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
+      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
+      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
+      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
+      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
+    </span>
+  ) : (
+    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
+      {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
+      {btn(`Add one ${line.name}`, "+", "piece", 1)}
+    </span>
+  );
+}
+
 export function CounterSaleScreen() {
   const router = useRouter();
   const gate = useCounterSaleGate();
@@ -125,8 +153,6 @@ export function CounterSaleScreen() {
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   const [scanText, setScanText] = React.useState("");
-  const [pendingQty, setPendingQty] = React.useState(1);
-  const [scanMessage, setScanMessage] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
@@ -189,65 +215,30 @@ export function CounterSaleScreen() {
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
-  const [lookup, setLookup] = React.useState<{ search?: string; scanCode?: string } | null>(null);
-  const { data: found, isFetching } = useProducts(
-    { ...(lookup ?? {}), isActive: true, includeVariants: true },
-    { enabled: lookup !== null },
-  );
-  // A lookup result becomes a line (or merges +pendingQty), then the field is cleared and refocused.
-  const lookupQtyRef = React.useRef(1);
-  React.useEffect(() => {
-    if (!lookup || isFetching) return;
-    if (locked) {
-      setLookup(null); // a late lookup must not change a locked cart
-      return;
-    }
-    const product = (found as { data?: any[] } | undefined)?.data?.[0];
-    if (!product) {
-      setScanMessage("No product found for that code.");
-    } else {
-      addProduct(product, lookupQtyRef.current);
-      setScanMessage("");
-    }
-    setLookup(null);
-    refocus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [found, isFetching, lookup, locked]);
+  // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
+  const scan = useCounterSaleScan({
+    locked,
+    refocus,
+    add: (product, level, n) =>
+      setLines((prev) => addScannedProduct(prev, product, level, n, customer?.pricingTier ?? 1)),
+  });
 
-  function addProduct(product: any, n: number) {
-    const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
-    const tier = customer?.pricingTier ?? 1;
-    setLines((prev) => {
-      const idx = prev.findIndex((l) => l.productId === product.id);
-      if (idx >= 0) return prev.map((l, i) => (i === idx ? mergeQtyIntoLine(l, n) : l));
-      return [
-        ...prev,
-        {
-          tempId: `${product.id}-${prev.length}`,
-          productId: product.id,
-          name: displayProductName(product),
-          unitPrice: getTierPrice(product, tier),
-          unitsPerBox: upb,
-          ...newLineQty(upb, n),
-        },
-      ];
-    });
-  }
+  const scanBusy = scan.waiting > 0;
+  const scanBusyRef = React.useRef(false);
+  scanBusyRef.current = scanBusy;
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (locked) return;
-    const parsed = parseScanField(scanText);
+    const text = scanText;
     setScanText("");
-    if (parsed.kind === "qty") {
-      setPendingQty(parsed.qty); // type a quantity, then scan: it multiplies the next scan
-      return;
-    }
-    if (!parsed.code) return;
-    lookupQtyRef.current = pendingQty;
-    setPendingQty(1);
-    setLookup(/^\d{8,14}$/.test(parsed.code) ? { scanCode: parsed.code } : { search: parsed.code });
+    scan.submit(text);
   }
+
+  const stepItem = (tempId: string, unit: StepUnit, dir: 1 | -1) => {
+    setLines((prev) => prev.map((l) => (l.tempId === tempId ? stepLine(l, unit, dir) : l)));
+    refocus();
+  };
 
   const removeLine = (tempId: string) => {
     setLines((prev) => prev.filter((l) => l.tempId !== tempId));
@@ -259,8 +250,7 @@ export function CounterSaleScreen() {
     setCustomerSearch("");
     setLines([]);
     setScanText("");
-    setPendingQty(1);
-    setScanMessage("");
+    scan.reset();
     setMethod("CASH");
     setTendered("");
     setReference("");
@@ -362,7 +352,6 @@ export function CounterSaleScreen() {
 
   // A sale the server confirmed: print once, then the receipt (or, for "next", a fresh sale when nothing needs the clerk's eyes).
   const finishSale = (res: CounterSaleResponse, next: boolean) => {
-    if (autoPrint) window.print(); // once per completed sale, before any reset
     // "Complete & next sale" never hides an unpaid sale: payment not recorded or a balance still due keeps the receipt
     // (whose own "New sale" starts the next one). The same holds when the server's total or change is not what the screen
     // showed the clerk (a credit auto-applied, a re-priced line): the receipt, with the SERVER's figures, shows first.
@@ -371,12 +360,19 @@ export function CounterSaleScreen() {
     const figuresDiffer =
       roundMoney(res.total) !== roundMoney(shown.total) ||
       roundMoney(res.change ?? 0) !== roundMoney(shown.change);
-    if (next && !unpaid && !figuresDiffer) resetSale();
+    const startFresh = next && !unpaid && !figuresDiffer;
+    if (autoPrint) {
+      // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
+      printAfterRenderRef.current = { reset: startFresh };
+      setReceipt(res);
+    } else if (startFresh) resetSale();
     else setReceipt(res);
   };
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
+    // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
+    if (!retry && scanBusyRef.current) return;
     submittingRef.current = true;
     try {
       if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
@@ -450,6 +446,17 @@ export function CounterSaleScreen() {
     finishSale({ ...res, method: res.method ?? sentMethod }, attempt.next);
     return false;
   };
+
+  // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
+  const printAfterRenderRef = React.useRef<{ reset: boolean } | null>(null);
+  React.useEffect(() => {
+    if (!receipt || !printAfterRenderRef.current) return;
+    const { reset } = printAfterRenderRef.current;
+    printAfterRenderRef.current = null;
+    window.print(); // once per completed sale
+    if (reset) resetSale();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receipt]);
 
   const toggleAutoPrint = (on: boolean) => {
     setAutoPrint(on);
@@ -653,16 +660,59 @@ export function CounterSaleScreen() {
           }}
           autoFocus
         />
-        {pendingQty > 1 ? (
+        {scan.pendingQty > 1 ? (
           <span
             className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold"
             data-testid="pending-qty"
           >
-            ×{pendingQty}
+            ×{scan.pendingQty}
           </span>
         ) : null}
       </form>
-      {scanMessage ? <p className="text-sm text-red-700">{scanMessage}</p> : null}
+      {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
+      {scan.failed ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+          data-testid="counter-scan-error"
+        >
+          <span>{COUNTER_SCAN_FAILED_COPY}</span>
+          <Button onClick={scan.retry}>Retry</Button>
+          <Button variant="secondary" onClick={scan.dismissFailure}>
+            Skip this scan
+          </Button>
+          {scan.waiting > 1 ? <span>{scan.waiting - 1} more waiting</span> : null}
+        </div>
+      ) : null}
+      {scan.picker ? (
+        <section
+          aria-label="Choose a product"
+          className="space-y-2 rounded border p-3 text-sm"
+          data-testid="counter-scan-picker"
+        >
+          <p className="font-medium">
+            Several products match &ldquo;{scan.picker.code}&rdquo;. Choose one.
+          </p>
+          <ul className="space-y-1">
+            {scan.picker.matches.map((p: any) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className="w-full rounded border px-3 py-2 text-left hover:bg-gray-50"
+                  onClick={() => scan.choose(p)}
+                >
+                  {displayProductName(p)}
+                  {p.sku ? <span className="ml-2 text-xs text-navy/60">{p.sku}</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <Button variant="secondary" onClick={scan.cancelPicker}>
+            Cancel
+          </Button>
+          {scan.waiting > 1 ? <p>{scan.waiting - 1} more scans waiting</p> : null}
+        </section>
+      ) : null}
 
       <ul className="divide-y rounded border" aria-label="Items">
         {lines.length === 0 ? <li className="p-3 text-sm text-navy/60">No items yet.</li> : null}
@@ -672,6 +722,7 @@ export function CounterSaleScreen() {
               {l.name} · {lineQtyLabel(l)}
             </span>
             <span className="flex items-center gap-3">
+              <LineStepper line={l} locked={locked} onStep={stepItem} />
               <span>{money(cartTotals([l], 0).subtotal)}</span>
               <button
                 type="button"
@@ -821,14 +872,23 @@ export function CounterSaleScreen() {
         </div>
       ) : null}
 
+      {scanBusy ? (
+        <p role="status" className="text-sm text-navy/70" data-testid="counter-scan-busy">
+          Adding scanned items…
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => void completeSale(false)} disabled={createSale.isPending || locked}>
+        <Button
+          onClick={() => void completeSale(false)}
+          disabled={createSale.isPending || locked || scanBusy}
+        >
           Complete sale
         </Button>
         <Button
           variant="secondary"
           onClick={() => void completeSale(true)}
-          disabled={createSale.isPending || locked}
+          disabled={createSale.isPending || locked || scanBusy}
         >
           Complete &amp; next sale
         </Button>

@@ -434,6 +434,11 @@ export const API_ERROR_CODES = {
    * order (or the reverse). The body carries `orderId`: open that order to confirm it, never resubmit on a new key.
    */
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
+  /**
+   * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
+   * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
+   */
+  ORDER_SAVED_CREDITS_PENDING: "ORDER_SAVED_CREDITS_PENDING",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
   /** 400 from POST /orders/:id/pickup-complete: the order is not a PICKUP order. Nothing was written. */
   PICKUP_ONLY: "PICKUP_ONLY",

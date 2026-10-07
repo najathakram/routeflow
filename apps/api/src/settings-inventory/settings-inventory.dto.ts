@@ -9,9 +9,19 @@ import { IsOptional } from "class-validator";
  * `@IsOptional()` is what keeps each property past the whitelist.
  */
 export class UpdateInventorySettingsDto {
-  @ApiProperty({ enum: ["off", "backorder"], description: "Out-of-stock ordering for buyers." })
+  @ApiPropertyOptional({
+    enum: ["off", "backorder"],
+    description: "Out-of-stock ordering for buyers.",
+  })
   @IsOptional()
-  buyerOversell!: "off" | "backorder";
+  buyerOversell?: "off" | "backorder";
+
+  @ApiPropertyOptional({
+    enum: ["show", "hide"],
+    description: "What buyers see about backordered items (needs out-of-stock ordering on).",
+  })
+  @IsOptional()
+  buyerBackorderVisibility?: "show" | "hide";
 
   @ApiPropertyOptional({ maxLength: 500, description: "Note stored on the policy row and audit." })
   @IsOptional()

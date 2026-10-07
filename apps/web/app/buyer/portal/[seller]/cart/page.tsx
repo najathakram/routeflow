@@ -34,6 +34,8 @@ import {
   isFulfilMethodNotOffered,
 } from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { API_ERROR_CODES } from "@routeflow/types";
+import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -213,6 +215,11 @@ export default function BuyerCartPage() {
         setOrderError(
           `Your order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      // OOS PR2 (R4): a stock refusal is coded; show the portal's own fixed copy, never a raw server string.
+      if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.INSUFFICIENT_STOCK) {
+        setOrderError(BUYER_INSUFFICIENT_STOCK_COPY);
         return;
       }
       const restricted = parseSellingRestricted(err);

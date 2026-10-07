@@ -155,7 +155,6 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   ...(
     [
       ["notifications.staffOrderEmail", "WS4 staff order email switch (Notifications tab)"],
-      ["orders.buyerOversell", "WS8 buyer oversell switch (Selling & catalog)"],
       ["credit.enforceNewOrders", "PR-3 credit Off/Watch card"],
       ["credit.enforceDelivery", "PR-3 credit Off/Watch card"],
     ] as const
@@ -167,6 +166,15 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     plannedSurface,
     adminOnly: true,
   })),
+  // WS8: the out-of-stock ordering switch (Settings -> Orders & stock), `PATCH /settings/inventory`.
+  // Operators open the card read-only; only a TENANT_ADMIN changes it, so the row is not adminOnly.
+  {
+    key: "orders.buyerOversell",
+    home: "policy",
+    kind: "behaviour",
+    status: "live",
+    screen: "#out-of-stock-ordering",
+  },
   // ── userPref: derived from PREF so the list cannot drift ─────────────────────
   {
     key: PREF.lowStockDigestEnabled,
