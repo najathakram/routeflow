@@ -15,7 +15,14 @@ import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
  * focusable control; the clerk and the store name follow. When the cart has lines, Exit asks "Discard this sale?" first
  * (Keep selling is the default, Escape keeps the cart). Only this Exit is guarded - nav links are not.
  */
-export function RegisterHeader({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
+export function RegisterHeader({
+  onOpenMobileNav,
+  actions,
+}: {
+  onOpenMobileNav: () => void;
+  /** A slot on the right, after the store name, for counter actions mounted later (e.g. "Today's sales"). Empty by default. */
+  actions?: React.ReactNode;
+}) {
   const { user } = useAuth();
   const { branding } = useTenant();
   const router = useRouter();
@@ -65,6 +72,9 @@ export function RegisterHeader({ onOpenMobileNav }: { onOpenMobileNav: () => voi
       >
         {storeName}
       </p>
+      <div data-testid="register-header-actions" className="flex shrink-0 items-center gap-2">
+        {actions}
+      </div>
       <div className="flex items-center gap-2">
         <Avatar name={user?.username ?? ""} size="sm" />
         <span data-testid="register-clerk" className="text-sm font-medium text-navy">

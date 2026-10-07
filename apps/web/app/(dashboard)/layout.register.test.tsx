@@ -7,6 +7,7 @@ import { setCounterCartHasLines } from "@/lib/counter-cart-signal";
 import { resetCounterLandingForTests } from "@/lib/counter-device-pref";
 import { setImpersonation, clearImpersonation } from "@/lib/impersonation";
 import DashboardLayout from "./layout";
+import { RegisterHeader } from "@/components/RegisterHeader";
 
 /**
  * POS-7: the counter "register look" and the per-device "open the counter" preference, proven on the REAL
@@ -233,6 +234,37 @@ describe("slim header", () => {
     mount(COUNTER);
     fireEvent.click(within(registerHeader()).getByLabelText("Open navigation menu"));
     expect(screen.getByTestId("sidebar-drawer-aside")).toBeInTheDocument();
+  });
+});
+
+describe("header actions slot", () => {
+  it("exists after the store name, is empty by default, and Exit is still first", () => {
+    mount(COUNTER);
+    const slot = screen.getByTestId("register-header-actions");
+    expect(slot).toBeEmptyDOMElement();
+    const header = registerHeader();
+    const store = screen.getByTestId("register-store");
+    expect(store.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header.querySelector(FOCUSABLE)).toBe(
+      screen.getByRole("button", { name: "Exit counter" }),
+    );
+  });
+
+  it("renders what is mounted into it, after Exit in focus order", () => {
+    render(
+      <RegisterHeader
+        onOpenMobileNav={() => undefined}
+        actions={<button type="button">Today&apos;s sales</button>}
+      />,
+    );
+    expect(
+      within(screen.getByTestId("register-header-actions")).getByRole("button", {
+        name: "Today's sales",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("register-header").querySelector(FOCUSABLE)).toBe(
+      screen.getByRole("button", { name: "Exit counter" }),
+    );
   });
 });
 
