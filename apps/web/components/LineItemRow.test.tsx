@@ -83,7 +83,7 @@ describe("LineItemRow layout contract (B565)", () => {
     const info = within(li).getByText("Sample Cola 12pk").parentElement!;
     expect(info).toHaveClass("col-start-1", "row-start-1");
 
-    const qty = within(li).getByText(/1 case = 12 units/).parentElement!;
+    const qty = within(li).getByText(/1 box = 12 pcs/).parentElement!;
     expect(qty).toHaveClass("col-start-1", "row-start-2");
 
     const total = within(li).getByText("$32.99", { selector: "span.font-semibold" });
@@ -110,28 +110,28 @@ describe("LineItemRow layout contract (B565)", () => {
     renderRow(makeProps({ ...boxedItem, pieces: 2 }));
     const row = screen.getByTestId("line-qty-cases-row");
     expect(row).toHaveClass("flex", "flex-wrap");
-    const cases = screen.getByTitle("Number of whole cases").parentElement!;
-    const units = screen.getByTitle("Extra loose units (less than a full case)").parentElement!;
+    const cases = screen.getByTitle("Number of whole boxes").parentElement!;
+    const units = screen.getByTitle("Extra pieces (less than a full box)").parentElement!;
     expect(cases).not.toBe(units);
     for (const group of [cases, units]) {
       expect(group.parentElement).toBe(row);
       expect(group).toHaveClass("whitespace-nowrap");
     }
-    expect(within(cases).getByText(/^cases?$/)).toBeInTheDocument();
+    expect(within(cases).getByText(/^box(es)?$/)).toBeInTheDocument();
     expect(within(units).getByText("+")).toBeInTheDocument();
-    expect(within(units).getByText(/^units?$/)).toBeInTheDocument();
+    expect(within(units).getByText(/^pcs?$/)).toBeInTheDocument();
   });
 
   // SA-558d: one wording in the row and the sheet (PriceEditor.test "case wording").
   it("says '1 case' / 'n cases' and '1 unit' / 'n units'", () => {
     const row = () => within(screen.getByTestId("line-qty-cases-row"));
     const { unmount } = renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 1 }));
-    expect(row().getByText("case")).toBeInTheDocument();
-    expect(row().getByText("unit")).toBeInTheDocument();
+    expect(row().getByText("box")).toBeInTheDocument();
+    expect(row().getByText("pc")).toBeInTheDocument();
     unmount();
     renderRow(makeProps({ ...boxedItem, boxes: 3, pieces: 2 }));
-    expect(row().getByText("cases")).toBeInTheDocument();
-    expect(row().getByText("units")).toBeInTheDocument();
+    expect(row().getByText("boxes")).toBeInTheDocument();
+    expect(row().getByText("pcs")).toBeInTheDocument();
   });
 });
 
@@ -141,7 +141,7 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     const props = makeProps(boxedItem);
     renderRow(props);
 
-    await user.click(screen.getByRole("button", { name: "Unit" }));
+    await user.click(screen.getByRole("button", { name: "Piece" }));
     expect(props.onSetSellBy).toHaveBeenCalledWith("unit");
 
     await user.click(screen.getByTitle("Add flavor / note"));
@@ -150,7 +150,7 @@ describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
     await user.click(screen.getByTitle("Remove"));
     expect(props.onRemove).toHaveBeenCalledTimes(1);
 
-    await user.clear(screen.getByTitle("Number of whole cases"));
+    await user.clear(screen.getByTitle("Number of whole boxes"));
     expect(props.onSetBoxes).toHaveBeenCalled();
   });
 
@@ -235,32 +235,32 @@ describe("multi-line per-item notes", () => {
   });
 });
 
-// SA-563 (#2696 d): "Remove extra units" is hidden at 0 cases — the units are then the whole line.
+// SA-563 (#2696 d): "Remove extra pieces" is hidden at 0 cases — the units are then the whole line.
 describe("SA-563: the remove-extra-units control needs at least one case", () => {
   it("cases 0 + units n ⇒ the control is absent", () => {
     renderRow(makeProps({ ...boxedItem, boxes: 0, pieces: 3, qty: 3 }));
-    expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Remove extra pieces")).not.toBeInTheDocument();
   });
 
   it("cases ≥ 1 + units n ⇒ present; tapping it sets units 0, leaves cases alone and keeps the line", () => {
     const props = makeProps({ ...boxedItem, boxes: 2, pieces: 3, qty: 27 });
     renderRow(props);
-    fireEvent.click(screen.getByLabelText("Remove extra units"));
+    fireEvent.click(screen.getByLabelText("Remove extra pieces"));
     expect(props.onSetPieces).toHaveBeenCalledWith(0);
     expect(props.onSetBoxes).not.toHaveBeenCalled();
     expect(props.onRemove).not.toHaveBeenCalled();
   });
 });
 
-// #2706 parity: mobile's "+ units" carries hitSlop={8}; web grows the tap target by the same 8px
+// #2706 parity: mobile's "+ pieces" carries hitSlop={8}; web grows the tap target by the same 8px
 // with a pseudo-element (layout unchanged).
-it("the '+ units' and remove-units controls carry an 8px hit-area extension", () => {
+it("the '+ pieces' and remove-units controls carry an 8px hit-area extension", () => {
   renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 0 }));
-  expect(screen.getByRole("button", { name: "+ units" })).toHaveClass(
+  expect(screen.getByRole("button", { name: "+ pieces" })).toHaveClass(
     "relative",
     "before:-inset-2",
   );
-  fireEvent.click(screen.getByRole("button", { name: "+ units" }));
-  expect(screen.getByLabelText("Remove extra units")).toHaveClass("relative", "before:-inset-2");
+  fireEvent.click(screen.getByRole("button", { name: "+ pieces" }));
+  expect(screen.getByLabelText("Remove extra pieces")).toHaveClass("relative", "before:-inset-2");
 });

@@ -354,7 +354,7 @@ export function InlineReturnSection({
                         </>
                       ) : (
                         <Input
-                          label="Qty (pieces)"
+                          label="Pieces"
                           type="number"
                           min={0}
                           inputMode="numeric"

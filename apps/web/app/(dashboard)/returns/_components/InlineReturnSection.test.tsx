@@ -93,7 +93,7 @@ function renderSection(
 async function addProductAndQuote(pieces: string) {
   fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
   fireEvent.click(await screen.findByText("Widget"));
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: pieces } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
@@ -142,7 +142,7 @@ describe("InlineReturnSection — lines to quote (#2406)", () => {
     renderSection({ getQuoteEnabled: false });
     fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
     fireEvent.click(await screen.findByText("Widget"));
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
     expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
   });
 });
@@ -209,7 +209,7 @@ describe("InlineReturnSection — 'return only what was bought' with nothing bou
   });
 });
 
-// B891 (symptom pin): every line's "Qty (pieces)" label used to share the label-derived id
+// B891 (symptom pin): every line's "Pieces" label used to share the label-derived id
 // "qty-(pieces)", so line 2's label targeted LINE 1's input and line 2's input was unlabelled.
 describe("InlineReturnSection — each line's labels target that line's own fields (B891)", () => {
   it("two lines ⇒ two distinct, correctly-labelled Qty inputs", async () => {
@@ -220,7 +220,7 @@ describe("InlineReturnSection — each line's labels target that line's own fiel
     fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "gad" } });
     fireEvent.click(await screen.findByText("Gadget"));
 
-    const qty = screen.getAllByLabelText(/qty \(pieces\)/i) as HTMLInputElement[];
+    const qty = screen.getAllByLabelText(/^pieces$/i) as HTMLInputElement[];
     expect(qty).toHaveLength(2);
     expect(qty[0]).not.toBe(qty[1]);
     expect(qty[0].id).not.toBe(qty[1].id);
@@ -235,7 +235,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
   async function addProduct(pieces: string) {
     fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
     fireEvent.click(await screen.findByText("Widget"));
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: pieces } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
   }
 
   it.each([["DRIVER"], ["CUSTOMER"], [undefined]])(
@@ -375,7 +375,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       };
       renderSection({ entryOrderId: "ord-1" });
     };
-    const qtyInputs = () => screen.getAllByLabelText(/qty \(pieces\)/i);
+    const qtyInputs = () => screen.getAllByLabelText(/^pieces$/i);
     const priceInputs = () => screen.getAllByLabelText(/credit price/i);
     const reasonInputs = () => screen.getAllByLabelText(/why the lower price/i);
     const quoteButton = () => screen.getByRole("button", { name: /get quote/i });

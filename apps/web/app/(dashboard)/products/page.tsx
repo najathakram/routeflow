@@ -619,7 +619,7 @@ function makeTableColumns(
     },
     {
       accessorKey: "unitsPerBox",
-      header: "Units / case",
+      header: "Pieces per box",
       enableSorting: false,
       cell: ({ row }) => {
         const p = row.original;

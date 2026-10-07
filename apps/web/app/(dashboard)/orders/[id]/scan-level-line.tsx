@@ -45,13 +45,13 @@ export function bumpLineForScan<
     : { ...it, qty: it.qty + 1 };
 }
 
-/** "1 case + 0 loose", "2 cases + 1 loose" — the count word agrees with its number. */
+/** "1 box + 0 pcs", "2 boxes + 1 pcs" — the count word agrees with its number. */
 export function splitLineHintText(qty: number, upb: number): string {
-  const cases = Math.floor(qty / upb);
-  return `${cases} ${cases === 1 ? "case" : "cases"} + ${qty % upb} loose`;
+  const boxes = Math.floor(qty / upb);
+  return `${boxes} ${boxes === 1 ? "box" : "boxes"} + ${qty % upb} pcs`;
 }
 
-/** No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */
+/** No hidden quantity (SA-580): a split line counts PIECES, so say boxes + pcs. */
 export function SplitLineHint({ item }: { item: any }) {
   const upb = Number(item.unitsPerBox ?? 0);
   if (!(item.boxSplit && upb > 1 && item.unitLabel == null)) return null;

@@ -77,7 +77,7 @@ export function PriceEditor({
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
   const boxed = !!li.unitsPerBox;
-  // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
+  // The row labels the price "Box price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
   const packed = (li.unitsPerBox ?? 0) > 1;
   const dialogRef = React.useRef<HTMLDivElement>(null);
@@ -159,7 +159,7 @@ export function PriceEditor({
                         : "bg-white text-navy/70 hover:bg-surface-raised",
                     )}
                   >
-                    {mode === "case" ? "Case" : "Unit"}
+                    {mode === "case" ? "Box" : "Piece"}
                   </button>
                 ))}
               </div>
@@ -172,9 +172,9 @@ export function PriceEditor({
                     onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-24")}
-                    aria-label="Total units"
+                    aria-label="Total pieces"
                   />
-                  units
+                  pcs
                 </label>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-navy/70">
@@ -185,7 +185,7 @@ export function PriceEditor({
                     onChange={(e) => onSetBoxes(parseInt(e.target.value, 10) || 0)}
                     onFocus={(e) => e.target.select()}
                     className={cn(inputCls, "w-20")}
-                    aria-label="Cases"
+                    aria-label="Boxes"
                   />
                   <span>{caseWord(li.boxes ?? 0)}</span>
                   {/* #2696 (d): loose units on top of cases are opt-in, as on the row. */}
@@ -201,7 +201,7 @@ export function PriceEditor({
                         onChange={(e) => onSetPieces(parseInt(e.target.value, 10) || 0)}
                         onFocus={(e) => e.target.select()}
                         className={cn(inputCls, "w-20")}
-                        aria-label="Extra loose units"
+                        aria-label="Extra pieces"
                       />
                       <span>{unitWord(li.pieces ?? 0)}</span>
                       {/* SA-563: hidden at 0 cases, as on the row. */}
@@ -212,7 +212,7 @@ export function PriceEditor({
                             onSetPieces(0);
                             closeLooseUnits();
                           }}
-                          aria-label="Remove extra units"
+                          aria-label="Remove extra pieces"
                           className="relative before:absolute before:-inset-2 before:content-[''] text-navy/50 hover:text-danger"
                         >
                           ×
@@ -225,13 +225,13 @@ export function PriceEditor({
                       onClick={openLooseUnits}
                       className="relative before:absolute before:-inset-2 before:content-[''] rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
                     >
-                      + units
+                      + pieces
                     </button>
                   )}
                 </div>
               )}
               <p className="text-xs text-navy/50">
-                1 case = {li.unitsPerBox} units · {li.qty} units total
+                1 box = {li.unitsPerBox} pcs · {li.qty} pcs total
               </p>
             </>
           ) : (
@@ -268,7 +268,7 @@ export function PriceEditor({
             off it needs a reason (below), as the server requires. */}
         <section className="space-y-1">
           <label className="block text-xs font-medium text-navy/70">
-            {packed ? "Case price" : "Price"}
+            {packed ? "Box price" : "Price"}
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">

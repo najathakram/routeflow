@@ -158,7 +158,7 @@ function UnitRow({
         </div>
       </div>
       <p className="mt-1.5 text-[11px] text-navy/50">
-        A grey figure is derived from the pack price; type a price to override it.
+        A grey figure is derived from the box price; type a price to override it.
       </p>
       <details className="mt-2">
         <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
@@ -303,7 +303,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           <span className="text-navy">
             <span className="font-medium">{product.unit || "Box"}</span>{" "}
             <span className="text-navy/60">
-              · {packPieces} {packPieces === 1 ? "piece" : "pieces"} · the pack (edit its price
+              · {packPieces} {packPieces === 1 ? "piece" : "pieces"} · the box (edit its price
               above)
             </span>
           </span>

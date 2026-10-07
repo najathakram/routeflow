@@ -96,7 +96,7 @@ export function PurchaseOrderLinesTable({
             Qty
           </span>
           <span role="columnheader" className="font-medium">
-            Unit Cost ($)
+            Cost ($)
           </span>
           <span role="columnheader" className="text-right font-medium">
             Subtotal
@@ -193,14 +193,14 @@ export function PurchaseOrderLinesTable({
                     type="number"
                     min={0}
                     step={0.0001}
-                    title={isBoxed ? "Cost per box" : "Cost per unit"}
+                    title={isBoxed ? "Cost per box" : "Cost per piece"}
                     aria-label="Unit cost"
                     value={line.unitCost}
                     onChange={(e) => updateLine(i, { unitCost: e.target.value })}
                     className={`${inputCls} ${NUM_MIN}`}
                   />
                   <p className="mt-0.5 text-[10px] text-navy/50">
-                    {isBoxed ? "per box" : "per unit"}
+                    {isBoxed ? "per box" : "per piece"}
                   </p>
                 </div>
                 <div className="flex items-center justify-between gap-2 md:contents">

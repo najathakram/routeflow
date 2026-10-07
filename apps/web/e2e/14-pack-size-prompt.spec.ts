@@ -14,9 +14,9 @@
  * then `getByText(label, { exact: true }).locator("xpath=..").locator(...)`):
  * the form's labels are plain text, not `<label for>`-linked to their inputs,
  * so `getByLabel` cannot resolve most of them. The pack-size input is the one
- * exception — `PackSizePrompt` gives it a real `aria-label="Units per box"`
+ * exception — `PackSizePrompt` gives it a real `aria-label="Pieces per box"`
  * — which conveniently disambiguates it from the form's OWN plain-text
- * "Units per box" field (same visible label text, no aria-label of its own).
+ * "Pieces per box" field (same visible label text, no aria-label of its own).
  */
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
@@ -55,7 +55,7 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
 
   /** The pack-size prompt's own count input — see the file header on why `getByLabel` disambiguates. */
   function packSizeInput(page: Page) {
-    return page.getByLabel("Units per box");
+    return page.getByLabel("Pieces per box");
   }
 
   /** No prompt of ANY confidence rendered — covers all three copy variants, not just the input. */

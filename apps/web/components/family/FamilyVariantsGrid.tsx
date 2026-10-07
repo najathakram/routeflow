@@ -26,8 +26,8 @@ const COLUMNS: Array<{
   { field: "unitSku", label: "Unit code", ariaLabel: "unit code", width: "min-w-[7rem]" },
   {
     field: "unitsPerBox",
-    label: "Units / case",
-    ariaLabel: "units per case",
+    label: "Pieces per box",
+    ariaLabel: "pieces per box",
     width: "min-w-[5rem]",
     inputMode: "numeric",
   },

@@ -1741,7 +1741,7 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label="Units per case"
+                    label="Pieces per box"
                     value={
                       isEditing ? (
                         <DecimalInput

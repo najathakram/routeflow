@@ -329,7 +329,7 @@ export function InlineCreateProductModal({
 
           {/* ── Units per box ── */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy">Units per box</label>
+            <label className="mb-1 block text-xs font-medium text-navy">Pieces per box</label>
             <input
               type="number"
               min={1}

@@ -466,7 +466,7 @@ export function ProductCreateModal({
               )}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">
-                  Case code (SKU / barcode)
+                  Box code (SKU / barcode)
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -744,7 +744,7 @@ export function ProductCreateModal({
               )}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Units per box</label>
+                <label className="mb-1 block text-sm font-medium text-navy">Pieces per box</label>
                 <input
                   type="number"
                   min="1"

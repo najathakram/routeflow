@@ -140,8 +140,8 @@ export interface LineItemRowProps {
 }
 
 /** SA-558d: the ONE case/unit wording, shared by the row and the scan screen's PriceEditor. */
-export const caseWord = (n: number | null | undefined) => (n === 1 ? "case" : "cases");
-export const unitWord = (n: number | null | undefined) => (n === 1 ? "unit" : "units");
+export const caseWord = (n: number | null | undefined) => (n === 1 ? "box" : "boxes");
+export const unitWord = (n: number | null | undefined) => (n === 1 ? "pc" : "pcs");
 
 /**
  * Renders one order line item: name/price display, the case/unit qty controls
@@ -356,7 +356,7 @@ export function LineItemRow({
           {li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
-                {li.unitsPerBox && li.unitsPerBox > 1 ? "Case price:" : "Price:"}
+                {li.unitsPerBox && li.unitsPerBox > 1 ? "Box price:" : "Price:"}
               </span>
               <MoneyInput
                 min={0}
@@ -434,7 +434,7 @@ export function LineItemRow({
                   : "bg-white text-navy/70 hover:bg-surface-raised",
               )}
             >
-              Case
+              Box
             </button>
             <button
               type="button"
@@ -447,7 +447,7 @@ export function LineItemRow({
                   : "bg-white text-navy/70 hover:bg-surface-raised",
               )}
             >
-              Unit
+              Piece
             </button>
           </div>
           {li.sellBy === "unit" ? (
@@ -460,9 +460,9 @@ export function LineItemRow({
                 onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
                 onFocus={(e) => e.target.select()}
                 className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Total units"
+                title="Total pieces"
               />
-              <span className="text-xs text-navy/70">units</span>
+              <span className="text-xs text-navy/70">pcs</span>
             </div>
           ) : (
             // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
@@ -483,7 +483,7 @@ export function LineItemRow({
                   onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
                   onFocus={(e) => e.target.select()}
                   className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  title="Number of whole cases"
+                  title="Number of whole boxes"
                 />
                 <span className="text-xs text-navy/70">{caseWord(li.boxes ?? 0)}</span>
               </span>
@@ -499,8 +499,8 @@ export function LineItemRow({
                     onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
                     onFocus={(e) => e.target.select()}
                     className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    title="Extra loose units (less than a full case)"
-                    aria-label="Extra loose units"
+                    title="Extra pieces (less than a full box)"
+                    aria-label="Extra pieces"
                   />
                   <span className="text-xs text-navy/70">{unitWord(li.pieces ?? 0)}</span>
                   {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
@@ -512,7 +512,7 @@ export function LineItemRow({
                         onSetPieces(0);
                         closeLooseUnits();
                       }}
-                      aria-label="Remove extra units"
+                      aria-label="Remove extra pieces"
                       className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
                     >
                       ×
@@ -527,13 +527,13 @@ export function LineItemRow({
                   // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
                   className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
                 >
-                  + units
+                  + pieces
                 </button>
               )}
             </div>
           )}
           <span className="text-[10px] text-navy/30">
-            1 case = {li.unitsPerBox} units
+            1 box = {li.unitsPerBox} pcs
             {li.qty > 0 && (
               <>
                 {" "}

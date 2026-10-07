@@ -147,7 +147,7 @@ export function CreatePOModal({
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Product</th>
                     <th className="px-3 py-2 text-left font-medium w-24">Qty</th>
-                    <th className="px-3 py-2 text-left font-medium w-28">Unit Cost ($)</th>
+                    <th className="px-3 py-2 text-left font-medium w-28">Cost ($)</th>
                     <th className="px-3 py-2 text-right font-medium w-24">Subtotal</th>
                     <th className="w-8" />
                   </tr>
@@ -224,13 +224,13 @@ export function CreatePOModal({
                             min={0}
                             step={0.0001}
                             placeholder="0.00"
-                            title={isBoxed ? "Cost per box" : "Cost per unit"}
+                            title={isBoxed ? "Cost per box" : "Cost per piece"}
                             value={line.unitCost}
                             onChange={(e) => updateLine(i, "unitCost", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                           />
                           <p className="mt-0.5 text-[10px] text-navy/50">
-                            {isBoxed ? "per box" : "per unit"}
+                            {isBoxed ? "per box" : "per piece"}
                           </p>
                         </td>
                         <td className="px-3 py-2 text-right text-navy/70">

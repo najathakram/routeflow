@@ -188,7 +188,7 @@ export function PackSizePrompt({
             value={draftValue}
             onChange={(e) => setDraftValue(e.target.value)}
             placeholder={isConfident ? undefined : "e.g. 12"}
-            aria-label="Units per box"
+            aria-label="Pieces per box"
             className="w-24 rounded border border-brand-300 bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <Button

@@ -163,7 +163,7 @@ async function openToStep1(orderId = "order-1") {
 }
 
 async function enterQtyAndGetQuote(pieces: string) {
-  const piecesInput = screen.getByLabelText(/qty \(pieces\)/i);
+  const piecesInput = screen.getByLabelText(/^pieces$/i);
   fireEvent.change(piecesInput, { target: { value: pieces } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
@@ -270,7 +270,7 @@ describe("RecordInlineReturnDialog — boxed product (AC3)", () => {
 
     expect(screen.getByLabelText(/^boxes$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^pieces$/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^qty/i)).not.toBeInTheDocument(); // no bare qty field
 
     fireEvent.change(screen.getByLabelText(/^boxes$/i), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
@@ -390,9 +390,9 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     expect(
       screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
     ).toBeNull();
-    expect((screen.getByLabelText(/qty \(pieces\)/i) as HTMLInputElement).value).not.toBe("10");
+    expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).not.toBe("10");
     // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
@@ -641,7 +641,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     // Back to the items, raise the quantity, quote again: the new quote credits the excess.
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(3));
     resolveNextQuote(
@@ -722,7 +722,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
     rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });

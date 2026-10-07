@@ -1761,7 +1761,7 @@ export default function NewInvoicePage() {
                                       <span className="italic">no SKU</span>
                                     )}
                                     {Number(p.unitsPerBox ?? 0) > 1 ? (
-                                      <span> · {p.unitsPerBox} per box</span>
+                                      <span> · {p.unitsPerBox} pcs per box</span>
                                     ) : null}
                                   </p>
                                 </div>
@@ -1901,7 +1901,7 @@ export default function NewInvoicePage() {
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Case
+                            Box
                           </button>
                           <button
                             type="button"
@@ -1913,7 +1913,7 @@ export default function NewInvoicePage() {
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Unit
+                            Piece
                           </button>
                         </div>
                       )}
@@ -1932,9 +1932,9 @@ export default function NewInvoicePage() {
                             }
                             onFocus={(e) => e.target.select()}
                             className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Total units"
+                            title="Total pieces"
                           />
-                          <span className="text-[9px] text-navy/30 text-right">units</span>
+                          <span className="text-[9px] text-navy/30 text-right">pcs</span>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-0.5">
@@ -1953,9 +1953,9 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Cases"
+                              title="Boxes"
                             />
-                            <span className="text-[10px] text-navy/70">c+</span>
+                            <span className="text-[10px] text-navy/70">box +</span>
                             <input
                               type="number"
                               min={0}
@@ -1971,11 +1971,11 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Extra loose units"
+                              title="Extra pieces"
                             />
                           </div>
                           <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} units
+                            {item.qty} {item.qty === 1 ? "pc" : "pcs"}
                           </span>
                         </div>
                       )

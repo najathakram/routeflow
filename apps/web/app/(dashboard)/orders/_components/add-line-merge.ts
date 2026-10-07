@@ -87,7 +87,7 @@ export function mergedLineMessage(name: string, merged: QtyLine): string {
         qty: merged.qty,
         boxes: merged.boxes,
         pieces: merged.pieces,
-        boxLabel: "case", // the line row says "cases"
+        boxLabel: "box", // the line row says "boxes"
       })
     : String(merged.qty);
   return `${name} — now ${label}`;
