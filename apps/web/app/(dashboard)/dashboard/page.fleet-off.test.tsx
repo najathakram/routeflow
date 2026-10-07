@@ -46,8 +46,9 @@ jest.mock("@/lib/api/addons", () => ({
 jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
-  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+  apiClient: { get: jest.fn().mockResolvedValue({ data: { timezone: "America/New_York" } }) },
 }));
+const shippedFromSeen: string[] = [];
 const page = (total: number, rows: unknown[] = []) => ({
   data: { data: rows, meta: { total, page: 1, limit: 1, totalPages: 1 } },
   isLoading: false,
@@ -62,7 +63,10 @@ jest.mock("@/lib/api/orders", () => ({
     shippedFrom?: string;
   }) => {
     if (p?.hasTracking === false) return page(2);
-    if (p?.shippedFrom) return page(9);
+    if (p?.shippedFrom) {
+      shippedFromSeen.push(p.shippedFrom);
+      return page(9);
+    }
     if (p?.fulfillPath === "SHIP" && p?.status === "CONFIRMED") return page(7);
     return page(3);
   },
@@ -104,10 +108,11 @@ describe("Dashboard — fleet-off clean UI", () => {
     );
   });
 
-  it("shipping account: Ready to ship and Shipped, no tracking cards with exact counts, linking to the filtered list", () => {
+  it("shipping account: Ready to ship and Shipped, no tracking cards with exact counts, linking to the filtered list", async () => {
     fleet = false;
     ship = true;
     renderWithProviders(<DashboardPage />);
+    await screen.findByText("9"); // the week card waits for the business timezone
 
     expect(tileLabels()).toEqual(
       expect.arrayContaining(["Ready to ship", "Shipped, no tracking", "Shipped this week"]),
@@ -129,6 +134,29 @@ describe("Dashboard — fleet-off clean UI", () => {
     expect(tile("Shipped this week").getAttribute("href")).toBe(
       "/orders?fulfillPath=SHIP&shipView=week",
     );
+  });
+
+  it("Shipped this week asks for Sunday 00:00 in the tenant's zone (same instant as the list)", async () => {
+    fleet = false;
+    ship = true;
+    shippedFromSeen.length = 0;
+    renderWithProviders(<DashboardPage />);
+    await screen.findByText("9");
+    const sent = shippedFromSeen.pop()!;
+    const { startOfTenantWeek } = jest.requireActual("@/lib/tenant-week");
+    expect(sent).toBe(startOfTenantWeek(new Date(), "America/New_York").toISOString());
+  });
+
+  it("Shipped this week keeps its placeholder until the timezone is known", async () => {
+    fleet = false;
+    ship = true;
+    const { apiClient } = jest.requireMock("@/lib/api-client");
+    apiClient.get.mockResolvedValueOnce({ data: {} });
+    renderWithProviders(<DashboardPage />);
+    await screen.findByText("Shipped this week");
+    const card = screen.getAllByText("Shipped this week").find((el) => el.tagName === "P")!;
+    expect(card.closest("a")).toHaveTextContent("—");
+    expect(card.closest("a")).not.toHaveTextContent("9");
   });
 
   it.each([

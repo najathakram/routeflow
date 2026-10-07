@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import DashboardPage from "./page";
 
 jest.mock("next/navigation", () => ({
@@ -73,7 +73,7 @@ jest.mock("@/lib/api/drivers", () => ({ useDrivers: () => idle }));
 jest.mock("@/lib/api/products", () => ({ useProducts: () => idle }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
-  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+  apiClient: { get: jest.fn().mockResolvedValue({ data: { timezone: "America/New_York" } }) },
 }));
 
 /**
@@ -120,12 +120,20 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
     ).not.toBeInTheDocument();
   });
 
-  it("a shipping account's OPERATOR enables both tile reads; a DRIVER keeps them disabled", () => {
+  it("a shipping account's OPERATOR enables both tile reads; a DRIVER keeps them disabled", async () => {
     features = SHIPPING_CAPS;
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
-    for (const r of reads) expect(r.options?.enabled).not.toBe(false);
-    expect(reads.filter(isShipTile).length).toBe(3);
+    // The week tile also waits for the business timezone (/settings), so it enables a render later.
+    await waitFor(() => {
+      const last = reads.slice(-reads.filter((r) => r.hook === "useOrders").length);
+      expect(last.length).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      const week = reads.filter(isShipTile).slice(-3);
+      expect(week.every((r) => r.options?.enabled !== false)).toBe(true);
+    });
+    expect(reads.filter(isShipTile).length).toBeGreaterThanOrEqual(3);
 
     reads.length = 0;
     authUser = { role: "DRIVER" };

@@ -26,6 +26,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
+import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -253,7 +254,7 @@ export default function OrdersPage() {
     // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
     // excluded from trip/route dispatch) — same URL-chip treatment as status.
     fulfillPath: "",
-    // Dashboard shipping cards: "no-tracking" (shipped, no tracking number) | "week" (shipped in the last 7 days).
+    // Dashboard shipping cards: "no-tracking" (shipped, no tracking number) | "week" (shipped since Sunday 00:00 in the business's timezone).
     shipView: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
@@ -263,12 +264,11 @@ export default function OrdersPage() {
   const productIdFilter = (urlFilters.productId as string) ?? "";
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
   const shipView = (urlFilters.shipView as string) ?? "";
+  // Sunday 00:00 in the business's timezone — the dashboard card uses the same helper.
+  const weekStart = useShippedWeekFrom(shipView === "week");
   const shipParams = {
     hasTracking: shipView === "no-tracking" ? (false as const) : undefined,
-    shippedFrom:
-      shipView === "week"
-        ? new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
-        : undefined,
+    shippedFrom: shipView === "week" ? weekStart : undefined,
   };
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
@@ -521,18 +521,28 @@ export default function OrdersPage() {
     }
   };
 
-  const { data, isLoading, isError } = useOrders({
-    status: statusFilter || undefined,
-    urgent: urgentOnly || undefined,
-    deliveryDateFrom: dateFrom || undefined,
-    deliveryDateTo: dateTo || undefined,
-    productId: productIdFilter || undefined,
-    fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
-    ...shipParams,
-    search: debouncedCustomerSearch || undefined,
-    page,
-    limit,
-  });
+  // The week view waits for the business timezone: never fetch (or show) an unfiltered list for it.
+  const weekPending = shipView === "week" && !weekStart;
+  const {
+    data,
+    isLoading: ordersLoading,
+    isError,
+  } = useOrders(
+    {
+      status: statusFilter || undefined,
+      urgent: urgentOnly || undefined,
+      deliveryDateFrom: dateFrom || undefined,
+      deliveryDateTo: dateTo || undefined,
+      productId: productIdFilter || undefined,
+      fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+      ...shipParams,
+      search: debouncedCustomerSearch || undefined,
+      page,
+      limit,
+    },
+    { enabled: !weekPending },
+  );
+  const isLoading = ordersLoading || weekPending;
 
   const orders = data?.data ?? [];
   const meta = data?.meta;
@@ -567,7 +577,7 @@ export default function OrdersPage() {
   const [isExporting, setIsExporting] = React.useState(false);
 
   const handleExport = async () => {
-    if (isExporting) return;
+    if (isExporting || weekPending) return;
     setIsExporting(true);
     try {
       const EXPORT_LIMIT = 1000;

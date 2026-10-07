@@ -469,6 +469,9 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
+  // ROUTE). A FAILED answer proceeds with today's behaviour instead of blocking forever.
+  const fulfilmentPending = !staffFulfilment.known && !staffFulfilment.failed;
   // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
@@ -1256,6 +1259,7 @@ export function CreateOrderModal({
     data: FormValues,
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
+    if (fulfilmentPending) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
@@ -1675,7 +1679,7 @@ export function CreateOrderModal({
               variant="secondary"
               type="button"
               loading={createOrder.isPending}
-              disabled={createOrder.isPending}
+              disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
               Save as Draft
@@ -1685,7 +1689,9 @@ export function CreateOrderModal({
               form="create-order-form"
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
-              disabled={createOrder.isPending || lineItems.some(isPendingDefaultUnit)}
+              disabled={
+                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+              }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order

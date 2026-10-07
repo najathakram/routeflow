@@ -59,6 +59,9 @@ export class SettingsController {
     let state = all["settings.state"] ?? "";
     let zip = all["settings.zip"] ?? "";
     let phone = all["settings.phone"] ?? "";
+    // The business's own IANA zone (TenantConfig.timezone, default America/New_York): the web uses it
+    // to place "this week" (Sunday 00:00 local) for the shipping cards and the orders week view.
+    let timezone = "America/New_York";
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -74,8 +77,10 @@ export class SettingsController {
           phone: true,
           invoiceNotes: true,
           invoiceTerms: true,
+          timezone: true,
         },
       });
+      if (config?.timezone) timezone = config.timezone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
@@ -114,6 +119,7 @@ export class SettingsController {
       logoUrl: all["settings.logoUrl"] ?? null,
       invoiceNotes,
       invoiceTerms,
+      timezone,
     };
   }
 

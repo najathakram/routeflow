@@ -28,6 +28,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -622,13 +623,12 @@ export default function DashboardPage() {
     { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", hasTracking: false, page: 1, limit: 1 },
     { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
   );
-  const weekAgo = React.useMemo(
-    () => new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10),
-    [],
-  );
+  // A week starts Sunday 00:00 in the BUSINESS's own timezone (same helper as the orders week view, so
+  // card count = list total). Until the zone is known the card keeps its loading placeholder.
+  const weekStart = useShippedWeekFrom(readsBusinessData && isOperator && shippingAccount);
   const shippedWeekQ = useOrders(
-    { fulfillPath: "SHIP", shippedFrom: weekAgo, page: 1, limit: 1 },
-    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+    { fulfillPath: "SHIP", shippedFrom: weekStart, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount && !!weekStart },
   );
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
@@ -863,7 +863,7 @@ export default function DashboardPage() {
             <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
               <StatCard
                 label="Shipped this week"
-                value={shipCount(shippedWeekQ)}
+                value={weekStart ? shipCount(shippedWeekQ) : "—"}
                 icon={<Truck className="h-5 w-5" />}
                 className="cursor-pointer transition-shadow hover:shadow-md"
               />
