@@ -7,10 +7,12 @@
  * helpers/local-fulfilment-profile.ts and restored row-for-row in afterAll. The only data written besides that config is the
  * one counter sale on the approved test tenant. Products and customer are DISCOVERED over the API. Needs `npm run local:sa`.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, request as pwRequest, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
+import { assertLocalFulfilmentTarget } from "../lib/local-fulfilment-guard";
 import {
   applyBusinessProfile,
   localTarget,
@@ -38,8 +40,46 @@ test.beforeAll(async () => {
   await applyBusinessProfile(target(), before, "in_store_shipping_retailer");
 });
 
+/** Throwaway rows this run created; retired in afterAll (also after a failure). */
+const created: {
+  api: string;
+  headers: Record<string, string>;
+  productId: string;
+  customerId: string;
+}[] = [];
+
+async function retireThrowaways() {
+  for (const c of created.splice(0)) {
+    const ctx = await pwRequest.newContext();
+    try {
+      // SOFT retire, never a hard delete: deactivate the product, set the customer INACTIVE, then READ BACK.
+      const p = await ctx.patch(`${c.api}/products/${c.productId}`, {
+        headers: c.headers,
+        data: { isActive: false },
+      });
+      expect(p.ok(), `deactivate the throwaway product: ${p.status()}`).toBeTruthy();
+      const cu = await ctx.patch(`${c.api}/customers/${c.customerId}/status`, {
+        headers: c.headers,
+        data: { status: "INACTIVE" },
+      });
+      expect(cu.ok(), `archive the throwaway customer: ${cu.status()}`).toBeTruthy();
+      const prod: any = await (
+        await ctx.get(`${c.api}/products/${c.productId}`, { headers: c.headers })
+      ).json();
+      expect(prod?.isActive, "the throwaway product reads back inactive").toBe(false);
+      const cust = JSON.stringify(
+        await (await ctx.get(`${c.api}/customers/${c.customerId}`, { headers: c.headers })).json(),
+      );
+      expect(cust, "the throwaway customer reads back INACTIVE").toContain('"status":"INACTIVE"');
+    } finally {
+      await ctx.dispose();
+    }
+  }
+}
+
 test.afterAll(async () => {
   test.setTimeout(120_000);
+  await retireThrowaways();
   if (!before) return;
   const restored = await restoreFulfilmentConfig(target(), before);
   expect(restored, "the tenant's fulfilment config is back exactly as it was").toBe(true);
@@ -48,9 +88,13 @@ test.afterAll(async () => {
 
 /**
  * A throwaway tier-2 customer and a throwaway product whose tier-2 price differs (10.00 -> 8.00), created through the operator
- * API on the approved test tenant and deleted again, so the re-price is ALWAYS observable whatever the seed holds.
+ * API on the approved test tenant and retired (inactive / archived, never hard-deleted) in afterAll, so the re-price is
+ * ALWAYS observable whatever the seed holds. The local-target guard (local web + API + DB, not GitHub Actions, approved test
+ * tenant) and assertTestTenant run BEFORE anything is created; the project is also only registered on a local lane.
  */
 async function makeTierFixtures(page: Page, api: string, headers: Record<string, string>) {
+  assertLocalFulfilmentTarget(target());
+  assertTestTenant(TENANT_SLUG, "spec 72 throwaway fixtures");
   const tag = Date.now().toString(36).toUpperCase();
   const prod = await page.request.post(`${api}/products`, {
     headers,
@@ -70,14 +114,8 @@ async function makeTierFixtures(page: Page, api: string, headers: Record<string,
   });
   expect(cust.ok(), `create the tier-2 customer: ${cust.status()}`).toBeTruthy();
   const customer: any = await cust.json();
-  const cleanup = async () => {
-    await page.request.delete(`${api}/customers/${customer.id}`, {
-      headers,
-      params: { force: "true" },
-    });
-    await page.request.delete(`${api}/products/${product.id}`, { headers });
-  };
-  return { product, customer, cleanup };
+  created.push({ api, headers, productId: product.id, customerId: customer.id });
+  return { product, customer };
 }
 
 async function discover(page: Page) {
@@ -191,7 +229,7 @@ for (const vp of VIEWPORTS) {
 
         expect(await overflow(), "no horizontal overflow after the pick").toBeLessThanOrEqual(0);
       } finally {
-        await fx.cleanup();
+        // retired in afterAll (also after a failure)
       }
     });
   });
