@@ -462,7 +462,7 @@ export default function CustomersPage() {
           const tagList = c.tagAssignments ?? [];
           const hasSecondary = Boolean(c.phone) || tagList.length > 0;
           return (
-            <div className="min-w-0 max-w-[4.5rem] sm:max-w-none">
+            <div className="min-w-0 max-w-[4.5rem] [overflow-wrap:anywhere] sm:max-w-none">
               <Link
                 href={`/customers/${c.id}`}
                 onClick={(e) => {
@@ -494,7 +494,8 @@ export default function CustomersPage() {
                     <span
                       key={ta.tag.id}
                       data-testid="name-secondary-tag"
-                      className="inline-flex max-w-[7rem] items-center truncate rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                      title={ta.tag.name}
+                      className="inline-block max-w-[7rem] truncate rounded-full px-2 py-0.5 align-bottom text-[10px] font-medium text-white"
                       style={{ backgroundColor: ta.tag.color }}
                     >
                       {ta.tag.name}
@@ -525,7 +526,9 @@ export default function CustomersPage() {
               <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 sm:flex text-[10px] font-semibold text-brand-600">
                 {initials}
               </span>
-              <span className="max-w-[4rem] text-navy/80 sm:max-w-none">{name}</span>
+              <span className="max-w-[4rem] text-navy/80 [overflow-wrap:anywhere] sm:max-w-none">
+                {name}
+              </span>
               {(row.original.regulatedCount ?? 0) > 0 && (
                 <span
                   title="Sells regulated items"

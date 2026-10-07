@@ -177,6 +177,8 @@ describe("PKG-1 customers list — F24 columns below sm (relocation, not removal
     renderWithProviders(<CustomersPage />);
     const lines = screen.getAllByTestId("name-secondary-line");
     expect(lines[0]).toHaveClass("sm:hidden");
+    const nameWrap = screen.getAllByRole("link", { name: "Ada Buyer" })[0].parentElement!;
+    expect(nameWrap.className).toMatch(/overflow-wrap:anywhere/);
     const tel = within(lines[0]).getByTestId("name-secondary-phone");
     expect(tel).toHaveAttribute("href", "tel:5550100");
     // tapping the phone must not open the row
@@ -338,7 +340,11 @@ describe("PKG-1 customers list — secondary line robustness", () => {
     ];
     renderWithProviders(<CustomersPage />);
     const chip = screen.getByTestId("name-secondary-tag");
-    expect(chip).toHaveClass("truncate");
+    expect(chip).toHaveClass("truncate", "inline-block");
+    expect(chip).toHaveAttribute(
+      "title",
+      "An extremely long tag name that must never widen the row",
+    );
     expect(chip.className).toMatch(/max-w-/);
   });
 

@@ -131,6 +131,41 @@ test.describe("customers list — 390px", () => {
     expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
   });
 
+  test("a long single-word name and business never spill into the next column or the page", async ({
+    page,
+  }) => {
+    await page.route(LIST, async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      const r = (body.data ?? [])[0];
+      if (r) {
+        r.contactName = "Christophersonwellingtonsmythe";
+        r.businessName = "Superlongbusinessnamewithoutanyspaces";
+        r.receivables = 12.5;
+      }
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.goto("/customers");
+    await expect(page.getByRole("heading", { name: /^customers$/i }).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await waitForDataLoaded(page);
+    const row = page.locator("tbody tr").first();
+    const cells = row.locator("td");
+    const nameBox = (await cells.nth(0).boundingBox())!;
+    const bizBox = (await cells.nth(1).boundingBox())!;
+    const link = (await row.getByRole("link").first().boundingBox())!;
+    expect(link.x + link.width).toBeLessThanOrEqual(nameBox.x + nameBox.width + 1);
+    expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(bizBox.x + 1);
+    const biz = (await cells.nth(1).locator("span").last().boundingBox())!;
+    const recvBox = (await row
+      .getByTestId("receivables-cell")
+      .locator("xpath=ancestor::td")
+      .boundingBox())!;
+    expect(biz.x + biz.width).toBeLessThanOrEqual(recvBox.x + 1);
+    expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
   test("C8 empty state fits the viewport and Clear search works", async ({ page }) => {
     await openList(page);
     const search = page.getByPlaceholder(/name, business or phone/i);
