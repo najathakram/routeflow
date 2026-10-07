@@ -1189,7 +1189,7 @@ export default function DashboardPage() {
               }
             />
           ) : (
-            <div key="recent-loaded" className="-mx-6 -mb-6">
+            <div className="-mx-6 -mb-6">
               <Table
                 data={recentOrders}
                 columns={orderColumns}
