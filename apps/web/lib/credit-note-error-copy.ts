@@ -35,6 +35,8 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "This credit is split across invoice lines. Enter an amount for each line.",
   [API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID]:
     "One of the credit lines isn't valid. Check each line amount.",
+  [API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE]:
+    "A credit note you picked is no longer available. Remove it and try again.",
 };
 
 /** Shown when the request got no response at all (a timeout or a dropped connection): it may have committed. */

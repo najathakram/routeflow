@@ -22,7 +22,8 @@ interface Args<C, Cr> {
  *
  * Credits: the modal's customer-id effect clears `appliedCredits` on every customer swap, so the
  * restored set is handed to that effect through `takeRestoredCredits()` rather than set here.
- * The server re-validates credits at submit, so a stale one is refused with a code, never applied.
+ * The server re-validates credits at submit: a stale one is refused with CREDIT_NOTE_UNAVAILABLE
+ * (B1204), never applied.
  */
 export function useCustomerChangeUndo<C, Cr>({
   selectedCustomer,

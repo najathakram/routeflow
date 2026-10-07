@@ -306,7 +306,7 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
     expect(payload.appliedCreditNotes).toBeUndefined();
   });
 
-  it("STALE CREDITS: Undo-restored credits go to the server (credit-notes.service.ts:1580 validates via orders.service.ts:1572); a coded refusal shows as an error and the modal stays open", async () => {
+  it("STALE CREDITS: Undo-restored credits go to the server (credit-notes.service.ts:1580 validates via orders.service.ts:1572); a CREDIT_NOTE_UNAVAILABLE refusal shows the fixed copy (never the server text) and the modal stays open", async () => {
     const onClose = jest.fn();
     const user = userEvent.setup({ delay: null });
     const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={onClose} />);
@@ -318,7 +318,10 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
     expect(mockCreateMutate.mock.calls[0][0].appliedCreditNotes).toEqual([{ creditNoteId: "cn1" }]);
     // The server refuses (stale / consumed credit): the mutation's error surfaces; nothing closes.
     mockCreateError = {
-      response: { status: 400, data: { message: "Credit note cn1 has expired" } },
+      response: {
+        status: 400,
+        data: { code: "CREDIT_NOTE_UNAVAILABLE", message: "Credit note cn1 has expired" },
+      },
     };
     rerender(<CreateOrderModal isOpen onClose={onClose} />);
     expect(
@@ -328,6 +331,22 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/has expired/)).toBeNull(); // never the raw server text
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("PKG-4 negative: an unrelated refusal is not mislabeled as a stale credit", () => {
+  it("a credit applied + an uncoded 400 for another reason does NOT show the stale-credit copy", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await typeCustomer(user);
+    await user.click(await rowBtn(/Acme Market/));
+    await user.click(await creditBox());
+    mockCreateError = {
+      response: { status: 400, data: { message: "Unlisted item price missing" } },
+    };
+    rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(await screen.findByText(/Unlisted item price missing/)).toBeInTheDocument();
+    expect(screen.queryByText(/credit note you picked/i)).toBeNull();
   });
 });
 

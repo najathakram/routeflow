@@ -80,7 +80,9 @@ export function CustomerSearchPicker<C extends PickerCustomer>({
           className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
         >
           {results.length === 0 && searched && (
-            <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
+            <li role="status" className="px-3 py-2 text-sm text-navy/70">
+              No customers found.
+            </li>
           )}
           {results.map((c, i) => (
             <li key={c.id} role="presentation">

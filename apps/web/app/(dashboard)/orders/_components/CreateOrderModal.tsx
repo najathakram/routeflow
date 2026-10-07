@@ -1166,7 +1166,13 @@ export function CreateOrderModal({
       return;
     }
     // K3: Escape with the customer list OPEN closes just the list (typed text kept) — never parks a draft.
-    if (customerSearch && customerListOpen && !selectedCustomer) {
+    // Same visibility rule as CustomerSearchPicker (`show`), so Escape never swallows a no-op.
+    if (
+      customerListOpen &&
+      !selectedCustomer &&
+      customerSearch &&
+      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+    ) {
       event.preventDefault();
       setCustomerListOpen(false);
       return;
@@ -1533,7 +1539,7 @@ export function CreateOrderModal({
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
       codedToastCopy(err) ||
-      (isStaleCreditRefusal(err, appliedCredits.length) ? STALE_CREDIT_COPY : null) ||
+      (isStaleCreditRefusal(err) ? STALE_CREDIT_COPY : null) ||
       err.response?.data?.message ||
       err.message ||
       "Something went wrong. Please try again."
@@ -1885,7 +1891,9 @@ export function CreateOrderModal({
                     className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown"
                   >
                     {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
-                      <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
+                      <li role="status" className="px-3 py-2 text-sm text-navy/70">
+                        No products found.
+                      </li>
                     )}
                     {filteredProducts.map((p: any, pi: number) => {
                       const hasVariants = p.variants?.length > 0;

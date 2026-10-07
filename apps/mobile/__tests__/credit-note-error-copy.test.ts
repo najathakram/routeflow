@@ -17,7 +17,7 @@ const apiError = (data: Record<string, unknown>) => ({ response: { data } });
 
 describe("credit-note error copy (#2418 U1: no raw server strings)", () => {
   it("has fixed copy for EVERY CREDIT_NOTE_* code and nothing else", () => {
-    expect(codes.length).toBe(13);
+    expect(codes.length).toBe(14);
     expect(Object.keys(CREDIT_NOTE_ERROR_COPY).sort()).toEqual([...codes].sort());
     for (const c of codes)
       expect(

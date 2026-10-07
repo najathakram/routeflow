@@ -15,7 +15,7 @@ export interface UseListboxNavOptions<T> {
   open: boolean;
   onPick: (item: T) => void;
   onClose?: () => void;
-  /** Changing this resets the highlight (pass the search text). */
+  /** Changing this (or the number of `items`) resets the highlight; pass the search text. */
   resetKey?: unknown;
   /** Highlight a fresh list starts at: -1 (default) = none, 0 = first row. */
   initial?: number;
@@ -35,7 +35,9 @@ export function useListboxNav<T>({
 
   React.useEffect(() => {
     setHighlight(initial);
-  }, [resetKey, open, initial]);
+    // Keyed on the result COUNT, not the array identity: callers re-derive `items` every render, and
+    // an identity key would drop the highlight on each one.
+  }, [resetKey, open, initial, items.length]);
 
   const optionId = (i: number) => `${idPrefix}-opt-${i}`;
   const listId = `${idPrefix}-list`;
