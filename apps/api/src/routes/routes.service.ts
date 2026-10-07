@@ -9,7 +9,6 @@ import {
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import {
-  assertDeliveriesFitStop,
   assertStopNotSkipped,
   claimStopCompletion,
   claimStopStatusChangeOnLiveRun,
@@ -2215,7 +2214,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
+      await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);
       // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
       // requirement from the stop's current orders (authoritative — orders can be
       // linked after dispatch), then block a regulated completion that lacks the

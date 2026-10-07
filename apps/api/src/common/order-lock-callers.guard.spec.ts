@@ -129,4 +129,28 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
       expect(orderLock).toBeLessThan(firstWrite);
     }
   });
+  it("SA-706d: every transaction that claims a stop locks the stop's Orders FIRST (Order -> RouteRunStop, one order on every path)", () => {
+    const offenders: string[] = [];
+    let claims = 0;
+    for (const file of walk(SRC)) {
+      const src = strip(fs.readFileSync(file, "utf8"));
+      const call = /\bclaimStopCompletion\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = call.exec(src))) {
+        if (/(async |function )$/.test(src.slice(Math.max(0, m.index - 12), m.index))) continue;
+        claims += 1;
+        // the enclosing method/function starts at the last head before the call
+        let start = 0;
+        HEAD.lastIndex = 0;
+        let h: RegExpExecArray | null;
+        while ((h = HEAD.exec(src)) && h.index < m.index) start = h.index;
+        if (!src.slice(start, m.index).includes("lockStopOrdersAndFit("))
+          offenders.push(
+            `${path.relative(SRC, file).replace(/\\/g, "/")}:${src.slice(0, m.index).split("\n").length}`,
+          );
+      }
+    }
+    expect(claims).toBeGreaterThanOrEqual(2); // completeStop + completeWithPayment (the scan found them)
+    expect(offenders).toEqual([]);
+  });
 });
