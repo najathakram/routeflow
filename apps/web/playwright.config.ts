@@ -476,11 +476,11 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
-    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 65). READ-ONLY:
+    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
     // never clicks Confirm; asserts no write request leaves the page.
     {
       name: "invoice-numbering-card",
-      testMatch: /65-invoice-numbering-card\.spec\.ts/,
+      testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
