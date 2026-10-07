@@ -37,7 +37,9 @@ describe("GoogleOAuthService — B825 returnOrigin travels inside the signed sta
   function buildService() {
     const config = {
       get: (key: string) =>
-        key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : CONFIG_VALUES[key],
+        key === "jwt"
+          ? { secret: "test-jwt-secret-for-oauth-state-0123456789" }
+          : CONFIG_VALUES[key],
     } as unknown as ConfigService;
     const service = new GoogleOAuthService(
       {} as any, // prisma — not reached by generateAuthUrl/verifyCallback's state handling
