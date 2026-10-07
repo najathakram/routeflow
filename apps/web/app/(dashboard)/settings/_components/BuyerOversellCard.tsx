@@ -27,6 +27,14 @@ export const OVERSELL_COPY = {
   saveFailed: "Couldn't save the out-of-stock ordering setting",
   savedOn: "Customers can now order items that are out of stock",
   savedOff: "Customers can no longer order items that are out of stock",
+  // OOS PR2: what a buyer is told about a backordered item (the seller's choice).
+  visibilityTitle: "What customers see about backordered items",
+  visibilityShow: 'Show it: the item says "Ships when restocked" and the order is tagged',
+  visibilityHide: "Hide it: the item looks in stock and customers see nothing about backorders",
+  visibilityNeedsSwitch: "This applies when out-of-stock ordering is on for a customer.",
+  savedShow: "Customers will see that backordered items ship when restocked",
+  savedHide: "Customers will no longer see anything about backorders",
+  visibilitySaveFailed: "Couldn't save what customers see about backordered items",
 } as const;
 
 export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
@@ -47,6 +55,24 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
             title: next === "backorder" ? OVERSELL_COPY.savedOn : OVERSELL_COPY.savedOff,
           }),
         onError: () => toast({ variant: "error", title: OVERSELL_COPY.saveFailed }),
+      },
+    );
+  }
+
+  // Only the exact value "hide" hides; an unknown value reads as the default, "show".
+  const visibility = data?.buyerBackorderVisibility === "hide" ? "hide" : "show";
+
+  function onVisibility(next: "show" | "hide") {
+    if (!canEdit || !data || !on || next === visibility) return;
+    update.mutate(
+      { buyerBackorderVisibility: next },
+      {
+        onSuccess: () =>
+          toast({
+            variant: "success",
+            title: next === "show" ? OVERSELL_COPY.savedShow : OVERSELL_COPY.savedHide,
+          }),
+        onError: () => toast({ variant: "error", title: OVERSELL_COPY.visibilitySaveFailed }),
       },
     );
   }
@@ -86,6 +112,36 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
               />
             </label>
           </div>
+          <fieldset
+            className="space-y-1.5 border-t border-surface-border pt-3"
+            disabled={!canEdit || !on || update.isPending}
+          >
+            <legend className="text-sm font-medium text-navy">
+              {OVERSELL_COPY.visibilityTitle}
+            </legend>
+            {(
+              [
+                ["show", OVERSELL_COPY.visibilityShow],
+                ["hide", OVERSELL_COPY.visibilityHide],
+              ] as const
+            ).map(([value, label]) => (
+              <label
+                key={value}
+                className="flex cursor-pointer items-start gap-2 text-sm text-navy"
+              >
+                <input
+                  type="radio"
+                  name="buyer-backorder-visibility"
+                  value={value}
+                  checked={visibility === value}
+                  onChange={() => onVisibility(value)}
+                  className="mt-1"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+            <p className="text-xs text-navy/55">{OVERSELL_COPY.visibilityNeedsSwitch}</p>
+          </fieldset>
           {!canEdit && <p className="text-xs text-navy/55">{OVERSELL_COPY.readOnly}</p>}
           {overrides > 0 && (
             <p className="text-xs text-navy/55">

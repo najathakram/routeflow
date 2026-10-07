@@ -240,6 +240,12 @@ export interface BuyerProduct {
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
   stockLeft: number | null;
+  /**
+   * OOS PR2: this buyer may order the item even when it is out of stock (the seller's setting,
+   * resolved server-side once per request). Absent/false = an out-of-stock item is not orderable.
+   * Where the seller hides backorders, `inStock` / `stockStatus` already read as in stock.
+   */
+  canBackorder?: boolean;
 }
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
@@ -257,6 +263,10 @@ export interface BuyerFavoriteAvailable {
   unitsPerBox: number | null;
   createdAt: string;
   unavailable: false;
+  /** OOS PR2: the same stock status the catalog row carries (masked where the seller hides backorders). */
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** OOS PR2: this buyer may order the item even when it is out of stock (server-resolved). */
+  canBackorder?: boolean;
 }
 
 /** A favourite the tenant hid from the buyer portal (SA-606 M3): name only, no price, not orderable. */

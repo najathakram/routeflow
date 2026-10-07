@@ -8,6 +8,7 @@ import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProduct, BuyerPromotion, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { isOrderBlocked, stockLine } from "@/lib/buyer-backorder";
 import { bogoChipLabel, deriveTilePrice } from "./tile-pricing";
 import { QtyStepper } from "./QtyStepper";
 import type { ShopDensity } from "../page";
@@ -53,17 +54,6 @@ function behaviorLabel(est?: ReplenishmentEstimate): string | null {
     return `You order every ~${c} days`;
   }
   return `Bought ${est.orderCount}x`;
-}
-
-function stockText(p: BuyerProduct): { label: string; cls: string } {
-  const status = p.stockStatus ?? "IN_STOCK";
-  if (status === "OUT_OF_STOCK") return { label: "Out of stock", cls: "text-danger" };
-  if (status === "LOW")
-    return {
-      label: p.stockLeft != null ? `Only ${p.stockLeft} left` : "Low stock",
-      cls: "text-warning",
-    };
-  return { label: "In stock", cls: "text-success" };
 }
 
 // ─── Product Tile (Catalogue v2) ───────────────────────────────────────────────
@@ -117,8 +107,9 @@ export function ProductTile({
   const priced = deriveTilePrice(product, promoRules, cartItem);
   const chip = computeChip(product, priced, bogoChipLabel(product, promotions), estimate);
   const behavior = behaviorLabel(estimate);
-  const stock = stockText(product);
-  const outOfStock = (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";
+  // OOS PR2: an out-of-stock item this buyer may order anyway ("Ships when restocked") is NOT blocked.
+  const stock = stockLine(product);
+  const outOfStock = isOrderBlocked(product);
   const isCompact = size === "sm";
   const detailHref = `/buyer/portal/${sellerSlug}/shop/${product.id}`;
 

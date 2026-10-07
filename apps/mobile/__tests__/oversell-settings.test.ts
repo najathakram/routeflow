@@ -1,8 +1,11 @@
 import {
   OVERSELL_COPY,
+  VISIBILITY_COPY,
   canEditOversell,
+  canEditVisibility,
   nextOversellMode,
   oversellIsOn,
+  visibilityMode,
 } from "../lib/oversell-settings";
 
 /**
@@ -65,5 +68,44 @@ describe("OVERSELL_COPY", () => {
     for (const k of ["loadFailed", "saveFailed", "savedOn", "savedOff"] as const) {
       expect(typeof OVERSELL_COPY[k]).toBe("string");
     }
+  });
+});
+
+describe("OOS PR2: what customers see about backordered items", () => {
+  it('only the exact value "hide" hides; everything else reads as the default, show', () => {
+    expect(visibilityMode("hide")).toBe("hide");
+    for (const v of ["show", "HIDE", "Hide", "yes", "", null, undefined, 1, true]) {
+      expect(visibilityMode(v)).toBe("show");
+    }
+  });
+
+  it("only an admin, and only while out-of-stock ordering is ON, may change it", () => {
+    expect(canEditVisibility("TENANT_ADMIN", true)).toBe(true);
+    expect(canEditVisibility("TENANT_ADMIN", false)).toBe(false);
+    for (const role of ["OPERATOR", "DRIVER", "CUSTOMER", null, undefined]) {
+      expect(canEditVisibility(role, true)).toBe(false);
+    }
+  });
+
+  it("matches the web card's copy (title, both choices, toasts)", () => {
+    expect(VISIBILITY_COPY.title).toBe("What customers see about backordered items");
+    expect(VISIBILITY_COPY.show).toBe(
+      'Show it: the item says "Ships when restocked" and the order is tagged',
+    );
+    expect(VISIBILITY_COPY.hide).toBe(
+      "Hide it: the item looks in stock and customers see nothing about backorders",
+    );
+    expect(VISIBILITY_COPY.needsSwitch).toBe(
+      "This applies when out-of-stock ordering is on for a customer.",
+    );
+    expect(VISIBILITY_COPY.savedShow).toBe(
+      "Customers will see that backordered items ship when restocked",
+    );
+    expect(VISIBILITY_COPY.savedHide).toBe(
+      "Customers will no longer see anything about backorders",
+    );
+    expect(VISIBILITY_COPY.saveFailed).toBe(
+      "Couldn't save what customers see about backordered items",
+    );
   });
 });

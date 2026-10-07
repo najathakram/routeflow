@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -86,6 +87,14 @@ function FavoriteCard({
         <div className="flex-1">
           <h3 className="text-sm font-semibold text-navy line-clamp-2">{item.name}</h3>
           {item.sku && <p className="text-[11px] text-navy/70 mt-0.5">SKU: {item.sku}</p>}
+          {canOrderOutOfStock(item) && (
+            <p
+              data-testid="favorite-ships-when-restocked"
+              className="mt-0.5 text-[11px] font-medium text-warning"
+            >
+              {SHIPS_WHEN_RESTOCKED}
+            </p>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-2">
@@ -112,6 +121,14 @@ function FavoriteCard({
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
+          ) : isOrderBlocked(item) ? (
+            // Same rule as the shop: an out-of-stock item this buyer cannot order is not addable.
+            <span
+              data-testid="favorite-out-of-stock"
+              className="rounded-lg bg-surface-muted px-3 py-2 text-xs font-semibold text-danger"
+            >
+              Out of stock
+            </span>
           ) : (
             <button
               onClick={onAdd}
@@ -200,6 +217,7 @@ export default function BuyerFavoritesPage() {
               cartQty={cart.getItemQty(item.productId)}
               onAdd={() =>
                 !item.unavailable &&
+                !isOrderBlocked(item) &&
                 cart.addItem({
                   productId: item.productId,
                   qty: 1,

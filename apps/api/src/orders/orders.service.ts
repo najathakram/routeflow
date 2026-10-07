@@ -2050,6 +2050,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
+                customerFacing: user.role === UserRole.CUSTOMER,
               });
             }
 
@@ -2485,6 +2486,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId: id,
               notes: "PROMOTE",
               performedById: user.sub,
+              customerFacing: user.role === UserRole.CUSTOMER,
             });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },

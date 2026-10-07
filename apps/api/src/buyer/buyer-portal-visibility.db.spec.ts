@@ -63,6 +63,7 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { ProductsService } from "../products/products.service";
 import { ProductPortalVisibilityService } from "../products/product-portal-visibility.service";
 import { OrdersService } from "../orders/orders.service";
+import { NO_BACKORDER_VIEW } from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -201,6 +202,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       orders,
       replenishment,
       promotions,
+      // OOS PR2: this spec is about portal visibility; the buyer cannot backorder here.
+      { resolve: async () => NO_BACKORDER_VIEW } as any,
     );
     dashboard = new BuyerDashboardService(prisma, storage as any, visibility);
     // scanProduct only touches prisma + the catalog + stock-alert services.
