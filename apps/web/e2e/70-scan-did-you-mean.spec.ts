@@ -106,7 +106,7 @@ for (const vp of VIEWPORTS) {
       await scan();
       await page.keyboard.press("Escape");
       await expect(picker).toBeHidden();
-      await expect(lines()).toHaveCount(0);
+      await expect(lines).toHaveCount(0);
       await expect(search).toBeVisible();
 
       await scan();
