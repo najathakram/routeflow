@@ -102,7 +102,7 @@ export function SidebarCollapseToggle({
     <button
       onClick={onToggle}
       className={cn(
-        "flex w-full items-center rounded-lg px-3 py-2.5 transition-colors",
+        "flex w-full items-center rounded-lg px-3 py-2.5 transition-colors motion-reduce:transition-none",
         collapsed ? "justify-center" : "gap-3",
         className,
       )}

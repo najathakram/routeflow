@@ -2037,10 +2037,14 @@ describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
   // constraint names creditNoteNumber is a number conflict. (a)/(b) are the two
   // shapes Prisma emits for that constraint; (c) proves a different unique is
   // NOT relabelled as a retryable numbering conflict.
-  it("REG-B267 P2002 (a): a creditNoteNumber field-array target maps to ConflictException", async () => {
+  it("REG-B267 P2002 (a): the pg adapter's constraint.index (no meta.target) maps to ConflictException", async () => {
     prisma.creditNote.create.mockRejectedValue({
       code: "P2002",
-      meta: { target: ["tenantId", "creditNoteNumber"] },
+      meta: {
+        driverAdapterError: {
+          cause: { constraint: { index: "CreditNote_tenantId_creditNoteNumber_key" } },
+        },
+      },
     });
 
     await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(
