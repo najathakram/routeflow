@@ -21,7 +21,7 @@ import {
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCreateInvoice,
   useUpdateInvoice,
@@ -62,8 +62,39 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  pendingScanDecision,
   type SellLevel,
 } from "@routeflow/pricing";
+import { useAuth } from "@/lib/auth-context";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { PendingUnitStatus } from "@/components/LineItemRow";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
+import { productUnitsKey, useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
+import {
+  UNITS_LOADING_SCAN_MESSAGE,
+  isPendingDefaultUnit,
+  isShapedLine,
+  isStaffRole,
+  pendingCount,
+} from "@/lib/default-unit-line";
+import { scanCodeIsShared } from "../../orders/_components/scan/useScanCodeHandler";
+import {
+  chooseUnit,
+  fromUnitLine,
+  matchesPackLine,
+  mergeIntoPackLine,
+  mergeResolvedInvoiceLines,
+  pickerLineOf,
+  saleUnitPriceField,
+  toUnitLine,
+  unitPayload,
+  unitProductIds,
+  unitRefusalCopy,
+  unitViews,
+  updateViews,
+  withTypedPrice,
+  type InvoiceUnitFields,
+} from "./invoice-line-unit-adapter";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -392,28 +423,10 @@ function ProductSearchInput({
 
 // ─── Line item row ────────────────────────────────────────────────────────────
 
-interface LineItemState {
-  key: string;
-  productId?: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
+interface LineItemState extends InvoiceUnitFields {
   discount: number;
   taxable: boolean;
-  regularPrice?: number; // original product price before special pricing
-  isSpecialPrice?: boolean; // true if a customer-specific price was applied
-  avgCost?: number; // average cost of the product (display only, never submitted)
   category?: string; // product category — for the per-category margin floor
-  unitsPerBox?: number; // set when product has box packaging
-  boxes?: number; // whole boxes (only when unitsPerBox is set)
-  pieces?: number; // extra loose pieces (only when unitsPerBox is set)
-  /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
-   *  carries {qty, boxes, pieces} and the per-case unitPrice. */
-  sellBy?: "case" | "unit";
-  /** #2696(c) SA-558e: the one-rule inputs (tier price, list, special?) — see sale-line-pricing. */
-  pricing?: SaleLinePricing;
-  /** Why a New-sale line's price moves off the customer's special price (sent then). */
-  overrideReason?: string;
 }
 
 function createEmptyItem(): LineItemState {
@@ -654,6 +667,73 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── Selling unit controls (VU-4a, B1218) ────────────────────────────────────────
+
+/**
+ * The "Sell {product} by" picker for one line: the SHARED OrderLineUnitPicker, in the slot the Case | Unit switch
+ * used. It owns the row's hooks so the page's `.map()` never calls one. A line that has no picker (units off, not
+ * staff, no ladder) renders `legacy`: today's switch, untouched.
+ */
+function LineUnitControl({
+  item,
+  enabled,
+  tier,
+  onChoose,
+  legacy,
+}: {
+  item: LineItemState;
+  enabled: boolean;
+  tier: number;
+  onChoose: (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) => void;
+  legacy: React.ReactNode;
+}) {
+  const units = useProductUnits(item.productId ?? "", enabled && !!item.productId);
+  const hasPicker = enabled && !!item.productId && (units.data?.length ?? 0) > 0;
+  if (!hasPicker) return <>{legacy}</>;
+  return (
+    <div className="mt-1 [&_select]:h-8">
+      <OrderLineUnitPicker
+        line={pickerLineOf(item)}
+        tier={tier}
+        startOnDefaultUnit={!!item.startOnDefaultUnit}
+        onChange={(option, refresh) => onChoose(item.key, option, refresh)}
+      />
+    </div>
+  );
+}
+
+/** A level line's quantity: a whole count of the unit, with "{n} pcs" under it (none at factor 1). */
+function LevelCount({
+  item,
+  enabled,
+  locked,
+  onCount,
+}: {
+  item: LineItemState;
+  enabled: boolean;
+  locked: boolean;
+  onCount: (n: number) => void;
+}) {
+  const units = useProductUnits(item.productId ?? "", enabled && !!item.productId);
+  const factor = units.data?.find((u) => u.label === item.unitLabel)?.factorToBase ?? 0;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <DecimalInput
+        decimals={0}
+        min={0}
+        disabled={locked}
+        aria-label={`${item.unitLabel} count`}
+        value={item.qty}
+        onChange={(v) => onCount(Math.max(0, Math.trunc(v ?? 0)))}
+        className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+      />
+      {factor > 1 && (
+        <span className="text-right text-[9px] text-navy/30">{item.qty * factor} pcs</span>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewInvoicePage() {
@@ -818,6 +898,74 @@ export default function NewInvoicePage() {
     return cp?.pricingTier ?? customer?.pricingTier ?? 1;
   };
 
+  // ── Selling units (VU-4a, B1218) ────────────────────────────────────────────
+  // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
+  const queryClient = useQueryClient();
+  const { user: authUser } = useAuth();
+  const staff = isStaffRole(authUser?.role);
+  const unitsOn = useUnitsEnabled({ enabled: staff }) && staff;
+  const unitLines = React.useMemo(() => unitViews(items), [items]);
+  const {
+    resolveBeforeSubmit,
+    retry: retryUnits,
+    retrying,
+    statusFor,
+  } = useDefaultUnitResolver(
+    unitLines,
+    (fn) => setItems((prev) => updateViews(prev, fn, tierFor)),
+    tierFor,
+    staff,
+  );
+  const resolvingRef = React.useRef(false);
+  const setLineUnit = (key: string, option: Parameters<typeof chooseUnit>[2], refresh: boolean) =>
+    setItems((prev) => chooseUnit(prev, key, option, refresh, tierFor));
+  /** The row's pending-unit state: qty locked, the tap count, loading / failed + Retry. */
+  const pendingUnitOf = (it: LineItemState) => {
+    const status = statusFor(toUnitLine(it));
+    return status
+      ? {
+          status,
+          taps: pendingCount(toUnitLine(it)),
+          onRetry: () => void retryUnits(),
+          retrying,
+        }
+      : undefined;
+  };
+  /**
+   * Every submit path (Save, Save draft, Preview, Download, Create sale) resolves a line still waiting for its
+   * default unit FIRST. Nothing pending = the synchronous path, unchanged. Blocked = nothing is sent.
+   */
+  function withResolvedItems(run: (lines: LineItemState[]) => unknown) {
+    if (!items.some((i) => isPendingDefaultUnit(toUnitLine(i)))) return void run(items);
+    if (resolvingRef.current) return;
+    resolvingRef.current = true;
+    const before = items;
+    void resolveBeforeSubmit(unitViews(before))
+      .then(({ lines, blocked, folds }) => {
+        if (blocked.length) {
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        const byKey = new Map(before.map((i) => [i.key, i]));
+        setItems((cur) => mergeResolvedInvoiceLines(cur, before, lines, folds, tierFor));
+        return run(lines.map((v) => fromUnitLine(byKey.get(v.tempId)!, v, tierFor)));
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
+  }
+  /** A refused unit (UNIT_NOT_OFFERED): the coded copy, and the stale ladder cache is dropped. */
+  function unitRefusal(err: unknown, lines: LineItemState[]): string | null {
+    const copy = unitRefusalCopy(err);
+    if (copy)
+      for (const id of unitProductIds(lines))
+        void queryClient.invalidateQueries({ queryKey: productUnitsKey(id) });
+    return copy;
+  }
+
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
@@ -884,6 +1032,10 @@ export default function NewInvoicePage() {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, sellBy } : it)));
   }
 
+  function setLinePrice(key: string, unitPrice: number) {
+    setItems((prev) => prev.map((it) => (it.key === key ? withTypedPrice(it, unitPrice) : it)));
+  }
+
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
    *  7 units of a 6-pack -> {boxes:1, pieces:1, qty:7}. Price is unchanged either way because
    *  computeLineSubtotal's proration is linear. */
@@ -904,7 +1056,12 @@ export default function NewInvoicePage() {
    * If the product is already on the invoice, just bump its qty by one box
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
-  function addProductFromCatalog(product: any, scanLevel?: SellLevel) {
+  function addProductFromCatalog(
+    product: any,
+    scanLevel?: SellLevel,
+    opts?: { startOnDefaultUnit?: boolean },
+  ) {
+    const dflt = unitsOn && !!opts?.startOnDefaultUnit;
     const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
@@ -940,14 +1097,48 @@ export default function NewInvoicePage() {
       unitsPerBox: upb,
       boxes: seed.boxes,
       pieces: seed.pieces,
+      unit: product.unit ?? "each",
+      listPrice,
+      priceType: effectivePrice !== listPrice ? "SPECIAL" : "STANDARD",
+      tierPrices: {
+        pricePerUnit: product.pricePerUnit,
+        priceTier2: product.priceTier2,
+        priceTier3: product.priceTier3,
+        priceTier4: product.priceTier4,
+        priceTier5: product.priceTier5,
+      },
+      startOnDefaultUnit: dflt || undefined,
+      pendingTaps: dflt ? 1 : undefined,
     };
 
-    const existing = items.find((it) => it.productId === product.id);
+    // With units on a re-add matches the PACK line of the product (a Case line is a different line); a unit line
+    // the default start resolves to folds into its twin later. Units off: today's match by product.
+    const matches = (it: LineItemState) =>
+      unitsOn ? matchesPackLine(it, product.id) : it.productId === product.id;
+    const existing = items.find(matches);
+    if (
+      existing &&
+      unitsOn &&
+      pendingScanDecision(
+        { startOnDefaultUnit: existing.startOnDefaultUnit, shaped: isShapedLine(existing) },
+        { mapsToDefault: dflt },
+      ) === "refuse"
+    ) {
+      // a scan of a different level while this line's default unit is still loading: refused, not counted
+      toast({ title: UNITS_LOADING_SCAN_MESSAGE, variant: "info" });
+      return;
+    }
     setItems((prev) => {
       // If product is already on the invoice, increment its qty instead of duplicating.
-      const existingIdx = prev.findIndex((it) => it.productId === product.id);
+      const existingIdx = prev.findIndex(matches);
       if (existingIdx >= 0) {
-        return prev.map((it, idx) => (idx !== existingIdx ? it : bumpInvoiceLine(it, scanLevel)));
+        return prev.map((it, idx) =>
+          idx !== existingIdx
+            ? it
+            : unitsOn
+              ? mergeIntoPackLine(it, scanLevel, dflt)
+              : bumpInvoiceLine(it, scanLevel),
+        );
       }
       // Replace the seeded blank row if it's the only one and is empty.
       const onlyBlank =
@@ -1003,7 +1194,9 @@ export default function NewInvoicePage() {
         .get(`/products/barcode/${encodeURIComponent(code)}`)
         .then((r) => r.data);
       if (product?.id) {
-        addProductFromCatalog(product, scanLevelForHit(code, product));
+        addProductFromCatalog(product, scanLevelForHit(code, product), {
+          startOnDefaultUnit: scanCodeIsShared(code, product),
+        });
         return;
       }
     } catch {
@@ -1020,7 +1213,9 @@ export default function NewInvoicePage() {
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
-        addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd));
+        addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd), {
+          startOnDefaultUnit: matches.length > 1 || scanCodeIsShared(code, toAdd),
+        });
         return;
       }
     } catch {
@@ -1090,7 +1285,7 @@ export default function NewInvoicePage() {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
-  function buildInvoiceDto(sendNow: boolean) {
+  function buildInvoiceDto(sendNow: boolean, lines: LineItemState[] = items) {
     return {
       customerId: customer!.id,
       dueDate: dueDate || undefined,
@@ -1112,7 +1307,7 @@ export default function NewInvoicePage() {
       // Always agrees with the dueDate above: picking a term derives the date,
       // and hand-typing a date clears the term, so the two can never disagree.
       paymentTermsLabel: terms || undefined,
-      items: items.map((it): CreateInvoiceItem => ({
+      items: lines.map((it): CreateInvoiceItem => ({
         productId: it.productId,
         description: it.description,
         qty: Number(it.qty),
@@ -1123,6 +1318,8 @@ export default function NewInvoicePage() {
         // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
         // item state for upb<=1, but a read site should never trust a single write-side guard.
         ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+        // A unit line (Case...) sends its count + per-unit price + label; never boxes/pieces.
+        ...unitPayload(it),
       })),
       notes: notes.trim() || undefined,
       referenceNumber: reference.trim() || undefined,
@@ -1147,8 +1344,10 @@ export default function NewInvoicePage() {
    * operator is still typing. Wraps `buildInvoiceDto` so all the existing
    * field-mapping logic stays in one place.
    */
-  function buildPartialInvoiceDto(): ReturnType<typeof buildInvoiceDto> {
-    const dto = buildInvoiceDto(false) as ReturnType<typeof buildInvoiceDto> & {
+  function buildPartialInvoiceDto(
+    lines: LineItemState[] = items,
+  ): ReturnType<typeof buildInvoiceDto> {
+    const dto = buildInvoiceDto(false, lines) as ReturnType<typeof buildInvoiceDto> & {
       items?: CreateInvoiceItem[];
     };
     return {
@@ -1159,12 +1358,12 @@ export default function NewInvoicePage() {
     };
   }
 
-  async function handlePreview() {
+  async function handlePreview(lines: LineItemState[] = items) {
     // Lenient check — only customer + dates required. Empty rows are dropped.
     if (!validateForPreview()) return;
     setPreviewLoading(true);
     try {
-      const dto = buildPartialInvoiceDto();
+      const dto = buildPartialInvoiceDto(lines);
       let invoiceId = currentDraftId;
       if (invoiceId) {
         // Update the existing draft so the preview reflects edits
@@ -1197,7 +1396,7 @@ export default function NewInvoicePage() {
     } catch (err) {
       toast({
         title: "Couldn't build preview",
-        description: "Check your inputs and try again.",
+        description: unitRefusal(err, lines) ?? "Check your inputs and try again.",
         variant: "error",
       });
     } finally {
@@ -1213,11 +1412,11 @@ export default function NewInvoicePage() {
    * before finalising / emailing.
    */
   const [downloadLoading, setDownloadLoading] = React.useState(false);
-  async function handleDownload() {
+  async function handleDownload(lines: LineItemState[] = items) {
     if (!validateForPreview()) return;
     setDownloadLoading(true);
     try {
-      const dto = buildPartialInvoiceDto();
+      const dto = buildPartialInvoiceDto(lines);
       let invoiceId = currentDraftId;
       if (invoiceId) {
         await updateInvoice.mutateAsync({ id: invoiceId, ...dto } as any);
@@ -1244,10 +1443,10 @@ export default function NewInvoicePage() {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
       toast({ title: "Invoice downloaded", variant: "success" });
-    } catch {
+    } catch (err) {
       toast({
         title: "Couldn't generate PDF",
-        description: "Please try again.",
+        description: unitRefusal(err, lines) ?? "Please try again.",
         variant: "error",
       });
     } finally {
@@ -1279,8 +1478,8 @@ export default function NewInvoicePage() {
    * invoice is always tied to an order. deliveredNow=true issues it immediately (van sale);
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
-  function handleSubmitSale(send: boolean) {
-    const saleLines = items.filter((it) => it.productId && Number(it.qty) > 0);
+  function handleSubmitSale(send: boolean, lines: LineItemState[] = items) {
+    const saleLines = lines.filter((it) => it.productId && Number(it.qty) > 0);
     // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
     const needsReason = saleLines.find(saleLineNeedsReason);
     if (needsReason) {
@@ -1291,7 +1490,10 @@ export default function NewInvoicePage() {
     const saleItems = saleLines.map((it) => ({
       productId: it.productId as string,
       qty: Number(it.qty),
-      unitPrice: Number(it.unitPrice),
+      // A unit line omits unitPrice unless the operator moved it off the picked unit's price (the server
+      // prices it from the ladder; a typed price off it is a one-time DISCOUNTED / MANUAL price).
+      ...saleUnitPriceField(it),
+      ...unitPayload(it),
       ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
         ? { overrideReason: it.overrideReason.trim() }
         : {}),
@@ -1347,22 +1549,22 @@ export default function NewInvoicePage() {
           });
           router.push(`/invoices/${inv.id}`);
         },
-        onError: () =>
+        onError: (err: unknown) =>
           toast({
             title: "Could not create the sale",
-            description: "Please check your inputs and try again.",
+            description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
             variant: "error",
           }),
       },
     );
   }
 
-  function handleSubmit(sendNow: boolean) {
+  function handleSubmit(sendNow: boolean, lines: LineItemState[] = items) {
     if (!validate()) return;
 
     // If we already have a preview draft, just update it and optionally send.
     if (currentDraftId) {
-      const dto = buildInvoiceDto(false);
+      const dto = buildInvoiceDto(false, lines);
       updateInvoice.mutate({ id: currentDraftId, ...dto } as any, {
         onSuccess: async () => {
           if (sendNow) {
@@ -1378,10 +1580,10 @@ export default function NewInvoicePage() {
           });
           router.push(`/invoices/${currentDraftId}`);
         },
-        onError: () => {
+        onError: (err: unknown) => {
           toast({
             title: "Failed to save invoice",
-            description: "Please check your inputs and try again.",
+            description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
             variant: "error",
           });
         },
@@ -1389,7 +1591,7 @@ export default function NewInvoicePage() {
       return;
     }
 
-    const dto = buildInvoiceDto(sendNow);
+    const dto = buildInvoiceDto(sendNow, lines);
 
     createInvoice.mutate(dto as Parameters<typeof createInvoice.mutate>[0], {
       onSuccess: (invoice) => {
@@ -1402,10 +1604,10 @@ export default function NewInvoicePage() {
         });
         router.push(`/invoices/${invoice.id}`);
       },
-      onError: () => {
+      onError: (err: unknown) => {
         toast({
           title: "Failed to create invoice",
-          description: "Please check your inputs and try again.",
+          description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
           variant: "error",
         });
       },
@@ -1739,7 +1941,7 @@ export default function NewInvoicePage() {
                                 type="button"
                                 onMouseDown={(e) => {
                                   e.preventDefault();
-                                  addProductFromCatalog(p);
+                                  addProductFromCatalog(p, undefined, { startOnDefaultUnit: true });
                                   setScanQuery("");
                                   setDebouncedScanQuery("");
                                 }}
@@ -1881,46 +2083,88 @@ export default function NewInvoicePage() {
                             isSpecialPrice: specialPrice !== undefined,
                             avgCost,
                             unitsPerBox: upb,
+                            // a new product: the unit state of the old one is gone; staff start on the default unit
+                            unit: product?.unit ?? "each",
+                            listPrice: price ? parseFloat(price) : undefined,
+                            priceType: specialPrice !== undefined ? "SPECIAL" : "STANDARD",
+                            tierPrices: product
+                              ? {
+                                  pricePerUnit: product.pricePerUnit,
+                                  priceTier2: product.priceTier2,
+                                  priceTier3: product.priceTier3,
+                                  priceTier4: product.priceTier4,
+                                  priceTier5: product.priceTier5,
+                                }
+                              : undefined,
+                            unitLabel: undefined,
+                            packBase: undefined,
+                            packDisplay: undefined,
+                            pieceUnit: undefined,
+                            pieceUnitPrice: undefined,
+                            sellBy: undefined,
+                            priceEdited: false,
+                            startOnDefaultUnit: unitsOn && !!pid ? true : undefined,
+                            pendingTaps: unitsOn && !!pid ? 1 : undefined,
                             ...(upb
                               ? seedLineQty(upb, scanLevel)
                               : { boxes: undefined, pieces: undefined, qty: item.qty || 1 }),
                           });
                         }}
                       />
-                      {/* Case | Unit sell-by toggle — UI-only; the payload always
+                      {/* Sell-by picker (VU-4a): replaces the Case | Unit switch on a line that has a ladder
+                          (Box = Case mode, Piece = Unit mode). Everyone else keeps the switch. */}
+                      <LineUnitControl
+                        item={item}
+                        enabled={unitsOn}
+                        tier={tierFor(item.productId ?? "")}
+                        onChoose={setLineUnit}
+                        legacy={
+                          <>
+                            {/* Case | Unit sell-by toggle — UI-only; the payload always
                           carries {qty, boxes, pieces} regardless of the mode. */}
-                      {item.unitsPerBox && item.unitsPerBox > 1 && (
-                        <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
-                          <button
-                            type="button"
-                            onClick={() => setLineSellBy(item.key, "case")}
-                            className={cn(
-                              "px-1.5 py-0.5 transition-colors",
-                              (item.sellBy ?? "case") === "case"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                            {item.unitsPerBox && item.unitsPerBox > 1 && (
+                              <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+                                <button
+                                  type="button"
+                                  onClick={() => setLineSellBy(item.key, "case")}
+                                  className={cn(
+                                    "px-1.5 py-0.5 transition-colors",
+                                    (item.sellBy ?? "case") === "case"
+                                      ? "bg-brand-500 text-white"
+                                      : "bg-white text-navy/70 hover:bg-surface-raised",
+                                  )}
+                                >
+                                  Case
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setLineSellBy(item.key, "unit")}
+                                  className={cn(
+                                    "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                                    item.sellBy === "unit"
+                                      ? "bg-brand-500 text-white"
+                                      : "bg-white text-navy/70 hover:bg-surface-raised",
+                                  )}
+                                >
+                                  Unit
+                                </button>
+                              </div>
                             )}
-                          >
-                            Case
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setLineSellBy(item.key, "unit")}
-                            className={cn(
-                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
-                              item.sellBy === "unit"
-                                ? "bg-brand-500 text-white"
-                                : "bg-white text-navy/70 hover:bg-surface-raised",
-                            )}
-                          >
-                            Unit
-                          </button>
-                        </div>
-                      )}
+                          </>
+                        }
+                      />
+                      {pendingUnitOf(item) && <PendingUnitStatus pending={pendingUnitOf(item)!} />}
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {(item.unitsPerBox ?? 0) > 1 ? (
+                    {item.unitLabel ? (
+                      <LevelCount
+                        item={item}
+                        enabled={unitsOn}
+                        locked={!!pendingUnitOf(item)}
+                        onCount={(n) => updateItem(item.key, { qty: n })}
+                      />
+                    ) : (item.unitsPerBox ?? 0) > 1 ? (
                       item.sellBy === "unit" ? (
                         <div className="flex flex-col gap-0.5">
                           <input
@@ -1932,6 +2176,7 @@ export default function NewInvoicePage() {
                             }
                             onFocus={(e) => e.target.select()}
                             className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            disabled={!!pendingUnitOf(item)}
                             title="Total units"
                           />
                           <span className="text-[9px] text-navy/30 text-right">units</span>
@@ -1953,6 +2198,7 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              disabled={!!pendingUnitOf(item)}
                               title="Cases"
                             />
                             <span className="text-[10px] text-navy/70">c+</span>
@@ -1971,6 +2217,7 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              disabled={!!pendingUnitOf(item)}
                               title="Extra loose units"
                             />
                           </div>
@@ -1983,6 +2230,7 @@ export default function NewInvoicePage() {
                       <DecimalInput
                         decimals={3}
                         min={0}
+                        disabled={!!pendingUnitOf(item)}
                         value={item.qty}
                         onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
                         className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -1999,7 +2247,8 @@ export default function NewInvoicePage() {
                       <MoneyInput
                         min={0}
                         value={item.unitPrice}
-                        onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        onChange={(v) => setLinePrice(item.key, v ?? 0)}
+                        disabled={!!pendingUnitOf(item)}
                         aria-label="Unit price"
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
@@ -2035,7 +2284,7 @@ export default function NewInvoicePage() {
                             productId={item.productId}
                             floor={floorForCategory(marginConfig, item.category)}
                             acked={floorAcked.has(item.key)}
-                            onSetToFloor={(fp) => updateItem(item.key, { unitPrice: fp })}
+                            onSetToFloor={(fp) => setLinePrice(item.key, fp)}
                             onSellAnyway={() =>
                               setFloorAcked((prev) => new Set(prev).add(item.key))
                             }
@@ -2265,7 +2514,7 @@ export default function NewInvoicePage() {
             {isSale ? (
               deliveredNow ? (
                 <Button
-                  onClick={() => handleSubmitSale(true)}
+                  onClick={() => withResolvedItems((l) => handleSubmitSale(true, l))}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
@@ -2275,7 +2524,7 @@ export default function NewInvoicePage() {
                 // Deliver later → only create the draft. It mirrors the order and
                 // becomes sendable after the order is delivered (never sent here).
                 <Button
-                  onClick={() => handleSubmitSale(false)}
+                  onClick={() => withResolvedItems((l) => handleSubmitSale(false, l))}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
@@ -2287,7 +2536,7 @@ export default function NewInvoicePage() {
                 <Button
                   variant="secondary"
                   leftIcon={<Eye className="h-4 w-4" />}
-                  onClick={handlePreview}
+                  onClick={() => withResolvedItems((l) => handlePreview(l))}
                   loading={previewLoading}
                   disabled={previewLoading || createInvoice.isPending}
                 >
@@ -2296,7 +2545,7 @@ export default function NewInvoicePage() {
                 <Button
                   variant="secondary"
                   leftIcon={<Download className="h-4 w-4" />}
-                  onClick={handleDownload}
+                  onClick={() => withResolvedItems((l) => handleDownload(l))}
                   loading={downloadLoading}
                   disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
                   title="Save as draft and download the PDF without sending"
@@ -2305,14 +2554,14 @@ export default function NewInvoicePage() {
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => handleSubmit(false)}
+                  onClick={() => withResolvedItems((l) => handleSubmit(false, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
                   Save as Draft
                 </Button>
                 <Button
-                  onClick={() => handleSubmit(true)}
+                  onClick={() => withResolvedItems((l) => handleSubmit(true, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
