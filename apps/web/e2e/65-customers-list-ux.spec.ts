@@ -173,3 +173,22 @@ test.describe("customers list — 1440px", () => {
     await expect(page.getByTestId("credits-cell").nth(1)).toHaveText("$0.00");
   });
 });
+
+test.describe("customers list — 768px", () => {
+  test.use({ viewport: { width: 768, height: 1024 } });
+  test.beforeEach(async ({ context }) => setTenantCookie(context, BASE_URL));
+
+  test("all columns show at sm+, Receivables is on screen, no document overflow, secondary line hidden", async ({
+    page,
+  }) => {
+    await openList(page);
+    for (const n of [/^email$/i, /^phone$/i, /^credits$/i, /^tags$/i]) {
+      await expect(page.getByRole("columnheader", { name: n })).toBeVisible();
+    }
+    await expect(page.getByTestId("name-secondary-line").first()).toBeHidden();
+    await expect(page.getByTestId("receivables-cell").first()).toBeVisible();
+    expect(await documentLevelOverflowPx(page)).toBeLessThanOrEqual(0);
+    await expect(page.getByTestId("receivables-cell").nth(1)).toHaveText("$0.00");
+    await expect(page.getByTestId("credits-cell").nth(1)).toHaveText("$0.00");
+  });
+});
