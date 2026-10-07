@@ -15,13 +15,14 @@ import { useTenantFeatures } from "../tenant-features";
  * The counter-sale gate: ONE read of `capabilities.fulfilment` from GET /tenants/me/features (never the raw `modes`).
  * Nothing shows until the answer is in, so a slow or failed request leaves the old screens exactly as they were.
  */
-export function useCounterSaleGate() {
-  const { data, isLoading } = useTenantFeatures();
+export function useCounterSaleGate(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled ?? true;
+  const { data, isLoading } = useTenantFeatures({ enabled });
   // The response type says `capabilities` is always there; a stale or partial answer may not have it, and that means DARK.
   const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
     ?.capabilities?.fulfilment;
   // `loading`: the answer is not in yet. The screen shows an empty placeholder (never "not turned on", which would be false).
-  return { ...counterSaleGate(cap), capability: cap, loading: isLoading === true };
+  return { ...counterSaleGate(cap), capability: cap, loading: enabled && isLoading === true };
 }
 
 export function useCreateCounterSale() {
