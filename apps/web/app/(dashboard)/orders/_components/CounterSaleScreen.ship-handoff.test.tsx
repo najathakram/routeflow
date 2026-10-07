@@ -15,8 +15,9 @@ jest.mock("@/lib/auth-context", () => ({
   useOptionalAuth: () => ({ user: { id: "u-a", tenantSlug: "acme" } }),
 }));
 const createDraft = jest.fn();
+let draftPending = false;
 jest.mock("@/lib/api/drafts", () => ({
-  useCreateDraft: () => ({ mutateAsync: createDraft, isPending: false }),
+  useCreateDraft: () => ({ mutateAsync: createDraft, isPending: draftPending }),
 }));
 const COLA = {
   id: "p-cola",
@@ -53,6 +54,7 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
 }));
 const mutateAsync = jest.fn();
+let salePending = false;
 jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => ({
     showButton: true,
@@ -60,7 +62,7 @@ jest.mock("@/lib/api/counter-sale", () => ({
     offerShipInstead: true,
     capability: { counter: "always", methods: ["SHIP"], staffDefault: "SHIP" },
   }),
-  useCreateCounterSale: () => ({ mutateAsync, isPending: false }),
+  useCreateCounterSale: () => ({ mutateAsync, isPending: salePending }),
   useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
@@ -77,6 +79,8 @@ const deferred = <T,>() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  salePending = false;
+  draftPending = false;
   window.localStorage.clear();
   window.sessionStorage.clear();
   resolveHook = null;
@@ -250,5 +254,75 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
     fireEvent.click(shipBtn());
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
+  const SALE = {
+    orderId: "o1",
+    orderNumber: "ORD-1",
+    invoiceId: "i1",
+    invoiceNumber: "INV-1",
+    total: 2.5,
+    paid: 2.5,
+    balanceDue: 0,
+    paymentRecorded: true,
+  };
+
+  it("Complete, then Ship while the sale POST is in flight: no draft, no navigation, the sale is untouched", async () => {
+    const post = deferred<typeof SALE>();
+    mutateAsync.mockReturnValue(post.promise);
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    fireEvent.click(shipBtn());
+    pickAcme(); // would let a pending hand-off run if one had been armed
+    await new Promise((r) => setTimeout(r, 30));
+    expect(createDraft).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    post.resolve(SALE);
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    expect(createDraft).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("the Ship button is disabled while the sale POST is pending", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    salePending = true;
+    fireEvent.click(screen.getByRole("button", { name: "Card" })); // any state change re-reads the flag
+    expect(shipBtn()).toBeDisabled();
+  });
+
+  it("Ship, then Enter in the cash field while the draft saves: no sale POST", async () => {
+    const draft = deferred<{ id: string }>();
+    createDraft.mockReturnValue(draft.promise);
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await scan("COLA");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(shipBtn());
+    await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(screen.getByLabelText("Amount tendered"), { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mutateAsync).not.toHaveBeenCalled();
+    draft.resolve({ id: "d-1" });
+    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("both Complete buttons are disabled while the draft saves", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    draftPending = true;
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Complete & next sale" })).toBeDisabled();
   });
 });
