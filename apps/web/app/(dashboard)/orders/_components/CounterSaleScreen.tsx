@@ -62,6 +62,8 @@ import {
   isBoxedLine,
   lineQtyLabel,
   restoreLine,
+  setLineQty,
+  type TypedQty,
   setLineNote,
   takeLine,
   toSaleItem,
@@ -83,6 +85,9 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
+/** The receipt's own controls: a full 44 px target with a visible keyboard focus ring. */
+const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visible:ring-navy";
+
 export function CounterSaleScreen() {
   const router = useRouter();
   const gate = useCounterSaleGate();
@@ -199,7 +204,6 @@ export function CounterSaleScreen() {
     customer,
     lines,
     setLines,
-    setCustomer,
     locked: lineLocked,
   });
   const repriceBlockedRef = React.useRef(false);
@@ -290,12 +294,34 @@ export function CounterSaleScreen() {
   // POS-3: a removed line is held for 5 s in ONE slot (a newer removal makes the older one final). Undo puts it back at
   // its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
   const [undo, setUndo] = React.useState<RemovedLine | null>(null);
+  const undoRef = React.useRef<RemovedLine | null>(null);
+  undoRef.current = undo;
   const undoTimerRef = React.useRef<number | null>(null);
   const dropUndo = React.useCallback(() => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoTimerRef.current = null;
+    undoLeftRef.current = UNDO_MS;
     setUndo(null);
   }, []);
+  // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
+  const undoLeftRef = React.useRef(UNDO_MS);
+  const undoStartedRef = React.useRef(0);
+  const armUndo = (ms: number) => {
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    undoLeftRef.current = ms;
+    undoStartedRef.current = Date.now();
+    undoTimerRef.current = window.setTimeout(dropUndo, ms);
+  };
+  const pauseUndo = () => {
+    if (undoTimerRef.current === null) return;
+    window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+    undoLeftRef.current = Math.max(0, undoLeftRef.current - (Date.now() - undoStartedRef.current));
+  };
+  const resumeUndo = () => {
+    if (!undoRef.current || undoTimerRef.current !== null) return;
+    armUndo(undoLeftRef.current);
+  };
   React.useEffect(
     () => () => {
       if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
@@ -307,9 +333,8 @@ export function CounterSaleScreen() {
     const taken = takeLine(lines, tempId);
     if (!taken) return;
     setLines(taken.lines);
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     setUndo(taken.removed);
-    undoTimerRef.current = window.setTimeout(dropUndo, UNDO_MS);
+    armUndo(UNDO_MS);
     refocus();
   };
 
@@ -319,6 +344,14 @@ export function CounterSaleScreen() {
     setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
     dropUndo();
     refocus();
+  };
+
+  // A TYPED quantity (steppers stay): the same normalized split a stepper makes; a refused value changes nothing.
+  const typeQty = (tempId: string, typed: TypedQty): boolean => {
+    const cur = lines.find((l) => l.tempId === tempId);
+    if (!cur || !setLineQty(cur, typed)) return false;
+    setLines((prev) => prev.map((l) => (l.tempId === tempId ? (setLineQty(l, typed) ?? l) : l)));
+    return true;
   };
 
   const noteLine = (tempId: string, note: string) =>
@@ -619,7 +652,7 @@ export function CounterSaleScreen() {
             <p className="font-semibold">Sale recorded — payment not recorded</p>
             <Link
               href={`/invoices/${receipt.invoiceId}`}
-              className="inline-block text-brand-700 underline print:hidden"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
             >
               Record payment
             </Link>
@@ -663,8 +696,10 @@ export function CounterSaleScreen() {
           ) : null}
         </dl>
         <div className="flex flex-wrap gap-2 print:hidden">
-          <Button onClick={() => window.print()}>Print</Button>
-          <Button variant="secondary" onClick={resetSale}>
+          <Button className={RECEIPT_BTN} onClick={() => window.print()}>
+            Print
+          </Button>
+          <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
             New sale
           </Button>
         </div>
@@ -857,32 +892,47 @@ export function CounterSaleScreen() {
                 onStep={stepItem}
                 onRemove={removeLine}
                 onNote={noteLine}
+                onQty={typeQty}
               />
             ))}
           </ul>
 
-          {undo ? (
-            <div
-              role="status"
-              aria-label="Removed item"
-              className="flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm"
-              data-testid="line-undo-bar"
-            >
-              <span>Line removed.</span>
-              <button
-                type="button"
-                className={cn(TAP_TARGET, "rounded border px-3 font-semibold disabled:opacity-40")}
-                disabled={lineLocked}
-                onClick={undoRemove}
-              >
-                Undo
-              </button>
-            </div>
-          ) : null}
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Removed item"
+            data-testid="line-undo-bar"
+            className={cn(
+              undo &&
+                "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
+            )}
+            onMouseEnter={pauseUndo}
+            onMouseLeave={resumeUndo}
+            onFocus={pauseUndo}
+            onBlur={resumeUndo}
+          >
+            {undo ? (
+              <>
+                <span>Line removed.</span>
+                <button
+                  type="button"
+                  className={cn(
+                    TAP_TARGET,
+                    "rounded border px-3 font-semibold disabled:opacity-40",
+                  )}
+                  aria-label={`Undo: put back ${undo.line.name}`}
+                  disabled={lineLocked}
+                  onClick={undoRemove}
+                >
+                  Undo
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
 
         <div
-          className="contents [&>*]:min-w-0 md:sticky md:top-4 md:block md:min-w-0 md:space-y-4"
+          className="contents [&>*]:min-w-0 md:sticky md:top-4 md:block md:max-h-[calc(100vh-5rem)] md:min-w-0 md:space-y-4 md:overflow-y-auto"
           data-testid="counter-payment-column"
         >
           {/* payment on the same screen */}

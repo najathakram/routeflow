@@ -1,7 +1,7 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { cartTotals } from "@/lib/counter-sale";
-import { NOTE_MAX, isBoxedLine, lineQtyLabel } from "./counter-sale-line-edit";
+import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -54,6 +54,88 @@ export function LineStepper({
 }
 
 /**
+ * A TYPED quantity field (the steppers stay). The draft is local: Enter / blur commit it, Escape reverts, and a value the
+ * screen refuses (not whole, or nothing left) snaps back to the line's quantity.
+ */
+function QtyField({
+  label,
+  value,
+  locked,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  locked: boolean;
+  onCommit: (text: string) => boolean;
+}) {
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const text = draft;
+    setDraft(null); // accepted or refused, the field re-reads the line
+    onCommit(text);
+  };
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min={0}
+      step={1}
+      aria-label={label}
+      className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
+      disabled={locked}
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setDraft(null);
+        }
+      }}
+    />
+  );
+}
+
+/** The typed editor for one line: a quantity for a plain line, boxes + pieces for a boxed one. */
+function LineQtyEditor({
+  line,
+  locked,
+  onQty,
+}: {
+  line: SaleLine;
+  locked: boolean;
+  onQty: (tempId: string, typed: TypedQty) => boolean;
+}) {
+  return isBoxedLine(line) ? (
+    <span className="flex items-center gap-1">
+      <QtyField
+        label={`Boxes of ${line.name}`}
+        value={line.boxes ?? 0}
+        locked={locked}
+        onCommit={(t) => onQty(line.tempId, { boxes: t })}
+      />
+      <QtyField
+        label={`Pieces of ${line.name}`}
+        value={line.pieces ?? 0}
+        locked={locked}
+        onCommit={(t) => onQty(line.tempId, { pieces: t })}
+      />
+    </span>
+  ) : (
+    <QtyField
+      label={`Set quantity of ${line.name}`}
+      value={line.qty}
+      locked={locked}
+      onCommit={(t) => onQty(line.tempId, { qty: t })}
+    />
+  );
+}
+
+/**
  * One cart line. Top row: name + quantity label, subtotal, remove. Below: the stepper and the note. `locked` disables EVERY
  * control on the line (an unknown outcome, or the sale POST in flight).
  */
@@ -63,12 +145,14 @@ export function CounterLineRow({
   onStep,
   onRemove,
   onNote,
+  onQty,
 }: {
   line: SaleLine;
   locked: boolean;
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
+  onQty: (tempId: string, typed: TypedQty) => boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
   const hasNote = !!l.note?.trim();
@@ -93,6 +177,7 @@ export function CounterLineRow({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
+        <LineQtyEditor line={l} locked={locked} onQty={onQty} />
         <button
           type="button"
           className={LINE_BTN}
@@ -119,11 +204,11 @@ export function CounterLineRow({
         ) : null}
       </div>
       {editing ? (
-        <textarea
-          rows={2}
+        <input
+          type="text"
           maxLength={NOTE_MAX}
           aria-label={`Note for ${l.name}`}
-          className="min-h-[44px] w-full resize-y rounded border px-2 py-1 text-sm"
+          className="min-h-[44px] w-full rounded border px-2 py-1 text-sm"
           placeholder="Flavor or note for this item (prints on invoice)"
           disabled={locked}
           value={l.note ?? ""}

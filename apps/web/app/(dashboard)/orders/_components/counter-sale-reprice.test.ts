@@ -42,5 +42,6 @@ describe("repriceLines (POS-2, display only)", () => {
     expect(repriceNote("Acme", 0, 1)).toBe("1 line kept its price.");
     expect(repriceNote("Acme", 1, 1)).toBe("Prices updated for Acme. 1 line kept its price.");
     expect(repriceNote("Acme", 0, 0)).toBeNull();
+    expect(repriceNote("Acme", 2, 0, "Wholesale")).toBe("Prices updated for Acme (Wholesale).");
   });
 });

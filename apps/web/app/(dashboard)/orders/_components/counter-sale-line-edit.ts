@@ -95,3 +95,34 @@ export function restoreLine(lines: SaleLine[], { line, index }: RemovedLine): Sa
       : merged;
   });
 }
+
+/** What the typed quantity editor hands over: the raw field text(s). */
+export interface TypedQty {
+  qty?: string;
+  boxes?: string;
+  pieces?: string;
+}
+
+const WHOLE = /^\d+$/;
+
+/**
+ * The line after a TYPED quantity, or null when the text is not a usable quantity (the editor then reverts; removal stays the
+ * x button). A plain line takes a whole qty >= 1. A boxed line takes whole boxes and pieces (>= 0, at least one piece in
+ * total), flattened and re-split through `normalizeBoxesPieces` so pieces < unitsPerBox - the same split a stepper makes.
+ */
+export function setLineQty(l: SaleLine, typed: TypedQty): SaleLine | null {
+  if (isBoxedLine(l)) {
+    const upb = l.unitsPerBox ?? 0;
+    const b = (typed.boxes ?? String(l.boxes ?? 0)).trim();
+    const p = (typed.pieces ?? String(l.pieces ?? 0)).trim();
+    if (!WHOLE.test(b) || !WHOLE.test(p)) return null;
+    const total = Number(b) * upb + Number(p);
+    if (!Number.isSafeInteger(total) || total < 1) return null;
+    const norm = normalizeBoxesPieces({ qty: total, unitsPerBox: upb });
+    return { ...l, boxes: norm.boxes ?? 0, pieces: norm.pieces ?? 0, qty: norm.qty };
+  }
+  const q = (typed.qty ?? String(l.qty)).trim();
+  if (!WHOLE.test(q)) return null;
+  const n = Number(q);
+  return Number.isSafeInteger(n) && n >= 1 ? { ...l, qty: n } : null;
+}

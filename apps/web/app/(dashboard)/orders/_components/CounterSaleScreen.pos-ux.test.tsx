@@ -151,12 +151,15 @@ describe("typed quantity editor (steppers stay)", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$47.00");
   });
 
-  it("a boxed line typed to zero boxes and zero pieces reverts", async () => {
-    await buildCart();
-    fireEvent.change(screen.getByLabelText("Boxes of Water"), { target: { value: "0" } });
+  it("a boxed line typed down to nothing (0 boxes, 0 pieces) reverts the last edit", async () => {
+    await buildCart(); // Water 1 box + 3 pcs
     fireEvent.change(screen.getByLabelText("Pieces of Water"), { target: { value: "0" } });
     fireEvent.blur(screen.getByLabelText("Pieces of Water"));
-    expect(lineOf("Water")).toHaveTextContent("1 box + 3 pcs");
+    expect(lineOf("Water")).toHaveTextContent("1 box");
+    fireEvent.change(screen.getByLabelText("Boxes of Water"), { target: { value: "0" } });
+    fireEvent.blur(screen.getByLabelText("Boxes of Water"));
+    expect(lineOf("Water")).toHaveTextContent("1 box");
+    expect((screen.getByLabelText("Boxes of Water") as HTMLInputElement).value).toBe("1");
   });
 
   it("the typed quantity rides the ring (qty only for a plain line)", async () => {

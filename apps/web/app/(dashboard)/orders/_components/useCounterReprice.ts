@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useCustomerPrices } from "@/lib/api/customers";
 import type { SaleLine } from "./counter-sale-scan";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
 import { repriceLines, repriceNote } from "./counter-sale-reprice";
 
 interface PickedLike {
@@ -11,9 +13,8 @@ interface PickedLike {
   pricingTier?: number | null;
 }
 
-interface Note<C> {
+interface Note {
   text: string;
-  prevCustomer: C | null;
   prevLines: SaleLine[];
 }
 
@@ -29,11 +30,10 @@ export function useCounterReprice<C extends PickedLike>(deps: {
   customer: C | null;
   lines: SaleLine[];
   setLines: React.Dispatch<React.SetStateAction<SaleLine[]>>;
-  setCustomer: (c: C | null) => void;
   /** Outcome unknown: the held cart is frozen, never re-priced. */
   locked: boolean;
 }) {
-  const { customer, lines, setLines, setCustomer, locked } = deps;
+  const { customer, lines, setLines, locked } = deps;
   const key = keyOf(customer);
   const prices = useCustomerPrices(customer?.id);
   const cpMap = React.useMemo(() => {
@@ -52,20 +52,17 @@ export function useCounterReprice<C extends PickedLike>(deps: {
   );
 
   const [appliedKey, setAppliedKey] = React.useState(key);
-  const [note, setNote] = React.useState<Note<C> | null>(null);
+  const [note, setNote] = React.useState<Note | null>(null);
+  const { data: tierLabels } = useTierLabels();
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
   const appliedKeyRef = React.useRef(key);
-  const appliedCustomerRef = React.useRef<C | null>(customer);
-  const skipKeyRef = React.useRef<string | null>(null);
 
   const answered = customer === null || prices.isSuccess;
   React.useEffect(() => {
-    if (skipKeyRef.current === key || locked) {
-      // An Undo already restored the prices (or the held cart is frozen): nothing to re-price.
-      skipKeyRef.current = null;
+    if (locked) {
+      // The held / in-flight cart is frozen: it is never re-priced.
       appliedKeyRef.current = key;
-      appliedCustomerRef.current = customer;
       setAppliedKey(key);
       return;
     }
@@ -75,12 +72,16 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     if (r.changed) setLines((cur) => repriceLines(cur, tierFor).lines);
     if (appliedKeyRef.current !== key) {
       const text = before.length
-        ? repriceNote(customer?.businessName ?? "Walk-in customer", r.changed, r.kept)
+        ? repriceNote(
+            customer?.businessName ?? "Walk-in customer",
+            r.changed,
+            r.kept,
+            tierLabel(tierLabels, customer?.pricingTier ?? 1),
+          )
         : null;
-      setNote(text ? { text, prevCustomer: appliedCustomerRef.current, prevLines: before } : null);
+      setNote(text ? { text, prevLines: before } : null);
     }
     appliedKeyRef.current = key;
-    appliedCustomerRef.current = customer;
     setAppliedKey(key);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, answered, tierFor, locked]);
@@ -90,7 +91,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
 
   const undo = () => {
     if (!note) return;
-    skipKeyRef.current = keyOf(note.prevCustomer);
+    // PRICES ONLY: the customer stays on the sale; lines added since keep the price they were given.
     const old = note.prevLines;
     setLines((cur) =>
       cur.map((l) => {
@@ -98,7 +99,6 @@ export function useCounterReprice<C extends PickedLike>(deps: {
         return o ? { ...l, unitPrice: o.unitPrice, priceType: o.priceType } : l;
       }),
     );
-    setCustomer(note.prevCustomer);
     setNote(null);
   };
 

@@ -38,10 +38,16 @@ export function repriceLines(
   return { lines: changed ? next : (lines as SaleLine[]), changed, kept };
 }
 
-/** The inline note after a re-price; null when nothing changed and nothing was kept. */
-export function repriceNote(name: string, changed: number, kept: number): string | null {
+/** The inline note after a re-price (names the price tier applied); null when nothing changed and nothing was kept. */
+export function repriceNote(
+  name: string,
+  changed: number,
+  kept: number,
+  tierName?: string,
+): string | null {
   const keptText = kept === 1 ? "1 line kept its price." : `${kept} lines kept their prices.`;
+  const who = tierName ? `${name} (${tierName})` : name;
   if (changed > 0)
-    return kept > 0 ? `Prices updated for ${name}. ${keptText}` : `Prices updated for ${name}.`;
+    return kept > 0 ? `Prices updated for ${who}. ${keptText}` : `Prices updated for ${who}.`;
   return kept > 0 ? keptText : null;
 }

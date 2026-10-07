@@ -212,8 +212,13 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
     expect(completeBtn()).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+    await waitFor(() => expect(screen.getByText("Walk-in customer")).toBeInTheDocument());
+    expect(total()).toHaveTextContent("$14.50");
+    pickAcme();
+    await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
+    expect(total()).toHaveTextContent("$11.00");
   });
 
   it("the sale request never carries a client price: the server prices by customer", async () => {
