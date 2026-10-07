@@ -65,6 +65,7 @@ const DRAFT = {
   ],
   total: 149,
   needsReview: false,
+  irregularPeriod: false,
   currency: "USD",
 };
 
