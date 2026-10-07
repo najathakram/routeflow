@@ -68,14 +68,13 @@ describe("billing export projection (B1187)", () => {
     ...over,
   });
 
-  it("event is {type, createdAt, amountDelta, actor, payload} and drops id/tenantId/actorId/futureColumn", () => {
+  it("event is {type, createdAt, actor, payload}: no amountDelta (internal MRR), and drops id/tenantId/actorId/futureColumn", () => {
     const out = projectBillingEventForExport(eventRow({ futureColumn: "x" }), "you") as Record<
       string,
       unknown
     >;
-    expect(Object.keys(out).sort()).toEqual(
-      ["actor", "amountDelta", "createdAt", "payload", "type"].sort(),
-    );
+    expect(Object.keys(out).sort()).toEqual(["actor", "createdAt", "payload", "type"].sort());
+    expect("amountDelta" in out).toBe(false);
   });
 
   it("an unlisted payload key (futurePayloadKey) is absent from the export", () => {
@@ -104,14 +103,14 @@ describe("billing export projection (B1187)", () => {
     }
   });
 
-  it("a type with no allowlist entry exports {type, createdAt, amountDelta} only (empty payload)", () => {
+  it("a type with no allowlist entry exports {type, createdAt, actor} only (empty payload)", () => {
     const out = projectBillingEventForExport(
       eventRow({ type: "brand.new_type", payload: { toPlan: "B", anything: 1 } }),
       "you",
     );
     expect(out.payload).toEqual({});
     expect(out.type).toBe("brand.new_type");
-    expect(out.amountDelta).toBe(20);
+    expect("amountDelta" in out).toBe(false);
   });
 
   it("non-scalar payload values are dropped even for a listed key", () => {
