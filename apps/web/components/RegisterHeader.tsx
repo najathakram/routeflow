@@ -6,8 +6,11 @@ import { ArrowLeft, Menu } from "lucide-react";
 import { Button, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
 import { useTenant } from "@/components/tenant-provider";
 import {
+  COUNTER_LEAVE_BLOCKED_COPY,
   getCounterCartBusy,
   getCounterCartHasLines,
+  getCounterLeaveNotice,
+  guardCounterLeave,
   subscribeCounterCart,
 } from "@/lib/counter-cart-signal";
 import { readExitTarget } from "@/lib/register-mode";
@@ -41,16 +44,17 @@ export function RegisterHeader({
   );
   const busy = React.useSyncExternalStore(subscribeCounterCart, getCounterCartBusy, () => false);
   const [asking, setAsking] = React.useState(false);
-  const [blocked, setBlocked] = React.useState(false);
-  React.useEffect(() => {
-    if (!busy) setBlocked(false);
-  }, [busy]);
+  // The notice is raised by the shared guard, so it also shows when a rail link, a g shortcut, the palette or the user menu was refused.
+  const blocked = React.useSyncExternalStore(
+    subscribeCounterCart,
+    getCounterLeaveNotice,
+    () => false,
+  );
   const keepRef = React.useRef<HTMLButtonElement>(null);
   const leave = () => {
-    if (getCounterCartBusy()) {
+    if (guardCounterLeave()) {
       // A sale is being recorded: leaving now would drop the receipt and invite a second ring-up.
       setAsking(false);
-      setBlocked(true);
       return;
     }
     setAsking(false);
@@ -66,10 +70,15 @@ export function RegisterHeader({
       <button
         type="button"
         aria-disabled={busy || undefined}
-        onClick={() => (busy ? setBlocked(true) : hasLines ? setAsking(true) : leave())}
+        onClick={() => {
+          if (guardCounterLeave()) return;
+          if (hasLines) setAsking(true);
+          else leave();
+        }}
         className={cn(
           TAP_TARGET,
           "gap-2 rounded-lg px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-raised",
+          "aria-disabled:cursor-not-allowed aria-disabled:opacity-50",
         )}
       >
         <ArrowLeft className="h-5 w-5" aria-hidden="true" />
@@ -102,7 +111,7 @@ export function RegisterHeader({
           role="status"
           className="absolute inset-x-0 top-full z-10 border-b border-danger/30 bg-danger-bg px-4 py-2 text-xs font-medium text-danger"
         >
-          A sale is in progress. Wait for the receipt or check its status before leaving.
+          {COUNTER_LEAVE_BLOCKED_COPY}
         </p>
       )}
 

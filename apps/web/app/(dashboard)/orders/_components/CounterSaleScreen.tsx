@@ -190,6 +190,16 @@ export function CounterSaleScreen() {
     setCounterCartBusy(busy);
     return () => setCounterCartBusy(false);
   }, [busy]);
+  // Closing or reloading the tab mid-sale loses the attempt too: ask the browser to confirm while busy.
+  React.useEffect(() => {
+    if (!busy) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [busy]);
   // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
   const lineLocked = locked || createSale.isPending;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.

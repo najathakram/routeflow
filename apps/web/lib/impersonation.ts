@@ -1,4 +1,5 @@
 import { clearTenantCookie } from "./tenant-cookie";
+import { guardCounterLeave } from "./counter-cart-signal";
 
 /**
  * Super-admin impersonation state — THE single reader/writer for the
@@ -70,6 +71,7 @@ export function clearImpersonation(): void {
  */
 export function exitImpersonation(): void {
   if (typeof window === "undefined") return;
+  if (guardCounterLeave()) return; // a counter sale is being recorded: do not hard-load away from it
   clearTenantCookie();
   clearImpersonation();
   window.location.href = "/admin/tenants";

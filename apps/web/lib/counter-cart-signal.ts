@@ -5,6 +5,7 @@
  */
 let hasLines = false;
 let busy = false;
+let leaveNotice = false;
 const listeners = new Set<() => void>();
 
 export function getCounterCartHasLines(): boolean {
@@ -32,5 +33,27 @@ export function getCounterCartBusy(): boolean {
 export function setCounterCartBusy(next: boolean): void {
   if (next === busy) return;
   busy = next;
+  if (!next) leaveNotice = false; // the sale settled: the "wait" notice goes with it
   listeners.forEach((fn) => fn());
+}
+
+export const COUNTER_LEAVE_BLOCKED_COPY =
+  "A sale is in progress. Wait for the receipt or check its status before leaving.";
+
+export function getCounterLeaveNotice(): boolean {
+  return leaveNotice;
+}
+
+/**
+ * THE shared leave guard. Every shell way out of the counter (Exit, rail/drawer links, g shortcuts, the palette, the user menu,
+ * leaving an impersonation) asks this first. Returns true when the leave must NOT happen (a sale is being recorded: leaving would
+ * drop the attempt and invite a second ring-up) and raises the notice the register header shows. Off the counter nothing is busy.
+ */
+export function guardCounterLeave(): boolean {
+  if (!busy) return false;
+  if (!leaveNotice) {
+    leaveNotice = true;
+    listeners.forEach((fn) => fn());
+  }
+  return true;
 }

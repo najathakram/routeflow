@@ -58,6 +58,8 @@ import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { RegisterHeader } from "@/components/RegisterHeader";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
 import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -231,7 +233,14 @@ function NavLink({
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
-      onClick={onNavigate}
+      onClick={(e) => {
+        // POS-7: a rail/drawer link cannot leave the counter while a sale is being recorded.
+        if (guardCounterLeave()) {
+          e.preventDefault();
+          return;
+        }
+        onNavigate?.();
+      }}
       data-testid="sidebar-nav-link"
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -518,7 +527,7 @@ function HeaderTools({
   const { user, logout } = useAuth();
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
-  const router = useRouter();
+  const router = useGuardedRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
@@ -787,6 +796,7 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 onSelect={() => {
+                  if (guardCounterLeave()) return;
                   const next = !driveMode;
                   setDriveMode(next);
                   if (next) router.push("/routes/my-runs");
@@ -803,6 +813,9 @@ function HeaderTools({
             <DropdownMenu.Item asChild>
               <PortalSwitchLink
                 to="buyer"
+                onClick={(e) => {
+                  if (guardCounterLeave()) e.preventDefault();
+                }}
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 iconClassName="h-4 w-4 text-navy/70"
                 labels={{
@@ -839,7 +852,10 @@ function HeaderTools({
             ) : (
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                onSelect={() => void logout()}
+                onSelect={() => {
+                  if (guardCounterLeave()) return;
+                  void logout();
+                }}
               >
                 <LogOut className="h-4 w-4" />
                 {t("menu.signOut")}
@@ -1159,7 +1175,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useRealtimeUpdates();
 
-  const shellRouter = useRouter();
+  const shellRouter = useGuardedRouter();
   // POS-7: landing at exactly /dashboard with "Open the counter on this device" on opens the counter (once per session).
   useCounterLanding({
     pathname,

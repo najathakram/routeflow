@@ -103,7 +103,8 @@ for (const vp of VIEWPORTS) {
 
       await enterCounterFromNav(page, vp.width);
 
-      // slim header: Exit counter is the first focusable; the clerk and the store name are there
+      // slim header: Exit counter is the first focusable; the store name is there, and so is the clerk (the user-menu trigger's
+      // username, which is hidden below sm: the check below reads its content, not its visibility)
       const header = page.getByTestId("register-header");
       const firstText = await header.evaluate(
         (el, sel) => (el.querySelector(sel) as HTMLElement | null)?.innerText ?? "",
