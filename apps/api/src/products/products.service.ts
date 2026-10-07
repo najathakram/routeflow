@@ -75,9 +75,11 @@ import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
   hasPriceColumns,
+  lockFamilyRow,
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
+import { assertValidParent } from "./product-parent";
 import {
   barcodeRowsToView,
   liveBarcodeRows,
@@ -830,6 +832,17 @@ export class ProductsService {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
       }
+      // The parent is judged under its row lock, the same check update() and bulkAssignParent() use: it must
+      // exist in THIS tenant, be active and standalone. A FAMILY parent makes the new row a VARIANT.
+      let parentKind: string | null = null;
+      if (dto.parentProductId) {
+        await lockFamilyRow(tx, tenantId, dto.parentProductId);
+        ({ parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id: null,
+          parentId: dto.parentProductId,
+        }));
+      }
       // The family's five columns, read under its row lock (family-price.ts), or today's inheritance.
       const priceColumns =
         dto.parentProductId && familyMode === "on"
@@ -876,6 +889,7 @@ export class ProductsService {
             reorderPoint: dto.reorderPoint,
             reorderQty: dto.reorderQty,
             parentProductId: dto.parentProductId ?? null,
+            ...(parentKind === "FAMILY" ? { kind: "VARIANT" as const } : {}),
             variantName: dto.variantName ?? null,
             trackedCategoryId: regulated.trackedCategoryId,
             trackedSubcategoryId: regulated.trackedSubcategoryId,
@@ -1233,6 +1247,18 @@ export class ProductsService {
           trackedSubcategoryId: effectiveSubcategoryId ?? null,
         },
       });
+      // A CHANGED parent is judged here, after the recipe guards took the family rows and this row (house lock
+      // order): it must exist in this tenant, be active and standalone, not be this product, and this product
+      // must have no variants of its own. A FAMILY parent makes this row a VARIANT. An echo of the current
+      // parent is not re-judged (an archived family must not block editing its existing variants).
+      if (dto.parentProductId && dto.parentProductId !== existing.parentProductId) {
+        const { parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id,
+          parentId: dto.parentProductId,
+        });
+        if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
+      }
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
       // propagation to this row's children after the write. Off = nothing runs.
       const family =
@@ -1421,14 +1447,13 @@ export class ProductsService {
   async bulkAssignParent(
     dto: BulkAssignParentDto,
   ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
-    const parent = await this.prisma.forTenant().product.findFirst({
-      where: { id: dto.parentProductId },
-      select: { id: true, parentProductId: true },
+    const bulkTenantId = this.prisma.getTenantId();
+    if (!bulkTenantId) throw new BadRequestException("No tenant context");
+    await assertValidParent(this.prisma.forTenant(), {
+      tenantId: bulkTenantId,
+      id: null,
+      parentId: dto.parentProductId,
     });
-    if (!parent) throw new BadRequestException("Parent product not found");
-    if (parent.parentProductId) {
-      throw new BadRequestException("Parent must be a standalone product, not a variant");
-    }
     // B964-2: validate EVERY assignment before the first write: one formula-led variant name rejects the WHOLE request with a coded 400
     // that names the row (index + product id), never a half-applied batch.
     dto.assignments.forEach((assignment, index) => {
