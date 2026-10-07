@@ -14,6 +14,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { voidCoveredRfInvoices } from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -1119,6 +1120,16 @@ export class PlatformAdminService {
             },
           }),
         ]);
+
+        // PR4a (owner ruling): the new prepaid window settles any OPEN RouteFlow invoice it fully covers -
+        // void them in THIS transaction, so the activation and the void land or roll back together.
+        await voidCoveredRfInvoices(tx, {
+          tenantId: id,
+          windowStart: now,
+          windowEnd: periodEnd,
+          actorId: adminId,
+          now,
+        });
 
         if (wasPaying !== isPaying) {
           // SA-693 / S4: only BILLABLE add-ons cross into the ledger — a comp is a platform grant (never
