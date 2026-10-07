@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -57,6 +58,11 @@ import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
+
+// Below `sm` the lower-value columns hide (a RELOCATION: phone + tags move to a secondary line in
+// the Name cell, email + credits live on the customer detail page). Consumed by Table via
+// `columnDef.meta.className` on both th and td.
+const HIDE_BELOW_SM = { className: "hidden sm:table-cell" };
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -441,9 +447,55 @@ export default function CustomersPage() {
       {
         accessorKey: "contactName",
         header: () => <SortHeader col="contactName">Name</SortHeader>,
-        cell: ({ row }) => (
-          <span className="font-medium text-navy">{row.original.contactName}</span>
-        ),
+        cell: ({ row }) => {
+          const c = row.original;
+          const tagList = c.tagAssignments ?? [];
+          const hasSecondary = Boolean(c.phone) || tagList.length > 0;
+          return (
+            <div className="min-w-0">
+              <Link
+                href={`/customers/${c.id}`}
+                onClick={(e) => {
+                  // Select mode: the row click toggles selection, so don't navigate.
+                  if (selectMode) e.preventDefault();
+                  else e.stopPropagation();
+                }}
+                className="font-medium text-navy hover:underline focus-visible:underline"
+              >
+                {c.contactName}
+              </Link>
+              {hasSecondary && (
+                // Phone + tags are hidden columns below sm; keep them reachable on a phone.
+                <div
+                  data-testid="name-secondary-line"
+                  className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-navy/70 sm:hidden"
+                >
+                  {c.phone && (
+                    <a
+                      data-testid="name-secondary-phone"
+                      href={`tel:${c.phone}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-mono tabular-nums underline"
+                    >
+                      {c.phone}
+                    </a>
+                  )}
+                  {tagList.slice(0, 2).map((ta) => (
+                    <span
+                      key={ta.tag.id}
+                      data-testid="name-secondary-tag"
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                      style={{ backgroundColor: ta.tag.color }}
+                    >
+                      {ta.tag.name}
+                    </span>
+                  ))}
+                  {tagList.length > 2 && <span>+{tagList.length - 2}</span>}
+                </div>
+              )}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "businessName",
@@ -479,8 +531,9 @@ export default function CustomersPage() {
         accessorKey: "email",
         header: "Email",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => (
-          <span className="text-navy/70 text-xs">
+          <span data-testid="email-cell" className="text-navy/70 text-xs">
             {displayEmail(row.original.email) ??
               displayEmail(row.original.user?.email) ??
               NO_EMAIL_COPY}
@@ -491,8 +544,9 @@ export default function CustomersPage() {
         accessorKey: "phone",
         header: "Phone",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => (
-          <span className="font-mono text-xs tabular-nums text-navy/70">
+          <span data-testid="phone-cell" className="font-mono text-xs tabular-nums text-navy/70">
             {row.original.phone ?? "—"}
           </span>
         ),
@@ -504,12 +558,13 @@ export default function CustomersPage() {
           const val = row.original.receivables ?? 0;
           return (
             <span
+              data-testid="receivables-cell"
               className={cn(
                 "block text-right font-medium tabular-nums",
                 val > 0 ? "text-danger" : "text-navy/70",
               )}
             >
-              {val > 0 ? fmt(val) : "—"}
+              {fmt(val)}
             </span>
           );
         },
@@ -518,16 +573,18 @@ export default function CustomersPage() {
         id: "credits",
         header: "Credits",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => {
           const val = row.original.unusedCredits ?? 0;
           return (
             <span
+              data-testid="credits-cell"
               className={cn(
                 "block text-right font-medium tabular-nums",
                 val > 0 ? "text-success" : "text-navy/70",
               )}
             >
-              {val > 0 ? fmt(val) : "—"}
+              {fmt(val)}
             </span>
           );
         },
@@ -536,11 +593,17 @@ export default function CustomersPage() {
         id: "tags",
         header: "Tags",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => {
           const tagList = row.original.tagAssignments ?? [];
-          if (!tagList.length) return <span className="text-navy/30 text-xs">—</span>;
+          if (!tagList.length)
+            return (
+              <span data-testid="tags-cell" className="text-navy/30 text-xs">
+                —
+              </span>
+            );
           return (
-            <div className="flex flex-wrap gap-1">
+            <div data-testid="tags-cell" className="flex flex-wrap gap-1">
               {tagList.slice(0, 2).map((ta) => (
                 <span
                   key={ta.tag.id}
@@ -991,21 +1054,28 @@ export default function CustomersPage() {
                   title="No matching customers"
                   description="No customers match your current search and filters."
                   action={
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setSearch("");
-                        setTypeFilter("");
-                        setTagFilter("");
-                        // One clearAll, not two setFilter calls: each setFilter rebuilds the
-                        // query string from the same render's searchParams, so the second
-                        // replace would restore the param the first one removed.
-                        clearUrlFilters();
-                      }}
-                    >
-                      Clear filters
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {search && (
+                        <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                          Clear search
+                        </Button>
+                      )}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSearch("");
+                          setTypeFilter("");
+                          setTagFilter("");
+                          // One clearAll, not two setFilter calls: each setFilter rebuilds the
+                          // query string from the same render's searchParams, so the second
+                          // replace would restore the param the first one removed.
+                          clearUrlFilters();
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
                   }
                 />
               ) : (

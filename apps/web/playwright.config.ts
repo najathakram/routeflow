@@ -911,6 +911,15 @@ export default defineConfig({
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
     {
+      name: "customers-list-ux",
+      testMatch: /65-customers-list-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    {
       name: "pageheader-action-wrap",
       testMatch: /57-pageheader-action-wrap\.spec\.ts/,
       dependencies: ["setup"],
