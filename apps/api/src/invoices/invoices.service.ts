@@ -45,6 +45,7 @@ import {
   loadEditCatalog,
   orderSyncLines,
   auditAttestedPacks,
+  inheritHeldUnit,
   recalcTotalsFromItems,
   inPlacePatch,
   matchEditLines,
@@ -3131,7 +3132,8 @@ export class InvoicesService {
         ); // #2656: 400 before any write
         // units_v1 (VU-4a): the factor of a unit line is decided HERE, by the server ladder, as create() does;
         // a row already sold by that unit keeps its own snapshot factor (resolveLineUnits rule 2).
-        const resolved = items.map((it, i) => {
+        const sent = inheritHeldUnit(items, matches); // SA-070: an absent label keeps a row's unit
+        const resolved = sent.map((it, i) => {
           const held = matches[i].productChanged ? null : matches[i].row;
           return requestsUnit(it)
             ? resolveLineUnits(
@@ -3144,7 +3146,7 @@ export class InvoicesService {
         });
         const editLines = buildEditedLines({
           resolved,
-          items: items,
+          items: sent,
           stored: storedRows,
           matches,
           productMap,

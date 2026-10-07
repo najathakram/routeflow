@@ -216,6 +216,7 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
         id: "row-1",
         productId: "p1",
         description: "Widget",
+        unitLabel: null,
         qty: 51,
         boxes: 2,
         pieces: 3,

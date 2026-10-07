@@ -75,6 +75,8 @@ export interface LineMatch {
   untouched: boolean;
   /** The payload names another product than the matched row: the row's own pack is not its pack. */
   productChanged: boolean;
+  /** VU-4a: the payload names ANOTHER unit than the row's (an explicit null / "" / pack label leaves it). */
+  leftUnit?: boolean;
 }
 
 const same = (a: unknown, b: unknown): boolean =>
@@ -107,11 +109,19 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     if (!row) throw new BadRequestException("unknown line id");
     if (used.has(row.id)) throw new BadRequestException("duplicate line id");
     used.add(row.id);
-    // A unit row re-sent as a pack line (Case -> Box) must not carry the old factor as its own pack.
-    const productChanged =
-      (item.productId ?? null) !== (row.productId ?? null) ||
-      (!requestsUnit(item) && norm(row.unitLabel ?? "") !== "");
-    out[i] = { row, untouched: !productChanged && sameMoneyTuple(item, row), productChanged };
+    // SA-070 / VU-4a: an ABSENT unitLabel keeps the row's unit; only an explicit other label (null, "", the
+    // pack's, another unit) LEAVES it, and then the old factor is not the line's pack (Case -> Box).
+    const rowUnit = norm(row.unitLabel ?? "");
+    const leftUnit =
+      rowUnit !== "" && item.unitLabel !== undefined && norm(item.unitLabel ?? "") !== rowUnit;
+    const productChanged = (item.productId ?? null) !== (row.productId ?? null) || leftUnit;
+    const held = item.unitLabel === undefined ? { ...item, unitLabel: row.unitLabel } : item;
+    out[i] = {
+      row,
+      untouched: !productChanged && sameMoneyTuple(held, row),
+      productChanged,
+      leftUnit,
+    };
   });
   items.forEach((item, i) => {
     if (item.id != null) return;
@@ -126,6 +136,16 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     out[i] = { row, untouched: true, productChanged: false };
   });
   return out;
+}
+
+/** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */
+export function inheritHeldUnit(items: EditPayloadLine[], matches: LineMatch[]): EditPayloadLine[] {
+  return items.map((it, i) => {
+    const m = matches[i];
+    return it.unitLabel === undefined && m.row?.unitLabel && !m.productChanged
+      ? { ...it, unitLabel: m.row.unitLabel }
+      : it;
+  });
 }
 
 export interface EditedLine {
@@ -252,8 +272,8 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
 }
 
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
-  return ctx.items.map((item, i): EditedLine => {
-    const { row, untouched, productChanged } = ctx.matches[i];
+  return ctx.items.map((rawItem, i): EditedLine => {
+    const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
     if (row && untouched) {
       // Verbatim: stored money, split, pack, levy and snapshots. Only cosmetic fields follow the payload.
       return {
@@ -267,13 +287,13 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           taxRate: Number(row.taxRate ?? 0),
           subtotal: Number(row.subtotal),
           categoryTaxAmount: Number(row.categoryTaxAmount ?? 0),
-          description: item.description ?? row.description,
-          notes: item.notes ?? null,
-          orderItemId: item.orderItemId ?? row.orderItemId ?? null,
+          description: rawItem.description ?? row.description,
+          notes: rawItem.notes ?? null,
+          orderItemId: rawItem.orderItemId ?? row.orderItemId ?? null,
         },
       };
     }
-    const product = item.productId ? ctx.productMap.get(item.productId) : undefined;
+    const product = rawItem.productId ? ctx.productMap.get(rawItem.productId) : undefined;
     const unitRes = ctx.resolved?.[i];
     if (product && unitRes && isUnitAware(unitRes)) {
       // VU-4a (D3): the SAME builder create() uses for a unit line; a changed line writes its whole data.
@@ -281,7 +301,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         ? ctx.categoryMap.get(product.trackedCategoryId)
         : null;
       const { tenantId: _t, ...data } = buildInvoiceUnitLine({
-        item: item as any,
+        item: rawItem as any,
         product,
         resolved: unitRes,
         category,
@@ -290,6 +310,11 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       return { rowId: row?.id ?? null, untouched: false, data };
     }
     const livePack = product?.unitsPerBox ?? null;
+    // A unit row re-sent as a pack line with a bare count: the count is boxes at the LIVE pack (as the unit count was).
+    const item: EditPayloadLine =
+      leftUnit && rawItem.boxes == null && rawItem.pieces == null && Number(livePack) > 1
+        ? { ...rawItem, boxes: rawItem.qty, pieces: 0, qty: rawItem.qty * Number(livePack) }
+        : rawItem;
     const qty = item.qty;
     let boxes: number | null = null;
     let pieces: number | null = null;
