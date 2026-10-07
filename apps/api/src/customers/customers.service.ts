@@ -806,8 +806,7 @@ export class CustomersService {
 
   async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
-    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
-    // rather than silently editing a customer nobody can see in the list.
+    // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
