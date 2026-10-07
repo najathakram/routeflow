@@ -121,7 +121,11 @@ const deferred = <T,>() => {
   const promise = new Promise<T>((r) => (resolve = r));
   return { promise, resolve };
 };
-const lines = () => within(screen.getByRole("list", { name: "Items" })).queryAllByRole("listitem");
+// the empty cart renders one placeholder <li>; it is not a line
+const lines = () =>
+  within(screen.getByRole("list", { name: "Items" }))
+    .queryAllByRole("listitem")
+    .filter((li) => li.textContent !== "No items yet.");
 
 describe("B1206: a FIFO scan queue (no scan is dropped)", () => {
   it("two scans inside the lookup time are two lines, each with its OWN typed quantity", async () => {
@@ -366,7 +370,7 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
 
   it("Complete sale: window.print runs with the receipt rendered", async () => {
     let receiptShown = false;
-    printSpy.mockImplementation(() => {
+    printSpy.mockImplementationOnce(() => {
       receiptShown = screen.queryByTestId("counter-sale-receipt") !== null;
     });
     await ring("Complete sale");
@@ -376,7 +380,7 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
 
   it("Complete & next sale: the receipt renders and prints once, THEN the till resets", async () => {
     let receiptShown = false;
-    printSpy.mockImplementation(() => {
+    printSpy.mockImplementationOnce(() => {
       receiptShown = screen.queryByTestId("counter-sale-receipt") !== null;
     });
     await ring(/Complete & next sale/);
