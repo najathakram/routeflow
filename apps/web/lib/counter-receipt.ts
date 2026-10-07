@@ -207,6 +207,9 @@ export interface ReprintSaleFacts {
   invoiceId: string;
   invoiceNumber: string;
   paymentState: "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
+  /** the server's figures, used as given */
+  paid: number;
+  balanceDue: number;
   methods: ReadonlyArray<{ method: ReprintTender; amount: number }>;
   createdAt: string | Date;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
@@ -272,9 +275,7 @@ export function receiptModelFromOrder(input: {
     });
   const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const hasTender = sale.methods.length > 0;
-  // the receipt's own Paid / Balance rows: what the stored tenders add up to against the order total
-  const paid = roundMoney(sale.methods.reduce((sum, m) => sum + m.amount, 0));
-  const balanceDue = sale.paymentState === "PAID" ? 0 : Math.max(0, roundMoney(order.total - paid));
+  const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
   return {
     header: receiptHeader(profile),

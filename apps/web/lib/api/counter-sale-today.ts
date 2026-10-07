@@ -15,6 +15,9 @@ export interface TodaysSaleRow {
   /** ISO time of the sale: format it in `meta.timezone` */
   createdAt: string;
   total: number;
+  /** server figure: every PAID payment on the sale's live invoices, store credit included */
+  paid: number;
+  balanceDue: number;
   customerId: string;
   customerName: string | null;
   isWalkIn: boolean;

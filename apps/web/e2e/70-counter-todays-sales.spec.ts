@@ -13,6 +13,8 @@ const ROW = {
   invoiceNumber: "INV-E2E-1",
   createdAt: "2026-10-07T15:15:00.000Z",
   total: 22.5,
+  paid: 22.5,
+  balanceDue: 0,
   customerId: "c1",
   customerName: null,
   isWalkIn: true,

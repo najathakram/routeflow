@@ -139,6 +139,8 @@ function Reprint({
           invoiceId: row.invoiceId,
           invoiceNumber: row.invoiceNumber,
           paymentState: row.paymentState,
+          paid: row.paid,
+          balanceDue: row.balanceDue,
           methods: row.methods,
           createdAt: row.createdAt,
           timezone,

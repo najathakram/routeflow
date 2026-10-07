@@ -54,6 +54,8 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
   invoiceNumber: "INV-1",
   createdAt: "2026-10-07T15:15:00.000Z",
   total: 22.5,
+  paid: 22.5,
+  balanceDue: 0,
   customerId: "c1",
   customerName: null,
   isWalkIn: true,
@@ -240,6 +242,25 @@ describe("CounterTodaysSales", () => {
     expect(root.textContent).not.toMatch(/Tendered|Change/);
     fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
+  });
+
+  it("reprint shows the server's paid and balance due, never a client sum", async () => {
+    serve({
+      1: page1([
+        row({
+          total: 20,
+          paid: 15,
+          balanceDue: 3,
+          paymentState: "PARTLY_PAID",
+          methods: [{ method: "CASH", amount: 9 }],
+        }),
+      ]),
+    });
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(root).toHaveTextContent("Paid$15.00");
+    expect(root).toHaveTextContent("Balance due$3.00");
   });
 
   it("Return items is the real gate: hidden without the add-on", async () => {

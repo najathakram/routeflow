@@ -41,7 +41,14 @@ const live = (method: "CASH" | "CARD" | "ON_ACCOUNT", over = {}) =>
     ...over,
   });
 type Tender = { method: "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT"; amount: number };
-const reprint = (methods: Tender[], paymentState: "PAID" | "ON_ACCOUNT" | "PARTLY_PAID" = "PAID") =>
+const reprint = (
+  methods: Tender[],
+  paymentState: "PAID" | "ON_ACCOUNT" | "PARTLY_PAID" = "PAID",
+  money: { paid: number; balanceDue: number } = {
+    paid: paymentState === "ON_ACCOUNT" ? 0 : 24.5,
+    balanceDue: paymentState === "ON_ACCOUNT" ? 24.5 : 0,
+  },
+) =>
   receiptModelFromOrder({
     order: {
       orderNumber: "ORD-1",
@@ -56,6 +63,7 @@ const reprint = (methods: Tender[], paymentState: "PAID" | "ON_ACCOUNT" | "PARTL
       invoiceId: "i1",
       invoiceNumber: "INV-1",
       paymentState,
+      ...money,
       methods,
       createdAt: SOLD.toISOString(),
       timezone: "America/New_York",
@@ -115,5 +123,10 @@ describe("receipt golden: live vs reprint", () => {
     const b = reprint([{ method: "STORE_CREDIT", amount: 24.5 }]);
     expect(b.methodLabel).toBe("Store credit");
     expect(b.dateLabel).toMatch(/11:15/);
+  });
+  it("uses the server's paid and balanceDue as given, whatever the tenders add up to", () => {
+    const b = reprint([{ method: "CASH", amount: 9 }], "PARTLY_PAID", { paid: 15, balanceDue: 3 });
+    expect(b.paid).toBe(15);
+    expect(b.balanceDue).toBe(3);
   });
 });
