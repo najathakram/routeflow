@@ -9,6 +9,8 @@ import { Test } from "@nestjs/testing";
 import { OrdersController } from "./orders.controller";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { expectNoStaffLeaks, leakyOrder } from "../common/testing/customer-leak-fixtures";
 
@@ -43,6 +45,8 @@ async function boot() {
     providers: [
       { provide: OrdersService, useValue: ordersService },
       { provide: ChangeRequestsService, useValue: {} },
+      { provide: OrderBatchShipService, useValue: {} },
+      { provide: PackingSlipService, useValue: {} },
     ],
   }).compile();
   return { controller: moduleRef.get(OrdersController), row };
