@@ -193,17 +193,32 @@ describeDb("settings/fulfilment — real Postgres (PR1)", () => {
     const t = await seed();
     const g = await get(t);
     const real = featureConfig.setAuditedInTx.bind(featureConfig);
-    // A BigInt in the audit meta cannot be serialised to JSON: the audit insert throws INSIDE the
-    // transaction, after the config row was upserted.
+    // Prisma serialises a BigInt in Json without throwing, so poisoning the meta proved nothing. Force a REAL
+    // throw INSIDE the transaction, after the config row was upserted: the tx client the writer receives has
+    // a working upsert and an audit insert that rejects.
     const spy = jest
       .spyOn(featureConfig, "setAuditedInTx")
       .mockImplementationOnce((tx, tenantId, key, mode, actor, meta) =>
-        real(tx, tenantId, key, mode, actor, { ...meta, poison: BigInt(1) }),
+        real(
+          {
+            tenantFeatureConfig: tx.tenantFeatureConfig,
+            auditLog: {
+              create: async () => {
+                throw new Error("audit insert failed");
+              },
+            },
+          },
+          tenantId,
+          key,
+          mode,
+          actor,
+          meta,
+        ),
       );
     try {
       await expect(
         patch(t, { fulfilmentModel: "ship", fingerprint: g.fingerprint }),
-      ).rejects.toBeTruthy();
+      ).rejects.toThrow("audit insert failed");
     } finally {
       spy.mockRestore();
     }
