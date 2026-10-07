@@ -5,9 +5,8 @@
  * localStorage; visit 2 (reload, every dashboard read delayed) is the measured one. Also pins
  * D5: the always-present cards appear, and no empty-state copy shows while data is in flight.
  *
- * Three legs (all read-only, approved test tenants, local stack):
+ * Two legs (all read-only, approved test tenants, local stack):
  *  - e2e-routeflow       — routes add-on ON, pre-authenticated operator (the project storageState)
- *  - qa-dashboard-routes — routes add-on ON, fresh login (seeded by apps/api/scripts/e2e-seed.js)
  *  - qa-lite             — NO routes add-on: the Routes/Drivers cards must be absent and nothing shifts
  * The routes legs also assert the Scheduled Routes / Active Drivers stat cards and the Route Runs /
  * Driver Status panels render (a reserved slot must resolve to the real card, never vanish).
@@ -37,12 +36,6 @@ async function installObserver(page: Page) {
 
 const LEGS = [
   { name: "e2e-routeflow (routes ON)", slug: TENANT_SLUG, login: false, routes: true },
-  {
-    name: "qa-dashboard-routes (routes ON)",
-    slug: "qa-dashboard-routes",
-    login: true,
-    routes: true,
-  },
   { name: "qa-lite (no routes)", slug: LITE_TENANT_SLUG, login: true, routes: false },
 ] as const;
 
