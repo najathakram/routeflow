@@ -11,6 +11,11 @@ import {
   type ConnectOAuthToken,
 } from "./provider/connect-oauth.interface";
 import { AppConfig } from "../config/configuration";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 
 /**
  * Stripe Connect (Standard accounts, direct charges, no platform fee).
@@ -48,6 +53,7 @@ import { AppConfig } from "../config/configuration";
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
+  private readonly stateKey: Buffer;
 
   /**
    * The platform's own Stripe account id, cached after the first successful
@@ -61,7 +67,13 @@ export class StripeConnectService {
     @Inject(CONNECT_OAUTH_PROVIDER) private readonly oauth: ConnectOAuthProvider,
     private readonly config: ConfigService<AppConfig>,
     private readonly jwt: JwtService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.stateKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.stripeConnectState,
+      config.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   private get clientId(): string {
     return this.config.get<AppConfig["stripe"]>("stripe")?.connectClientId ?? "";
@@ -139,7 +151,11 @@ export class StripeConnectService {
     const jti = randomUUID();
     const state = await this.jwt.signAsync(
       { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti },
-      { expiresIn: "15m" },
+      {
+        secret: this.stateKey,
+        audience: DERIVED_JWT_AUDIENCES.stripeConnectState,
+        expiresIn: "15m",
+      },
     );
     await this.prisma.tenantStripeConnect.upsert({
       where: { tenantId },
@@ -205,13 +221,24 @@ export class StripeConnectService {
    * exception text (invariant 12).
    */
   async completeOAuth(code: string, state: string) {
-    let payload: { purpose?: string; tid?: string; by?: string | null; jti?: string };
+    let payload: {
+      purpose?: string;
+      tid?: string;
+      by?: string | null;
+      jti?: string;
+      aud?: unknown;
+    };
     try {
-      payload = await this.jwt.verifyAsync(state);
+      payload = await this.jwt.verifyAsync(state, { secret: this.stateKey });
     } catch {
       throw new BadRequestException("state_expired");
     }
-    if (payload.purpose !== "stripe-connect" || !payload.tid || !payload.jti) {
+    if (
+      payload.aud !== DERIVED_JWT_AUDIENCES.stripeConnectState ||
+      payload.purpose !== "stripe-connect" ||
+      !payload.tid ||
+      !payload.jti
+    ) {
       throw new BadRequestException("state_invalid");
     }
     const tenantId = payload.tid;

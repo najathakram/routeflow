@@ -17,6 +17,11 @@ import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { escapeHtml } from "../common/html-escape";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
 import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
 
@@ -29,6 +34,7 @@ export interface DeviceInfo {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -37,7 +43,13 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly entitlements: EntitlementsService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.emailVerifyKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.emailVerify,
+      configService.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   /**
    * Validate username + password.
@@ -444,13 +456,23 @@ export class AuthService {
   async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type: string; tenantId: string };
+    let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
     try {
-      payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+      payload = this.jwtService.verify(token, {
+        secret: this.emailVerifyKey,
+        audience: DERIVED_JWT_AUDIENCES.emailVerify,
+      });
     } catch {
-      throw new BadRequestException(
-        "Verification link is invalid or has expired. Please sign up again or request a new link.",
-      );
+      // Links issued before per-purpose keys were signed with the session secret and carry no
+      // audience; they stay valid for their own 24h and nothing else is accepted that way.
+      try {
+        payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+        if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
+      } catch {
+        throw new BadRequestException(
+          "Verification link is invalid or has expired. Please sign up again or request a new link.",
+        );
+      }
     }
 
     if (payload.type !== "email_verify") {
