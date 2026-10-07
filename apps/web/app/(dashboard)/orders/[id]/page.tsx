@@ -93,6 +93,8 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditScanBar } from "./_components/EditScanBar";
@@ -137,6 +139,7 @@ import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
+import { fulfilPathOptions } from "@/lib/fulfil-path-options";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -1860,8 +1863,24 @@ export default function OrderDetailPage() {
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
+  const applyFulfillPath = (fulfillPath: "ROUTE" | "SHIP") =>
+    patchFulfillPath.mutate(
+      { id, fulfillPath },
+      {
+        onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
+        onError: (err: any) =>
+          toast({
+            title: "Could not update fulfillment",
+            description: codedToastCopy(err) ?? err?.response?.data?.message,
+            variant: "error",
+          }),
+      },
+    );
   const [showShipDialog, setShowShipDialog] = React.useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
+  // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
+  const [pickupOpen, setPickupOpen] = React.useState(false);
+  const [pendingPath, setPendingPath] = React.useState<"ROUTE" | "SHIP" | null>(null);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -2696,7 +2715,11 @@ export default function OrderDetailPage() {
                     onClick={handleMarkShipped}
                     loading={updateStatus.isPending}
                   >
-                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                    {order.fulfillPath === "SHIP"
+                      ? "Mark shipped"
+                      : order.fulfillPath === "PICKUP"
+                        ? "Ready for pickup"
+                        : "Out for Delivery"}
                   </Button>
                   {order.fulfillPath === "SHIP" && (
                     <p className="text-[11px] text-navy/50">
@@ -2706,6 +2729,11 @@ export default function OrderDetailPage() {
                   )}
                 </div>
               </ActionTier>
+              {order.fulfillPath === "PICKUP" && (
+                <ActionTier tier="secondary">
+                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
+                </ActionTier>
+              )}
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -2736,14 +2764,18 @@ export default function OrderDetailPage() {
           {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
               <ActionTier tier="primary">
-                <Button
-                  size="sm"
-                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                  onClick={handleDeliver}
-                  loading={updateStatus.isPending}
-                >
-                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-                </Button>
+                {order.fulfillPath === "PICKUP" ? (
+                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
+                ) : (
+                  <Button
+                    size="sm"
+                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                    onClick={handleDeliver}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                  </Button>
+                )}
               </ActionTier>
               <ActionTier tier="secondary">
                 <Button
@@ -3278,10 +3310,7 @@ export default function OrderDetailPage() {
                   <dd className="flex flex-col items-end gap-0.5">
                     <div className="w-40">
                       <Select
-                        options={[
-                          { value: "ROUTE", label: "Delivery route" },
-                          { value: "SHIP", label: "Ship via carrier" },
-                        ]}
+                        options={fulfilPathOptions(order.fulfillPath)}
                         value={order.fulfillPath}
                         disabled={fulfillPathLocked || patchFulfillPath.isPending}
                         title={
@@ -3291,19 +3320,8 @@ export default function OrderDetailPage() {
                         }
                         onChange={(e) => {
                           const fulfillPath = e.target.value as "ROUTE" | "SHIP";
-                          patchFulfillPath.mutate(
-                            { id: order.id, fulfillPath },
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Fulfillment updated", variant: "success" }),
-                              onError: (err: any) =>
-                                toast({
-                                  title: "Could not update fulfillment",
-                                  description: codedToastCopy(err) ?? err?.response?.data?.message,
-                                  variant: "error",
-                                }),
-                            },
-                          );
+                          if (order.fulfillPath === "PICKUP") return setPendingPath(fulfillPath);
+                          applyFulfillPath(fulfillPath);
                         }}
                       />
                     </div>
@@ -3597,6 +3615,23 @@ export default function OrderDetailPage() {
         confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
         loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
+      />
+
+      {access.staff && order.fulfillPath === "PICKUP" && (
+        <PickupHandOverDialog
+          order={order}
+          open={pickupOpen}
+          onClose={() => setPickupOpen(false)}
+        />
+      )}
+      <FulfillPathMoveConfirm
+        open={pendingPath !== null}
+        onClose={() => setPendingPath(null)}
+        loading={patchFulfillPath.isPending}
+        onConfirm={() => {
+          if (pendingPath) applyFulfillPath(pendingPath);
+          setPendingPath(null);
+        }}
       />
 
       <UnmarkShippedConfirm

@@ -384,7 +384,10 @@ export interface BuyerOrder extends BuyerOrderListItem {
   /** Free-text carrier label and tracking number, set when the seller ships the order. */
   shippingCarrier: string | null;
   shippingTrackingNumber: string | null;
-  /** Stamped when a tracking number is first set (OrdersService.updateShipment). */
+  /**
+   * The SHIP transition's stamp (OrdersService.changeStatus), kept through an unmark. Saving
+   * tracking never stamps it, except `updateShipment` backfilling a legacy already-shipped order.
+   */
   shippedAt: string | null;
 }
 

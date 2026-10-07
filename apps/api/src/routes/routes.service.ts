@@ -9,15 +9,16 @@ import {
 import { createHash, randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import {
-  assertDeliveriesFitStop,
   assertStopNotSkipped,
   claimStopCompletion,
   claimStopStatusChangeOnLiveRun,
   assertRunInProgress,
   assertRunStillInProgress,
+  lockRunOrdersForTerminalStatus,
   lockRunStopsForTerminalStatus,
+  lockStopsOrdersForRelease,
 } from "./delivery-lines.util";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, retryRouteTx } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
 import { reorderRouteStopsInTx } from "./route-stop-reorder";
@@ -85,6 +86,7 @@ import { ROUTES_DISPATCH_KEY, assertRouteKindDispatchAllowed } from "./route-dis
 import { observeRunCredit } from "./run-credit-observation";
 import { RouteRealtime } from "./route-realtime";
 import {
+  lockStopOrdersAndFit,
   reconcileDeliveredStopOrders,
   resolvePostReconcileOrderTotals,
 } from "./complete-payment-reconcile";
@@ -1486,49 +1488,33 @@ export class RoutesService {
       driver: { select: { id: true, contactName: true, user: { select: { username: true } } } },
     };
 
-    // F11 (B129 / B211): the two TERMINAL transitions release the orders of
-    // every stop that recorded no work, in the SAME transaction as the status
-    // write. Stop ids are read inside the tx (not from the findUnique above) so
-    // a driver's completeStop that committed in between is seen as COMPLETED
-    // and drops out; the helper's status filter is the second guard. Gate
-    // reads above (stops-complete, cash backstop) ran pre-release against the
-    // FULL order set, which can only make them stricter. SCHEDULED /
-    // IN_PROGRESS writes — including un-cancel — stay the bare update: un-cancel
-    // is a status-only restore that re-pins NOTHING. It restores the RUN row
-    // (its completed stops' POD and settlement), never its order set: createRun
-    // refuses a route that already carries a SCHEDULED/IN_PROGRESS run, so
-    // re-dispatching the released orders means cancelling this run again and
-    // dispatching a FRESH run on the route — un-cancel is not a path back to
-    // them (spec R3; follow-up row).
+    // F11 (B129 / B211): the two TERMINAL transitions release the orders of every stop that
+    // recorded no work, in the SAME tx as the status write. Stop ids are read inside the tx so a
+    // completeStop that committed in between drops out (the helper's status filter is the second
+    // guard); the gate reads above ran against the FULL order set, which can only be stricter.
+    // SCHEDULED / IN_PROGRESS writes (un-cancel included) stay the bare update: a status-only
+    // restore of the RUN row that re-pins NO orders (createRun refuses a route that already carries
+    // a live run, so re-dispatching released orders means a FRESH run; spec R3; follow-up row).
     //
-    // No run-row FOR UPDATE is taken (follow-up row). Concurrent PATCHes are
-    // idempotent under the matrix and the release matches 0 rows twice, but
-    // this branch locks the run row BEFORE the order rows while completeStop /
-    // completeWithPayment lock a stop's order rows before the run row — a
-    // simultaneous operator cancel and driver stop completion can therefore
-    // deadlock, and Postgres aborts one of the two requests.
+    // Lock order (SA-706f): Orders → stop rows → RouteRun, as completeStop / completeWithPayment
+    // take them, so a cancel racing a stop completion waits its turn (no run-row lock).
     const releasesOrders =
       dto.status === RouteRunStatus.CANCELLED || dto.status === RouteRunStatus.COMPLETED;
 
     const updated = releasesOrders
-      ? // #2631 (lead's Opus): the stop-first lock inverts reorder's run → stops order and
-        // route-optimization's unordered stop batches — a cancel × reorder/optimize deadlock is
-        // retried, never a 500. Each attempt re-locks and re-reads everything (no outer state).
-        await retryOnTxConflict("routes.updateRunStatus", () =>
+      ? // #2631 / SA-706f: each attempt re-locks and re-reads everything; a conflict is retried.
+        await retryRouteTx("routes.updateRunStatus", () =>
           this.prisma.tenantTransaction(async (tx) => {
-            await lockRunStopsForTerminalStatus(tx, id); // #2631 / SA-550: STOP rows → RouteRun
+            const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id, run.tenantId); // Orders FIRST
+            await lockRunStopsForTerminalStatus(tx, id); // then STOP rows → RouteRun
             const row = await tx.routeRun.update({ where: { id }, data: updates, include });
             const stops = await tx.routeRunStop.findMany({
               where: { routeRunId: id, status: { not: "COMPLETED" } },
               select: { id: true },
             });
             const stopIds = stops.map((s: { id: string }) => s.id);
-            // Without this line the release is invisible: an operator asking
-            // "why did these orders come off run X / reappear in dispatch?" has
-            // nothing but a null pointer, indistinguishable from an order that
-            // was never dispatched (same reason completeStop logs its withheld
-            // auto-completion below).
-            const { released } = await this.releaseUndeliveredOrders(tx, stopIds);
+            // Logged: once the pointers are null nothing else records why an order left run X.
+            const { released } = await this.releaseUndeliveredOrders(tx, stopIds, lockedOrderIds);
             if (released > 0) {
               this.logger.log(
                 `updateRunStatus: run ${id} → ${dto.status} released ${released} undelivered order(s) ` +
@@ -1670,8 +1656,8 @@ export class RoutesService {
    * `invoice.order.routeRunId` join and the order reappears as trip-eligible.
    * PARTIALLY_DELIVERED is deliberately NOT added to the notIn list — a
    * partially-delivered order on a genuinely non-completed stop must still
-   * release. No FOR UPDATE is taken and the write order is unchanged; the
-   * relation filter is the whole fix.
+   * release. It writes only Orders the caller holds FOR UPDATE (SA-706f; a completion's auto-complete
+   * locks its own set first, the one Stop → Order arm: see delivery-lines.util.ts).
    *
    * A third write follows: every PENDING ChangeRequest on an order write 2
    * actually released is DECLINED. ChangeRequests are only created (and only
@@ -1708,14 +1694,18 @@ export class RoutesService {
   private async releaseUndeliveredOrders(
     tx: any,
     stopIds: string[],
+    lockedOrderIds?: string[],
   ): Promise<{ released: number }> {
     if (stopIds.length === 0) return { released: 0 };
+    // SA-706f: writes only Orders this tx holds FOR UPDATE; later attachments wait for the next pass.
+    const locked = lockedOrderIds ?? (await lockStopsOrdersForRelease(tx, stopIds));
     // Re-checked by EVERY statement below, never read once into a variable: a
     // stop the caller saw as non-COMPLETED can be COMPLETED by the time each
     // write runs.
     const stopStillOpen = { routeRunStop: { status: { not: "COMPLETED" } } };
     await tx.order.updateMany({
       where: {
+        id: { in: locked },
         routeRunStopId: { in: stopIds },
         ...stopStillOpen,
         status: OrderStatus.OUT_FOR_DELIVERY,
@@ -1723,6 +1713,7 @@ export class RoutesService {
       data: { status: OrderStatus.CONFIRMED },
     });
     const releaseWhere = {
+      id: { in: locked },
       routeRunStopId: { in: stopIds },
       ...stopStillOpen,
       status: { notIn: [OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
@@ -1731,7 +1722,7 @@ export class RoutesService {
       await tx.order.findMany({ where: releaseWhere, select: { id: true } })
     ).map((o: { id: string }) => o.id);
     const { count } = await tx.order.updateMany({
-      where: { id: { in: releasedIds }, ...releaseWhere },
+      where: { ...releaseWhere, id: { in: releasedIds } },
       data: { routeRunId: null, routeRunStopId: null },
     });
     if (releasedIds.length > 0) {
@@ -2213,131 +2204,135 @@ export class RoutesService {
     await ingestPodCapture(this.podDeps, dto, stopId);
 
     let autoCompleted = false;
-    await this.prisma.tenantTransaction(async (tx) => {
-      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
-      // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
-      // requirement from the stop's current orders (authoritative — orders can be
-      // linked after dispatch), then block a regulated completion that lacks the
-      // required checks / signature / hands it to a safe-drop, and normalise the
-      // captured values onto the stop.
-      const db = tx as unknown as RegulatedDeliveryDb;
-      const sets = await loadAgeIdCategorySets(db);
-      const requirements = await deriveStopRegulatedRequirements(
-        db,
-        { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
-        sets,
-      );
-      const regulatedPatch = assertRegulatedDeliverySatisfied({
-        requirements,
-        capture: dto,
-        existingSignatureUrl: stop.signatureUrl,
-      });
-
-      // 1. Mark stop completed (SA-151, see claimStopCompletion).
-      await claimStopCompletion(tx, stopId, {
-        status: "COMPLETED",
-        completedAt: new Date(),
-        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-        ...regulatedPatch,
-      });
-      await assertRunStillInProgress(tx, runId); // #2631: in-tx, after the stop claim (no run lock)
-
-      // 2. Record delivery mutations if provided
-      if (dto.deliveries && dto.deliveries.length > 0) {
-        for (const d of dto.deliveries) {
-          const item = await tx.orderItem.findFirst({
-            where: { id: d.orderItemId },
-            select: { orderId: true, productId: true, unitPrice: true },
-          });
-          if (!item) continue;
-          await tx.deliveryMutation.create({
-            data: {
-              orderId: item.orderId,
-              orderItemId: d.orderItemId,
-              // B148/R3: `DeliveryMutation.productId` is a real Product FK, so
-              // it comes from the tenant-scoped order item — never verbatim
-              // from the body. A stale/blank/foreign client id would either
-              // blow up the whole completion transaction on the FK or park a
-              // cross-tenant reference the owning tenant's product purge can
-              // never see. Unlisted (free-text) lines have no product: null.
-              productId: item.productId ?? null,
-              routeRunStopId: stopId,
-              ...(driver ? { driverId: driver.id } : {}),
-              type: (d.type as any) ?? "DELIVERED",
-              quantityDelivered: d.quantityDelivered,
-              ...(d.note ? { note: d.note } : {}),
-            },
-          });
-        }
-      }
-
-      // 3. Mark linked orders as DELIVERED
-      const orderIds = stop.orders.map((o) => o.id);
-      if (orderIds.length > 0) {
-        await tx.order.updateMany({
-          where: {
-            id: { in: orderIds },
-            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
-          },
-          data: { status: OrderStatus.DELIVERED },
+    // SA-706f: a 40P01/40001 victim re-runs the WHOLE tx (DB writes only; each attempt starts clean).
+    await retryRouteTx("routes.completeStop", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        autoCompleted = false;
+        await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);
+        // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
+        // requirement from the stop's current orders (authoritative — orders can be
+        // linked after dispatch), then block a regulated completion that lacks the
+        // required checks / signature / hands it to a safe-drop, and normalise the
+        // captured values onto the stop.
+        const db = tx as unknown as RegulatedDeliveryDb;
+        const sets = await loadAgeIdCategorySets(db);
+        const requirements = await deriveStopRegulatedRequirements(
+          db,
+          { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
+          sets,
+        );
+        const regulatedPatch = assertRegulatedDeliverySatisfied({
+          requirements,
+          capture: dto,
+          existingSignatureUrl: stop.signatureUrl,
         });
-      }
 
-      // RF-016: Auto-complete run when last stop is done
-      const allStops = await tx.routeRunStop.findMany({
-        where: { routeRunId: runId },
-        select: { id: true, status: true },
-      });
-      const allDone = allStops.every(
-        (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
-      );
-      if (allDone) {
-        // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
-        // but here because RF-016 bypasses updateRunStatus entirely on the
-        // common path (last stop closes -> auto-complete). Read via `tx` so a
-        // payment recorded earlier in THIS transaction is visible. Leaves the
-        // run IN_PROGRESS — the driver lands on settle-then-complete instead.
-        const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
-        if (outstanding > 0.001) {
-          // Withholding the auto-completion is otherwise invisible —
-          // `autoCompleted: false` has no client consumer, so without this line
-          // an operator asking "every stop is done, why is the run still open?"
-          // finds nothing in the logs.
-          this.logger.log(
-            `completeStop: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
-              `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
-          );
-        } else {
-          await tx.routeRun.update({
-            where: { id: runId },
-            data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
-          });
-          // F11 / B211: the run is COMPLETED now — release the orders of the
-          // stops that recorded no work (the SKIPPED ones; allDone already
-          // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
-          // stop's COMPLETED write, so `id !== stopId` is a second guard for a
-          // snapshot that still shows it PENDING. A withheld auto-completion
-          // (the `if` branch above) releases nothing — the run is still open.
-          const releasedStopIds = allStops
-            .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
-            .map((s: any) => s.id);
-          const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
-          if (released > 0) {
-            // Logged for the same reason as the withheld branch above: once the
-            // pointers are null nothing else records that this run released
-            // them.
-            this.logger.log(
-              `completeStop: RF-016 auto-completion of run ${runId} released ${released} ` +
-                `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
-            );
+        // 1. Mark stop completed (SA-151, see claimStopCompletion).
+        await claimStopCompletion(tx, stopId, {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+          ...regulatedPatch,
+        });
+        await assertRunStillInProgress(tx, runId); // #2631: in-tx, after the stop claim (no run lock)
+
+        // 2. Record delivery mutations if provided
+        if (dto.deliveries && dto.deliveries.length > 0) {
+          for (const d of dto.deliveries) {
+            const item = await tx.orderItem.findFirst({
+              where: { id: d.orderItemId },
+              select: { orderId: true, productId: true, unitPrice: true },
+            });
+            if (!item) continue;
+            await tx.deliveryMutation.create({
+              data: {
+                orderId: item.orderId,
+                orderItemId: d.orderItemId,
+                // B148/R3: `DeliveryMutation.productId` is a real Product FK, so
+                // it comes from the tenant-scoped order item — never verbatim
+                // from the body. A stale/blank/foreign client id would either
+                // blow up the whole completion transaction on the FK or park a
+                // cross-tenant reference the owning tenant's product purge can
+                // never see. Unlisted (free-text) lines have no product: null.
+                productId: item.productId ?? null,
+                routeRunStopId: stopId,
+                ...(driver ? { driverId: driver.id } : {}),
+                type: (d.type as any) ?? "DELIVERED",
+                quantityDelivered: d.quantityDelivered,
+                ...(d.note ? { note: d.note } : {}),
+              },
+            });
           }
-          autoCompleted = true;
         }
-      }
-    });
+
+        // 3. Mark linked orders as DELIVERED
+        const orderIds = stop.orders.map((o) => o.id);
+        if (orderIds.length > 0) {
+          await tx.order.updateMany({
+            where: {
+              id: { in: orderIds },
+              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
+            },
+            data: { status: OrderStatus.DELIVERED },
+          });
+        }
+
+        // RF-016: Auto-complete run when last stop is done
+        const allStops = await tx.routeRunStop.findMany({
+          where: { routeRunId: runId },
+          select: { id: true, status: true },
+        });
+        const allDone = allStops.every(
+          (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
+        );
+        if (allDone) {
+          // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
+          // but here because RF-016 bypasses updateRunStatus entirely on the
+          // common path (last stop closes -> auto-complete). Read via `tx` so a
+          // payment recorded earlier in THIS transaction is visible. Leaves the
+          // run IN_PROGRESS — the driver lands on settle-then-complete instead.
+          const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
+          if (outstanding > 0.001) {
+            // Withholding the auto-completion is otherwise invisible —
+            // `autoCompleted: false` has no client consumer, so without this line
+            // an operator asking "every stop is done, why is the run still open?"
+            // finds nothing in the logs.
+            this.logger.log(
+              `completeStop: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
+                `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+            );
+          } else {
+            await tx.routeRun.update({
+              where: { id: runId },
+              data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+            });
+            // F11 / B211: the run is COMPLETED now — release the orders of the
+            // stops that recorded no work (the SKIPPED ones; allDone already
+            // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
+            // stop's COMPLETED write, so `id !== stopId` is a second guard for a
+            // snapshot that still shows it PENDING. A withheld auto-completion
+            // (the `if` branch above) releases nothing — the run is still open.
+            const releasedStopIds = allStops
+              .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
+              .map((s: any) => s.id);
+            const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
+            if (released > 0) {
+              // Logged for the same reason as the withheld branch above: once the
+              // pointers are null nothing else records that this run released
+              // them.
+              this.logger.log(
+                `completeStop: RF-016 auto-completion of run ${runId} released ${released} ` +
+                  `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
+              );
+            }
+            autoCompleted = true;
+          }
+        }
+      }),
+    );
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
     // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.
@@ -2440,181 +2435,185 @@ export class RoutesService {
     // no payment was collected this completion — no payment call, no fields).
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
-    await withAfterCommit(this.prisma, async (tx, after) => {
-      await assertDeliveriesFitStop(tx, stopId, stop.orders, dto.deliveries);
-      // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
-      const db = tx as unknown as RegulatedDeliveryDb;
-      const sets = await loadAgeIdCategorySets(db);
-      const requirements = await deriveStopRegulatedRequirements(
-        db,
-        { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
-        sets,
-      );
-      const regulatedPatch = assertRegulatedDeliverySatisfied({
-        requirements,
-        capture: dto,
-        existingSignatureUrl: stop.signatureUrl,
-      });
+    // SA-706f: a conflict victim re-runs the whole tx; the AfterCommit queue resets per attempt.
+    await retryRouteTx("routes.completeWithPayment", () =>
+      withAfterCommit(this.prisma, async (tx, after) => {
+        [autoCompleted, paymentIds, excess, advancePaymentId] = [false, [], undefined, undefined];
+        await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);
+        // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
+        const db = tx as unknown as RegulatedDeliveryDb;
+        const sets = await loadAgeIdCategorySets(db);
+        const requirements = await deriveStopRegulatedRequirements(
+          db,
+          { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
+          sets,
+        );
+        const regulatedPatch = assertRegulatedDeliverySatisfied({
+          requirements,
+          capture: dto,
+          existingSignatureUrl: stop.signatureUrl,
+        });
 
-      // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
-      await claimStopCompletion(tx, stopId, {
-        status: "COMPLETED",
-        completedAt: new Date(),
-        ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
-        ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
-        ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
-        ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
-        ...regulatedPatch,
-      });
-      await assertRunStillInProgress(tx, runId); // #2631: in-tx, after the stop claim (no run lock)
+        // 1. Mark stop completed — SA-151 review, see claimStopCompletion (delivery-lines.util.ts).
+        await claimStopCompletion(tx, stopId, {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          ...(dto.driverNote !== undefined ? { driverNote: dto.driverNote } : {}),
+          ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
+          ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
+          ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+          ...regulatedPatch,
+        });
+        await assertRunStillInProgress(tx, runId); // #2631: in-tx, after the stop claim (no run lock)
 
-      // 2. Record delivery mutations. Track which orders were actually delivered
-      // in THIS completion — only they may be reconciled to the delivered basis
-      // below. An order merely linked to the stop but not delivered here (e.g. one
-      // the office already marked DELIVERED) keeps its existing invoice; reconciling
-      // it against a deliveredQty of 0 would wrongly zero its open draft.
-      const deliveredOrderIdSet = new Set<string>();
-      if (dto.deliveries && dto.deliveries.length > 0) {
-        const orderIdByItemId = new Map<string, string>();
-        for (const d of dto.deliveries) {
-          const item = await tx.orderItem.findFirst({
-            where: { id: d.orderItemId },
-            select: { orderId: true, productId: true },
-          });
-          if (!item) continue;
-          deliveredOrderIdSet.add(item.orderId);
-          orderIdByItemId.set(d.orderItemId, item.orderId);
-          await tx.deliveryMutation.create({
-            data: {
-              orderId: item.orderId,
-              orderItemId: d.orderItemId,
-              // B148/R3: from the tenant-scoped order item, never verbatim from
-              // the body — see the completeStop create site for why.
-              productId: item.productId ?? null,
-              routeRunStopId: stopId,
-              ...(driver ? { driverId: driver.id } : {}),
-              type: (d.type as any) ?? "DELIVERED",
-              quantityDelivered: d.quantityDelivered,
-            },
-          });
-        }
-        // B785/SA-133: RECOMPUTE deliveredQty, never increment/overwrite -- other cumulative
-        // consumers (order-cancel-impact.ts, order-stock.ts, orders.service.ts) are unaffected.
-        for (const orderId of deliveredOrderIdSet) {
-          const pairs = [...orderIdByItemId].filter((p) => p[1] === orderId);
-          const itemIds = pairs.map((p) => p[0]);
-          for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
-            await tx.orderItem.update({
-              where: { id: u.id },
-              data: { deliveredQty: u.deliveredQty },
+        // 2. Record delivery mutations. Track which orders were actually delivered
+        // in THIS completion — only they may be reconciled to the delivered basis
+        // below. An order merely linked to the stop but not delivered here (e.g. one
+        // the office already marked DELIVERED) keeps its existing invoice; reconciling
+        // it against a deliveredQty of 0 would wrongly zero its open draft.
+        const deliveredOrderIdSet = new Set<string>();
+        if (dto.deliveries && dto.deliveries.length > 0) {
+          const orderIdByItemId = new Map<string, string>();
+          for (const d of dto.deliveries) {
+            const item = await tx.orderItem.findFirst({
+              where: { id: d.orderItemId },
+              select: { orderId: true, productId: true },
+            });
+            if (!item) continue;
+            deliveredOrderIdSet.add(item.orderId);
+            orderIdByItemId.set(d.orderItemId, item.orderId);
+            await tx.deliveryMutation.create({
+              data: {
+                orderId: item.orderId,
+                orderItemId: d.orderItemId,
+                // B148/R3: from the tenant-scoped order item, never verbatim from
+                // the body — see the completeStop create site for why.
+                productId: item.productId ?? null,
+                routeRunStopId: stopId,
+                ...(driver ? { driverId: driver.id } : {}),
+                type: (d.type as any) ?? "DELIVERED",
+                quantityDelivered: d.quantityDelivered,
+              },
             });
           }
+          // B785/SA-133: RECOMPUTE deliveredQty, never increment/overwrite -- other cumulative
+          // consumers (order-cancel-impact.ts, order-stock.ts, orders.service.ts) are unaffected.
+          for (const orderId of deliveredOrderIdSet) {
+            const pairs = [...orderIdByItemId].filter((p) => p[1] === orderId);
+            const itemIds = pairs.map((p) => p[0]);
+            for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
+              await tx.orderItem.update({
+                where: { id: u.id },
+                data: { deliveredQty: u.deliveredQty },
+              });
+            }
+          }
         }
-      }
 
-      // 3. Mark linked orders as DELIVERED
-      const orderIds = stop.orders.map((o) => o.id);
-      if (orderIds.length > 0) {
-        await tx.order.updateMany({
-          where: {
-            id: { in: orderIds },
-            status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
-          },
-          data: { status: OrderStatus.DELIVERED },
-        });
-      }
-
-      // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
-      // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
-      // full rationale (why this must not live behind the payment step below).
-      const deliveredOrderIds = await reconcileDeliveredStopOrders(
-        this.invoicesService,
-        tx,
-        stop.orders,
-        deliveredOrderIdSet,
-        user.sub,
-      );
-
-      // 5. Record payment (atomic with stop completion — RF-005). The invoice is
-      // resolved SERVER-side from the delivered orders — the mobile client cannot
-      // supply an invoiceId (Order has no invoiceId scalar), so the old
-      // client-invoiceId path silently recorded nothing. This records the payment
-      // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
-      // against the invoice(s) step 4 just reconciled.
-      if (dto.payment && dto.payment.amount > 0) {
-        const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
-          tx,
-          after,
-          deliveredOrderIds,
-          dto.payment.amount,
-          dto.payment.method,
-          { runId, stopId },
-        );
-        paymentIds = recorded.paymentIds;
-        excess = recorded.excess;
-        advancePaymentId = recorded.advancePaymentId;
-        if (advancePaymentId) {
-          this.logger.log(
-            `completeWithPayment: ${excess} over-collection booked to advance ${advancePaymentId} (run ${runId}, stop ${stopId})`,
-          );
-        } else if (recorded.applied + 0.005 < dto.payment.amount) {
-          this.logger.warn(
-            `completeWithPayment: collected ${dto.payment.amount} but only ${recorded.applied} applied to ` +
-              `invoices for orders ${deliveredOrderIds.join(",")} (remainder unrecorded).`,
-          );
-        }
-      }
-
-      // 6. RF-016: Auto-complete run when last stop is done
-      const allStops = await tx.routeRunStop.findMany({
-        where: { routeRunId: runId },
-        select: { id: true, status: true },
-      });
-      const allDone = allStops.every(
-        (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
-      );
-      if (allDone) {
-        // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
-        // but here because RF-016 bypasses updateRunStatus entirely on the
-        // common path (last stop closes -> auto-complete). Read via `tx` so a
-        // payment recorded earlier in THIS transaction is visible. Leaves the
-        // run IN_PROGRESS — the driver lands on settle-then-complete instead.
-        const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
-        if (outstanding > 0.001) {
-          // See completeStop's gate: without this the withheld completion
-          // leaves no trace at all in the logs.
-          this.logger.log(
-            `completeWithPayment: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
-              `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
-          );
-        } else {
-          await tx.routeRun.update({
-            where: { id: runId },
-            data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+        // 3. Mark linked orders as DELIVERED
+        const orderIds = stop.orders.map((o) => o.id);
+        if (orderIds.length > 0) {
+          await tx.order.updateMany({
+            where: {
+              id: { in: orderIds },
+              status: { notIn: NON_ROUTABLE_ORDER_STATUSES },
+            },
+            data: { status: OrderStatus.DELIVERED },
           });
-          // F11 / B211: the run is COMPLETED now — release the orders of the
-          // stops that recorded no work (the SKIPPED ones; allDone already
-          // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
-          // stop's COMPLETED write, so `id !== stopId` is a second guard for a
-          // snapshot that still shows it PENDING. A withheld auto-completion
-          // (the `if` branch above) releases nothing — the run is still open.
-          const releasedStopIds = allStops
-            .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
-            .map((s: any) => s.id);
-          const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
-          if (released > 0) {
-            // Logged for the same reason as the withheld branch above: once the
-            // pointers are null nothing else records that this run released
-            // them.
+        }
+
+        // 4. B663: reconcile every delivered order's invoice onto the DELIVERED
+        // quantities, UNCONDITIONALLY — see complete-payment-reconcile.ts for the
+        // full rationale (why this must not live behind the payment step below).
+        const deliveredOrderIds = await reconcileDeliveredStopOrders(
+          this.invoicesService,
+          tx,
+          stop.orders,
+          deliveredOrderIdSet,
+          user.sub,
+        );
+
+        // 5. Record payment (atomic with stop completion — RF-005). The invoice is
+        // resolved SERVER-side from the delivered orders — the mobile client cannot
+        // supply an invoiceId (Order has no invoiceId scalar), so the old
+        // client-invoiceId path silently recorded nothing. This records the payment
+        // the canonical way (InvoicePayment + recomputeStatus over non-VOID sums)
+        // against the invoice(s) step 4 just reconciled.
+        if (dto.payment && dto.payment.amount > 0) {
+          const recorded = await this.invoicesService.recordDeliveryPaymentInTx(
+            tx,
+            after,
+            deliveredOrderIds,
+            dto.payment.amount,
+            dto.payment.method,
+            { runId, stopId },
+          );
+          paymentIds = recorded.paymentIds;
+          excess = recorded.excess;
+          advancePaymentId = recorded.advancePaymentId;
+          if (advancePaymentId) {
             this.logger.log(
-              `completeWithPayment: RF-016 auto-completion of run ${runId} released ${released} ` +
-                `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
+              `completeWithPayment: ${excess} over-collection booked to advance ${advancePaymentId} (run ${runId}, stop ${stopId})`,
+            );
+          } else if (recorded.applied + 0.005 < dto.payment.amount) {
+            this.logger.warn(
+              `completeWithPayment: collected ${dto.payment.amount} but only ${recorded.applied} applied to ` +
+                `invoices for orders ${deliveredOrderIds.join(",")} (remainder unrecorded).`,
             );
           }
-          autoCompleted = true;
         }
-      }
-    });
+
+        // 6. RF-016: Auto-complete run when last stop is done
+        const allStops = await tx.routeRunStop.findMany({
+          where: { routeRunId: runId },
+          select: { id: true, status: true },
+        });
+        const allDone = allStops.every(
+          (s: any) => s.id === stopId || s.status === "COMPLETED" || s.status === "SKIPPED",
+        );
+        if (allDone) {
+          // R7b / B152: same cash-settlement gate as updateRunStatus's backstop,
+          // but here because RF-016 bypasses updateRunStatus entirely on the
+          // common path (last stop closes -> auto-complete). Read via `tx` so a
+          // payment recorded earlier in THIS transaction is visible. Leaves the
+          // run IN_PROGRESS — the driver lands on settle-then-complete instead.
+          const outstanding = await this.getUnsettledPhysicalMoney(runId, run, tx);
+          if (outstanding > 0.001) {
+            // See completeStop's gate: without this the withheld completion
+            // leaves no trace at all in the logs.
+            this.logger.log(
+              `completeWithPayment: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
+                `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+            );
+          } else {
+            await tx.routeRun.update({
+              where: { id: runId },
+              data: { status: RouteRunStatus.COMPLETED, completedAt: new Date() },
+            });
+            // F11 / B211: the run is COMPLETED now — release the orders of the
+            // stops that recorded no work (the SKIPPED ones; allDone already
+            // excluded PENDING/IN_PROGRESS). `allStops` was read after THIS
+            // stop's COMPLETED write, so `id !== stopId` is a second guard for a
+            // snapshot that still shows it PENDING. A withheld auto-completion
+            // (the `if` branch above) releases nothing — the run is still open.
+            const releasedStopIds = allStops
+              .filter((s: any) => s.id !== stopId && s.status !== "COMPLETED")
+              .map((s: any) => s.id);
+            const { released } = await this.releaseUndeliveredOrders(tx, releasedStopIds);
+            if (released > 0) {
+              // Logged for the same reason as the withheld branch above: once the
+              // pointers are null nothing else records that this run released
+              // them.
+              this.logger.log(
+                `completeWithPayment: RF-016 auto-completion of run ${runId} released ${released} ` +
+                  `undelivered order(s) from stop(s) ${releasedStopIds.join(",")}.`,
+              );
+            }
+            autoCompleted = true;
+          }
+        }
+      }),
+    );
 
     // P6-5: DELIVERED per order this completion flipped (driver bypasses
     // changeStatus). AFTER the tx, fire-and-forget; skip DRAFT/CANCELLED/DELIVERED.

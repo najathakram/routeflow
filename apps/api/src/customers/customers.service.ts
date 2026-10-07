@@ -62,6 +62,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { omitStaffOnlyCustomerFields, pickSelfServiceFields } from "./self-service-fields";
+import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
 import { assertSafeCustomerNames } from "./customer-name-guard";
 import {
@@ -893,7 +894,9 @@ export class CustomersService {
       }),
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
-    return { data, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
+    // Customer-facing fields only for the customer themself (common/staff-only-fields.ts).
+    const rows = user.role === UserRole.CUSTOMER ? data.map(toCustomerOrder) : data;
+    return { data: rows, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
 
   async addAddress(id: string, dto: CreateAddressDto) {

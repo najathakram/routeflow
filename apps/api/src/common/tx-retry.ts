@@ -10,7 +10,8 @@
  * attempts, 100 ms then 300 ms backoff. Unlike that loop, any OTHER error propagates at once, and
  * exhausting the attempts propagates the last conflict: nothing is swallowed, the caller decides.
  */
-import { HttpException, Logger } from "@nestjs/common";
+import { HttpException, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 export const TX_CONFLICT_MAX_ATTEMPTS = 3;
 /** 100 ms then 300 ms between attempts (exported so a caller with its own loop backs off the same way). */
@@ -47,5 +48,40 @@ export async function retryOnTxConflict<T>(label: string, run: () => Promise<T>)
       );
       await new Promise((r) => setTimeout(r, TX_CONFLICT_BACKOFF_MS[attempt - 1] ?? 300));
     }
+  }
+}
+
+/**
+ * `retryOnTxConflict` for the credit-spend transactions: when the retries are EXHAUSTED the caller
+ * gets a coded, retryable 503 (nothing was saved) instead of the raw P2034 that surfaced as an
+ * uncoded 500. Any other error propagates untouched.
+ */
+export async function retryCreditTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await retryOnTxConflict(label, run);
+  } catch (err) {
+    if (!txConflictState(err)) throw err;
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message: "Another change to these credits was in progress. Nothing was saved; please retry.",
+    });
+  }
+}
+
+/**
+ * `retryOnTxConflict` for the route / run / stop transactions (completeStop, completeWithPayment, a
+ * run's terminal status move): when the retries are EXHAUSTED the caller gets a coded, retryable 503
+ * (nothing was saved) instead of the raw 40P01 / 40001 / P2034 that surfaced as an uncoded 500.
+ * Any other error propagates untouched.
+ */
+export async function retryRouteTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await retryOnTxConflict(label, run);
+  } catch (err) {
+    if (!txConflictState(err)) throw err;
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message: "Someone else is updating this route. Nothing was saved; please try again.",
+    });
   }
 }

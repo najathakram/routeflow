@@ -597,7 +597,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx: nothing yet
@@ -779,7 +781,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       const raced = {
@@ -806,7 +810,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null);

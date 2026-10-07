@@ -216,9 +216,7 @@ describe("CounterSaleService.ring", () => {
     it("a key that belongs to a NON-counter order is 409 COUNTER_SALE_KEY_CONFLICT before any write", async () => {
       replay = true;
       replayOrder = { id: "ord-staff", counterSale: false };
-      const e = await errorOf(
-        service.ring(named({ method: "CASH" }) as never, staff, "k-staff"),
-      );
+      const e = await errorOf(service.ring(named({ method: "CASH" }) as never, staff, "k-staff"));
       expect(e.getStatus()).toBe(409);
       expect(e.getResponse().code).toBe("COUNTER_SALE_KEY_CONFLICT");
       expect(recordPayment).not.toHaveBeenCalled();

@@ -12,24 +12,21 @@ import {
  * isFleetHeld, deriveFulfilmentCapability), with every failure collapsing to counter "off".
  */
 /**
- * On master `pickup` and `pickup_ship` are `available: false` in the registry (SA-666a, #3210), so a stored
- * pickup reads as unset. The positive "in-store => counter always" path is therefore only reachable once the
- * counter flow flips them; this FIXTURE flips the live registry row for the duration of `fn` (restored in
- * finally) to keep that derivation covered. Real-registry behaviour is asserted separately below.
+ * `pickup` and `pickup_ship` are `available: true` in the registry (the pickup mode API flipped them), so a
+ * stored pickup reads as in-store. The UNAVAILABLE branch (SA-666a: a stored mode the registry marks
+ * unavailable reads as unset) is dormant on real data, so `withUnavailable` flips the live registry row for
+ * the duration of `fn` (restored in finally) to keep it covered.
  */
-async function withPickupAvailable<T>(fn: () => Promise<T>): Promise<T> {
-  const modes = FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes as Record<
-    string,
-    { available: boolean }
-  >;
-  const before = { pickup: modes.pickup.available, pickup_ship: modes.pickup_ship.available };
-  modes.pickup.available = true;
-  modes.pickup_ship.available = true;
+async function withUnavailable<T>(mode: string, fn: () => Promise<T>): Promise<T> {
+  const row = FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes[mode] as {
+    available: boolean;
+  };
+  const before = row.available;
+  row.available = false;
   try {
     return await fn();
   } finally {
-    modes.pickup.available = before.pickup;
-    modes.pickup_ship.available = before.pickup_ship;
+    row.available = before;
   }
 }
 
@@ -53,15 +50,15 @@ describe("readFulfilmentCapability", () => {
     expect(cap.counter).toBe("optional");
   });
 
-  it("(registry FIXTURE: pickup flipped available) fulfilment_model pickup => counter always, PICKUP only", async () => {
-    const cap = await withPickupAvailable(() =>
-      readFulfilmentCapability(deps({ fulfilment_model: "pickup" }) as never, "t1"),
-    );
+  it("fulfilment_model pickup => counter always, PICKUP only", async () => {
+    const cap = await readFulfilmentCapability(deps({ fulfilment_model: "pickup" }) as never, "t1");
     expect(cap).toMatchObject({ counter: "always", methods: ["PICKUP"], staffOpensAs: "counter" });
   });
 
-  it("master truth: a stored pickup reads as unset (pickup is unavailable), so the counter is off", async () => {
-    const cap = await readFulfilmentCapability(deps({ fulfilment_model: "pickup" }) as never, "t1");
+  it("(registry FIXTURE: pickup marked unavailable) a stored pickup reads as unset, so the counter is off", async () => {
+    const cap = await withUnavailable("pickup", () =>
+      readFulfilmentCapability(deps({ fulfilment_model: "pickup" }) as never, "t1"),
+    );
     expect(cap).toMatchObject({
       counter: "off",
       methods: ["ROUTE", "SHIP"],
@@ -132,9 +129,8 @@ describe("readFulfilmentCapability", () => {
       d.addonService.getActiveAddons.mockRejectedValue(new Error("db"));
       const r = await readFulfilmentInputs(d as never, "t1");
       expect(r).toMatchObject({ fulfilmentMode: "pickup", fleet: null, modesFailed: false });
-      // the derivation itself never throws, and a null fleet reads as false (pickup is unavailable on
-      // master, so it derives as unset: ROUTE+SHIP, counter off)
-      expect(capabilityFromInputs(r)).toMatchObject({ fleet: false, counter: "off" });
+      // the derivation itself never throws, and a null fleet reads as false (pickup is in-store: counter always)
+      expect(capabilityFromInputs(r)).toMatchObject({ fleet: false, counter: "always" });
       const ship = await readFulfilmentInputs(
         (() => {
           const x = deps({ fulfilment_model: "ship" });
@@ -171,43 +167,39 @@ describe("readFulfilmentCapability", () => {
     expect(offenders).toEqual([]);
   });
 
-  // SA-666a on master (#3210): `pickup` and `pickup_ship` are `available: false` in the registry, every other
-  // fulfilment_model mode and every counter_sales mode is available. Asserted against the REAL registry.
-  describe("SA-666a: the real registry's availability decides what a stored mode reads as", () => {
+  // SA-666b: every fulfilment_model mode and every counter_sales mode is available. Asserted against the REAL registry.
+  describe("SA-666b: the real registry's availability decides what a stored mode reads as", () => {
     const modesOf = (key: string) =>
       FEATURE_REGISTRY.find((f) => f.key === key)!.config!.modes as Record<
         string,
         { available: boolean }
       >;
 
-    it("master: pickup and pickup_ship are unavailable; the other modes and counter_sales are available", () => {
-      const fm = modesOf("fulfilment_model");
-      expect(
-        Object.entries(fm)
-          .filter(([, m]) => !m.available)
-          .map(([k]) => k)
-          .sort(),
-      ).toEqual(["pickup", "pickup_ship"]);
-      for (const m of Object.values(modesOf("counter_sales"))) expect(m.available).toBe(true);
+    it("every fulfilment_model and counter_sales mode is available", () => {
+      for (const key of ["fulfilment_model", "counter_sales"])
+        for (const m of Object.values(modesOf(key))) expect(m.available).toBe(true);
     });
 
-    it.each(["pickup", "pickup_ship"])(
-      "%s stored => unset: ROUTE+SHIP, counter off, even with counter_sales unset",
-      async (stored) => {
+    it.each([
+      ["pickup", ["PICKUP"]],
+      ["pickup_ship", ["PICKUP", "SHIP"]],
+    ])(
+      "%s stored => in-store: its methods, counter always, even with counter_sales unset",
+      async (stored, methods) => {
         const cap = await readFulfilmentCapability(
           deps({ fulfilment_model: stored }) as never,
           "t1",
         );
-        expect(cap).toMatchObject({ counter: "off", methods: ["ROUTE", "SHIP"] });
+        expect(cap).toMatchObject({ counter: "always", methods });
       },
     );
 
-    it("pickup stored + counter_sales on => the counter is 'optional' (counter_sales still works)", async () => {
+    it("pickup stored + counter_sales on => the counter is still 'always'", async () => {
       const cap = await readFulfilmentCapability(
         deps({ fulfilment_model: "pickup", counter_sales: "on" }) as never,
         "t1",
       );
-      expect(cap.counter).toBe("optional");
+      expect(cap.counter).toBe("always");
     });
 
     it("an available stored mode (ship) is honoured", async () => {
