@@ -137,6 +137,19 @@ export class ReturnsController {
     return this.inlineReturns.refund(id, dto, user);
   }
 
+  /**
+   * SA-727b: "Give store credit instead" for a return captured for a refund that is still pending. An explicit staff action
+   * only: the capture replay and issueCredit never convert. One transaction: the CAS clears the stored refund intent, the
+   * credit note is minted and linked, and an awaited audit row records REFUND_PENDING -> STORE_CREDIT.
+   */
+  @Post("inline/:id/store-credit")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @UseGuards(AddonGuard)
+  @RequireAddon("orders_inline_returns")
+  storeCreditInline(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.inlineReturns.storeCreditInstead(id, user);
+  }
+
   /** m-5: undoes a captured inline return (restock/ledger/credit) and cancels the row. */
   @Post("inline/:id/cancel")
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -177,6 +190,7 @@ export class ReturnsController {
     @Query("page") page?: string,
     @Query("limit") limit?: string,
     @Query("kind") kind?: string,
+    @Query("pendingRefund") pendingRefund?: string,
   ) {
     // #2406: default STANDARD keeps the existing Returns list unchanged; INLINE/ALL are opt-in.
     // Whitelisted BEFORE the service is called — an unrecognized value never reaches `where.kind`.
@@ -190,6 +204,8 @@ export class ReturnsController {
       reason,
       search,
       kind: (kind as ReturnKindFilter | undefined) ?? "STANDARD",
+      // SA-727b: ?pendingRefund=true lists INLINE returns captured for a refund that is not recorded yet
+      pendingRefund: pendingRefund === "true",
       page: page ? +page : 1,
       limit: limit ? +limit : 20,
     });

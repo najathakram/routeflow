@@ -18,6 +18,9 @@ export type RefundTender = (typeof REFUND_TENDERS)[number];
 /** The action name of the awaited in-tx audit row a refund writes (also the replay's tender source). */
 export const INLINE_REFUND_AUDIT_ACTION = "inline_return.refund";
 
+/** SA-727b: the awaited audit row of "Give store credit instead" ({from: REFUND_PENDING, to: STORE_CREDIT}). */
+export const INLINE_STORE_CREDIT_AUDIT_ACTION = "inline_return.store_credit_instead";
+
 /** `Return.refundMethod` of a refund: the existing literal, no new strings (SA-727). */
 export const EXTERNAL_REFUND_METHOD = "EXTERNAL_REFUND";
 

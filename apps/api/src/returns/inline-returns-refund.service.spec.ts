@@ -431,6 +431,196 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     });
   });
 
+  describe("store credit instead (SA-727b)", () => {
+    beforeEach(() => {
+      creditNotes.mintStandaloneInTx.mockResolvedValue({
+        id: "cn-1",
+        creditNoteNumber: "CN-1",
+        customerId: "cust-1",
+        amount: 30,
+      });
+    });
+
+    it("converts a PENDING refund in ONE tx: Return/Order/Invoice locks, the CAS clears the stored intent, the credit is minted and linked, an awaited audit row {from, to}", async () => {
+      const out = await service.storeCreditInstead("ret-1", OPERATOR);
+      expect(out).toBeDefined();
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+      expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? FOR UPDATE/);
+      expect(rawCalls[1]).toMatch(/FROM "Order" WHERE id IN/);
+      expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN/);
+      // CAS first (clears the intent), then the credit mint's own link CAS (which needs refundMethod null)
+      expect(prisma.return.updateMany.mock.calls[0][0]).toEqual({
+        where: {
+          id: "ret-1",
+          kind: "INLINE",
+          status: "RECEIVED",
+          creditNoteId: null,
+          refundMethod: "EXTERNAL_REFUND",
+          refundedAt: null,
+        },
+        data: { refundMethod: null },
+      });
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+      expect(creditNotes.mintStandaloneInTx.mock.calls[0][1]).toMatchObject({
+        customerId: "cust-1",
+        amount: 30,
+      });
+      expect(prisma.return.updateMany.mock.calls[1][0]).toMatchObject({
+        where: { id: "ret-1", status: "RECEIVED", creditNoteId: null, refundMethod: null },
+        data: { creditNoteId: "cn-1", status: "REFUNDED", refundMethod: "CREDIT_NOTE" },
+      });
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        action: "inline_return.store_credit_instead",
+        entityType: "Return",
+        entityId: "ret-1",
+        meta: expect.objectContaining({
+          from: "REFUND_PENDING",
+          to: "STORE_CREDIT",
+          amount: 30,
+          creditNoteId: "cn-1",
+          actor: "user-OPERATOR",
+        }),
+      });
+    });
+
+    it("the CAS loser (a refund won the race) is 409 RETURN_ALREADY_RESOLVED: nothing minted, no audit row", async () => {
+      prisma.return.updateMany.mockResolvedValueOnce({ count: 0 });
+      expect(await codeOf(service.storeCreditInstead("ret-1", OPERATOR))).toBe(
+        "RETURN_ALREADY_RESOLVED",
+      );
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("a REFUNDED (or already credited) return is 409 RETURN_ALREADY_RESOLVED without opening a transaction", async () => {
+      for (const resolved of [
+        { status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 },
+        { status: "REFUNDED", refundMethod: "CREDIT_NOTE", creditNoteId: "cn-9" },
+      ]) {
+        row = receivedReturn(resolved);
+        expect(await codeOf(service.storeCreditInstead("ret-1", OPERATOR))).toBe(
+          "RETURN_ALREADY_RESOLVED",
+        );
+      }
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("only a PENDING refund converts: a store-credit RECEIVED row, a cancelled one and a $0 one are 409 RETURN_NOT_REFUNDABLE", async () => {
+      for (const over of [
+        { refundMethod: null },
+        { status: "CANCELLED" },
+        { creditSubtotal: 0, creditTax: 0 },
+      ]) {
+        row = receivedReturn(over);
+        expect(await codeOf(service.storeCreditInstead("ret-1", OPERATOR))).toBe(
+          "RETURN_NOT_REFUNDABLE",
+        );
+      }
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("an audit failure rejects the whole conversion (one transaction: the DB spec proves the rollback of the cleared intent)", async () => {
+      prisma.auditLog.create.mockRejectedValue(new Error("audit down"));
+      await expect(service.storeCreditInstead("ret-1", OPERATOR)).rejects.toThrow("audit down");
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("only office roles convert: a DRIVER is 403 with a {code} body before any read", async () => {
+      const err: any = await service.storeCreditInstead("ret-1", DRIVER).catch((e) => e);
+      expect(err.getStatus()).toBe(403);
+      expect(err.getResponse()).toMatchObject({ code: "REFUND_NOT_ALLOWED" });
+      expect(prisma.return.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("the automatic path never converts: issueCredit leaves a pending refund alone (refundMethod IS NULL guard kept)", async () => {
+      prisma.return.findFirst.mockImplementation(async () => receivedReturn());
+      await (service as any).issueCredit("ret-1");
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the contract the web depends on (#3295): coded bodies, statuses, idempotency", () => {
+    const body = async (p: Promise<unknown>) => {
+      const e: any = await p.catch((x) => x);
+      return { status: e.getStatus?.(), body: e.getResponse?.() };
+    };
+
+    it("each refusal is a 409 whose body carries {code}", async () => {
+      // REFUND_AMOUNT_CHANGED (also carries the real amount)
+      let r = await body(service.refund("ret-1", { ...REFUND, expectedAmount: 31 }, OPERATOR));
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ code: "REFUND_AMOUNT_CHANGED", amount: 30 });
+      // REFUND_NEEDS_PAID_INVOICE
+      prisma.invoice.findMany.mockResolvedValue([paidInvoice({ payments: [] })]);
+      r = await body(service.refund("ret-1", REFUND, OPERATOR));
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ code: "REFUND_NEEDS_PAID_INVOICE" });
+      // RETURN_NOT_REFUNDABLE
+      row = receivedReturn({ status: "CANCELLED" });
+      r = await body(service.refund("ret-1", REFUND, OPERATOR));
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ code: "RETURN_NOT_REFUNDABLE" });
+      // RETURN_ALREADY_RESOLVED
+      row = receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CARD" } });
+      r = await body(service.refund("ret-1", REFUND, OPERATOR));
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ code: "RETURN_ALREADY_RESOLVED" });
+      // RETURN_REFUNDED_CASH (cancel)
+      row = receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 });
+      r = await body(service.cancel("ret-1", OPERATOR));
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ code: "RETURN_REFUNDED_CASH" });
+    });
+
+    it("the 403 of the service-level gate carries {code: REFUND_NOT_ALLOWED}", async () => {
+      const r = await body(service.refund("ret-1", REFUND, DRIVER));
+      expect(r.status).toBe(403);
+      expect(r.body).toMatchObject({ code: "REFUND_NOT_ALLOWED" });
+    });
+
+    it("idempotent: the SAME tender and amount again is a 200 with the stored result and NEVER a second refund (SA-727a); another tender or amount is 409 RETURN_ALREADY_RESOLVED", async () => {
+      await service.refund("ret-1", REFUND, OPERATOR); // the first POST records it
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      row = receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH", amount: 30 } });
+      const second = await service.refund("ret-1", REFUND, OPERATOR);
+      expect(second).toMatchObject({ status: "REFUNDED", refundTender: "CASH" });
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1); // no second write
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1); // no second audit row
+      expect(
+        (await body(service.refund("ret-1", { ...REFUND, tender: "CHECK" }, OPERATOR))).body,
+      ).toMatchObject({
+        code: "RETURN_ALREADY_RESOLVED",
+      });
+    });
+
+    it("expectedAmount is compared with the SERVER-computed amount at refund time (a pending refund stores refundAmount null); a replay compares with the STORED refundAmount", async () => {
+      row = receivedReturn(); // pending: refundAmount null
+      expect(row.refundAmount).toBeNull();
+      await expect(service.refund("ret-1", REFUND, OPERATOR)).resolves.toBeDefined(); // 30 = 28 + 2
+      row = receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH" } });
+      expect(
+        (await body(service.refund("ret-1", { ...REFUND, expectedAmount: 29 }, OPERATOR))).body,
+      ).toMatchObject({
+        code: "RETURN_ALREADY_RESOLVED",
+      });
+    });
+
+    it("an OPERATOR and a TENANT_ADMIN may capture-for-refund and refund", async () => {
+      for (const u of [OPERATOR, user("TENANT_ADMIN")]) {
+        row = receivedReturn();
+        await expect(service.refund("ret-1", REFUND, u)).resolves.toMatchObject({
+          refundTender: "CASH",
+        });
+      }
+    });
+  });
+
   describe("capture resolution (SA-727)", () => {
     const priced = {
       chunks: [

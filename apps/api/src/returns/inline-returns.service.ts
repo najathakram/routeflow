@@ -67,6 +67,7 @@ import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 import {
   EXTERNAL_REFUND_METHOD,
   INLINE_REFUND_AUDIT_ACTION,
+  INLINE_STORE_CREDIT_AUDIT_ACTION,
   canRefundRole,
   inlineReturnAmount,
   isRefundPending,
@@ -932,7 +933,7 @@ export class InlineReturnsService {
     // WITHOUT minting a credit note, so POST /returns/inline/:id/refund can resolve it.
     const resolution = dto.resolution ?? "STORE_CREDIT";
     if (resolution === "REFUND" && !canRefundRole(user.role)) {
-      throw new ForbiddenException("Only office staff can capture a return for a refund");
+      throw this.refundNotAllowed("Only office staff can capture a return for a refund");
     }
 
     const tenantId = this.prisma.getTenantId();
@@ -1319,7 +1320,7 @@ export class InlineReturnsService {
    */
   async refund(id: string, dto: RefundInlineReturnDto, user: JwtPayload): Promise<any> {
     if (!canRefundRole(user.role)) {
-      throw new ForbiddenException("Only office staff can refund a return");
+      throw this.refundNotAllowed("Only office staff can refund a return");
     }
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
@@ -1414,12 +1415,7 @@ export class InlineReturnsService {
           refundedAt: new Date(),
         },
       });
-      if (claimed.count === 0) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.RETURN_ALREADY_RESOLVED,
-          message: "This return was already resolved.",
-        });
-      }
+      if (claimed.count === 0) throw this.alreadyResolved();
 
       // M5: AWAITED, in this transaction: no audit row, no refund
       await tx.auditLog.create({
@@ -1497,6 +1493,129 @@ export class InlineReturnsService {
       refundTender: tender,
       refundPending: false,
     };
+  }
+
+  /**
+   * SA-727b: "Give store credit instead" - converts a PENDING refund (captured for a refund, nothing recorded yet) into store
+   * credit. An explicit staff action ONLY: the capture replay and issueCredit keep their `refundMethod IS NULL` guard and
+   * never convert. ONE transaction in the SA-727a lock order (Return -> carrying + source Orders -> source Invoices ->
+   * the credit note rows, which issueCreditInTx's settle locks): the CAS (RECEIVED, no credit note, EXTERNAL_REFUND stored,
+   * refundedAt null) clears the stored intent, THEN issueCreditInTx mints and links the credit, plus an awaited audit row
+   * {from: REFUND_PENDING, to: STORE_CREDIT}. The CAS loser (a refund or another conversion won) gets 409
+   * RETURN_ALREADY_RESOLVED; a failure anywhere rolls the whole thing back, intent included.
+   */
+  async storeCreditInstead(id: string, user: JwtPayload): Promise<any> {
+    if (!canRefundRole(user.role)) {
+      throw this.refundNotAllowed("Only office staff can give store credit instead of a refund");
+    }
+    const tenantId = this.prisma.getTenantId();
+    await this.assertGranted(tenantId);
+
+    const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
+    if (!pre) throw new NotFoundException("Return not found");
+    if (isResolvedReturn(pre)) throw this.alreadyResolved();
+
+    let minted: any;
+    await this.prisma.tenantTransaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
+      const fresh = await tx.return.findFirst({
+        where: { id, kind: "INLINE" },
+        include: { items: true },
+      });
+      if (!fresh) throw new NotFoundException("Return not found");
+      if (isResolvedReturn(fresh)) throw this.alreadyResolved();
+      if (!isRefundPending(fresh) || fresh.holdReason) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
+          message:
+            "Only a return captured for a refund that is still pending can be given store credit.",
+        });
+      }
+      const items = fresh.items as Array<{
+        sourceOrderId?: string | null;
+        sourceInvoiceItemId?: string | null;
+      }>;
+      await lockRefundOrders(tx, tenantId, [
+        fresh.orderId,
+        ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
+      ]);
+      const sourceItemIds = [
+        ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((o): o is string => !!o)),
+      ];
+      if (sourceItemIds.length > 0) {
+        const lines: Array<{ invoiceId: string }> =
+          (await tx.invoiceItem.findMany({
+            where: { id: { in: sourceItemIds } },
+            select: { id: true, invoiceId: true },
+          })) ?? [];
+        await lockRefundInvoices(tx, tenantId, [...new Set(lines.map((l) => l.invoiceId))]);
+      }
+
+      const amount = inlineReturnAmount(fresh);
+      if (!(amount > 0.001)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
+          message: "This return is worth $0.00, so there is nothing to credit.",
+        });
+      }
+
+      // the CAS: clear the stored refund intent (the only writer that ever does); the credit mint's own guard needs it null
+      const claimed = await tx.return.updateMany({
+        where: {
+          id,
+          kind: "INLINE",
+          status: "RECEIVED",
+          creditNoteId: null,
+          refundMethod: EXTERNAL_REFUND_METHOD,
+          refundedAt: null,
+        },
+        data: { refundMethod: null },
+      });
+      if (claimed.count === 0) throw this.alreadyResolved();
+
+      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId);
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          impersonatedBy: user.impersonatedBy ?? null,
+          action: INLINE_STORE_CREDIT_AUDIT_ACTION,
+          entityType: "Return",
+          entityId: id,
+          meta: {
+            returnId: id,
+            returnNumber: fresh.returnNumber ?? null,
+            orderId: fresh.orderId,
+            customerId: fresh.customerId,
+            from: "REFUND_PENDING",
+            to: "STORE_CREDIT",
+            amount,
+            creditNoteId: minted?.id ?? null,
+            actor: user.sub,
+            impersonatedBy: user.impersonatedBy ?? null,
+          },
+        },
+      });
+    });
+
+    if (minted) this.emitCreditNoteCreated(tenantId, minted);
+    const after = await this.prisma
+      .forTenant()
+      .return.findUnique({ where: { id }, include: { items: true } });
+    if (!after) throw new NotFoundException("Return not found");
+    return this.withParkedReversals(after);
+  }
+
+  /** SA-727: the refund gate's 403 carries a code (`{code}` body) like every 409 here; the controller's RolesGuard 403 does not. */
+  private refundNotAllowed(message: string): ForbiddenException {
+    return new ForbiddenException({ code: API_ERROR_CODES.REFUND_NOT_ALLOWED, message });
+  }
+
+  private alreadyResolved(): ConflictException {
+    return new ConflictException({
+      code: API_ERROR_CODES.RETURN_ALREADY_RESOLVED,
+      message: "This return was already resolved.",
+    });
   }
 
   /** Q-C: declines a driver-cap hold outright. HIGH-4: nothing was ever restocked or

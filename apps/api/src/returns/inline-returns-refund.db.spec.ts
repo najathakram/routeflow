@@ -597,4 +597,93 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     );
     expect(qu).toMatchObject({ canRefund: false, paidInFull: false });
   }, 60_000);
+  const storeCredit = (s: Seed, id: string, role = "OPERATOR") =>
+    inTenant(s, () => inline.storeCreditInstead(id, staff(s, role)));
+
+  it("16. SA-727b: Give store credit instead converts a PENDING refund in one tx: REFUNDED/CREDIT_NOTE, ONE credit note, stock not restocked twice, audit {REFUND_PENDING -> STORE_CREDIT}; the refund then loses", async () => {
+    const s = await seed("convert");
+    const r = await capture(s, 4, "REFUND");
+    const out = await storeCredit(s, r.id);
+    expect(out).toMatchObject({ status: "REFUNDED", refundMethod: "CREDIT_NOTE" });
+    expect(out.creditNoteId).toBeTruthy();
+    expect(Number(out.refundAmount)).toBe(40);
+    expect(await creditNoteCount(s)).toBe(1);
+    expect(await stock(s)).toBe(4);
+    const audit = await prisma.auditLog.findMany({
+      where: { tenantId: s.tenantId, action: "inline_return.store_credit_instead" },
+    });
+    expect(audit).toHaveLength(1);
+    expect(audit[0].meta).toMatchObject({ from: "REFUND_PENDING", to: "STORE_CREDIT", amount: 40 });
+    const e = await fail(refund(s, r.id, "CASH", 40));
+    expect(status(e)).toBe(409);
+    expect(codeOf(e)).toBe("RETURN_ALREADY_RESOLVED");
+    expect(await auditRows(s)).toHaveLength(0);
+  }, 60_000);
+
+  it("17. SA-727b: store credit on a REFUNDED return is 409 RETURN_ALREADY_RESOLVED and mints nothing", async () => {
+    const s = await seed("convert-refunded");
+    const r = await capture(s, 4, "REFUND");
+    await refund(s, r.id, "CASH", 40);
+    const e = await fail(storeCredit(s, r.id));
+    expect(status(e)).toBe(409);
+    expect(codeOf(e)).toBe("RETURN_ALREADY_RESOLVED");
+    expect(await creditNoteCount(s)).toBe(0);
+    expect((await row(r.id)).refundMethod).toBe("EXTERNAL_REFUND");
+  }, 60_000);
+
+  it("18. SA-727b: a refund and a store-credit conversion racing in parallel: exactly one wins, the other is 409, never both and never a 500", async () => {
+    const s = await seed("race-convert");
+    const r = await capture(s, 4, "REFUND");
+    const outcomes = await Promise.allSettled([refund(s, r.id, "CASH", 40), storeCredit(s, r.id)]);
+    const ok = outcomes.filter((o) => o.status === "fulfilled");
+    const bad = outcomes.filter((o) => o.status === "rejected") as PromiseRejectedResult[];
+    expect(ok).toHaveLength(1);
+    expect(bad).toHaveLength(1);
+    expect(status(bad[0].reason)).toBe(409);
+    expect(codeOf(bad[0].reason)).toBe("RETURN_ALREADY_RESOLVED");
+    const credits = await creditNoteCount(s);
+    const audits = (await auditRows(s)).length;
+    expect(credits + audits).toBe(1);
+    expect((await row(r.id)).refundMethod).toBe(credits === 1 ? "CREDIT_NOTE" : "EXTERNAL_REFUND");
+  }, 60_000);
+
+  it("19. SA-727b: an audit failure in the conversion rolls back the cleared intent and the mint: the pending refund is intact", async () => {
+    const s = await seed("convert-audit-fail");
+    const r = await capture(s, 4, "REFUND");
+    const trg = `convert_audit_fail_${s.tenantId.replace(/-/g, "")}`;
+    await prisma.$executeRawUnsafe(
+      `CREATE OR REPLACE FUNCTION ${trg}() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END; $$ LANGUAGE plpgsql`,
+    );
+    await prisma.$executeRawUnsafe(
+      `CREATE TRIGGER ${trg} BEFORE INSERT ON "AuditLog" FOR EACH ROW WHEN (NEW."tenantId" = '${s.tenantId}' AND NEW.action = 'inline_return.store_credit_instead') EXECUTE FUNCTION ${trg}()`,
+    );
+    try {
+      expect(await fail(storeCredit(s, r.id))).toBeDefined();
+      const stored = await row(r.id);
+      expect(stored.status).toBe("RECEIVED");
+      expect(stored.refundMethod).toBe("EXTERNAL_REFUND");
+      expect(stored.creditNoteId).toBeNull();
+      expect(await creditNoteCount(s)).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${trg} ON "AuditLog"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${trg}()`);
+    }
+    await expect(refund(s, r.id, "CASH", 40)).resolves.toMatchObject({ status: "REFUNDED" });
+  }, 60_000);
+
+  it("20. SA-727b: the 'Pending refunds' list (GET /returns?pendingRefund=true) returns exactly the pending ones, flagged refundPending", async () => {
+    const s = await seed("pending-list");
+    const pending = await capture(s, 2, "REFUND");
+    const done = await capture(s, 2, "REFUND");
+    await refund(s, done.id, "CASH", 20);
+    const credited = await capture(s, 2); // store credit
+    const { data } = await inTenant(s, () =>
+      returns.findAll({ kind: "INLINE", pendingRefund: true, limit: 50 }),
+    );
+    const ids = (data as any[]).map((d) => d.id);
+    expect(ids).toEqual([pending.id]);
+    expect(ids).not.toContain(done.id);
+    expect(ids).not.toContain(credited.id);
+    expect((data as any[])[0]).toMatchObject({ refundPending: true, refundedAt: null });
+  }, 60_000);
 });
