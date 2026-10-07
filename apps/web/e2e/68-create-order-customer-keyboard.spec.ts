@@ -76,6 +76,7 @@ for (const vp of [
     test("Change customer then Undo restores the chip and keeps the lines", async ({ page }) => {
       const search = await openBuilder(page);
       await search.fill(CUSTOMER);
+      await expect(page.getByRole("option", { name: new RegExp(CUSTOMER) })).toBeVisible();
       await search.press("ArrowDown");
       await search.press("Enter");
       await page.getByRole("button", { name: "Change customer" }).click();

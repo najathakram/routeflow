@@ -321,7 +321,12 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
       response: { status: 400, data: { message: "Credit note cn1 has expired" } },
     };
     rerender(<CreateOrderModal isOpen onClose={onClose} />);
-    expect(await screen.findByText(/Credit note cn1 has expired/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "A credit note you picked is no longer available. Remove it and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/has expired/)).toBeNull(); // never the raw server text
     expect(onClose).not.toHaveBeenCalled();
   });
 });

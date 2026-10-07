@@ -87,6 +87,7 @@ import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
@@ -1532,6 +1533,7 @@ export function CreateOrderModal({
     // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
     return (
       codedToastCopy(err) ||
+      (isStaleCreditRefusal(err, appliedCredits.length) ? STALE_CREDIT_COPY : null) ||
       err.response?.data?.message ||
       err.message ||
       "Something went wrong. Please try again."
