@@ -106,6 +106,7 @@ import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
 import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
@@ -1554,7 +1555,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
         assertReplaySameCart(existing, dto);
         options.onReplay?.(existing);
-        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
 
@@ -2131,7 +2133,8 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing) {
               assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
               options.onReplay?.(existing);
-              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
@@ -2188,13 +2191,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
-    // Credit-note intents: store the operator's selection against the FINAL order
-    // id, then settle (a harmless no-op until an invoice exists — settle bails
-    // early when the order has no invoices yet). Short, dedicated Serializable tx
-    // — NOT inside the stock/create transaction above.
-    if (appliedCreditNotes !== undefined) {
-      await this.syncAndSettleOrderCredits(order.id, customerId, appliedCreditNotes);
-    }
+    // Credit-note intents: store the selection against the FINAL order id, then settle (a no-op
+    // until an invoice exists). Short Serializable tx - NOT inside the create transaction above.
+    await this.syncCreateCredits(order.id, customerId, appliedCreditNotes);
 
     return order;
   }
@@ -4383,6 +4382,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
+  }
+
+  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
+    if (n === undefined) return;
+    await savedCreditsPending(id, () => this.syncAndSettleOrderCredits(id, cId, n));
   }
 
   /**
