@@ -310,6 +310,22 @@ describe("RfInvoiceIssuerService", () => {
     expect(no.invoices[0].needsReview).toBe(false);
   });
 
+  it("MUST-2: the period window is passed to the builder, and an irregular period raises ONE notice per period", async () => {
+    const { svc, builder, invoices, audits } = make({
+      subs: [sub()],
+      draft: { ...DRAFT, needsReview: true, irregularPeriod: true },
+    });
+    await svc.runIssueDue(NOW);
+    await svc.runIssueDue(NOW);
+    expect(builder.build).toHaveBeenCalledWith("tenant-acme", "MONTHLY", {
+      periodStart: new Date("2026-10-12T00:00:00.000Z"),
+      periodEnd: new Date("2026-11-11T00:00:00.000Z"),
+    });
+    expect(invoices).toHaveLength(1);
+    expect(invoices[0].needsReview).toBe(true);
+    expect(audits.filter((a) => a.action === "RF_INVOICE_IRREGULAR_PERIOD")).toHaveLength(1);
+  });
+
   it("SA722-1: two concurrent issues of one period -> ONE row; the loser's period-index P2002 is absorbed", async () => {
     let attempts = 0;
     const { svc, invoices, audits } = make({
