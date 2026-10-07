@@ -119,6 +119,16 @@ describe("verification link lifecycle", () => {
     });
   });
 
+  it("activation and its audit record commit together", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+    (prisma.auditLog.create as jest.Mock).mockRejectedValue(new Error("audit write failed"));
+    await expect(auth.verifyEmailAndLogin("t")).rejects.toThrow("audit write failed");
+    // Both writes ran inside one transaction, so the failed audit write rolls the activation back.
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(prisma.refreshToken.upsert).not.toHaveBeenCalled();
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
   it("refuses the same link when used again", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({
       ...base,

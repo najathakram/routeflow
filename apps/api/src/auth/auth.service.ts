@@ -467,24 +467,29 @@ export class AuthService {
     if (!(await mayUseVerificationLink(this.prisma, user))) {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    // Claim the activation atomically so a second concurrent use of the same link loses.
-    const claimed = await this.prisma.user.updateMany({
-      where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
-      data: { status: "ACTIVE" },
+    // Claim the activation atomically (a second concurrent use loses) and record it in the same
+    // transaction, so a failed audit write rolls the activation back.
+    const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      const res = await tx.user.updateMany({
+        where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
+        data: { status: "ACTIVE" },
+      });
+      if (res.count !== 1) return false;
+      await tx.auditLog.create({
+        data: {
+          tenantId: user.tenantId ?? null,
+          userId: user.id,
+          action: "user.activate",
+          entityType: "User",
+          entityId: user.id,
+          meta: { reason: "email_verify" },
+        },
+      });
+      return true;
     });
-    if (claimed.count !== 1) {
+    if (!claimed) {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    await this.prisma.auditLog.create({
-      data: {
-        tenantId: user.tenantId ?? null,
-        userId: user.id,
-        action: "user.activate",
-        entityType: "User",
-        entityId: user.id,
-        meta: { reason: "email_verify" },
-      },
-    });
     const activeUser = { ...user, status: "ACTIVE" as const };
 
     const { password: _pw, ...safeUser } = activeUser;
