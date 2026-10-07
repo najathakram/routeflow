@@ -2,7 +2,17 @@
 // server text for these errors (apps/web/lib/raw-message-allowlist.json must not grow).
 import type { InlineReturnRefundTender } from "@routeflow/types";
 
-export type RefundErrorKind = "changed" | "resolved" | "forbidden" | "failed";
+export type RefundErrorKind =
+  "changed" | "resolved" | "forbidden" | "needsPaid" | "refundedCash" | "notRefundable" | "failed";
+
+/** Every kind except "failed" (retry) and "changed" (re-quote, fresh confirm) ends the refund: Close only. */
+export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
+  "resolved",
+  "forbidden",
+  "needsPaid",
+  "refundedCash",
+  "notRefundable",
+]);
 
 export const REFUND_COPY = {
   heading: "How do you want to give the money back?",
@@ -11,6 +21,10 @@ export const REFUND_COPY = {
   changed: "The refund amount changed. Check it and confirm again.",
   resolved: "This return is already done. Nothing more was refunded.",
   forbidden: "You don't have permission to refund this return.",
+  needsPaid:
+    "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
+  refundedCash: "This return was already refunded. Nothing more was refunded.",
+  notRefundable: "There's nothing to refund on this return.",
 } as const;
 
 export function refundErrorKind(err: unknown): RefundErrorKind {
@@ -19,6 +33,9 @@ export function refundErrorKind(err: unknown): RefundErrorKind {
   if (res?.status === 403) return "forbidden";
   if (res?.status === 409 && res.data?.code === "REFUND_AMOUNT_CHANGED") return "changed";
   if (res?.status === 409 && res.data?.code === "RETURN_ALREADY_RESOLVED") return "resolved";
+  if (res?.status === 409 && res.data?.code === "REFUND_NEEDS_PAID_INVOICE") return "needsPaid";
+  if (res?.status === 409 && res.data?.code === "RETURN_REFUNDED_CASH") return "refundedCash";
+  if (res?.status === 409 && res.data?.code === "RETURN_NOT_REFUNDABLE") return "notRefundable";
   return "failed";
 }
 
