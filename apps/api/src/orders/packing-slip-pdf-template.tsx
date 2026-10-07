@@ -57,7 +57,10 @@ export function PackingSlipPdfTemplate({ pages }: { pages: PackingSlipPage[] }) 
           </View>
           {p.lines.map((l, i) => (
             <View key={i} style={styles.tr} wrap={false}>
-              <Text style={styles.colName}>{l.name}</Text>
+              <Text style={styles.colName}>
+                {l.name}
+                {l.backordered ? "  [BACKORDER]" : ""}
+              </Text>
               <Text style={styles.colSku}>{l.sku ?? ""}</Text>
               <Text style={styles.colQty}>{l.qtyText}</Text>
             </View>

@@ -14,6 +14,7 @@ import type { BatchShipOutcome } from "./order-batch-ship";
 import {
   buildPackingSlipPages,
   classifyForSlip,
+  PACKING_SLIP_LINE_SELECT,
   type PackingSlipOrderLike,
   type PackingSlipSeller,
 } from "./packing-slip-data";
@@ -66,15 +67,7 @@ export class PackingSlipService {
           },
           lineItems: {
             orderBy: { createdAt: "asc" },
-            select: {
-              name: true,
-              qty: true,
-              boxes: true,
-              pieces: true,
-              unitLabel: true,
-              status: true,
-              product: { select: { name: true, sku: true, unitSku: true } },
-            },
+            select: PACKING_SLIP_LINE_SELECT,
           },
         },
       })

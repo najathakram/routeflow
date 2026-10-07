@@ -34,5 +34,7 @@ export function toCounterOrderItem(i: CounterSaleDto["items"][number], unitsPerB
     ...(i.pieces != null ? { pieces: i.pieces } : {}),
     ...(i.unitPrice != null ? { unitPrice: i.unitPrice } : {}),
     ...(i.priceReason ? { overrideReason: i.priceReason } : {}),
+    // POS-3: the line note lands on OrderItem.notes (the same field Create Order's per-line note writes).
+    ...(i.note?.trim() ? { notes: i.note.trim() } : {}),
   } as OrderItemDto;
 }

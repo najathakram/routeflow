@@ -319,7 +319,8 @@ describeDb(
       expect(await stockNow()).toBe(3);
       const refused: any = await editQty(created.id, 7, buyer(0)).catch((e) => e);
       expect(refused).toBeInstanceOf(ConflictException);
-      expect(JSON.stringify(refused.getResponse())).toMatch(/insufficient stock|not enough stock/i);
+      expect(refused.getStatus()).toBe(409);
+      expect(refused.getResponse()).toMatchObject({ code: "INSUFFICIENT_STOCK" });
       expect(await stockNow()).toBe(3);
       const kept = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
       expect(Number(kept.qty)).toBe(2);
