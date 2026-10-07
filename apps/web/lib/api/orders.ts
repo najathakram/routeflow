@@ -35,10 +35,12 @@ export interface Order {
     phone?: string | null;
     mobile?: string | null;
     email?: string | null;
+    /** a walk-in customer cannot be charged on account (the pickup hand-over's tender rules) */
+    isWalkIn?: boolean | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
-  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
-  fulfillPath: "ROUTE" | "SHIP";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   urgent: boolean;
   subtotal: number;
   tax: number;

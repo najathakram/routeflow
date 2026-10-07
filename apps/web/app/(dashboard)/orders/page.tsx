@@ -39,6 +39,7 @@ import { saveTripDraft } from "@/lib/trip-draft";
 import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -233,6 +234,7 @@ function PagerControls({
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");
@@ -293,6 +295,17 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
+    // A business whose staff default is the counter: "New order" OPENS AS the counter sale, unless the operator chose
+    // "Ship this order instead" (?ship=1), which falls through to the normal builder.
+    if (
+      !resume &&
+      action === "new" &&
+      counterGate.opensAsCounter &&
+      searchParams.get("ship") !== "1"
+    ) {
+      router.replace("/orders/counter-sale");
+      return;
+    }
     if (resume) {
       setResumeDraftId(resume);
     } else {
@@ -307,10 +320,12 @@ export default function OrdersPage() {
     params.delete("action");
     params.delete("resumeDraft");
     params.delete("scan");
+    params.delete("ship");
+    params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, counterGate.opensAsCounter]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -349,6 +364,13 @@ export default function OrdersPage() {
   // column are noise there. An active date filter in the URL keeps them, so it can still be cleared.
   const { fleet } = useFleetAccess();
   const showDelivery = fleet || !!dateFrom || !!dateTo;
+  // A sort left on the hidden Delivery Date column would order rows by a key the user can no longer see.
+  React.useEffect(() => {
+    if (!showDelivery && sortCol === "deliveryDate") {
+      setSortCol("createdAt");
+      setSortDir("desc");
+    }
+  }, [showDelivery, sortCol]);
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
     label: statusLabel(String(v.filters.status ?? ""), v.label),
@@ -650,7 +672,20 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>New Order</Button>
+            {counterGate.showButton ? (
+              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
+                Counter sale
+              </Button>
+            ) : null}
+            <Button
+              onClick={() =>
+                counterGate.opensAsCounter
+                  ? router.push("/orders/counter-sale")
+                  : setIsCreateOpen(true)
+              }
+            >
+              New Order
+            </Button>
           </div>
         }
       />

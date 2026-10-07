@@ -37,6 +37,7 @@ import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
@@ -517,6 +518,7 @@ function ModeSwitcher({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMo
 
 export default function DashboardPage() {
   const router = useRouter();
+  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
@@ -763,6 +765,11 @@ export default function DashboardPage() {
                 New Route
               </Button>
             )}
+            {counterGate.showButton ? (
+              <Button href="/orders/counter-sale" size="sm" variant="secondary">
+                Counter sale
+              </Button>
+            ) : null}
             <Button href="/orders?action=new" size="sm" variant="primary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               New Order
@@ -775,6 +782,11 @@ export default function DashboardPage() {
       {!isDriver && !isOperator && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
+          {counterGate.showButton ? (
+            <Button href="/orders/counter-sale" size="sm" variant="secondary">
+              Counter sale
+            </Button>
+          ) : null}
           <Button href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order

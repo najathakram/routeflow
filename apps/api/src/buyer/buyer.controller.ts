@@ -594,7 +594,11 @@ export class BuyerController {
             // A buyer cart folds only into an order on the SAME fulfil path (merge-candidates.ts).
             const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
               forMerge: true,
-              mergeAs: { audience: "buyer" },
+              // The cart folds only into an order on the path it asked for (the SAME resolver as create).
+              mergeAs: {
+                audience: "buyer",
+                ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
+              },
             });
             if (!activeOrder) return null;
             // B1094: the fold writes ABSOLUTE totals, so a retry that serialized behind the submit that
@@ -787,6 +791,7 @@ export class BuyerController {
       urgent: dto.urgent,
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
+      ...(dto.fulfillPath ? { fulfillPath: dto.fulfillPath } : {}),
     };
     const created = await this.ordersService.create(
       (idempotencyKey ? { ...createDto, idempotencyKey } : createDto) as any, // B1094: replays by key

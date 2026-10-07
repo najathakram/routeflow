@@ -34,6 +34,8 @@ jest.mock("@/lib/tenant-features", () => ({
               portalDefault: null,
               counter: "off",
               fleet: false,
+              staffOpensAs: "order",
+              consistent: true,
             },
           },
         }

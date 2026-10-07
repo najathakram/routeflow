@@ -38,6 +38,9 @@ import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+// Pickup mode: POST /orders/:id/pickup-complete hands an order-ahead PICKUP order over at the till.
+import { PickupCompleteController } from "./counter-sale/pickup-complete.controller";
+import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
 import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
@@ -68,12 +71,13 @@ import {
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
   ],
-  controllers: [OrdersController, CounterSaleController],
+  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
   providers: [
     OrdersService,
     ChangeRequestsService,
     PolicyOversellReader,
     CounterSaleService,
+    PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
   ],

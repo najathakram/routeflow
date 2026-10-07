@@ -31,6 +31,8 @@ jest.mock("@/lib/tenant-features", () => ({
               portalDefault: null,
               counter: "off",
               fleet: false,
+              staffOpensAs: "order",
+              consistent: true,
             },
           },
         }
@@ -129,8 +131,11 @@ describe("Dashboard — fleet-off clean UI", () => {
     );
   });
 
-  it("no shipping cards for an unset account or a fleet account", () => {
-    fleet = false;
+  it.each([
+    ["an unset account", false],
+    ["a fleet account", true],
+  ])("no shipping cards for %s", (_name, fleetOn) => {
+    fleet = fleetOn;
     ship = false;
     renderWithProviders(<DashboardPage />);
     expect(tileLabels()).not.toContain("Ready to ship");

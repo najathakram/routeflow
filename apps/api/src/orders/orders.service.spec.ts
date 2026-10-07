@@ -1805,7 +1805,7 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
+      it("a buyer's requested dto.fulfillPath is ignored: the customer's own default stands", async () => {
         tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create(
@@ -1814,7 +1814,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.order.create).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "SHIP" }) }),
         );
       });
 

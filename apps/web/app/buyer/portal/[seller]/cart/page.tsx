@@ -23,8 +23,16 @@ import {
   useBuyerPromotions,
   toPromotionRules,
 } from "@/lib/api/buyer";
+import type { FulfilmentMethod } from "@routeflow/types";
 import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@routeflow/pricing";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import {
+  FULFIL_METHOD_LABEL,
+  FULFIL_METHOD_NOT_OFFERED_COPY,
+  buyerFulfilmentChoice,
+  isFulfilMethodNotOffered,
+} from "@/lib/buyer-fulfilment";
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
 
 function fmt(n: number) {
@@ -49,6 +57,14 @@ export default function BuyerCartPage() {
     null,
   );
   const [orderError, setOrderError] = React.useState<string | null>(null);
+
+  // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
+  // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
+  const { data: capability } = useBuyerSellerCapabilities();
+  const choice = buyerFulfilmentChoice(capability);
+  const [pickedMethod, setPickedMethod] = React.useState<FulfilmentMethod | null>(null);
+  const fulfillPath =
+    pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
 
   // Whether we'll merge into the existing order
   const willMerge = !forceNew && activeOrder != null;
@@ -175,6 +191,7 @@ export default function BuyerCartPage() {
         requestedDeliveryDate: deliveryDate || undefined,
         status: "PENDING",
         forceNew,
+        ...(fulfillPath ? { fulfillPath } : {}),
       });
 
       // Clear cart ONLY after confirmed success to avoid data loss on network failure
@@ -201,6 +218,10 @@ export default function BuyerCartPage() {
       const restricted = parseSellingRestricted(err);
       if (restricted) {
         setOrderError(buyerBlockedMessage(restricted));
+        return;
+      }
+      if (isFulfilMethodNotOffered(err)) {
+        setOrderError(FULFIL_METHOD_NOT_OFFERED_COPY);
         return;
       }
       setOrderError(data?.message ?? "Failed to create order. Please try again.");
@@ -527,6 +548,30 @@ export default function BuyerCartPage() {
                 className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
             </div>
+
+            {choice.showChoice && (
+              <fieldset>
+                <legend className="block text-xs text-navy/70 mb-1">How do you want it?</legend>
+                <div className="space-y-1.5">
+                  {choice.methods.map((m) => (
+                    <label
+                      key={m}
+                      className="flex items-center gap-2 cursor-pointer text-sm text-navy"
+                    >
+                      <input
+                        type="radio"
+                        name="fulfillPath"
+                        value={m}
+                        checked={fulfillPath === m}
+                        onChange={() => setPickedMethod(m)}
+                        className="h-4 w-4 accent-buyer-500"
+                      />
+                      {FULFIL_METHOD_LABEL[m]}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
 
             <div>
               <label className="block text-xs text-navy/70 mb-1">Order Notes</label>

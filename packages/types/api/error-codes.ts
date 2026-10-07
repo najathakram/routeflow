@@ -175,6 +175,11 @@
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
 //                    stays open on account; the same Idempotency-Key retried with a corrected payment finishes it). A tender BELOW
 //                    the balance is not an error: it records a PARTIAL payment (`paymentRecorded: true`, `balanceDue` > 0, no change).
+//   Pickup mode (POST /orders/:id/pickup-complete) — `body.code`, raised BEFORE anything is written: 400 IDEMPOTENCY_KEY_REQUIRED, 400
+//                    PICKUP_ONLY (the order is not a PICKUP order), 409 PICKUP_NOT_READY (DRAFT, PENDING, PARTIALLY_DELIVERED or
+//                    CANCELLED); its payment refusals reuse the counter-sale codes above as the `paymentErrorCode` of a 200 whose hand-over
+//                    committed but whose payment did not. An order create / buyer submit asking for a fulfilment method the business does
+//                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -422,6 +427,20 @@ export const API_ERROR_CODES = {
    */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  /** 400 from POST /orders/:id/pickup-complete: the order is not a PICKUP order. Nothing was written. */
+  PICKUP_ONLY: "PICKUP_ONLY",
+  /**
+   * 409 from POST /orders/:id/pickup-complete: the pickup order is not ready to hand over (still DRAFT or
+   * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
+   */
+  PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
+   * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
+   */
+  PICKUP_PAYMENT_REQUIRED: "PICKUP_PAYMENT_REQUIRED",
+  PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
+  PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
