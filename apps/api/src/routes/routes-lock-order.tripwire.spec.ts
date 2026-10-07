@@ -59,7 +59,7 @@ describe("routes lock order: Orders → STOP rows → RouteRun (#2631, SA-550, S
     const firstStatement = cb.slice(1).trim();
     expect(
       firstStatement.startsWith(
-        "const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id)",
+        "const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id, run.tenantId)",
       ),
     ).toBe(true);
     const orders = at(cb, /lockRunOrdersForTerminalStatus\(/);
@@ -101,10 +101,10 @@ describe("routes lock order: Orders → STOP rows → RouteRun (#2631, SA-550, S
     );
   });
 
-  it("(iv) updateRunStatus's terminal tx runs under retryOnTxConflict (its stop locks invert reorder / optimize)", () => {
+  it("(iv) updateRunStatus's terminal tx runs under retryRouteTx (its stop locks invert reorder / optimize)", () => {
     const body = methodBody("updateRunStatus");
     expect(body).toMatch(
-      /retryOnTxConflict\("routes\.updateRunStatus", \(\) =>\s*this\.prisma\.tenantTransaction\(async \(tx\) => \{\s*const lockedOrderIds = await lockRunOrdersForTerminalStatus\(tx, id\)/,
+      /retryRouteTx\("routes\.updateRunStatus", \(\) =>\s*this\.prisma\.tenantTransaction\(async \(tx\) => \{\s*const lockedOrderIds = await lockRunOrdersForTerminalStatus\(tx, id, run\.tenantId\)/,
     );
   });
 

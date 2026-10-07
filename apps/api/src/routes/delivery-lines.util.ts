@@ -105,12 +105,24 @@ export async function assertRunStillInProgress(tx: any, runId: string): Promise<
  * stops), FOR UPDATE by id, BEFORE the stop rows: completeStop / completeWithPayment lock a stop's
  * Orders first, so Stop -> Order here was a 40P01 with the driver as the victim. Returns the locked
  * ids; the release writes ONLY inside that set (an order attached later waits for the next pass).
+ *
+ * The ONE covered-by-retries exception to Orders -> RouteRunStop: the RF-016 auto-complete arm of
+ * completeStop / completeWithPayment (the last stop closes the run) locks its own stop's Orders, claims
+ * the stop, THEN locks the run's OTHER stops' Orders to release them (Order(A) -> Stop(A) -> Order(B)).
+ * Against a run cancel that already holds Order(B) and waits for Stop(A) that is a deadlock; both sides
+ * run under retryRouteTx (a victim re-runs; exhaustion is a coded 503), and a DB pin records the retry.
  */
-export async function lockRunOrdersForTerminalStatus(tx: any, runId: string): Promise<string[]> {
+export async function lockRunOrdersForTerminalStatus(
+  tx: any,
+  runId: string,
+  tenantId: string | null,
+): Promise<string[]> {
   if (!runId) throw new Error("SA-706f: run id missing for the terminal-status order lock");
   const rows: Array<{ id: string }> = await tx.$queryRaw`
-    SELECT id FROM "Order" WHERE "routeRunId" = ${runId}
-      OR "routeRunStopId" IN (SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId})
+    SELECT id FROM "Order"
+    WHERE ("routeRunId" = ${runId}
+      OR "routeRunStopId" IN (SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId}))
+      AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})
     ORDER BY id FOR UPDATE`;
   return rows.map((r) => r.id);
 }

@@ -37,7 +37,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { Client } from "pg";
-import { ConflictException, HttpException } from "@nestjs/common";
+import { HttpException, Logger } from "@nestjs/common";
+import { retriedStateFromLog } from "../common/testing/tx-retry-capture";
 import { RoutesService } from "./routes.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
@@ -200,7 +201,7 @@ describeDb("a run CANCEL and a stop completion lock in one order (SA-706f)", () 
   }
 
   /** Two-line order on a run stop with its DRAFT pending mirror (the office's normal starting state). */
-  async function seedOrderOnStop(label: string) {
+  async function seedOrderOnStop(label: string, opts: { skippedSibling?: boolean } = {}) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `SA706f ${slug}` } });
     createdTenantIds.push(tenant.id);
@@ -248,6 +249,8 @@ describeDb("a run CANCEL and a stop completion lock in one order (SA-706f)", () 
     });
     const order = await prisma.order.create({
       data: {
+        // SA-706g arm: explicit ids so the sibling sorts BEFORE the target in the id-ordered locks.
+        ...(opts.skippedSibling ? { id: `zz-${idBase}` } : {}),
         customerId: customer.id,
         status: "OUT_FOR_DELIVERY",
         orderNumber: `SA706f-${RUN_SUFFIX}-${label}`,
@@ -274,7 +277,38 @@ describeDb("a run CANCEL and a stop completion lock in one order (SA-706f)", () 
     });
     // The DRAFT pending mirror, built the same way the office flow builds it.
     await tenantCtx.run(tenantId, () => invoicesService.createInvoiceFromOrder(order.id));
-    return { tenantId, order, run, runStop, line1, line2 };
+    let siblingOrder: { id: string } | null = null;
+    if (opts.skippedSibling) {
+      // A second, SKIPPED stop that carries an order: the stop the last completion's auto-complete releases.
+      const sibRouteStop = await prisma.routeStop.create({
+        data: { routeId: route.id, customerId: customer.id, stopNumber: 2, tenantId },
+      });
+      const sibStop = await prisma.routeRunStop.create({
+        data: {
+          routeRunId: run.id,
+          routeStopId: sibRouteStop.id,
+          customerId: customer.id,
+          stopNumber: 2,
+          status: "SKIPPED",
+          tenantId,
+        },
+      });
+      siblingOrder = await prisma.order.create({
+        data: {
+          id: `aa-${idBase}`,
+          customerId: customer.id,
+          status: "OUT_FOR_DELIVERY",
+          orderNumber: `SA706f-${RUN_SUFFIX}-${label}-sib`,
+          routeRunId: run.id,
+          routeRunStopId: sibStop.id,
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          tenantId,
+        },
+      });
+    }
+    return { tenantId, order, run, runStop, line1, line2, siblingOrder };
   }
 
   /**
@@ -344,18 +378,50 @@ describeDb("a run CANCEL and a stop completion lock in one order (SA-706f)", () 
     { orderItemId: s.line2.id, type: "DELIVERED", quantityDelivered: 4 },
   ];
 
+  // Every retried attempt of the three paths, recorded from the real `retryOnTxConflict` warning (no
+  // production change). With the retry in place a deadlock victim re-runs and PASSES, so a pin that
+  // only checks the outcome cannot see a lock-order inversion: these states can (MUST B).
+  const RETRY_LABELS = [
+    "routes.updateRunStatus",
+    "routes.completeStop",
+    "routes.completeWithPayment",
+  ];
+  function captureRetries() {
+    const seen: string[] = [];
+    const spy = jest.spyOn(Logger.prototype, "warn").mockImplementation(function (
+      this: unknown,
+      message: unknown,
+    ) {
+      for (const label of RETRY_LABELS) {
+        const state = retriedStateFromLog(message, label);
+        if (state) seen.push(`${label}:${state}`);
+      }
+    } as never);
+    return { seen, restore: () => spy.mockRestore() };
+  }
+
   async function cancelVersusCompletion(label: string, complete: (s: Seed) => Promise<unknown>) {
     const s = await seedOrderOnStop(label);
-    const { firstBlocked, blocked, results } = await raceOnHeldStop(
-      s.runStop.id,
-      () =>
-        tenantCtx.run(s.tenantId, () =>
-          routesService.updateRunStatus(s.run.id, { status: "CANCELLED" } as never, operator),
-        ),
-      () => tenantCtx.run(s.tenantId, () => complete(s)),
-    );
+    const retries = captureRetries();
+    let raced: Awaited<ReturnType<typeof raceOnHeldStop>>;
+    try {
+      raced = await raceOnHeldStop(
+        s.runStop.id,
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            routesService.updateRunStatus(s.run.id, { status: "CANCELLED" } as never, operator),
+          ),
+        () => tenantCtx.run(s.tenantId, () => complete(s)),
+      );
+    } finally {
+      retries.restore();
+    }
+    const { firstBlocked, blocked, results } = raced;
     expect(firstBlocked).toBeGreaterThanOrEqual(1); // the PATCH waits on T2 (queued ahead)
     expect(blocked).toBeGreaterThanOrEqual(2); // and the completion is waiting too
+    // The fixed ordering never deadlocks, so NO attempt was retried (an inverted order would be a
+    // victim that retries and passes the outcome checks below, but shows up here).
+    expect(retries.seen).toEqual([]);
     const [cancel, completion] = results as Array<{ ok: boolean; e?: unknown }>;
     for (const r of [cancel, completion]) {
       if (!r.ok) expect(String((r.e as Error)?.message)).not.toMatch(/40P01|deadlock detected/i);
@@ -393,6 +459,80 @@ describeDb("a run CANCEL and a stop completion lock in one order (SA-706f)", () 
       ),
     );
   }, 60_000);
+
+  /**
+   * SA-706g: the ONE covered-by-retries exception. The completion that closes the run (RF-016
+   * auto-complete) locks its own stop Orders, claims the stop, then locks the SKIPPED sibling Orders
+   * to release them: Order(A) -> Stop(A) -> Order(B). A cancel racing it holds Order(B) (id-ordered
+   * first) while waiting for Order(A): a real deadlock, resolved by the retry on both sides. Here the
+   * completion starts FIRST (so it holds Order(A) before the cancel asks for it). Asserted: no uncoded
+   * error, a terminal run state consistent with the outcomes, the sibling order released. The retry
+   * count is RECORDED (console.info, quoted in the PR body), deliberately not asserted to be [].
+   */
+  async function autoCompleteArmVersusCancel(
+    label: string,
+    complete: (s: Seed) => Promise<unknown>,
+  ) {
+    const s = await seedOrderOnStop(label, { skippedSibling: true });
+    const retries = captureRetries();
+    let raced: Awaited<ReturnType<typeof raceOnHeldStop>>;
+    try {
+      raced = await raceOnHeldStop(
+        s.runStop.id,
+        () => tenantCtx.run(s.tenantId, () => complete(s)),
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            routesService.updateRunStatus(s.run.id, { status: "CANCELLED" } as never, operator),
+          ),
+      );
+    } finally {
+      retries.restore();
+    }
+    expect(raced.firstBlocked).toBeGreaterThanOrEqual(1);
+    expect(raced.blocked).toBeGreaterThanOrEqual(2);
+    const [completion, cancel] = raced.results as Array<{ ok: boolean; e?: unknown }>;
+    for (const r of [completion, cancel]) {
+      if (!r.ok) {
+        // coded (a refusal or the 503), never a bare Prisma error
+        expect(r.e).toBeInstanceOf(HttpException);
+        expect(String((r.e as Error)?.message)).not.toMatch(/40P01|deadlock detected/i);
+      }
+    }
+    expect(completion.ok || cancel.ok).toBe(true);
+    const run = await prisma.routeRun.findUniqueOrThrow({ where: { id: s.run.id } });
+    // A cancel that succeeds always leaves CANCELLED (it can overwrite an auto-COMPLETED run: the
+    // filed follow-up "updateRunStatus does not re-check the run status under the lock").
+    expect(run.status).toBe(cancel.ok ? "CANCELLED" : "COMPLETED");
+    const sibling = await prisma.order.findUniqueOrThrow({ where: { id: s.siblingOrder!.id } });
+    expect(sibling.routeRunStopId).toBeNull(); // released on every outcome
+    // eslint-disable-next-line no-console
+    console.info(
+      `SA-706g arm (${label}): retries=${JSON.stringify(retries.seen)} completion=${completion.ok} ` +
+        `cancel=${cancel.ok} run=${run.status}`,
+    );
+  }
+
+  it("SA-706g: run CANCELLED vs the LAST stop completeStop (auto-completes the run): one coded outcome, no uncoded error", async () => {
+    await autoCompleteArmVersusCancel("arm-stop", (s) =>
+      routesService.completeStop(
+        s.run.id,
+        s.runStop.id,
+        { deliveries: deliveriesOf(s) } as never,
+        operator,
+      ),
+    );
+  }, 90_000);
+
+  it("SA-706g: run CANCELLED vs the LAST stop completeWithPayment (auto-completes the run): one coded outcome, no uncoded error", async () => {
+    await autoCompleteArmVersusCancel("arm-payment", (s) =>
+      routesService.completeWithPayment(
+        s.run.id,
+        s.runStop.id,
+        { deliveries: deliveriesOf(s) } as never,
+        operator,
+      ),
+    );
+  }, 90_000);
 
   it("SA-706f: a COMPLETED run PATCH cannot race a completion of the same stop: its gate refuses a pending stop before any lock", async () => {
     const s = await seedOrderOnStop("complete-gate");

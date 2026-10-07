@@ -18,7 +18,7 @@ import {
   lockRunStopsForTerminalStatus,
   lockStopsOrdersForRelease,
 } from "./delivery-lines.util";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, retryRouteTx } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
 import { reorderRouteStopsInTx } from "./route-stop-reorder";
@@ -1503,9 +1503,9 @@ export class RoutesService {
 
     const updated = releasesOrders
       ? // #2631 / SA-706f: each attempt re-locks and re-reads everything; a conflict is retried.
-        await retryOnTxConflict("routes.updateRunStatus", () =>
+        await retryRouteTx("routes.updateRunStatus", () =>
           this.prisma.tenantTransaction(async (tx) => {
-            const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id); // Orders FIRST
+            const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id, run.tenantId); // Orders FIRST
             await lockRunStopsForTerminalStatus(tx, id); // then STOP rows → RouteRun
             const row = await tx.routeRun.update({ where: { id }, data: updates, include });
             const stops = await tx.routeRunStop.findMany({
@@ -1656,8 +1656,8 @@ export class RoutesService {
    * `invoice.order.routeRunId` join and the order reappears as trip-eligible.
    * PARTIALLY_DELIVERED is deliberately NOT added to the notIn list — a
    * partially-delivered order on a genuinely non-completed stop must still
-   * release. No FOR UPDATE is taken and the write order is unchanged; the
-   * relation filter is the whole fix.
+   * release. It writes only Orders the caller holds FOR UPDATE (SA-706f; a completion's auto-complete
+   * locks its own set first, the one Stop → Order arm: see delivery-lines.util.ts).
    *
    * A third write follows: every PENDING ChangeRequest on an order write 2
    * actually released is DECLINED. ChangeRequests are only created (and only
@@ -2205,7 +2205,7 @@ export class RoutesService {
 
     let autoCompleted = false;
     // SA-706f: a 40P01/40001 victim re-runs the WHOLE tx (DB writes only; each attempt starts clean).
-    await retryOnTxConflict("routes.completeStop", () =>
+    await retryRouteTx("routes.completeStop", () =>
       this.prisma.tenantTransaction(async (tx) => {
         autoCompleted = false;
         await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);
@@ -2436,7 +2436,7 @@ export class RoutesService {
     let excess: number | undefined;
     let advancePaymentId: string | null | undefined;
     // SA-706f: a conflict victim re-runs the whole tx; the AfterCommit queue resets per attempt.
-    await retryOnTxConflict("routes.completeWithPayment", () =>
+    await retryRouteTx("routes.completeWithPayment", () =>
       withAfterCommit(this.prisma, async (tx, after) => {
         [autoCompleted, paymentIds, excess, advancePaymentId] = [false, [], undefined, undefined];
         await lockStopOrdersAndFit(tx, stopId, stop.orders, dto.deliveries);

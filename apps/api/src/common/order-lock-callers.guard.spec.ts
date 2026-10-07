@@ -59,8 +59,10 @@ function callSites(name: string): string[] {
  * Every call of `name(` (definitions excluded) with the text of its enclosing method up to the
  * call (`prefix`), so a guard can assert what that method locked BEFORE it.
  */
-function callPrefixes(name: string): Array<{ site: string; prefix: string; line: number }> {
-  const out: Array<{ site: string; prefix: string; line: number }> = [];
+function callPrefixes(
+  name: string,
+): Array<{ site: string; prefix: string; args: string; line: number }> {
+  const out: Array<{ site: string; prefix: string; args: string; line: number }> = [];
   for (const file of walk(SRC)) {
     const src = strip(fs.readFileSync(file, "utf8"));
     const call = new RegExp(`\\b${name}\\(`, "g");
@@ -78,6 +80,7 @@ function callPrefixes(name: string): Array<{ site: string; prefix: string; line:
       out.push({
         site: `${path.relative(SRC, file).replace(/\\/g, "/")}#${enclosing}`,
         prefix: src.slice(start, m.index),
+        args: src.slice(m.index, src.indexOf(";", m.index)), // the whole call, multi-line or not
         line: src.slice(0, m.index).split("\n").length,
       });
     }
@@ -193,10 +196,7 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
   it("SA-706f: every other transaction that takes a RouteRunStop lock and writes Orders locks those Orders first", () => {
     // `lockRowsNoWait(tx, "RouteRunStop", ...)`: today only the at-stop change merge, which holds the
     // Order FOR UPDATE (raw or lockOrderRow(s)) before its NOWAIT stop lock.
-    const sites = callPrefixes("lockRowsNoWait").filter((s) => {
-      const text = fs.readFileSync(path.join(SRC, s.site.split("#")[0]), "utf8");
-      return text.split("\n")[s.line - 1]?.includes('"RouteRunStop"');
-    });
+    const sites = callPrefixes("lockRowsNoWait").filter((s) => s.args.includes('"RouteRunStop"'));
     expect(sites.map((s) => s.site)).toEqual([
       "orders/orders.service.ts#approveChangeRequestAtStop",
     ]);
@@ -204,13 +204,13 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
       expect(s.prefix).toMatch(/FROM "Order" WHERE id = [^`]*FOR UPDATE|lockOrderRows?\(/);
   });
 
-  it("SA-706f: completeStop and completeWithPayment re-run a conflict victim, each attempt starting clean", () => {
+  it("SA-706f: completeStop and completeWithPayment re-run a conflict victim (coded 503 on exhaustion), each attempt starting clean", () => {
     const src = strip(fs.readFileSync(path.join(SRC, "routes/routes.service.ts"), "utf8"));
     for (const [label, reset] of [
       ["routes.completeStop", "autoCompleted = false;"],
       ["routes.completeWithPayment", "[autoCompleted, paymentIds, excess, advancePaymentId] ="],
     ] as const) {
-      const at = src.indexOf(`retryOnTxConflict("${label}"`);
+      const at = src.indexOf(`retryRouteTx("${label}"`);
       expect(at).toBeGreaterThan(-1);
       // the attempt resets what the previous attempt may have set, before its first lock
       const body = src.slice(at, at + 600);

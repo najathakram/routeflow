@@ -67,3 +67,21 @@ export async function retryCreditTx<T>(label: string, run: () => Promise<T>): Pr
     });
   }
 }
+
+/**
+ * `retryOnTxConflict` for the route / run / stop transactions (completeStop, completeWithPayment, a
+ * run's terminal status move): when the retries are EXHAUSTED the caller gets a coded, retryable 503
+ * (nothing was saved) instead of the raw 40P01 / 40001 / P2034 that surfaced as an uncoded 500.
+ * Any other error propagates untouched.
+ */
+export async function retryRouteTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await retryOnTxConflict(label, run);
+  } catch (err) {
+    if (!txConflictState(err)) throw err;
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message: "Someone else is updating this route. Nothing was saved; please try again.",
+    });
+  }
+}
