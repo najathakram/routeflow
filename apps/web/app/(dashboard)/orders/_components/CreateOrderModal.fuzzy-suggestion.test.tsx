@@ -1,6 +1,6 @@
 /** B1219: a single FUZZY scan match (no exact code) asks "Did you mean ...?" before adding. */
 import * as React from "react";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
@@ -96,7 +96,7 @@ describe("Create Order scan - fuzzy single match (B1219)", () => {
     expect(picker).toHaveTextContent("Did you mean Cola Zero 12345?");
     expect(lines()).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(within(picker).getByRole("button", { name: "Add" }));
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
   });
@@ -105,9 +105,10 @@ describe("Create Order scan - fuzzy single match (B1219)", () => {
     mockResolveProductByCode.mockResolvedValue(suggestion);
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await act(async () => typeScan("12345"));
-    await screen.findByRole("group", { name: /did you mean/i });
+    const picker = await screen.findByRole("group", { name: /did you mean/i });
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // The modal footer has its own Cancel - scope to the picker's.
+    fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
     expect(lines()).toHaveLength(0);
   });
