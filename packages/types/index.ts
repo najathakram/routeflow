@@ -140,6 +140,7 @@ export * from "./order-applied-credits";
 // Prisma-enum mirrors live in `./api/enums.ts`, pinned set-equal to
 // `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
 
+export * from "./order-line-backorder";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";
@@ -173,6 +174,7 @@ export * from "./api/config-snapshots";
 export * from "./api/counter-sale";
 export * from "./api/import";
 export * from "./api/analytics-insights";
+export * from "./api/fulfilment-methods";
 export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";

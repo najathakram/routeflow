@@ -57,7 +57,9 @@ const MERGE = {
   carried:
     "productId name qty unitPrice subtotal priceType originalPrice promoFreeUnits boxes pieces unitsPerBox notes overrideReason overriddenBy status trackedCategoryId " +
     // B297: the loser line's trio, via `...copyCategoryTaxSnapshot(meta)` (SPREAD_HELPER_KEYS).
-    "categoryTaxType categoryTaxRate categoryPriceIncludesTax",
+    "categoryTaxType categoryTaxRate categoryPriceIncludesTax " +
+    // SA-716 MUST 2: the backorder marker is a fact of the sale; the fold CARRIES it (winner += losers').
+    "backorderedPieces",
   // #2717 M3: the stamp rides `...compositionStampOf(write.data)` (an opaque local spread, so not checked as
   // carried); the components are rescaled from the winner's own stored rows by syncOrderLineCompositions.
   rederived: "categoryTaxAmount compositionMode recipeId recipeVersion", // recomputeLineCategoryTaxes after the fold
@@ -171,7 +173,9 @@ export const COPIERS: Copier[] = [
     // B658: categoryTaxAmount is now priced from the live category (it was a hard 0), and B297 stamps
     // the trio beside it (`...categorySnapshot`, an opaque spread: presence is not checked).
     rederived:
-      "unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion",
+      "unitPrice subtotal priceType originalPrice promoFreeUnits trackedCategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion " +
+      // SA-714/SA-716: a standing order is a fresh sale — decrementStockForSale SETs the marker after the create.
+      "backorderedPieces",
     components: "rederived", // #2717 M3: syncOrderLineCompositions plans a RECIPE line from the ACTIVE recipe, mode-gated
     na: ORDER_FRESH,
     gaps: {
@@ -198,7 +202,9 @@ export const COPIERS: Copier[] = [
     // by computeLineSubtotal at that carried pack and price; promoFreeUnits is 0 for a rollover line.
     viaOptions: "unitsPerBox unitPrice priceType originalPrice overrideReason overriddenBy",
     rederived:
-      "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion",
+      "name subtotal promoFreeUnits trackedCategoryId trackedSubcategoryId categoryTaxAmount position categoryTaxType categoryTaxRate categoryPriceIncludesTax compositionMode recipeId recipeVersion " +
+      // SA-716: the rollover line is a fresh sale of the remainder — create()'s decrement SETs the marker.
+      "backorderedPieces",
     components: "rederived", // #2717 M3: written by OrdersService.create, which syncs compositions in its tx
     na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
     gaps: {
@@ -274,7 +280,8 @@ export const COPIERS: Copier[] = [
     anchor: { via: "delegate", model: "orderItem" },
     carried:
       "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits",
-    reset: "priceType status invoicedQty",
+    // SA-716: a line rebuilt from invoice lines has no sale-time stock history — backorderedPieces stays 0.
+    reset: "priceType status invoicedQty backorderedPieces",
     rederived: "name trackedSubcategoryId compositionMode recipeId recipeVersion",
     components: "rederived", // #2717 M3: syncOrderLineCompositions runs right after the back-sync loop
     na: "deliveredQty overrideReason overriddenBy",

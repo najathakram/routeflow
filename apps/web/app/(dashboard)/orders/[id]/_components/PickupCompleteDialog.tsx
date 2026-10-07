@@ -11,13 +11,16 @@ import {
   PAYMENT_PROBLEM_COPY,
   PICKUP_DEAD_INVOICE,
   changeDue,
+  clearHeldPickupKey,
   newIdempotencyKey,
   paymentMethodOptions,
   pickupBalanceDue,
   pickupCompleteErrorCopy,
   pickupErrorCode,
   quickTenderOptions,
+  readHeldPickupKey,
   validatePayment,
+  writeHeldPickupKey,
 } from "@/lib/counter-sale";
 
 const money = (n: number) =>
@@ -46,6 +49,7 @@ export function PickupCompleteDialog({
   invoices,
   isWalkIn,
   heldKey,
+  storeKey = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -55,6 +59,8 @@ export function PickupCompleteDialog({
   invoices: ReadonlyArray<{ id: string; status: string }>;
   isWalkIn: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
+  /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
+  storeKey?: string | null;
 }) {
   const ownHeld = React.useRef<HeldPickupKey>(null);
   const held = heldKey ?? ownHeld;
@@ -86,6 +92,10 @@ export function PickupCompleteDialog({
 
   React.useEffect(() => {
     if (open) {
+      if (held.current?.orderId !== orderId) {
+        const stored = readHeldPickupKey(storeKey);
+        held.current = stored ? { orderId, key: stored } : null;
+      }
       keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
       setMethod("CASH");
       setTendered("");
@@ -118,11 +128,14 @@ export function PickupCompleteDialog({
         return;
       }
       held.current = null;
+      clearHeldPickupKey(storeKey);
       setOutcome(res);
     } catch (err) {
       const status = (err as { response?: { status?: number } } | null)?.response?.status;
-      held.current =
-        status === undefined || status >= 500 ? { orderId, key: keyRef.current } : null;
+      const unknown = status === undefined || status >= 500;
+      held.current = unknown ? { orderId, key: keyRef.current } : null;
+      if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
+      else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
       setError(pickupCompleteErrorCopy(err));
     }

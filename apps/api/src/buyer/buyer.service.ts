@@ -11,6 +11,8 @@ import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
+import type { Prisma } from "@prisma/client";
+import { excludeWalkIn } from "../customers/walk-in-protected";
 import { escapeHtml } from "../common/html-escape";
 
 @Injectable()
@@ -191,12 +193,13 @@ export class BuyerService {
     // link read, upsert, seller email or socket emit — is what keeps the answer consistent with
     // getSellers (hides it) and the seller-context guard (403s it): no "already connected" 409 and
     // no "Connected!" for a portal that is refused. Stateless, so restore re-enables it.
+    // The tenant's walk-in customer is a system row: never matched, linked or auto-approved here.
     const customer = await this.prisma.customer.findFirst({
-      where: {
+      where: excludeWalkIn<Prisma.CustomerWhereInput>({
         tenantId: tenant.id,
         deletedAt: null,
         OR: [{ email: claimedEmail }, { user: { email: claimedEmail } }],
-      },
+      }),
       include: { user: { select: { email: true } } },
     });
     if (!customer) {
