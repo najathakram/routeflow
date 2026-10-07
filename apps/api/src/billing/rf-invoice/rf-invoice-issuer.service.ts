@@ -200,15 +200,6 @@ export class RfInvoiceIssuerService {
       return { status: "no_price" };
     }
 
-    if (draft.irregularPeriod) {
-      await this.raiseOnce(
-        sub.tenantId,
-        RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
-        periodKey,
-        `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
-      );
-    }
-
     try {
       const invoice = await withRfInvoiceNumberLock(() =>
         withRfInvoiceNumber(() =>
@@ -249,6 +240,15 @@ export class RfInvoiceIssuerService {
           }),
         ),
       );
+      // Only after the row is committed: a failed create must never leave a notice saying "was issued".
+      if (draft.irregularPeriod) {
+        await this.raiseOnce(
+          sub.tenantId,
+          RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
+          periodKey,
+          `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
+        );
+      }
       return { status: "issued", invoice };
     } catch (e) {
       if (uniqueViolationOn(e, RF_INVOICE_PERIOD_INDEX, { exact: true }))
