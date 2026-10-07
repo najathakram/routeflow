@@ -128,6 +128,18 @@ describe("RfInvoiceBuilder", () => {
       expect(r.irregularPeriod).toBe(false);
     });
 
+    it("pin: BLD-1's exact fixture (19.995 x 2) through a 30-day window equals its no-window result", async () => {
+      const { builder } = make({ addons: [addon({ priceSnapshot: 19.995, quantity: 2 })] });
+      const plain = await builder.build("tenant-acme", "MONTHLY");
+      const windowed = await builder.build("tenant-acme", "MONTHLY", win(30));
+      if (!plain.ok || !windowed.ok) throw new Error("expected drafts");
+      // cyclePrice rounds the unit (19.995 -> 20.00) BEFORE x qty x months on both paths.
+      expect(windowed.lines.map((l) => l.amount)).toEqual([149, 40]);
+      expect(windowed.total).toBe(189);
+      expect(windowed.lines).toEqual(plain.lines);
+      expect(windowed.total).toBe(plain.total);
+    });
+
     it("a 90-day (quarterly) window is 3x, rounded per line", async () => {
       const r = await run(90);
       expect(r.lines.map((l) => l.amount)).toEqual([447, 119.94]);
