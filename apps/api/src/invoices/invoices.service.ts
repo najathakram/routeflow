@@ -133,6 +133,7 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
@@ -177,7 +178,7 @@ import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
@@ -618,17 +619,15 @@ export class InvoicesService {
     // participates in the dueDate computation, so it is not a candidate.)
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
-    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this
-    // invoice doesn't already carry an explicit deposit — an explicit caller-supplied
-    // deposit (overrides.depositPercent, e.g. a future "New sale" deposit field)
-    // always wins and is never clobbered. Otherwise falls back to
-    // effectiveDepositPercent (WP-D1: customer override when set, else the
-    // tenant-wide default) — already null-or-positive, so no extra >0 guard is
-    // needed here. The deposit is due immediately (depositDueDate = issueDate); the
-    // remainder still rides the terms-label dueDate resolved above.
-    // computeDepositFields does all the read-time math — nothing derived is stored
-    // here. No effective deposit leaves these keys OUT of extraInvoiceData entirely,
-    // so the create payload is byte-identical to before this change.
+    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this invoice doesn't
+    // already carry an explicit deposit — an explicit caller-supplied deposit
+    // (overrides.depositPercent, e.g. a future "New sale" deposit field) always wins and is never
+    // clobbered. Otherwise falls back to effectiveDepositPercent (WP-D1: customer override when
+    // set, else the tenant-wide default) — already null-or-positive, so no extra >0 guard is needed
+    // here. The deposit is due immediately (depositDueDate = issueDate); the remainder still rides
+    // the terms-label dueDate resolved above. computeDepositFields does all the read-time math —
+    // nothing derived is stored here. No effective deposit leaves these keys OUT of
+    // extraInvoiceData entirely, so the create payload is byte-identical to before this change.
     const depositFields: Record<string, any> =
       overrides?.depositPercent != null
         ? {
@@ -1241,6 +1240,7 @@ export class InvoicesService {
       ? null
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
+      if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2782,20 +2782,19 @@ export class InvoicesService {
           : {};
     const tenantId = this.prisma.getTenantId();
 
-    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside
-    // ONE tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape.
-    // Previously this ran with no transaction at all AND never settled the
-    // order's explicit-amount OrderCreditNote selections, so a leftover selection
-    // was neither auto-applied (send()'s explicitIds exclusion assumes settle
-    // already ran) nor settled here — stranding it. B100/F16b: the number is reserved
-    // BEFORE this transaction opens, in reserveNext's own short transaction
-    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method
-    // never receives a caller tx; if it ever does, it must reserve INSIDE it with
-    // `generateInvoiceNumber(tenantId, tx)`, the createSplitInvoices rule
-    // (fix-round-2b.md D7) — a hoisted reservation under a caller's tx is the
-    // pool-starving nested open.
+    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside ONE
+    // tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape. Previously this ran
+    // with no transaction at all AND never settled the order's explicit-amount OrderCreditNote
+    // selections, so a leftover selection was neither auto-applied (send()'s explicitIds exclusion
+    // assumes settle already ran) nor settled here — stranding it. B100/F16b: the number is
+    // reserved BEFORE this transaction opens, in reserveNext's own short transaction
+    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method never receives
+    // a caller tx; if it ever does, it must reserve INSIDE it with `generateInvoiceNumber(tenantId,
+    // tx)`, the createSplitInvoices rule (fix-round-2b.md D7) — a hoisted reservation under a
+    // caller's tx is the pool-starving nested open.
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
+      await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
       let created: any;
       try {
         created = await tx.invoice.create({
@@ -3512,7 +3511,7 @@ export class InvoicesService {
    */
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
+    return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           // #2255 / SA-404: FIRST statement — lock (Order →) Invoice and re-read, then decide from
@@ -3522,6 +3521,7 @@ export class InvoicesService {
           const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
+          await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
           const updated = await tx.invoice.update({
             where: { id },
             data: { status: nextStatus, sentAt: new Date() },
