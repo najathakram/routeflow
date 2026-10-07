@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test-utils/render";
 import { FulfillmentSettingsTab } from "./FulfillmentSettingsTab";
 
@@ -187,7 +188,8 @@ describe("the Delivery method card", () => {
       }),
     });
     await renderLoaded();
-    fireEvent.click(radio(/On our own trucks/));
+    // A real user click (jsdom's synthetic click toggles a disabled radio's checkedness).
+    await userEvent.click(radio(/On our own trucks/));
     expect(radio(/No preference/)).toBeChecked();
     expect(review()).toBeDisabled();
   });

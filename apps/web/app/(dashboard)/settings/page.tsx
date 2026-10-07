@@ -89,6 +89,8 @@ import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
 import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
+import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
+import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
@@ -2763,6 +2765,16 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: the endpoint is asked ONLY on
+  // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
+  // exactly what it was (an unknown tab falls back to the hub). No hub entry points at it.
+  const fulfilmentQuery = useFulfilmentSettings({
+    enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  const showFulfilment =
+    activeTab === "fulfilment" &&
+    (fulfilmentQuery.isLoading || fulfilmentQuery.isError || !!fulfilmentQuery.data?.selfServe);
+
   // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
   // "← All settings" back link (the old tab strip is retired). Every screen component
   // is reused unchanged, so the individual settings behave exactly as before, and the
@@ -2787,6 +2799,15 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
+    ...(showFulfilment
+      ? {
+          fulfilment: {
+            title: "Fulfillment",
+            node: <FulfillmentSettingsTab />,
+            width: "max-w-3xl",
+          },
+        }
+      : {}),
     ...(isAdmin
       ? {
           regulated: {
