@@ -187,6 +187,8 @@ export interface OrderItem {
    *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
    *  previews at full price while the server bills the reduced subtotal. */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /**
