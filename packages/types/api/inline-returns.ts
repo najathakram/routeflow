@@ -183,23 +183,30 @@ export interface InlineReturnQuoteBreakdown {
   total: number;
 }
 
-/** The exact shape `POST /returns/inline/quote` resolves to (`quote()`'s
- *  `Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }>`). */
-export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown {
+/** SA-727: the refund eligibility the quote adds to its pricing. `canRefund` is ALWAYS set explicitly (a paid walk-in
+ *  sale -> true; an unpaid one, or a caller without the refund gate -> false). The API always sends all four; a client
+ *  that may talk to an older API reads it as `Partial<InlineReturnRefundEligibility>`. */
+export interface InlineReturnRefundEligibility {
+  /** The caller passes the refund gate (office roles) AND every source invoice is paid in full. A hint: the refund
+   *  endpoint re-checks under its locks. */
+  canRefund: boolean;
+  /** Every returned line is on a source invoice that is non-VOID, not written off, with balance 0. False when a line is
+   *  on no invoice at all. */
+  paidInFull: boolean;
+  /** The payment methods (`PaymentMethod` values, sorted) of the confirmed payments on those invoices, for
+   *  preselecting the refund tender (CASH -> CASH, CREDIT_CARD -> CARD, CHECK -> CHECK). */
+  paidMethods: string[];
+  /** The customer is the tenant's system walk-in customer (a counter sale to an anonymous buyer). */
+  customerIsWalkIn: boolean;
+}
+
+/** The exact shape `POST /returns/inline/quote` resolves to: `quote()`'s `QuoteBreakdown & { productBreakdown, ...the four
+ *  InlineReturnRefundEligibility fields }`. */
+export interface InlineReturnQuoteResponse
+  extends InlineReturnQuoteBreakdown, InlineReturnRefundEligibility {
   /** Per-productId sub-breakdown — same shape as the top-level totals, scoped to one
    *  requested item. */
   productBreakdown: Record<string, InlineReturnQuoteBreakdown>;
-  /** SA-727: the caller passes the refund gate (office roles) AND every source invoice is paid in full. A hint: the
-   *  refund endpoint re-checks under its locks. */
-  canRefund: boolean;
-  /** SA-727: every returned line is on a source invoice that is non-VOID, not written off, with balance 0. False when a
-   *  line is on no invoice at all. */
-  paidInFull: boolean;
-  /** SA-727: the payment methods (`PaymentMethod` values, sorted) of the confirmed payments on those invoices, for
-   *  preselecting the refund tender (CASH -> CASH, CREDIT_CARD -> CARD, CHECK -> CHECK). */
-  paidMethods: string[];
-  /** SA-727: the customer is the tenant's system walk-in customer (a counter sale to an anonymous buyer). */
-  customerIsWalkIn: boolean;
 }
 
 // ─── Response: what POST /returns/inline/capture (and approve/reject/cancel) return ────
