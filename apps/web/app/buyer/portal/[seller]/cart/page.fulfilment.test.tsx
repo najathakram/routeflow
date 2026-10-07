@@ -11,10 +11,12 @@ const mutateAsync = jest.fn();
 const clearCart = jest.fn();
 let offer: { portalMethods: string[]; portalDefault: string | null } | undefined;
 let capState: "ok" | "error" | "loading" = "ok";
+const push = jest.fn();
+let active: { id: string; orderNumber: string; fulfillPath: string } | undefined;
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push }),
 }));
 jest.mock("@/lib/buyer-auth-context", () => ({
   useBuyerAuth: () => ({
@@ -43,7 +45,7 @@ jest.mock("@/lib/buyer-cart", () => ({
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerProducts: () => ({ data: { data: [] } }),
   useBuyerCreateOrder: () => ({ mutateAsync, isPending: false }),
-  useBuyerActiveOrder: () => ({ data: undefined }),
+  useBuyerActiveOrder: () => ({ data: active }),
   useBuyerPromotions: () => ({ data: [] }),
   toPromotionRules: () => [],
 }));
@@ -56,6 +58,7 @@ beforeEach(() => {
   mutateAsync.mockResolvedValue({ id: "o1", orderNumber: "SO-1" });
   offer = undefined;
   capState = "ok";
+  active = undefined;
 });
 
 describe("buyer cart — pickup / ship choice", () => {
@@ -140,5 +143,71 @@ describe("buyer cart — pickup / ship choice", () => {
     expect(screen.queryByRole("radio")).toBeNull();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync.mock.calls[0][0]).not.toHaveProperty("fulfillPath");
+  });
+});
+
+describe("buyer cart — merge follows the chosen fulfilment path", () => {
+  const both = { portalMethods: ["PICKUP", "SHIP"], portalDefault: "PICKUP" };
+
+  it("Ship to me with an active PICKUP order: no merge banner, button reads Place Order", async () => {
+    offer = both;
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "PICKUP" };
+    render(<BuyerCartPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: "Ship to me" }));
+    expect(screen.queryByText(/added to your existing order/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /place order/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add to existing order/i })).toBeNull();
+  });
+
+  it("Pick up with an active SHIP order: no merge banner", async () => {
+    offer = both;
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "SHIP" };
+    render(<BuyerCartPage />);
+    await screen.findByRole("radio", { name: "Pick up at store" });
+    expect(screen.queryByText(/added to your existing order/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /place order/i })).toBeInTheDocument();
+  });
+
+  it("path mismatch: submit goes to the NEW order, not the active one", async () => {
+    offer = both;
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "PICKUP" };
+    render(<BuyerCartPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: "Ship to me" }));
+    await place();
+    fireEvent.click(await screen.findByRole("button", { name: /view order/i }));
+    expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/o1");
+    expect(push).not.toHaveBeenCalledWith("/buyer/portal/acme/orders/a1");
+  });
+
+  it("same path (control): banner shows, button says Add to existing, redirects to the active order", async () => {
+    offer = both;
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "PICKUP" };
+    render(<BuyerCartPage />);
+    expect(await screen.findByText(/added to your existing order/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add to existing order/i }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/buyer/portal/acme/orders/a1"));
+  });
+
+  it("no path sent (no offer): today's rule, any active order merges", async () => {
+    offer = { portalMethods: [], portalDefault: null };
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "SHIP" };
+    render(<BuyerCartPage />);
+    expect(await screen.findByText(/added to your existing order/i)).toBeInTheDocument();
+  });
+
+  it("no active order: never an Add to existing order label", async () => {
+    offer = both;
+    render(<BuyerCartPage />);
+    await screen.findByRole("button", { name: /place order/i });
+    expect(screen.queryByText(/add to existing order/i)).toBeNull();
+  });
+
+  it("forced new with a mismatched active order: no Add to existing order switch", async () => {
+    offer = both;
+    active = { id: "a1", orderNumber: "SO-9", fulfillPath: "PICKUP" };
+    render(<BuyerCartPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /create new order instead/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "Ship to me" }));
+    expect(screen.queryByText(/add to existing order/i)).toBeNull();
   });
 });

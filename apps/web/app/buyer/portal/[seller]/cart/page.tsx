@@ -67,7 +67,11 @@ export default function BuyerCartPage() {
     pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
 
   // Whether we'll merge into the existing order
-  const willMerge = !forceNew && activeOrder != null;
+  // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
+  // sent a differing active order is not a merge target. No path sent => today's rule.
+  const pathMatches = !fulfillPath || activeOrder?.fulfillPath === fulfillPath;
+  const mergeable = activeOrder != null && pathMatches;
+  const willMerge = !forceNew && mergeable;
 
   // Resolve prices for exactly the cart's products. This MUST be an id filter:
   // a plain page of the catalog silently omits any product outside it, and the
@@ -322,7 +326,7 @@ export default function BuyerCartPage() {
         </div>
       )}
 
-      {forceNew && activeOrder && (
+      {forceNew && mergeable && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
           <p className="text-sm text-navy/70">A new order will be created.</p>
           <button
