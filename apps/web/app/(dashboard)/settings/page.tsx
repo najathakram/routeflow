@@ -2784,9 +2784,8 @@ function SettingsPageInner() {
   const fulfilmentQuery = useFulfilmentSettings({
     enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
-  const showFulfilment =
-    activeTab === "fulfilment" &&
-    (fulfilmentQuery.isLoading || fulfilmentQuery.isError || !!fulfilmentQuery.data?.selfServe);
+  // Only a confirmed `selfServe: true` shows the tab: while loading or on an error nothing of it appears.
+  const showFulfilment = activeTab === "fulfilment" && fulfilmentQuery.data?.selfServe === true;
 
   // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
   // "← All settings" back link (the old tab strip is retired). Every screen component

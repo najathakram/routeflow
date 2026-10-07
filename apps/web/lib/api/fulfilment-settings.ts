@@ -42,8 +42,11 @@ export function useUpdateFulfilmentSettings() {
   const qc = useQueryClient();
   return useMutation<FulfilmentSettingsUpdated, Error, FulfilmentSettingsPatchRequest>({
     mutationFn: (dto) => apiClient.patch("/settings/fulfilment", dto).then((r) => r.data),
-    onSuccess: ({ changed: _changed, ...settings }) =>
-      qc.setQueryData<FulfilmentSettings>(FULFILMENT_SETTINGS_KEY, settings),
+    onSuccess: ({ changed: _changed, ...settings }) => {
+      qc.setQueryData<FulfilmentSettings>(FULFILMENT_SETTINGS_KEY, settings);
+      // The counter gate and the capability answers live under the tenant caches.
+      void qc.invalidateQueries({ queryKey: ["tenant"] });
+    },
   });
 }
 
