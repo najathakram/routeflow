@@ -183,7 +183,7 @@ export async function applyCarriedMarkers(
         where: { id: { in: [...a.finalLines.keys()] } },
         select: { id: true, unitsPerBox: true },
       })
-    ).map((p: { id: string; unitsPerBox: unknown }) => [p.id, p.unitsPerBox]),
+    ).map((r: { id: string; unitsPerBox: unknown }) => [r.id, r.unitsPerBox]),
   );
   const out = new Map<string, number>();
   for (const [productId, lines] of a.finalLines) {
