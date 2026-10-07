@@ -31,8 +31,7 @@ async function ready(page: Page, path: string) {
 }
 
 async function skipFromTab(page: Page) {
-  // Focus starts at the document; the first Tab stop in the shell is the skip link.
-  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  // A fresh navigation leaves focus on the document, so the first Tab stop is the skip link.
   await page.keyboard.press("Tab");
   const skip = page.getByRole("link", { name: "Skip to content" });
   await expect(skip).toBeFocused();
@@ -139,9 +138,12 @@ test.describe("shell no-regress @1440", () => {
     await page.waitForTimeout(300);
     await expect(page).toHaveURL(/\/dashboard$/);
 
-    await page.keyboard.press("g");
-    await page.keyboard.press("o");
-    await expect(page).toHaveURL(/\/orders$/);
+    // The keydown listener attaches on hydration; retry the chord until it is live.
+    await expect(async () => {
+      await page.keyboard.press("g");
+      await page.keyboard.press("o");
+      await expect(page).toHaveURL(/\/orders$/, { timeout: 1_500 });
+    }).toPass({ timeout: 15_000 });
 
     // Inside a text input the sequence is ignored.
     await ready(page, "/dashboard");
