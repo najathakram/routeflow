@@ -30,7 +30,6 @@ export interface SaleLine {
   listPrice?: number;
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
-  unitCost?: number;
   category?: string;
 }
 
@@ -67,7 +66,6 @@ export function addScannedProduct(
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
       priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
-      ...(product.averageCost != null ? { unitCost: Number(product.averageCost) } : {}),
       ...(product.category ? { category: String(product.category) } : {}),
       ...(qty ? { qty: qty.qty, boxes: qty.boxes ?? 0, pieces: qty.pieces ?? 0 } : born),
     },

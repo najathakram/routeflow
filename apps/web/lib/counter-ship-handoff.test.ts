@@ -136,6 +136,26 @@ describe("counterCartToDraftPayload", () => {
   });
 });
 
+describe("the parked draft carries no cost or margin data", () => {
+  const keys = (v: unknown, out: string[] = []): string[] => {
+    if (Array.isArray(v)) v.forEach((x) => keys(x, out));
+    else if (v && typeof v === "object")
+      for (const [k, x] of Object.entries(v)) {
+        out.push(k);
+        keys(x, out);
+      }
+    return out;
+  };
+
+  it("no key matching /cost|margin/i at any depth, even if the cart line carries one", () => {
+    const withCost = { ...CASE_LINE, unitCost: 19.25, averageCost: 19.25 } as any;
+    const payload = counterCartToDraftPayload([withCost, PLAIN_LINE], CUSTOMER);
+    expect(keys(payload).filter((k) => /cost|margin/i.test(k))).toEqual([]);
+    const dto = counterShipDraftInput([withCost], CUSTOMER);
+    expect(keys(dto).filter((k) => /cost|margin/i.test(k))).toEqual([]);
+  });
+});
+
 describe("counterShipDraftInput", () => {
   it("is an ORDER draft titled 'Order, <customer>' carrying the payload", () => {
     const dto = counterShipDraftInput([PLAIN_LINE], CUSTOMER);

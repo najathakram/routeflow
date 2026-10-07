@@ -24,7 +24,6 @@ export interface CounterShipLine {
   listPrice?: number;
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
-  unitCost?: number;
   category?: string;
 }
 
@@ -58,7 +57,6 @@ function toDraftLine(l: CounterShipLine): DraftLineItem {
     ...(l.unitsPerBox != null ? { unitsPerBox: l.unitsPerBox } : {}),
     ...(l.boxes != null ? { boxes: l.boxes } : {}),
     ...(l.pieces != null ? { pieces: l.pieces } : {}),
-    ...(l.unitCost != null ? { unitCost: l.unitCost } : {}),
     ...(l.category ? { category: l.category } : {}),
   };
 }
