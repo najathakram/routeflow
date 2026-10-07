@@ -9,6 +9,13 @@ import { fulfilPathOptions, type FulfilPath } from "@/lib/fulfil-path-options";
 type Writable = "ROUTE" | "SHIP";
 
 /** Order-detail "Fulfillment" summary row: ROUTE/SHIP picker; a PICKUP order lists "Pick up at store" as current. */
+/**
+ * The fulfillment-change refusal copy (the row's own update and the page's move-off-pickup confirm share
+ * it): a coded refusal is mapped first; an UNCODED one keeps today's server sentence (B991 / B987-E).
+ */
+export const fulfillPathErrorCopy = (err: any): string | undefined =>
+  codedToastCopy(err) ?? err?.response?.data?.message;
+
 export function OrderFulfilmentRow({
   orderId,
   fulfillPath,
@@ -52,7 +59,7 @@ export function OrderFulfilmentRow({
                   onError: (err: any) =>
                     toast({
                       title: "Could not update fulfillment",
-                      description: codedToastCopy(err) ?? err?.response?.data?.message,
+                      description: fulfillPathErrorCopy(err),
                       variant: "error",
                     }),
                 },

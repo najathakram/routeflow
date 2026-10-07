@@ -62,7 +62,7 @@ import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
-import { OrderFulfilmentRow } from "../_components/OrderFulfilmentRow";
+import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   OrderInlineReturnsSection,
@@ -1886,7 +1886,7 @@ export default function OrderDetailPage() {
         onError: (err: any) =>
           toast({
             title: "Could not update fulfillment",
-            description: codedToastCopy(err) ?? err?.response?.data?.message,
+            description: fulfillPathErrorCopy(err),
             variant: "error",
           }),
       },
