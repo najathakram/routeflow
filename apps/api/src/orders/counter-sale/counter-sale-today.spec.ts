@@ -137,7 +137,8 @@ describe("CounterSaleTodayService: the day window (tests 1-3)", () => {
     const nextDayStart = row("2026-11-02T05:00:00.000Z"); // 00:00 EST on the 2nd
     const beforeStart = row("2026-11-01T03:59:59.000Z"); // 23:59:59 EDT on the 31st
     const { call } = setup([firstOneThirty, secondOneThirty, nextDayStart, beforeStart]);
-    const res = await call({ day: "2026-11-01" }, NOW);
+    // "now" is the day AFTER the fall-back day: a day later than the tenant's today is refused.
+    const res = await call({ day: "2026-11-01" }, iso("2026-11-02T15:00:00.000Z"));
     expect(res.meta.windowStart).toBe("2026-11-01T04:00:00.000Z");
     expect(res.meta.windowEnd).toBe("2026-11-02T05:00:00.000Z");
     const hours = (Date.parse(res.meta.windowEnd) - Date.parse(res.meta.windowStart)) / 3_600_000;
