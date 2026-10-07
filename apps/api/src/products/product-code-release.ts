@@ -1,6 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { lockBarcodeCodes, lockProductRow, type CatalogTx } from "./product-catalog-sync";
+import {
+  barcodeEquivalents,
+  lockBarcodeCodes,
+  lockProductRow,
+  type CatalogTx,
+} from "./product-catalog-sync";
 
 /**
  * SA-603 / SA-603a (c): one-ACTIVE-holder-per-code. A deactivated product RELEASES its sku / barcode / unitSku
@@ -67,9 +72,11 @@ const CODE_SELECT = {
 } as const;
 
 /** The legacy namespaces (create/update pre-checks): sku vs sku|unitSku, barcode vs barcode|unitSku, unitSku vs all. */
-function collidingColumns(field: CodeField, value: string): Array<Record<string, string>> {
+function collidingColumns(field: CodeField, value: string): Array<Record<string, unknown>> {
   if (field === "sku") return [{ sku: value }, { unitSku: value }];
-  if (field === "barcode") return [{ barcode: value }, { unitSku: value }];
+  // B1214: a barcode collides with every equivalent spelling of the same label (UPC-A <-> EAN-13 ...).
+  if (field === "barcode")
+    return [{ barcode: { in: barcodeEquivalents(value) } }, { unitSku: value }];
   return [{ unitSku: value }, { sku: value }, { barcode: value }];
 }
 
@@ -156,7 +163,11 @@ export async function findCodeHolders(
   const holders = [...legacy];
   if (field === "barcode") {
     const rows: Array<{ productId: string }> = await tx.productBarcode.findMany({
-      where: { tenantId, code: value, ...(productId ? { productId: { not: productId } } : {}) },
+      where: {
+        tenantId,
+        code: { in: barcodeEquivalents(value) },
+        ...(productId ? { productId: { not: productId } } : {}),
+      },
       select: { productId: true },
     });
     const ids = [...new Set(rows.map((r) => r.productId))].filter(
@@ -334,7 +345,10 @@ export async function claimCodes(
     if (active) taken(c.field, c.value, active);
     for (const h of holders) {
       const entry = toRelease.get(h.id) ?? { holder: h, codes: [] };
-      entry.codes.push({ field: c.field, value: c.value });
+      // B1214: the holder may hold an EQUIVALENT spelling; release matches on the exact live value, so name them all.
+      for (const value of c.field === "barcode" ? barcodeEquivalents(c.value) : [c.value]) {
+        entry.codes.push({ field: c.field, value });
+      }
       toRelease.set(h.id, entry);
     }
   }
@@ -350,7 +364,7 @@ export async function claimCodes(
     // Re-checked under the row lock: a holder reactivated in the meantime is now ACTIVE -> 409.
     if (fresh?.isActive) taken(held[0].field, held[0].value, fresh);
     // eslint-disable-next-line no-await-in-loop
-    const released = (await releaseLive(tx, tenantId, fresh ?? holder, held)).fields;
+    const released = await releaseLive(tx, tenantId, fresh ?? holder, held);
     // eslint-disable-next-line no-await-in-loop
     await tx.auditLog.create({
       data: {
@@ -360,8 +374,12 @@ export async function claimCodes(
         entityType: "Product",
         entityId: holder.id,
         meta: {
-          fields: released,
-          codes: held.map((h) => h.value),
+          fields: released.fields,
+          // What the release actually freed (the holder's own spellings), not every spelling that was searched.
+          codes:
+            released.freed.length > 0
+              ? released.freed.map((f) => f.value)
+              : held.map((h) => h.value),
           claimedBy: productId,
           reason: "released on reuse",
         },
