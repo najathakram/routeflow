@@ -95,6 +95,8 @@ import {
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 import {
+  CREDITS_PENDING_COPY,
+  creditsPendingOrderId,
   idempotencyConflictOrderId,
   isUnknownOutcome,
   useCreateOrderSubmitKey,
@@ -1365,11 +1367,17 @@ export function CreateOrderModal({
           pendingAsDraftRef.current = false;
           returnSave.onSuccess();
           onClose();
+          // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+          if (created?.creditsPending && created?.id) {
+            toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+            onViewOrder?.(created.id);
+          }
         },
         onError: (err: any) => {
           // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
           // key-conflict code can fall through to the refused / re-mint branch.
-          const heldOrderId = idempotencyConflictOrderId(err);
+          const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+          const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
           submitKey.settle(
             heldOrderId
               ? "conflict"
@@ -1380,10 +1388,14 @@ export function CreateOrderModal({
                   : "refused",
           );
           if (heldOrderId) {
-            toast({
-              title: "Your earlier submit went through. Opening that order.",
-              variant: "success",
-            });
+            toast(
+              pendingOrderId
+                ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                : {
+                    title: "Your earlier submit went through. Opening that order.",
+                    variant: "success",
+                  },
+            );
             onClose();
             onViewOrder?.(heldOrderId);
             return;

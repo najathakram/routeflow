@@ -436,7 +436,7 @@ export const API_ERROR_CODES = {
   IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
   /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
-   * `orderId`. Keep the Idempotency-Key and resubmit: the replay re-runs the idempotent credit sync.
+   * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */
   ORDER_SAVED_CREDITS_PENDING: "ORDER_SAVED_CREDITS_PENDING",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",

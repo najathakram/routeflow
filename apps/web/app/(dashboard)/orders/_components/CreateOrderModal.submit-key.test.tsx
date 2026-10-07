@@ -369,20 +369,6 @@ describe("CreateOrderModal - the key survives refusals after an unknown outcome"
     expect(keyOf(1)).toBe(keyOf(0));
   });
 
-  it("B1201: a 503 ORDER_SAVED_CREDITS_PENDING (saved, credits pending) keeps the key for the resubmit", async () => {
-    post
-      .mockRejectedValueOnce({
-        response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "o1" } },
-      })
-      .mockResolvedValue({ data: { id: "o1" } });
-    await openWithLine();
-    fireEvent.click(createBtn());
-    await flush();
-    await retry();
-    expect(orderPosts()).toHaveLength(2);
-    expect(keyOf(1)).toBe(keyOf(0));
-  });
-
   it("closing the modal after an unknown outcome warns the order may have gone through", async () => {
     post.mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"));
     mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
@@ -437,6 +423,52 @@ describe("CreateOrderModal - the key already made an order (SA-715)", () => {
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-77"));
     expect(onClose).toHaveBeenCalled();
     expect(orderPosts()).toHaveLength(1); // no re-mint + resubmit
+  });
+});
+
+describe("CreateOrderModal - saved, credits not applied (B1201)", () => {
+  const COPY =
+    "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockCustomerPrices = [];
+  });
+  const fillAndCreate = async (onClose: jest.Mock, onViewOrder: jest.Mock) => {
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    renderWithProviders(<CreateOrderModal isOpen onClose={onClose} onViewOrder={onViewOrder} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    capturedOnScan!("111");
+    await screen.findByText("Widget p1");
+    fireEvent.click(createBtn());
+    await flush();
+  };
+
+  it("a 503 ORDER_SAVED_CREDITS_PENDING opens the saved order with the exact copy and never resubmits", async () => {
+    post.mockRejectedValue({
+      response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "ord-88" } },
+    });
+    const onClose = jest.fn();
+    const onViewOrder = jest.fn();
+    await fillAndCreate(onClose, onViewOrder);
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-88"));
+    expect(onClose).toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: COPY }));
+    expect(orderPosts()).toHaveLength(1);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/press create again/i);
+  });
+
+  it("a replay response carrying creditsPending (lost response) shows the same copy and opens the order", async () => {
+    post.mockResolvedValue({ data: { id: "ord-89", creditsPending: true } });
+    const onViewOrder = jest.fn();
+    await fillAndCreate(jest.fn(), onViewOrder);
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-89"));
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: COPY }));
   });
 });
 

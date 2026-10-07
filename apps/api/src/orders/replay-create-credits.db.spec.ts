@@ -1,4 +1,4 @@
-// B1201 - DB lane (NEED-DB: written, not run on the builder box). Mock InvoicesService/NotificationsService before they're imported — same ESM-traversal guards
+// B1201 (path B) - DB lane, real Postgres: a keyed replay NEVER writes credit intents. Mock InvoicesService/NotificationsService before they are imported - same ESM-traversal guards
 // the unit-test harness uses (`@react-pdf/renderer` / `expo-server-sdk`).
 jest.mock("../invoices/invoices.service", () => ({
   InvoicesService: jest.fn().mockImplementation(() => ({
@@ -243,48 +243,6 @@ describeDb(
       );
     const conflict = () => Object.assign(new Error("write conflict"), { code: "P2034" });
 
-    it("the credit tx exhausts once: 503 ORDER_SAVED_CREDITS_PENDING; the same-key resubmit applies the credit exactly once", async () => {
-      const c = await customer();
-      const note = await raw.creditNote.create({
-        data: {
-          tenantId,
-          customerId: c.id,
-          creditNoteNumber: `CN-${run}-${n}`,
-          amount: "50",
-          status: "ISSUED",
-        },
-      });
-      const key = `b1201-${run}-1`;
-      // retryCreditTx makes 3 attempts: fail all 3 to exhaust it, then the real sync runs.
-      const spy = jest.spyOn(credits, "syncOrderCreditSelections");
-      spy
-        .mockRejectedValueOnce(conflict())
-        .mockRejectedValueOnce(conflict())
-        .mockRejectedValueOnce(conflict());
-      const e: any = await errorOf(create(c.id, key, note.id));
-      spy.mockRestore();
-      expect(e?.getStatus?.()).toBe(503);
-      const saved = await raw.order.findFirstOrThrow({ where: { tenantId, customerId: c.id } });
-      expect(e.getResponse()).toMatchObject({
-        code: "ORDER_SAVED_CREDITS_PENDING",
-        orderId: saved.id,
-      });
-      expect(await raw.orderCreditNote.count({ where: { orderId: saved.id } })).toBe(0);
-
-      const again = (await create(c.id, key, note.id)) as any;
-      expect(again.id).toBe(saved.id);
-      const rows = await raw.orderCreditNote.findMany({ where: { orderId: saved.id } });
-      expect(rows).toHaveLength(1);
-      expect(Number(rows[0].amount)).toBe(20);
-
-      // a third press (idempotent): still exactly one intent; no invoice yet, so nothing is spent
-      await create(c.id, key, note.id);
-      expect(await raw.orderCreditNote.count({ where: { orderId: saved.id } })).toBe(1);
-      expect(await raw.order.count({ where: { tenantId, customerId: c.id } })).toBe(1);
-      const after = await raw.creditNote.findUniqueOrThrow({ where: { id: note.id } });
-      expect(Number(after.amountUsed)).toBe(0);
-    }, 60_000);
-
     async function noteFor(customerId: string) {
       return raw.creditNote.create({
         data: {
@@ -296,43 +254,107 @@ describeDb(
         },
       });
     }
-    const exhaustOnce = () => {
+    /** Exhaust retryCreditTx (3 attempts) once, so create() commits the order but 503s at its tail. */
+    const tail503 = async (customerId: string, key: string, creditNoteId: string) => {
       const spy = jest.spyOn(credits, "syncOrderCreditSelections");
       spy
         .mockRejectedValueOnce(conflict())
         .mockRejectedValueOnce(conflict())
         .mockRejectedValueOnce(conflict());
-      return spy;
+      const e: any = await errorOf(create(customerId, key, creditNoteId));
+      spy.mockRestore();
+      return e;
     };
-    const editRevision = (orderId: string) =>
-      raw.orderRevision.create({
-        data: { tenantId, orderId, revisionNumber: 1, source: "EDIT", snapshot: {} },
-      });
+    const intents = (orderId: string) => raw.orderCreditNote.count({ where: { orderId } });
 
-    it("B1201 ruling: an operator edited the order after the tail 503 - the replay does NOT apply the credit", async () => {
+    it("the tail exhausts once: 503 ORDER_SAVED_CREDITS_PENDING with the saved order id, never 'Nothing was saved'", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const e = await tail503(c.id, `b1201-${run}-1`, note.id);
+      expect(e?.getStatus?.()).toBe(503);
+      const saved = await raw.order.findFirstOrThrow({ where: { tenantId, customerId: c.id } });
+      expect(e.getResponse()).toMatchObject({
+        code: "ORDER_SAVED_CREDITS_PENDING",
+        orderId: saved.id,
+      });
+      expect(e.getResponse().message).not.toMatch(/nothing was saved/i);
+      expect(await intents(saved.id)).toBe(0);
+    }, 60_000);
+
+    it("a replay NEVER writes credit intents: it returns the saved order with creditsPending, however often it is pressed", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const key = `b1201-${run}-2`;
+      const e = await tail503(c.id, key, note.id);
+      const orderId = e.getResponse().orderId as string;
+      for (let press = 0; press < 2; press++) {
+        const again = (await create(c.id, key, note.id)) as any;
+        expect(again.id).toBe(orderId);
+        expect(again.creditsPending).toBe(true);
+      }
+      expect(await intents(orderId)).toBe(0);
+      expect(await raw.order.count({ where: { tenantId, customerId: c.id } })).toBe(1);
+      const after = await raw.creditNote.findUniqueOrThrow({ where: { id: note.id } });
+      expect(Number(after.amountUsed)).toBe(0);
+    }, 60_000);
+
+    it("after a REAL edit through updateOrderItems the replay still writes nothing", async () => {
       const c = await customer();
       const note = await noteFor(c.id);
       const key = `b1201-${run}-edit`;
-      const spy = exhaustOnce();
-      const e: any = await errorOf(create(c.id, key, note.id));
-      spy.mockRestore();
+      const e = await tail503(c.id, key, note.id);
       const orderId = e.getResponse().orderId as string;
-      await editRevision(orderId); // the operator edited it (and so owns its credit state)
-      const again = (await create(c.id, key, note.id)) as any;
-      expect(again.id).toBe(orderId);
-      expect(await raw.orderCreditNote.count({ where: { orderId } })).toBe(0);
+      const line = await raw.orderItem.findFirstOrThrow({ where: { orderId } });
+      await tenantCtx.run(tenantId, () =>
+        svc.updateOrderItems(
+          orderId,
+          { items: [{ id: line.id, qty: 3, overrideReason: "b1201 pin" }] } as never,
+          staff(),
+        ),
+      );
+      await errorOf(create(c.id, key, note.id)); // a changed cart under the key is a 409; never a write
+      expect(await intents(orderId)).toBe(0);
     }, 60_000);
 
-    it("B1201 ruling: an operator removed the credit after a successful create - a replay does NOT re-add it", async () => {
+    it("after a REAL cancel through changeStatus the replay writes no intents onto the cancelled order", async () => {
       const c = await customer();
       const note = await noteFor(c.id);
-      const key = `b1201-${run}-removed`;
-      const first = (await create(c.id, key, note.id)) as any;
-      expect(await raw.orderCreditNote.count({ where: { orderId: first.id } })).toBe(1);
-      await raw.orderCreditNote.deleteMany({ where: { orderId: first.id } }); // operator unticked it
-      await editRevision(first.id);
+      const key = `b1201-${run}-cancel`;
+      const e = await tail503(c.id, key, note.id);
+      const orderId = e.getResponse().orderId as string;
+      await tenantCtx.run(tenantId, () =>
+        svc.changeStatus(orderId, { status: "CANCELLED" } as never, staff()),
+      );
+      expect((await raw.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe(
+        "CANCELLED",
+      );
       await create(c.id, key, note.id);
-      expect(await raw.orderCreditNote.count({ where: { orderId: first.id } })).toBe(0);
+      expect(await intents(orderId)).toBe(0);
+    }, 60_000);
+
+    it("a selected note voided between the 503 and the replay: the replay returns the saved order, not a 4xx", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const key = `b1201-${run}-voided`;
+      const e = await tail503(c.id, key, note.id);
+      const orderId = e.getResponse().orderId as string;
+      await raw.creditNote.update({ where: { id: note.id }, data: { status: "VOID" } });
+      const again = (await create(c.id, key, note.id)) as any;
+      expect(again.id).toBe(orderId);
+      expect(await intents(orderId)).toBe(0);
+    }, 60_000);
+
+    it("a first press that succeeds applies its intent once; replays leave it at exactly one", async () => {
+      const c = await customer();
+      const note = await noteFor(c.id);
+      const key = `b1201-${run}-ok`;
+      const first = (await create(c.id, key, note.id)) as any;
+      const again = (await create(c.id, key, note.id)) as any;
+      expect(again.id).toBe(first.id);
+      expect(again.creditsPending).toBe(false);
+      const rows = await raw.orderCreditNote.findMany({ where: { orderId: first.id } });
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0].amount)).toBe(20);
     }, 60_000);
   },
 );

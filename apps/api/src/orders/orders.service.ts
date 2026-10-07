@@ -106,7 +106,7 @@ import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
 import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
-import { creditsUntouched, savedCreditsPending } from "./create-credit-tail";
+import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
@@ -1554,9 +1554,9 @@ export class OrdersService implements OnApplicationBootstrap {
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
         assertReplaySameCart(existing, dto);
-        await this.syncCreateCredits(existing.id, customerId, appliedCreditNotes, true); // B1201
         options.onReplay?.(existing);
-        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
 
@@ -2132,9 +2132,9 @@ export class OrdersService implements OnApplicationBootstrap {
             }
             if (existing) {
               assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
-              await this.syncCreateCredits(existing.id, customerId, appliedCreditNotes, true); // B1201
               options.onReplay?.(existing);
-              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
@@ -4384,8 +4384,8 @@ export class OrdersService implements OnApplicationBootstrap {
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
   }
 
-  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[], r = false) {
-    if (n === undefined || (r && !(await creditsUntouched(this.prisma, id)))) return;
+  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
+    if (n === undefined) return;
     await savedCreditsPending(id, () => this.syncAndSettleOrderCredits(id, cId, n));
   }
 
