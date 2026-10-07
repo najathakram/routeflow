@@ -32,6 +32,10 @@
 
 import { BadRequestException } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import type { ResolvedLineUnits } from "../products/line-units";
+import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
+import { norm } from "../orders/unit-label-norm";
+import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -42,6 +46,7 @@ import {
   splitMatchesQty,
   type CategoryTaxType,
 } from "@routeflow/pricing";
+import { assertInvoiceTotalsSane, storedInvoiceTotals } from "../common/money-invariants.util";
 import { foldCategoryTax } from "./manual-invoice-context";
 import { priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 
@@ -75,11 +80,15 @@ export interface LineMatch {
 const same = (a: unknown, b: unknown): boolean =>
   a == null || b == null ? a == null && b == null : Math.abs(Number(a) - Number(b)) < 1e-9;
 
-/** qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched". */
+/**
+ * qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched" — plus the unit
+ * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
+ */
 const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
-  same(item.qty, row.qty) &&
-  same(item.boxes, row.boxes) &&
-  same(item.pieces, row.pieces) &&
+  norm(item.unitLabel ?? "") === norm(row.unitLabel ?? "") &&
+  (requestsUnit(item)
+    ? same(item.qty, row.boxes)
+    : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
   same(item.taxRate ?? 0, row.taxRate ?? 0);
@@ -98,7 +107,10 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     if (!row) throw new BadRequestException("unknown line id");
     if (used.has(row.id)) throw new BadRequestException("duplicate line id");
     used.add(row.id);
-    const productChanged = (item.productId ?? null) !== (row.productId ?? null);
+    // A unit row re-sent as a pack line (Case -> Box) must not carry the old factor as its own pack.
+    const productChanged =
+      (item.productId ?? null) !== (row.productId ?? null) ||
+      (!requestsUnit(item) && norm(row.unitLabel ?? "") !== "");
     out[i] = { row, untouched: !productChanged && sameMoneyTuple(item, row), productChanged };
   });
   items.forEach((item, i) => {
@@ -142,6 +154,8 @@ interface PlanCtx {
   categoryMap: ReadonlyMap<string, any>;
   clampFreeUnits: (free: number | undefined, boxes: number | null, qty: number) => number;
   warn: (message: string) => void;
+  /** VU-4a: `resolveLineUnits` per item (index-aligned; undefined = no unit requested). The CALLER resolves. */
+  resolved?: ReadonlyArray<ResolvedLineUnits | undefined>;
 }
 
 const lineLabel = (item: EditPayloadLine) =>
@@ -260,6 +274,21 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       };
     }
     const product = item.productId ? ctx.productMap.get(item.productId) : undefined;
+    const unitRes = ctx.resolved?.[i];
+    if (product && unitRes && isUnitAware(unitRes)) {
+      // VU-4a (D3): the SAME builder create() uses for a unit line; a changed line writes its whole data.
+      const category = product.trackedCategoryId
+        ? ctx.categoryMap.get(product.trackedCategoryId)
+        : null;
+      const { tenantId: _t, ...data } = buildInvoiceUnitLine({
+        item: item as any,
+        product,
+        resolved: unitRes,
+        category,
+        tenantId: undefined,
+      });
+      return { rowId: row?.id ?? null, untouched: false, data };
+    }
     const livePack = product?.unitsPerBox ?? null;
     const qty = item.qty;
     let boxes: number | null = null;
@@ -311,7 +340,8 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
     const pieceQty = regulatedUnitBasis(
-      { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
+      // A label that resolved to the pack (the only way one reaches this branch) is a pack line.
+      { qty, boxes, pieces, unitLabel: null },
       basisPack,
     ).unitBasisQty;
     const categoryTaxAmount = category
@@ -339,6 +369,8 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         subtotal: lineSub,
         boxes,
         pieces,
+        // A unit row re-sent as a pack line clears its label (the key is absent on every other pack line).
+        ...(row?.unitLabel ? { unitLabel: null } : {}),
         // Never CLEAR a pack the line carried (B717); a stored line keeps its own, never a sibling's.
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
@@ -420,8 +452,14 @@ export function editInvoiceTotals(
 /** Reads the products (pack + regulated snapshot) and regulated-section tax config the edited lines reference. */
 export async function loadEditCatalog(
   db: any,
-  items: Array<{ productId?: string | null }>,
-): Promise<{ productMap: Map<string, any>; categoryMap: Map<string, any> }> {
+  items: Array<{ productId?: string | null; unitLabel?: string | null }>,
+  /** VU-4a: with the caller's prisma + entitlements, the unit ladders of the lines that ask for a unit. */
+  units?: Parameters<typeof prepareUnitLadders>[1],
+): Promise<{
+  productMap: Map<string, any>;
+  categoryMap: Map<string, any>;
+  unitsByProduct: Map<string, any[]>;
+}> {
   const productIds = [...new Set(items.filter((i) => i.productId).map((i) => i.productId!))];
   const products: any[] =
     productIds.length > 0
@@ -431,6 +469,7 @@ export async function loadEditCatalog(
             id: true,
             name: true,
             kind: true,
+            unit: true,
             unitsPerBox: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
@@ -444,5 +483,54 @@ export async function loadEditCatalog(
   return {
     productMap: new Map(products.map((p) => [p.id, p])),
     categoryMap: new Map(cats.map((c) => [c.id, c])),
+    // staff only, behind flag.units_v1; reads nothing when no line asks for a unit (create()'s own gate).
+    unitsByProduct: units ? await prepareUnitLadders(items, units) : new Map(),
   };
+}
+
+/** SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one. */
+export async function auditAttestedPacks(
+  tx: any,
+  tenantId: string | null | undefined,
+  invoiceId: string,
+  editLines: EditedLine[],
+): Promise<void> {
+  const attested = editLines.flatMap((l) =>
+    l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
+  );
+  if (attested.length === 0) return;
+  await tx.auditLog.create({
+    data: {
+      tenantId,
+      action: "INVOICE_LINE_PACK_ATTESTED",
+      entityType: "invoice",
+      entityId: invoiceId,
+      meta: { attested },
+    },
+  });
+}
+
+/**
+ * RF-012: a discount / shipping change alone recomputes the invoice total from its STORED lines (moved
+ * verbatim out of `update()`, which sits at its size ceiling). Throws when the result is worse than stored.
+ */
+export function recalcTotalsFromItems(
+  existingItems: Array<Record<string, any>>,
+  dto: { discount?: number; shippingFee?: number },
+  inv: { discount?: unknown; shippingFee?: unknown },
+): Record<string, unknown> {
+  const subtotal = roundMoney(
+    existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0),
+  );
+  const taxTotal = roundMoney(
+    existingItems.reduce((s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0),
+  );
+  const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
+  const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
+  const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+  assertInvoiceTotalsSane(
+    { discount: invDiscount, subtotal, total },
+    storedInvoiceTotals(inv as any),
+  ); // B1030 / SA-651
+  return { subtotal, taxAmount: taxTotal, discount: invDiscount, shippingFee: shipping, total };
 }
