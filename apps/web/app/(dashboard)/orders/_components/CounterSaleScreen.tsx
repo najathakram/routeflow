@@ -46,6 +46,7 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
+import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { useCounterSaleScan } from "./useCounterSaleScan";
@@ -478,98 +479,15 @@ export function CounterSaleScreen() {
   }
 
   if (receipt) {
-    const paymentNotRecorded = receipt.paymentRecorded === false;
-    // The server's tender method (echoed on the POST, derived from storage on a recovered sale): an ON_ACCOUNT sale is
-    // owed on account, which is not a failed payment.
-    const onAccount = receipt.method === "ON_ACCOUNT" && !paymentNotRecorded;
-    // Change: the server's when it has one; else, on a RECOVERED cash sale (the server stores no cash tendered), the
-    // attempt's tendered minus what was paid, labelled "as entered".
-    const serverChange = receipt.change != null && receipt.change > 0 ? receipt.change : null;
-    const derivedChange =
-      serverChange == null && enteredTender != null && !paymentNotRecorded
-        ? roundMoney(enteredTender - receipt.paid)
-        : null;
-    const shownChange =
-      serverChange ?? (derivedChange != null && derivedChange > 0 ? derivedChange : null);
-    const changeAsEntered = serverChange == null && shownChange != null;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
-        <h1 className="text-xl font-semibold">Receipt</h1>
-        <p className="text-sm text-navy/70">
-          Order {receipt.orderNumber} · Invoice {receipt.invoiceNumber}
-        </p>
-        <ul className="divide-y text-sm">
-          {lines.map((l) => (
-            <li key={l.tempId} className="flex justify-between py-1">
-              <span>
-                {l.name} {isBoxedLine(l) ? "× " : ""}
-                {lineQtyLabel(l)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        {onAccount ? (
-          <div
-            role="status"
-            className="space-y-1 rounded border border-navy/20 bg-navy/5 p-3 text-sm"
-            data-testid="counter-on-account"
-          >
-            <p className="font-semibold">On account</p>
-            <p>{money(receipt.balanceDue)} balance due on account</p>
-          </div>
-        ) : null}
-        {paymentNotRecorded ? (
-          <div
-            role="status"
-            className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
-            data-testid="counter-payment-not-recorded"
-          >
-            <p className="font-semibold">Sale recorded — payment not recorded</p>
-            <Link
-              href={`/invoices/${receipt.invoiceId}`}
-              className="inline-block text-brand-700 underline print:hidden"
-            >
-              Record payment
-            </Link>
-          </div>
-        ) : null}
-        <dl className="space-y-1 text-sm">
-          <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">
-            <dt>Total</dt>
-            <dd>{money(receipt.total)}</dd>
-          </div>
-          {paymentNotRecorded || onAccount ? null : (
-            <div className="flex justify-between">
-              <dt>Paid</dt>
-              <dd>{money(receipt.paid)}</dd>
-            </div>
-          )}
-          {paymentNotRecorded || onAccount || receipt.balanceDue > 0 ? (
-            <div className="flex justify-between">
-              <dt>Balance due</dt>
-              <dd>{money(receipt.balanceDue)}</dd>
-            </div>
-          ) : null}
-          {enteredTender != null && !paymentNotRecorded ? (
-            <div className="flex justify-between">
-              <dt>Tendered</dt>
-              <dd>
-                {money(enteredTender)} <span className="text-xs text-navy/60">as entered</span>
-              </dd>
-            </div>
-          ) : null}
-          {!paymentNotRecorded && shownChange != null && shownChange > 0 ? (
-            <div className="flex justify-between text-lg font-semibold">
-              <dt>Change</dt>
-              <dd>
-                {money(shownChange)}
-                {changeAsEntered ? (
-                  <span className="ml-1 text-xs font-normal text-navy/60">as entered</span>
-                ) : null}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
+        <CounterReceiptBody
+          receipt={receipt}
+          lines={lines}
+          enteredTender={enteredTender}
+          profile={settings}
+          fallbackMethod={method}
+        />
         <div className="flex flex-wrap gap-2 print:hidden">
           <Button onClick={() => window.print()}>Print</Button>
           <Button variant="secondary" onClick={resetSale}>
