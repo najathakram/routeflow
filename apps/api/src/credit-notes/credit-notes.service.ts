@@ -16,6 +16,7 @@ import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing"
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
+import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -660,13 +661,10 @@ export class CreditNotesService {
           // Anything else (a future unique on CreditNoteItem or the ledger) must
           // propagate untouched rather than reach the operator as a retry advice
           // that cannot help — and either way the real constraint gets logged.
-          const target = Array.isArray(err?.meta?.target)
-            ? err.meta.target.join(",")
-            : String(err?.meta?.target ?? "");
           this.logger.warn(
-            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${target}`,
+            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${describeUniqueViolation(err)}`,
           );
-          if (target === "" || target.includes("creditNoteNumber"))
+          if (uniqueViolationOn(err, "CreditNote_tenantId_creditNoteNumber_key", { exact: true }))
             throw new ConflictException("Credit note number conflict — please retry.");
           throw err;
         }

@@ -1,3 +1,4 @@
+import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { cartMismatchConflict, draftMismatchConflict } from "./merge-idempotency";
 import { replayLineKey } from "./unit-line-build";
 
@@ -32,20 +33,19 @@ export function assertReplaySameCart(
   if (incoming !== norm(live, true)) throw cartMismatchConflict(existing.id);
 }
 
+const IDEMPOTENCY_INDEX = "Order_tenantId_idempotencyKey_key";
+
 /**
- * Is this P2002 the (tenantId, idempotencyKey) unique index? Prisma reports the violated columns in
- * `meta.target` on the native engine, but with the pg DRIVER ADAPTER (what runs here) `meta.target` is
- * absent and the index name sits in `meta.driverAdapterError.cause.constraint.index` - matching only
- * `target` made the race loser's P2002 escape create() as a raw 500 instead of a replay.
+ * Is this P2002 the (tenantId, idempotencyKey) unique index? EXACT index name (adapter `constraint.index`,
+ * a native name string, or the quoted name in `originalMessage`) or the exact native column pair - never a
+ * substring: `OrderIdempotencyKey_*` (the merge-key table) also contains "idempotencykey". With the pg
+ * DRIVER ADAPTER (what runs here) `meta.target` is absent, so matching only it made the race loser's P2002
+ * escape create() as a raw 500 instead of a replay (B1186).
  */
 export function isIdempotencyKeyViolation(e: unknown): boolean {
-  const meta = (e as { meta?: Record<string, any> } | null)?.meta;
-  const hay = [
-    meta?.target,
-    meta?.driverAdapterError?.cause?.constraint?.index,
-    meta?.driverAdapterError?.cause?.originalMessage,
-  ]
-    .flat()
-    .map((x) => String(x ?? "").toLowerCase());
-  return hay.some((h) => h.includes("idempotencykey"));
+  const c = uniqueViolationConstraints(e);
+  if (!c) return false;
+  if (c.names.includes(IDEMPOTENCY_INDEX)) return true;
+  const f = new Set(c.fields);
+  return f.size === 2 && f.has("tenantId") && f.has("idempotencyKey");
 }
