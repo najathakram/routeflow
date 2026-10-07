@@ -2084,16 +2084,16 @@ export default function NewInvoicePage() {
                             avgCost,
                             unitsPerBox: upb,
                             // a new product: the unit state of the old one is gone; staff start on the default unit
-                            unit: product?.unit ?? "each",
+                            unit: (product as any)?.unit ?? "each",
                             listPrice: price ? parseFloat(price) : undefined,
                             priceType: specialPrice !== undefined ? "SPECIAL" : "STANDARD",
                             tierPrices: product
                               ? {
-                                  pricePerUnit: product.pricePerUnit,
-                                  priceTier2: product.priceTier2,
-                                  priceTier3: product.priceTier3,
-                                  priceTier4: product.priceTier4,
-                                  priceTier5: product.priceTier5,
+                                  pricePerUnit: (product as any).pricePerUnit,
+                                  priceTier2: (product as any).priceTier2,
+                                  priceTier3: (product as any).priceTier3,
+                                  priceTier4: (product as any).priceTier4,
+                                  priceTier5: (product as any).priceTier5,
                                 }
                               : undefined,
                             unitLabel: undefined,
