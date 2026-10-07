@@ -133,8 +133,23 @@ export class SubscriptionService {
         orderBy: { createdAt: "desc" },
         take: 500,
       }),
+      // SA M2 / B1187: the tenant's own copy carries ONLY tenant-facing columns - an explicit select, never
+      // the whole row (issuedById, paid*, send counters, void reason and period key are admin-only).
       this.prisma.rfInvoice.findMany({
         where: { tenantId },
+        select: {
+          number: true,
+          amount: true,
+          currency: true,
+          status: true,
+          cycle: true,
+          issuedAt: true,
+          dueDate: true,
+          periodStart: true,
+          periodEnd: true,
+          paidAt: true,
+          lines: true,
+        },
         orderBy: { issuedAt: "desc" },
         take: 500,
       }),

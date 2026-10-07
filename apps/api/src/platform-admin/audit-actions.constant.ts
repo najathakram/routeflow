@@ -64,6 +64,9 @@ export const AdminAuditAction = {
   // #2159 S2 — the intake link.
   ONBOARDING_LINK_ISSUED: "ONBOARDING_LINK_ISSUED",
   ONBOARDING_LINK_REVOKED: "ONBOARDING_LINK_REVOKED",
+  // Manual invoices due (PR1): the issuer's notices, written in the issuing transaction.
+  RF_INVOICE_ISSUED: "RF_INVOICE_ISSUED",
+  RF_INVOICE_NEEDS_PRICE: "RF_INVOICE_NEEDS_PRICE",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -106,6 +109,8 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ONBOARDING_STEP_WAIVED: "Onboarding step waived",
   ONBOARDING_LINK_ISSUED: "Onboarding intake link issued",
   ONBOARDING_LINK_REVOKED: "Onboarding intake link revoked",
+  RF_INVOICE_ISSUED: "RouteFlow invoice issued",
+  RF_INVOICE_NEEDS_PRICE: "RouteFlow invoice not issued (no price)",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

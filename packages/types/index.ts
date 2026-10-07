@@ -185,6 +185,7 @@ export * from "./api/policies";
 export * from "./api/inventory-settings";
 export * from "./api/preferences";
 export * from "./api/settings-registry";
+export * from "./api/rf-invoices";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 
