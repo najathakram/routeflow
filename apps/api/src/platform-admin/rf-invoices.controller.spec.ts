@@ -192,6 +192,8 @@ describe("request DTOs", () => {
     expect(await errors(RfInvoiceListQueryDto, { page: "0" })).toContain("page");
     expect(await errors(RfInvoiceListQueryDto, { q: "x".repeat(101) })).toContain("q");
     expect(await errors(RfInvoiceListQueryDto, { view: "everything" })).toContain("view");
+    expect(await errors(RfInvoiceListQueryDto, { tenantId: "not-a-uuid" })).toContain("tenantId");
+    expect(await errors(RfInvoiceListQueryDto, { tenantId: ID })).toEqual([]);
     expect(await errors(RfInvoiceListQueryDto, { sort: "colour" })).toContain("sort");
     expect(await errors(RfInvoiceListQueryDto, { dir: "sideways" })).toContain("dir");
   });

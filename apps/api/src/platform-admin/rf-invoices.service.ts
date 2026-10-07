@@ -157,7 +157,10 @@ export class RfInvoicesAdminService {
       }),
       this.prisma.rfInvoice.count({ where: where as any }),
     ]);
-    return { rows: rows.map((r: any) => this.toRow(r, now)), meta: { total, page, limit } };
+    return {
+      rows: rows.map((r: any) => this.toRow(r, now)),
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    };
   }
 
   async summary(now: Date = new Date()): Promise<RfInvoiceSummary> {
@@ -261,8 +264,11 @@ export class RfInvoicesAdminService {
     }
     const method = dto.method as ExternalPaymentMethod;
     const reference = dto.reference?.trim() || null;
-    // spaces and dashes are stripped first: "4111 1111 1111 1111" is a card number too
-    if (reference && CARD_LIKE.test(reference.replace(/[\s-]/g, ""))) {
+    const note = dto.note?.trim() || null;
+    // separators (spaces, dashes, dots, slashes) are stripped first: "4111.1111.1111.1111" is a card number too
+    const cardLike = (text: string | null) =>
+      !!text && CARD_LIKE.test(text.replace(/[\s.\-/]/g, ""));
+    if (cardLike(reference) || cardLike(note)) {
       throw new BadRequestException({
         code: API_ERROR_CODES.RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD,
         message: CARD_LIKE_MESSAGE,
@@ -275,7 +281,6 @@ export class RfInvoicesAdminService {
       });
     }
     const paidAt = this.resolvePaidAt(dto.paidAt, now);
-    const note = dto.note?.trim() || null;
 
     return this.transition(id, "OPEN", actorId, now, (row) => ({
       data: {
