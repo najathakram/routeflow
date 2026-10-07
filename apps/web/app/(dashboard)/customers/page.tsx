@@ -521,7 +521,7 @@ export default function CustomersPage() {
               <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 sm:flex text-[10px] font-semibold text-brand-600">
                 {initials}
               </span>
-              <span className="max-w-[5rem] text-navy/80 sm:max-w-none">{name}</span>
+              <span className="max-w-[4rem] text-navy/80 sm:max-w-none">{name}</span>
               {(row.original.regulatedCount ?? 0) > 0 && (
                 <span
                   title="Sells regulated items"
