@@ -73,7 +73,7 @@ function deepKeys(v: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
-function make() {
+function make(row: Record<string, unknown> = FULL_ROW) {
   const prisma: any = {
     billingEvent: { findMany: jest.fn(async () => [FULL_EVENT]) },
     user: {
@@ -83,7 +83,7 @@ function make() {
     },
     rfInvoice: {
       findMany: jest.fn(async ({ select }: any) =>
-        [FULL_ROW].map((row) =>
+        [row].map((row) =>
           select
             ? Object.fromEntries(
                 Object.keys(select)
@@ -119,5 +119,38 @@ describe("SubscriptionService.getExport (RfInvoice columns)", () => {
     const keys = deepKeys(out);
     for (const k of ADMIN_ONLY) expect(keys.has(k)).toBe(false);
     for (const k of BILLING_EXPORT_INVOICE_FIELDS) expect(keys.has(k)).toBe(true);
+  });
+
+  it("N2: each line is projected through a LINE-KEY allowlist - an internal key on a line never leaves", async () => {
+    const leaky = {
+      ...FULL_ROW,
+      lines: [
+        {
+          kind: "ADDON",
+          code: "SKU1",
+          label: "Add-on",
+          quantity: 2,
+          unitAmount: 10,
+          amount: 20,
+          internalNote: "negotiated",
+          costBasis: 3.5,
+          nested: { priceUnknown: true },
+        },
+      ],
+    };
+    const { svc } = make(leaky);
+    const out = await svc.getExport("tenant-acme");
+    const keys = deepKeys(out);
+    for (const k of ["internalNote", "costBasis", "nested", "priceUnknown"]) {
+      expect(keys.has(k)).toBe(false);
+    }
+    expect(out.invoices[0].lines).toEqual([
+      { kind: "ADDON", code: "SKU1", label: "Add-on", quantity: 2, unitAmount: 10, amount: 20 },
+    ]);
+  });
+
+  it("N2: a missing or non-array lines column exports as an empty list", async () => {
+    const { svc } = make({ ...FULL_ROW, lines: null });
+    expect((await svc.getExport("tenant-acme")).invoices[0].lines).toEqual([]);
   });
 });

@@ -94,6 +94,9 @@ import { EntitlementsModule } from "./entitlements.module";
     ConfigSnapshotFlagService,
     PlanTransitionConfigService,
     TenantConfigSnapshotAdminService,
+    // Manual invoices due PR2: the platform-admin queue issues an invoice on demand and prices tenants.
+    RfInvoiceBuilder,
+    RfInvoiceIssuerService,
   ],
 })
 export class BillingModule {}

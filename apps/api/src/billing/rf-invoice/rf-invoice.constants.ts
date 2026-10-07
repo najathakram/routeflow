@@ -5,6 +5,7 @@
  * pins the two equal.
  */
 import { AdminAuditAction } from "../../platform-admin/audit-actions.constant";
+import { assertApprovedTestTenantSlug } from "../../common/tenant-class.util";
 
 /** `RfInvoice.status` - a plain string column. The legacy FAILED is never written. */
 export const RF_INVOICE_STATUS_VALUES = ["OPEN", "PAID", "VOID"] as const;
@@ -59,3 +60,19 @@ export const RF_INVOICE_LEAD_DAYS = 7;
 
 /** A subscription whose period ended more than this many days ago is stale (rollCycles lagging): never invoiced. */
 export const RF_INVOICE_STALE_DAYS = 1;
+
+/**
+ * RF_INVOICE_TEST_TENANT_SLUGS: a comma list of approved TEST tenants (default none) that the platform-admin
+ * queue treats as eligible for the list, the summary and issue-now even though they are not PRODUCTION. The
+ * cron never reads it. Every slug must pass the test-tenant policy: a live tenant's slug throws.
+ */
+export function rfInvoiceTestTenantSlugs(
+  raw: string | undefined = process.env.RF_INVOICE_TEST_TENANT_SLUGS,
+): string[] {
+  const slugs = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const slug of slugs) assertApprovedTestTenantSlug(slug, "RF_INVOICE_TEST_TENANT_SLUGS");
+  return [...new Set(slugs)];
+}

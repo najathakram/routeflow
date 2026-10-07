@@ -27,6 +27,30 @@ export const BILLING_EXPORT_INVOICE_FIELDS = [
   "lines",
 ] as const;
 
+/**
+ * The keys of one entry of an invoice's `lines` that a tenant may see (RfInvoice.lines is Json, so a
+ * future internal key on a line must not ride along). Same six keys as RfInvoiceLine.
+ */
+export const BILLING_EXPORT_LINE_FIELDS = [
+  "kind",
+  "code",
+  "label",
+  "quantity",
+  "unitAmount",
+  "amount",
+] as const;
+
+export function projectInvoiceLinesForExport(lines: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(lines)) return [];
+  return lines
+    .filter((l): l is Record<string, unknown> => !!l && typeof l === "object" && !Array.isArray(l))
+    .map((l) => {
+      const out: Record<string, unknown> = {};
+      for (const k of BILLING_EXPORT_LINE_FIELDS) out[k] = l[k];
+      return out;
+    });
+}
+
 export type BillingExportActor = "you" | "RouteFlow support" | "system";
 
 /**
@@ -86,6 +110,7 @@ export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
 export function projectInvoiceForExport(row: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
   for (const k of BILLING_EXPORT_INVOICE_FIELDS) out[k] = row[k];
+  out.lines = projectInvoiceLinesForExport(row.lines);
   return out;
 }
 

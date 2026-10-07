@@ -68,6 +68,10 @@ export const AdminAuditAction = {
   RF_INVOICE_ISSUED: "RF_INVOICE_ISSUED",
   RF_INVOICE_NEEDS_PRICE: "RF_INVOICE_NEEDS_PRICE",
   RF_INVOICE_STALE_PERIOD: "RF_INVOICE_STALE_PERIOD",
+  // Manual invoices due (PR2): the office's actions on an invoice, written in the action's transaction.
+  RF_INVOICE_MARKED_PAID: "RF_INVOICE_MARKED_PAID",
+  RF_INVOICE_REOPENED: "RF_INVOICE_REOPENED",
+  RF_INVOICE_VOIDED: "RF_INVOICE_VOIDED",
   RF_INVOICE_IRREGULAR_PERIOD: "RF_INVOICE_IRREGULAR_PERIOD",
 } as const;
 
@@ -114,6 +118,9 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   RF_INVOICE_ISSUED: "RouteFlow invoice issued",
   RF_INVOICE_NEEDS_PRICE: "RouteFlow invoice not issued (no price)",
   RF_INVOICE_STALE_PERIOD: "RouteFlow invoice not issued (stale period)",
+  RF_INVOICE_MARKED_PAID: "RouteFlow invoice marked paid",
+  RF_INVOICE_REOPENED: "RouteFlow invoice reopened",
+  RF_INVOICE_VOIDED: "RouteFlow invoice voided",
   RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
 };
 

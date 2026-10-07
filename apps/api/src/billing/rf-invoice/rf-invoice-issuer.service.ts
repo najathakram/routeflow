@@ -22,6 +22,17 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The subscriptions the issuer considers (also read by the platform-admin summary, so the two never disagree). */
+export const RF_INVOICE_CANDIDATE_WHERE = {
+  externalPayment: true,
+  stripeSubId: null,
+  planKey: { not: null },
+  cancelAtPeriodEnd: false,
+  periodStart: { not: null },
+  periodEnd: { not: null },
+  tenant: { class: "PRODUCTION", deletedAt: null, status: "ACTIVE" },
+} as const;
+
 export interface IssueWindow {
   periodStart: Date;
   periodEnd: Date;
@@ -95,15 +106,7 @@ export class RfInvoiceIssuerService {
     if (mode === "off") return summary;
 
     const subs = (await this.prisma.tenantSubscription.findMany({
-      where: {
-        externalPayment: true,
-        stripeSubId: null,
-        planKey: { not: null },
-        cancelAtPeriodEnd: false,
-        periodStart: { not: null },
-        periodEnd: { not: null },
-        tenant: { class: "PRODUCTION", deletedAt: null, status: "ACTIVE" },
-      },
+      where: RF_INVOICE_CANDIDATE_WHERE,
       select: {
         tenantId: true,
         cycle: true,
@@ -154,8 +157,15 @@ export class RfInvoiceIssuerService {
     return summary;
   }
 
-  /** The periods due now for one subscription, earliest first. */
-  private async windowsFor(sub: IssuerSubscription, now: Date): Promise<IssueWindow[]> {
+  /**
+   * The periods due now for one subscription, earliest first. The cron uses the 7-day lead; the
+   * platform-admin issue-now passes `Infinity` to issue the next uninvoiced period immediately.
+   */
+  async windowsFor(
+    sub: IssuerSubscription,
+    now: Date,
+    leadDays: number = RF_INVOICE_LEAD_DAYS,
+  ): Promise<IssueWindow[]> {
     const start = sub.periodStart as Date;
     const end = sub.periodEnd as Date;
     const length = end.getTime() - start.getTime();
@@ -170,7 +180,7 @@ export class RfInvoiceIssuerService {
     if (prior) windows.push({ periodStart: start, periodEnd: end });
 
     // (a) the next period, once it starts within the lead time.
-    if (end.getTime() - now.getTime() <= RF_INVOICE_LEAD_DAYS * DAY_MS) {
+    if (end.getTime() - now.getTime() <= leadDays * DAY_MS) {
       windows.push({ periodStart: end, periodEnd: new Date(end.getTime() + length) });
     }
     return windows;
@@ -181,7 +191,12 @@ export class RfInvoiceIssuerService {
    * RF_INVOICE_ISSUED notice are one transaction. A race loser (the period's unique index) reports
    * "exists"; any other unique violation propagates.
    */
-  async issuePeriod(sub: IssuerSubscription, window: IssueWindow, now: Date): Promise<IssueResult> {
+  async issuePeriod(
+    sub: IssuerSubscription,
+    window: IssueWindow,
+    now: Date,
+    actorId: string | null = null,
+  ): Promise<IssueResult> {
     const periodKey = window.periodStart.toISOString();
     const already = await this.prisma.rfInvoice.findFirst({
       where: { tenantId: sub.tenantId, periodKey },
@@ -219,13 +234,14 @@ export class RfInvoiceIssuerService {
                 dueDate: window.periodStart,
                 currency: draft.currency,
                 lines: draft.lines as unknown as Prisma.InputJsonValue,
-                issuedById: null,
+                issuedById: actorId,
                 needsReview: draft.needsReview,
               },
               select: { id: true, number: true },
             });
             await writeAdminNotice(tx, {
               tenantId: sub.tenantId,
+              actorId,
               action: RF_INVOICE_AUDIT_ACTIONS.ISSUED,
               message: `RouteFlow invoice ${number} issued for ${draft.total.toFixed(2)} ${draft.currency}, due ${periodKey.slice(0, 10)}.`,
               meta: {
@@ -241,6 +257,9 @@ export class RfInvoiceIssuerService {
         ),
       );
       // Only after the row is committed: a failed create must never leave a notice saying "was issued".
+      // BEST EFFORT: raiseOnce swallows and logs its own failure, and nothing re-raises it - if this notice
+      // fails once, the invoice stays issued and the notice is never written again (the row's needsReview flag
+      // is the durable signal).
       if (draft.irregularPeriod) {
         await this.raiseOnce(
           sub.tenantId,
@@ -292,12 +311,12 @@ export class RfInvoiceIssuerService {
 }
 
 /** The subscription's period ended more than a day ago: rollCycles has not caught up. */
-function isStale(sub: IssuerSubscription, now: Date): boolean {
+export function isStale(sub: IssuerSubscription, now: Date): boolean {
   return (sub.periodEnd as Date).getTime() < now.getTime() - RF_INVOICE_STALE_DAYS * DAY_MS;
 }
 
 /** The cron query's predicate, applied again to each row read. */
-function isCandidate(sub: IssuerSubscription): boolean {
+export function isCandidate(sub: IssuerSubscription): boolean {
   return (
     sub.externalPayment === true &&
     !sub.stripeSubId &&
