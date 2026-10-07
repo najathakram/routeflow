@@ -68,6 +68,10 @@ const HIDE_BELOW_SM = { className: "hidden sm:table-cell" };
 // the scrollport's left edge at a viewport-bound width so its text and buttons stay on screen.
 const EMPTY_FIT = "sticky left-0 w-[calc(100vw-5rem)] max-w-full";
 const TIGHT_BELOW_SM = { className: "px-2 sm:px-4 whitespace-normal sm:whitespace-nowrap" };
+// Same, plus a smaller type size below sm for the two columns that must share a 390px row.
+const TIGHT_SMALL_BELOW_SM = {
+  className: "px-2 sm:px-4 whitespace-normal sm:whitespace-nowrap text-xs sm:text-sm",
+};
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -481,7 +485,7 @@ export default function CustomersPage() {
                       data-testid="name-secondary-phone"
                       href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="font-mono tabular-nums underline"
+                      className="font-mono text-[11px] tabular-nums underline"
                     >
                       {c.phone}
                     </a>
@@ -505,7 +509,7 @@ export default function CustomersPage() {
       },
       {
         accessorKey: "businessName",
-        meta: TIGHT_BELOW_SM,
+        meta: TIGHT_SMALL_BELOW_SM,
         header: () => <SortHeader col="businessName">Business Name</SortHeader>,
         cell: ({ row }) => {
           const name = row.original.businessName ?? "";
@@ -560,7 +564,7 @@ export default function CustomersPage() {
       },
       {
         id: "receivables",
-        meta: TIGHT_BELOW_SM,
+        meta: TIGHT_SMALL_BELOW_SM,
         header: () => <SortHeader col="receivables">Receivables</SortHeader>,
         cell: ({ row }) => {
           const val = row.original.receivables ?? 0;
