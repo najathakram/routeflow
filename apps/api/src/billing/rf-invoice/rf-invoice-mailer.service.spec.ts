@@ -419,23 +419,60 @@ describe("RfInvoiceMailerService", () => {
       expect(keys.sort()).toEqual(["RF-2026-0001:d0", "RF-2026-0002:d7", "RF-2026-0003:d14"]);
     });
 
-    it("nothing on a day that is not a stage, nothing before the due date, and NOTHING after d14", async () => {
+    it("nothing before the due date", async () => {
       const { svc, sendPlatform } = make({
-        invoices: [
-          inv("inv-1", { dueDate: dueIn(3) }),
-          inv("inv-2", { dueDate: dueIn(-1) }),
-          inv("inv-3", { dueDate: dueIn(-3) }),
-          inv("inv-4", { dueDate: dueIn(-10) }),
-          inv("inv-5", { dueDate: dueIn(-15) }),
-          inv("inv-6", { dueDate: dueIn(-30) }),
-          inv("inv-7", { dueDate: dueIn(-120) }),
-        ],
+        invoices: [inv("inv-1", { dueDate: dueIn(3) }), inv("inv-2", { dueDate: dueIn(1) })],
       });
       expect((await svc.runRemind(NOW)).sent).toBe(0);
       expect(sendPlatform).not.toHaveBeenCalled();
     });
 
-    it("only OPEN invoices within the 14-day window of PRODUCTION tenants are read", async () => {
+    it("catch-up: a cron that missed day 7 sends d7 on day 8, then nothing more that stage", async () => {
+      const { svc, prisma, sendPlatform } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(-8) })],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(1);
+      expect(
+        prisma.billingNotificationLog.create.mock.calls.map((c: any) => c[0].data.key),
+      ).toEqual(["RF-2026-0001:d7"]);
+      sendPlatform.mockClear();
+      expect((await svc.runRemind(NOW)).sent).toBe(0);
+      expect(sendPlatform).not.toHaveBeenCalled();
+    });
+
+    it("catch-up: between stages the HIGHEST reached stage is the only one tried (day 3 = d0, day 10 = d7)", async () => {
+      const { svc, prisma } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(-3) }), inv("inv-2", { dueDate: dueIn(-10) })],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(2);
+      expect(
+        prisma.billingNotificationLog.create.mock.calls.map((c: any) => c[0].data.key).sort(),
+      ).toEqual(["RF-2026-0001:d0", "RF-2026-0002:d7"]);
+    });
+
+    it("catch-up: a cron that missed days 7-15 sends ONLY d14 (no d7), and after d14 nothing more, ever", async () => {
+      const { svc, prisma, sendPlatform } = make({
+        invoices: [inv("inv-1", { dueDate: dueIn(-15) }), inv("inv-2", { dueDate: dueIn(-120) })],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(2);
+      const keys = prisma.billingNotificationLog.create.mock.calls.map((c: any) => c[0].data.key);
+      expect(keys.sort()).toEqual(["RF-2026-0001:d14", "RF-2026-0002:d14"]);
+      expect(keys.some((k: string) => k.endsWith(":d7") || k.endsWith(":d0"))).toBe(false);
+      sendPlatform.mockClear();
+      expect((await svc.runRemind(NOW)).sent).toBe(0);
+      expect((await svc.runRemind(new Date(NOW.getTime() + 30 * DAY))).sent).toBe(0);
+      expect(sendPlatform).not.toHaveBeenCalled();
+    });
+
+    it("never a lower stage after a higher one was sent (d14 sent, the claim table queried again on a later day)", async () => {
+      const { svc, sendPlatform } = make({ invoices: [inv("inv-1", { dueDate: dueIn(-14) })] });
+      expect((await svc.runRemind(NOW)).sent).toBe(1);
+      sendPlatform.mockClear();
+      expect((await svc.runRemind(new Date(NOW.getTime() + DAY))).sent).toBe(0);
+      expect(sendPlatform).not.toHaveBeenCalled();
+    });
+
+    it("only OPEN, already-due invoices of PRODUCTION tenants are read", async () => {
       const { svc, prisma } = make();
       await svc.runRemind(NOW);
       const where = prisma.rfInvoice.findMany.mock.calls[0][0].where;
@@ -443,8 +480,32 @@ describe("RfInvoiceMailerService", () => {
         status: "OPEN",
         tenant: { class: "PRODUCTION", deletedAt: null },
       });
-      expect(where.dueDate.gte).toEqual(dueIn(-14));
-      expect(where.dueDate.lt).toEqual(dueIn(1));
+      expect(where.dueDate).toEqual({ lt: dueIn(1) });
+    });
+
+    it("a tenant that now pays by card (stripeSubId set) gets no reminder and no issue email, but can be resent manually", async () => {
+      const card = { subscription: { stripeSubId: "sub_123" } };
+      const { svc, sendPlatform, prisma } = make({
+        invoices: [
+          inv("inv-1", { dueDate: dueIn(-7), tenant: card }),
+          inv("inv-2", { dueDate: dueIn(0), tenant: card }),
+        ],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(0);
+      await svc.sendAuto("inv-2", "issue", NOW);
+      expect(sendPlatform).not.toHaveBeenCalled();
+      expect(prisma.billingNotificationLog.create).not.toHaveBeenCalled();
+      expect((await svc.sendManual("inv-1", ADMIN, NOW)).outcome).toBe("sent");
+      expect(sendPlatform).toHaveBeenCalledTimes(2);
+    });
+
+    it("a manual-pay tenant (no stripeSubId) is still reminded", async () => {
+      const { svc } = make({
+        invoices: [
+          inv("inv-1", { dueDate: dueIn(-7), tenant: { subscription: { stripeSubId: null } } }),
+        ],
+      });
+      expect((await svc.runRemind(NOW)).sent).toBe(1);
     });
 
     it("an approved test tenant on RF_INVOICE_TEST_TENANT_SLUGS widens the scope", async () => {
