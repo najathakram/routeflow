@@ -1,8 +1,15 @@
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, CREDITS_PENDING_COPY } from "@routeflow/types";
 
-/** B1205: same fixed sentence as web's CREDITS_PENDING_COPY. The server's own text is never shown. */
-export const CREDITS_PENDING_COPY =
-  "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+/** B1205: the fixed sentence lives in @routeflow/types (shared with web); re-exported here. */
+export { CREDITS_PENDING_COPY };
+
+/**
+ * B1205: where a saved order is opened (credits-pending and the idempotency-held order). Drivers have no operator order route - they go back to
+ * the stop (the screen's own back), exactly like every other wind-down in their flow.
+ */
+export function savedOrderDestination(role?: string | null): "order" | "stop" {
+  return role === "DRIVER" ? "stop" : "order";
+}
 
 export interface SavedCreditsPending {
   kind: "saved-credits-pending";

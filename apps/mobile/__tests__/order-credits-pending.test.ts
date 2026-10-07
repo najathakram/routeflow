@@ -61,3 +61,26 @@ describe("copy", () => {
     );
   });
 });
+
+describe("savedOrderDestination (driver contexts)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { savedOrderDestination } = require("../lib/order-credits-pending");
+  it("a driver returns to the stop; staff open the saved order", () => {
+    expect(savedOrderDestination("DRIVER")).toBe("stop");
+    expect(savedOrderDestination("OPERATOR")).toBe("order");
+    expect(savedOrderDestination(undefined)).toBe("order");
+  });
+
+  it("NewOrderScreen routes BOTH credits-pending branches through it (no bare operator replace)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs");
+    const src: string = fs.readFileSync(
+      require("path").join(__dirname, "../components/NewOrderScreen.tsx"),
+      "utf8",
+    );
+    expect(src.match(/savedOrderDestination\(userRole\) === "stop"/g)).toHaveLength(3);
+    expect(src).not.toMatch(
+      /^\s*router\.replace\(`\/\(operator\)\/orders\/\$\{(hint|pending)\.orderId\}`/m,
+    );
+  });
+});

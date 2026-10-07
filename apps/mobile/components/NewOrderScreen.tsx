@@ -146,7 +146,11 @@ import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
-import { creditsPendingFromError, creditsPendingFromOrder } from "../lib/order-credits-pending";
+import {
+  savedOrderDestination,
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+} from "../lib/order-credits-pending";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -1855,7 +1859,9 @@ function ProductPickView({
           const hint = creditsPendingFromOrder(order);
           if (hint) {
             showToast(hint.message);
-            router.replace(`/(operator)/orders/${hint.orderId}` as any);
+            // Drivers have no operator order route: back to the stop.
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${hint.orderId}` as any);
             return;
           }
           onSaved(order.orderNumber);
@@ -1893,7 +1899,8 @@ function ProductPickView({
             clearStopCartSnapshot();
             await finalizeBoundDraft();
             showToast(pending.message);
-            router.replace(`/(operator)/orders/${pending.orderId}` as any);
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${pending.orderId}` as any);
             return;
           }
           // Release the latch on EVERY failure branch below — each of them
@@ -1960,7 +1967,9 @@ function ProductPickView({
                     // the bound draft before navigating away.
                     resetOrderSubmitKey(customerId);
                     void finalizeBoundDraft();
-                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                    // Drivers have no operator order route: back to the stop.
+                    if (savedOrderDestination(userRole) === "stop") onBack();
+                    else router.replace(`/(operator)/orders/${heldOrderId}` as any);
                   },
                 },
               ],
