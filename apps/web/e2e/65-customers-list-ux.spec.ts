@@ -78,7 +78,7 @@ test.describe("customers list — 390px", () => {
     await expect(line).toBeVisible();
     await expect(page.getByTestId("name-secondary-phone").first()).toHaveAttribute(
       "href",
-      "tel:555-0142",
+      "tel:5550142",
     );
     await expect(page.getByTestId("name-secondary-phone").first()).toBeInViewport();
     await expect(page.getByTestId("name-secondary-tag").first()).toHaveText("VIP");
@@ -117,6 +117,13 @@ test.describe("customers list — 390px", () => {
     const header = page.getByRole("columnheader", { name: /receivables/i });
     const box = (await header.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(390);
+    // Truly visible: inside the table's own scroll container too, not just the viewport.
+    const scrollerRight = await header.evaluate((el) => {
+      let n: HTMLElement | null = el as HTMLElement;
+      while (n && !/auto|scroll/.test(getComputedStyle(n).overflowX)) n = n.parentElement;
+      return n ? n.getBoundingClientRect().right : window.innerWidth;
+    });
+    expect(box.x + box.width).toBeLessThanOrEqual(scrollerRight + 1);
     await expect(page.getByTestId("receivables-cell").first()).toBeInViewport();
     const chip = page.getByTestId("name-secondary-tag").first();
     const cb = (await chip.boundingBox())!;
