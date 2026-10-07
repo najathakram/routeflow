@@ -20,6 +20,7 @@ import { isLiveOnline } from "../lib/live-online";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
+import { isStaffRole } from "../lib/default-unit-line";
 
 /** B923: the legacy-replay count is logged once per app session. */
 let legacyReplayLogged = false;
@@ -175,7 +176,7 @@ export function useNetworkSync() {
       // for staff, offer to open the saved order. Drivers have no operator order route.
       if (result.creditsPending.length > 0) {
         const first = describeCreditsPendingDrain(result.creditsPending);
-        const staff = useAuthStore.getState().user?.role !== "DRIVER";
+        const staff = isStaffRole(useAuthStore.getState().user?.role);
         if (staff) {
           chooseAction(first.title, first.message, [
             { label: "Dismiss", style: "cancel" },

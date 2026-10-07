@@ -84,3 +84,15 @@ describe("savedOrderDestination (driver contexts)", () => {
     );
   });
 });
+
+describe("post-drain credits-pending alert role gate (#3287 nit)", () => {
+  it("offers 'Open order' by isStaffRole, not by 'not a driver'", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(path.join(__dirname, "../hooks/useNetworkSync.ts"), "utf8");
+    expect(src).toMatch(/isStaffRole\(useAuthStore\.getState\(\)\.user\?\.role\)/);
+    expect(src).not.toMatch(/role !== "DRIVER"/);
+  });
+});
