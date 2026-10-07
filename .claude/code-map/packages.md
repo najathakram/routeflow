@@ -511,3 +511,7 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - `api/error-codes.ts` (#3250, #3239) — batch-ship and pickup-complete codes added (API literals pinned by the parity spec, L-261).
 - `api/orders.ts` (#3250) — batch-ship and packing-slip request and result types.
 - `api/buyer.ts` (#3215) — buyer response shapes narrowed to the customer-facing fields.
+
+## Landed 2026-10-07 (W17)
+
+- `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master b22689aa8`).
