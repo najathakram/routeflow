@@ -55,6 +55,36 @@ function callSites(name: string): string[] {
   return [...new Set(out)].sort();
 }
 
+/**
+ * Every call of `name(` (definitions excluded) with the text of its enclosing method up to the
+ * call (`prefix`), so a guard can assert what that method locked BEFORE it.
+ */
+function callPrefixes(name: string): Array<{ site: string; prefix: string; line: number }> {
+  const out: Array<{ site: string; prefix: string; line: number }> = [];
+  for (const file of walk(SRC)) {
+    const src = strip(fs.readFileSync(file, "utf8"));
+    const call = new RegExp(`\\b${name}\\(`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = call.exec(src))) {
+      if (/(async |function )$/.test(src.slice(Math.max(0, m.index - 12), m.index))) continue;
+      let start = 0;
+      let enclosing = "?";
+      HEAD.lastIndex = 0;
+      let h: RegExpExecArray | null;
+      while ((h = HEAD.exec(src)) && h.index < m.index) {
+        start = h.index;
+        enclosing = h[1] ?? h[2];
+      }
+      out.push({
+        site: `${path.relative(SRC, file).replace(/\\/g, "/")}#${enclosing}`,
+        prefix: src.slice(start, m.index),
+        line: src.slice(0, m.index).split("\n").length,
+      });
+    }
+  }
+  return out;
+}
+
 /** Every settleOrderCreditsInTx caller → the first lock it holds on the Order before it runs. */
 const SETTLE_CALLERS: Record<string, string> = {
   "invoices/invoices.service.ts#createSplitInvoices":
@@ -152,5 +182,49 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
     }
     expect(claims).toBeGreaterThanOrEqual(2); // completeStop + completeWithPayment (the scan found them)
     expect(offenders).toEqual([]);
+  });
+
+  it("SA-706f: a run's terminal move locks the run's Orders BEFORE its stop rows (Orders -> RouteRunStop -> RouteRun)", () => {
+    const sites = callPrefixes("lockRunStopsForTerminalStatus");
+    expect(sites.map((s) => s.site)).toEqual(["routes/routes.service.ts#updateRunStatus"]);
+    for (const s of sites) expect(s.prefix).toContain("lockRunOrdersForTerminalStatus(");
+  });
+
+  it("SA-706f: every other transaction that takes a RouteRunStop lock and writes Orders locks those Orders first", () => {
+    // `lockRowsNoWait(tx, "RouteRunStop", ...)`: today only the at-stop change merge, which holds the
+    // Order FOR UPDATE (raw or lockOrderRow(s)) before its NOWAIT stop lock.
+    const sites = callPrefixes("lockRowsNoWait").filter((s) => {
+      const text = fs.readFileSync(path.join(SRC, s.site.split("#")[0]), "utf8");
+      return text.split("\n")[s.line - 1]?.includes('"RouteRunStop"');
+    });
+    expect(sites.map((s) => s.site)).toEqual([
+      "orders/orders.service.ts#approveChangeRequestAtStop",
+    ]);
+    for (const s of sites)
+      expect(s.prefix).toMatch(/FROM "Order" WHERE id = [^`]*FOR UPDATE|lockOrderRows?\(/);
+  });
+
+  it("SA-706f: completeStop and completeWithPayment re-run a conflict victim, each attempt starting clean", () => {
+    const src = strip(fs.readFileSync(path.join(SRC, "routes/routes.service.ts"), "utf8"));
+    for (const [label, reset] of [
+      ["routes.completeStop", "autoCompleted = false;"],
+      ["routes.completeWithPayment", "[autoCompleted, paymentIds, excess, advancePaymentId] ="],
+    ] as const) {
+      const at = src.indexOf(`retryOnTxConflict("${label}"`);
+      expect(at).toBeGreaterThan(-1);
+      // the attempt resets what the previous attempt may have set, before its first lock
+      const body = src.slice(at, at + 600);
+      expect(body).toContain(reset);
+      expect(body.indexOf(reset)).toBeLessThan(body.indexOf("lockStopOrdersAndFit("));
+    }
+  });
+
+  it("SA-706f: run-stop-reorder locks RouteRunStop rows and writes no Order rows (so it cannot invert the order)", () => {
+    const file = strip(fs.readFileSync(path.join(SRC, "routes/run-stop-reorder.ts"), "utf8"));
+    expect(file).toContain('FROM "RouteRunStop"'); // the pin is still about a stop locker
+    expect(file).not.toMatch(
+      /\.order\.(update|updateMany|create|createMany|delete|deleteMany|upsert)\b/,
+    );
+    expect(file).not.toMatch(/(UPDATE|DELETE FROM|INSERT INTO)\s+"Order"/i);
   });
 });

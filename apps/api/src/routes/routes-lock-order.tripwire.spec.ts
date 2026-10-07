@@ -1,10 +1,11 @@
 /**
- * #2631 / SA-550 / 550a — source tripwire for the routes lock order (the billing
- * tenant-lock-order.tripwire's style): the STOP row is the serialization point between a run's
- * terminal transition and a stop completion, in the house order STOP rows → RouteRun.
+ * #2631 / SA-550 / 550a / SA-706f — source tripwire for the routes lock order (the billing
+ * tenant-lock-order.tripwire's style): the house order is Orders → STOP rows → RouteRun; the STOP
+ * row is the serialization point between a run's terminal transition and a stop completion.
  *
- *   (i)   updateRunStatus's terminal-status transaction takes lockRunStopsForTerminalStatus as its
- *         FIRST statement — before any routeRun / order / changeRequest write;
+ *   (i)   updateRunStatus's terminal-status transaction takes lockRunOrdersForTerminalStatus as its
+ *         FIRST statement and lockRunStopsForTerminalStatus as its SECOND — before any routeRun /
+ *         order / changeRequest write;
  *   (ii)  completeStop and completeWithPayment touch NO RouteRun (read or write) inside their
  *         transaction before claimStopCompletion, and re-check the run with assertRunStillInProgress
  *         right after it, before any order write;
@@ -52,12 +53,18 @@ const at = (hay: string, needle: RegExp) => {
   return m ? m.index : -1;
 };
 
-describe("routes lock order: STOP rows → RouteRun (#2631, SA-550)", () => {
-  it("(i) updateRunStatus: the terminal tx's FIRST statement is lockRunStopsForTerminalStatus", () => {
+describe("routes lock order: Orders → STOP rows → RouteRun (#2631, SA-550, SA-706f)", () => {
+  it("(i) updateRunStatus: the terminal tx locks the run's Orders FIRST, then its stop rows, before any write", () => {
     const cb = firstTxCallback(methodBody("updateRunStatus"));
     const firstStatement = cb.slice(1).trim();
-    expect(firstStatement.startsWith("await lockRunStopsForTerminalStatus(tx, id)")).toBe(true);
+    expect(
+      firstStatement.startsWith(
+        "const lockedOrderIds = await lockRunOrdersForTerminalStatus(tx, id)",
+      ),
+    ).toBe(true);
+    const orders = at(cb, /lockRunOrdersForTerminalStatus\(/);
     const lock = at(cb, /lockRunStopsForTerminalStatus\(/);
+    expect(lock).toBeGreaterThan(orders);
     for (const write of [/tx\.routeRun\.update\(/, /releaseUndeliveredOrders\(/, /tx\.order\./]) {
       const w = at(cb, write);
       if (w >= 0) expect(lock).toBeLessThan(w);
@@ -94,10 +101,10 @@ describe("routes lock order: STOP rows → RouteRun (#2631, SA-550)", () => {
     );
   });
 
-  it("(iv) updateRunStatus's terminal tx runs under retryOnTxConflict (its stop-first lock inverts reorder / optimize)", () => {
+  it("(iv) updateRunStatus's terminal tx runs under retryOnTxConflict (its stop locks invert reorder / optimize)", () => {
     const body = methodBody("updateRunStatus");
     expect(body).toMatch(
-      /retryOnTxConflict\("routes\.updateRunStatus", \(\) =>\s*this\.prisma\.tenantTransaction\(async \(tx\) => \{\s*await lockRunStopsForTerminalStatus\(tx, id\)/,
+      /retryOnTxConflict\("routes\.updateRunStatus", \(\) =>\s*this\.prisma\.tenantTransaction\(async \(tx\) => \{\s*const lockedOrderIds = await lockRunOrdersForTerminalStatus\(tx, id\)/,
     );
   });
 

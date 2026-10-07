@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
   deliveredSoFarForLine,
   fetchEvidenceByLine,
@@ -99,11 +100,36 @@ export async function assertRunStillInProgress(tx: any, runId: string): Promise<
 }
 
 /**
- * #2631 / SA-550: a run's move to COMPLETED / CANCELLED takes the house order STOP rows → RouteRun:
- * its CURRENT stop rows FOR UPDATE (by id, a stable order) BEFORE the run row or any order write —
- * so a stop completion in flight is waited for, never overtaken, and the old run→order vs
- * stop→order→run deadlock with completeStop / completeWithPayment is gone. A run with no stop rows
- * locks the run row directly.
+ * SA-706f: the house order is Orders -> STOP rows -> RouteRun, on every path. A run's terminal move
+ * locks every Order `releaseUndeliveredOrders` may write (attached to the run OR to one of its
+ * stops), FOR UPDATE by id, BEFORE the stop rows: completeStop / completeWithPayment lock a stop's
+ * Orders first, so Stop -> Order here was a 40P01 with the driver as the victim. Returns the locked
+ * ids; the release writes ONLY inside that set (an order attached later waits for the next pass).
+ */
+export async function lockRunOrdersForTerminalStatus(tx: any, runId: string): Promise<string[]> {
+  if (!runId) throw new Error("SA-706f: run id missing for the terminal-status order lock");
+  const rows: Array<{ id: string }> = await tx.$queryRaw`
+    SELECT id FROM "Order" WHERE "routeRunId" = ${runId}
+      OR "routeRunStopId" IN (SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ${runId})
+    ORDER BY id FOR UPDATE`;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * A completion's auto-complete release (RF-016): the Orders attached to the run's OTHER stops,
+ * FOR UPDATE by id, so `releaseUndeliveredOrders` writes only rows it holds (SA-706f).
+ */
+export async function lockStopsOrdersForRelease(tx: any, stopIds: string[]): Promise<string[]> {
+  if (stopIds.length === 0) return [];
+  const rows: Array<{ id: string }> = await tx.$queryRaw`
+    SELECT id FROM "Order" WHERE "routeRunStopId" IN (${Prisma.join(stopIds)}) ORDER BY id FOR UPDATE`;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The same terminal move's second step (after the Orders, SA-706f): the run's CURRENT stop rows
+ * FOR UPDATE by id BEFORE the run row, so a stop completion in flight is waited for, never
+ * overtaken (#2631 / SA-550). A run with no stop rows locks the run row directly.
  */
 export async function lockRunStopsForTerminalStatus(tx: any, runId: string): Promise<void> {
   // SA-511c: an undefined id would lock nothing and silently skip the serialization.
