@@ -55,6 +55,8 @@ import {
 } from "@/lib/counter-sale";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { CounterLineRow } from "./CounterLineRow";
+import { isBoxedLine, lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 
 interface PickedCustomer {
@@ -67,78 +69,7 @@ interface PickedCustomer {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-/** A pack of 1 (or no pack) has no box/piece split: it reads in pieces. Only unitsPerBox > 1 is a boxed line. */
-const isBoxedLine = (l: SaleLine) => (l.unitsPerBox ?? 0) > 1;
-
-/** ONE quantity label for the cart and the receipt: whole boxes, then loose pieces; a plain line reads "× qty". */
-export const lineQtyLabel = (l: SaleLine): string => {
-  if (!isBoxedLine(l)) return `× ${l.qty}`;
-  // Always the normalized split (pieces < pack), so a stored 0 boxes + 30 pcs on a 24-pack still reads "1 box + 6 pcs".
-  const n = normalizeBoxesPieces({
-    boxes: l.boxes,
-    pieces: l.pieces,
-    qty: l.qty,
-    unitsPerBox: l.unitsPerBox,
-  });
-  const boxes = n.boxes ?? 0;
-  return `${boxes} box${boxes === 1 ? "" : "es"}${n.pieces ? ` + ${n.pieces} pcs` : ""}`;
-};
-
-/**
- * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product
- * (unitsPerBox > 1) sends `{boxes, pieces, qty}` with `qty` the integer piece count; anything else (no pack, or a pack of 1,
- * which has no box/piece split) sends `qty` alone. Boxes without a qty is what the server reads as 0.
- */
-export const toSaleItem = (l: SaleLine): CounterSaleItem => {
-  const n = normalizeBoxesPieces({
-    boxes: l.boxes,
-    pieces: l.pieces,
-    qty: l.qty,
-    unitsPerBox: l.unitsPerBox,
-  });
-  return n.boxes === null || n.pieces === null
-    ? { productId: l.productId, qty: n.qty }
-    : { productId: l.productId, boxes: n.boxes, pieces: n.pieces, qty: n.qty };
-};
-
-const STEP_BTN = "rounded border px-2 py-0.5 text-xs disabled:opacity-40";
-
-/** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
-function LineStepper({
-  line,
-  locked,
-  onStep,
-}: {
-  line: SaleLine;
-  locked: boolean;
-  onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
-}) {
-  const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
-    <button
-      type="button"
-      className={STEP_BTN}
-      aria-label={label}
-      disabled={locked || stepLine(line, unit, dir) === line}
-      onClick={() => onStep(line.tempId, unit, dir)}
-    >
-      {text}
-    </button>
-  );
-  return isBoxedLine(line) ? (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
-      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
-      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
-      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
-      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
-    </span>
-  ) : (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
-      {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
-      {btn(`Add one ${line.name}`, "+", "piece", 1)}
-    </span>
-  );
-}
-
+export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 export function CounterSaleScreen() {
   const router = useRouter();
   const gate = useCounterSaleGate();
@@ -788,23 +719,13 @@ export function CounterSaleScreen() {
       <ul className="divide-y rounded border" aria-label="Items">
         {lines.length === 0 ? <li className="p-3 text-sm text-navy/60">No items yet.</li> : null}
         {lines.map((l) => (
-          <li key={l.tempId} className="flex items-center justify-between gap-2 p-3 text-sm">
-            <span>
-              {l.name} · {lineQtyLabel(l)}
-            </span>
-            <span className="flex items-center gap-3">
-              <LineStepper line={l} locked={locked} onStep={stepItem} />
-              <span>{money(cartTotals([l], 0).subtotal)}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${l.name}`}
-                disabled={locked}
-                onClick={() => removeLine(l.tempId)}
-              >
-                ×
-              </button>
-            </span>
-          </li>
+          <CounterLineRow
+            key={l.tempId}
+            line={l}
+            locked={locked}
+            onStep={stepItem}
+            onRemove={removeLine}
+          />
         ))}
       </ul>
 
