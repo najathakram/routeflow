@@ -1,4 +1,4 @@
-import { assertNotWalkIn, excludeWalkIn } from "./walk-in-protected";
+import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
@@ -810,6 +810,7 @@ export class CustomersService {
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
     assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
     assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
     assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only

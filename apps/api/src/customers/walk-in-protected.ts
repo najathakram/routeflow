@@ -27,3 +27,17 @@ export function excludeWalkIn<T extends { AND?: unknown }>(where: T): T {
   where.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
   return where;
 }
+
+/**
+ * The walk-in customer's sign-in email is fixed: update() refuses a CHANGED `email` (the only login-related
+ * field UpdateCustomerDto carries) before any write. An unchanged value resent by the edit form passes.
+ * Other fields stay editable.
+ */
+export function assertWalkInLoginUntouched(
+  existing: { isWalkIn?: boolean | null; email?: string | null },
+  dto: { email?: string | null },
+): void {
+  if (existing.isWalkIn !== true || dto.email === undefined) return;
+  const norm = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
+  if (norm(dto.email) !== norm(existing.email)) assertNotWalkIn(existing);
+}

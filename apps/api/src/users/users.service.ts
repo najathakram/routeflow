@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { assertNotWalkIn } from "../customers/walk-in-protected";
 import { ConfigService } from "@nestjs/config";
 import { User, UserRole } from "@prisma/client";
 import * as crypto from "crypto";
@@ -189,6 +190,7 @@ export class UsersService {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
     this.assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
     return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { status: dto.status },
@@ -369,6 +371,14 @@ export class UsersService {
     }
   }
 
+  /** The walk-in customer's login account stays as it is: refuse before any write (WALK_IN_PROTECTED). */
+  private async assertNotWalkInAccount(userId: string) {
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { userId }, select: { id: true, isWalkIn: true } });
+    assertNotWalkIn(customer);
+  }
+
   async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
@@ -384,6 +394,7 @@ export class UsersService {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
     this.assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     await this.prisma.forTenant().user.update({
