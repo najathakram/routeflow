@@ -126,3 +126,41 @@ export function editMarkers(args: {
   }
   return next;
 }
+
+/**
+ * CARRY through a recreate-mode fold (SA-716 M2: the staff create auto-merge replaces every line, so the
+ * old rows - and their markers - are gone). `carried` is the held markers of one product + pack group,
+ * captured BEFORE the delete. They are assigned to the first recreated lines by position, each clamped to
+ * its own pieces; then ONLY the settle's increase delta (`backorder`, from `backorderPiecesForEditDelta`)
+ * is added, from the last position backwards, into whatever room is left. Returns every line's value.
+ */
+export function carriedMarkers(args: {
+  carried: number;
+  lines: Array<{ id: string; position: number | null; final: number }>;
+  backorder: number;
+}): Map<string, number> {
+  const out = new Map<string, number>();
+  const ordered = byPosition(args.lines);
+  let left = Math.max(0, args.carried);
+  for (const l of ordered) {
+    const take = Math.min(Math.max(0, l.final), left);
+    left = round3(left - take);
+    out.set(l.id, take);
+  }
+  let extra = Math.max(0, args.backorder);
+  for (const l of [...ordered].reverse()) {
+    const room = round3(Math.max(0, l.final) - (out.get(l.id) ?? 0));
+    const take = Math.min(room, extra);
+    extra = round3(extra - take);
+    out.set(l.id, round3((out.get(l.id) ?? 0) + take));
+  }
+  return out;
+}
+
+/** The statuses an order is still "live" in for the tag (shared with the UI rule in packages/types). */
+export const LIVE_BACKORDER_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+]);

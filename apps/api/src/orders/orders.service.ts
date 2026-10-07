@@ -174,6 +174,7 @@ import {
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
+import { captureMarkerCarry } from "./backorder-marker-writes";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
@@ -2059,7 +2060,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 notes: "CREATE",
                 performedById: user.sub,
               });
-              for (const [li, n] of markers ?? []) Object.assign(li, { backorderedPieces: n });
+              for (const li of stockLines)
+                Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 });
             }
 
             const created = await tx.order.create({
@@ -3123,6 +3125,7 @@ export class OrdersService implements OnApplicationBootstrap {
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
+        let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
@@ -3528,6 +3531,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
             lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
@@ -4227,6 +4231,7 @@ export class OrdersService implements OnApplicationBootstrap {
             allowOversell,
             blockCredits: carrierLocked,
             lineIdentity,
+            markerCarry,
           });
           creditGate = () =>
             assertWithinCreditLimit(

@@ -1,4 +1,4 @@
-import { editMarkers, saleMarkers } from "./backorder-marker";
+import { carriedMarkers, editMarkers, saleMarkers } from "./backorder-marker";
 
 /** SA-714 R1 / SA-716: pure attribution of the per-line backorder marker (PIECES). */
 const line = (productId: string, qty: number, position: number | null, extra: object = {}) => ({
@@ -178,5 +178,28 @@ describe("editMarkers (ADJUST on edit; SET for a re-decrement)", () => {
   it("set mode zeroes a stale marker when nothing is backordered now", () => {
     const out = editMarkers({ lines: [L("a", 0, 8, 0, 6)], backorder: 0, mode: "set" });
     expect(out.get("a")).toBe(0);
+  });
+});
+
+describe("carriedMarkers (recreate-mode create-merge fold)", () => {
+  const L = (id: string, position: number | null, final: number) => ({ id, position, final });
+  it("marker 3 + an auto-merge adding 2 at 0 stock -> 5 on the recreated line", () => {
+    const out = carriedMarkers({ carried: 3, backorder: 2, lines: [L("n", 0, 5)] });
+    expect(out.get("n")).toBe(5);
+  });
+  it("carried markers land on the first lines by position, clamped to each line's pieces", () => {
+    const out = carriedMarkers({ carried: 7, backorder: 0, lines: [L("b", 1, 4), L("a", 0, 4)] });
+    expect([out.get("a"), out.get("b")]).toEqual([4, 3]);
+  });
+  it("carried pieces that no longer fit are dropped, never invented", () => {
+    const out = carriedMarkers({ carried: 9, backorder: 0, lines: [L("a", 0, 2)] });
+    expect(out.get("a")).toBe(2);
+  });
+  it("only the INCREASE delta is added, into the room left from the last position backwards", () => {
+    const out = carriedMarkers({ carried: 3, backorder: 2, lines: [L("a", 0, 3), L("b", 1, 4)] });
+    expect([out.get("a"), out.get("b")]).toEqual([3, 2]);
+  });
+  it("no carry and no delta -> zeros", () => {
+    expect(carriedMarkers({ carried: 0, backorder: 0, lines: [L("a", 0, 5)] }).get("a")).toBe(0);
   });
 });

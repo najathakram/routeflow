@@ -1,5 +1,5 @@
 import { backorderPiecesForEditDelta } from "./oversell-policy";
-import { editMarkers, type EditMarkerLine } from "./backorder-marker";
+import { carriedMarkers, editMarkers, type EditMarkerLine } from "./backorder-marker";
 
 /**
  * SA-714 R1 / SA-716: the DB half of the backorder marker. Called ONLY from inside the locked stock
@@ -108,6 +108,114 @@ export async function applyEditMarkers(
       mode: a.mode,
     }))
       out.set(id, n);
+  }
+  await writeValues(db, out);
+}
+
+/** SET to 0 for lines that are being re-taken as a fresh sale (reopen): a stale value must never survive. */
+export async function resetMarkers(db: any, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await writeValues(db, new Map(ids.map((id) => [id, 0])));
+}
+
+/** `productId|unitsPerBox` - the pack group a carried marker belongs to (a different pack is a different line). */
+const groupKey = (productId: string, unitsPerBox: unknown) =>
+  `${productId}|${unitsPerBox == null ? "" : Number(unitsPerBox)}`;
+
+/**
+ * Held markers per product + pack group, read BEFORE a recreate-mode delete (the captureCompositionCarry
+ * pattern). Only lines that carry a marker are read into the map; the query is one indexed read.
+ */
+export async function captureMarkerCarry(db: any, orderId: string): Promise<Map<string, number>> {
+  const rows: Array<{
+    productId: string | null;
+    unitsPerBox: unknown;
+    backorderedPieces: unknown;
+  }> = await db.orderItem.findMany({
+    where: {
+      orderId,
+      productId: { not: null },
+      status: { not: "CANCELLED" },
+      backorderedPieces: { gt: 0 },
+    },
+    select: { productId: true, unitsPerBox: true, backorderedPieces: true },
+  });
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const k = groupKey(r.productId as string, r.unitsPerBox);
+    out.set(k, (out.get(k) ?? 0) + Number(r.backorderedPieces));
+  }
+  return out;
+}
+
+/**
+ * Recreate-mode fold (staff create auto-merge only): hand the carried markers to the first recreated lines
+ * of each product + pack group, then add the settle's increase delta. Runs even when the fold's stock delta
+ * is zero, so a marker on an untouched product survives the recreate.
+ */
+export async function applyCarriedMarkers(
+  db: any,
+  a: {
+    carry: ReadonlyMap<string, number>;
+    allowOversell: boolean;
+    products: Array<{ id: string; currentStock: unknown; unitsPerBox: unknown }>;
+    deltas: ReadonlyMap<string, number>;
+    finalLines: ReadonlyMap<string, EditLine[]>;
+    piecesOf: (li: EditLine, qty: unknown, livePack: unknown) => number;
+  },
+): Promise<void> {
+  if (a.carry.size === 0 && a.deltas.size === 0) return;
+  const backorder = backorderPiecesForEditDelta({
+    deltaByProduct: a.deltas,
+    availableByProduct: new Map(a.products.map((p) => [p.id, Number(p.currentStock)])),
+    allowOversell: a.allowOversell,
+  });
+  const ids = [...a.finalLines.values()].flat().flatMap((f) => (f.id ? [f.id] : []));
+  if (ids.length === 0) return;
+  const rows: Array<{ id: string; position: number | null }> = await db.orderItem.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, position: true },
+  });
+  const posById = new Map(rows.map((r) => [r.id, r.position]));
+  const packs = new Map(
+    (
+      await db.product.findMany({
+        where: { id: { in: [...a.finalLines.keys()] } },
+        select: { id: true, unitsPerBox: true },
+      })
+    ).map((p: { id: string; unitsPerBox: unknown }) => [p.id, p.unitsPerBox]),
+  );
+  const out = new Map<string, number>();
+  for (const [productId, lines] of a.finalLines) {
+    const groups = new Map<string, EditLine[]>();
+    for (const f of lines) {
+      if (!f.id || !posById.has(f.id)) continue;
+      const k = groupKey(productId, f.unitsPerBox);
+      groups.set(k, [...(groups.get(k) ?? []), f]);
+    }
+    let productExtra = backorder.get(productId) ?? 0; // the product's delta is spent once across its groups
+    for (const [k, group] of groups) {
+      const carried = a.carry.get(k) ?? 0;
+      if (carried <= 0 && productExtra <= 0) continue;
+      const values = carriedMarkers({
+        carried,
+        backorder: productExtra,
+        lines: group.map((f) => ({
+          id: f.id as string,
+          position: posById.get(f.id as string) ?? null,
+          final: a.piecesOf(f, f.qty, packs.get(productId)),
+        })),
+      });
+      let placed = 0;
+      for (const [id, n] of values) {
+        out.set(id, n);
+        placed += n;
+      }
+      productExtra = Math.max(
+        0,
+        Math.round((productExtra - Math.max(0, placed - carried)) * 1000) / 1000,
+      );
+    }
   }
   await writeValues(db, out);
 }

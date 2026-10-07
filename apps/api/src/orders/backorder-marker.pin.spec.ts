@@ -36,7 +36,9 @@ describe("backorderedPieces stays informational", () => {
     expect(lines).toHaveLength(3);
     expect(lines.filter((l) => l.includes("write.data.backorderedPieces"))).toHaveLength(2);
     expect(
-      lines.filter((l) => l.includes("Object.assign(li, { backorderedPieces: n })")),
+      lines.filter((l) =>
+        l.includes("Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 })"),
+      ),
     ).toHaveLength(1);
   });
 

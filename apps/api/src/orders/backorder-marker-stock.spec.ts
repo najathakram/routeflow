@@ -243,3 +243,57 @@ describe("restoreStockForReopen SETs the marker (its own value, never the stale 
     expect(marker(rows, "A")).toBe(0);
   });
 });
+
+describe("recreate-mode create-merge fold CARRIES the held markers (SA-716 M2)", () => {
+  const user = { role: "OPERATOR" } as any;
+  const fold = (rows: Row[], stock: number, heldQty: number, finalQty: number, opts: any) => {
+    const t = fakeTx([prod(stock)], rows);
+    return {
+      ...t,
+      run: () =>
+        settleStockForEdit(
+          deps,
+          t.tx,
+          order,
+          [{ id: "old", productId: "p1", qty: heldQty, deliveredQty: 0, status: "PENDING" }],
+          [{ id: "new", productId: "p1", qty: finalQty }],
+          user,
+          undefined,
+          { allowOversell: true, lineIdentity: "recreated", ...opts },
+        ),
+    };
+  };
+  it("marker 3 + an auto-merge adding 2 at 0 stock -> 5", async () => {
+    const rows = [row("new", 0, 0)];
+    await fold(rows, 0, 3, 5, { markerCarry: new Map([["p1|", 3]]) }).run();
+    expect(marker(rows, "new")).toBe(5);
+  });
+  it("the carry survives a fold with NO stock delta (an untouched product)", async () => {
+    const rows = [row("new", 0, 0)];
+    await fold(rows, 0, 3, 3, { markerCarry: new Map([["p1|", 3]]) }).run();
+    expect(marker(rows, "new")).toBe(3);
+  });
+  it("operator replaceAll / buyer / driver recreates pass no carry and stay NONE", async () => {
+    const rows = [row("new", 0, 0)];
+    const f = fold(rows, 0, 3, 5, {});
+    await f.run();
+    expect(f.writes).toEqual([]);
+    expect(marker(rows, "new")).toBe(0);
+  });
+  it("a different pack group's carry does not land on this line", async () => {
+    const rows = [row("new", 0, 0)];
+    await fold(rows, 50, 3, 3, { markerCarry: new Map([["p1|24", 3]]) }).run();
+    expect(marker(rows, "new")).toBe(0);
+  });
+});
+
+describe("reopen SETs every re-taken line, even a product with a zero stock delta (SA-716 c)", () => {
+  it("a fully delivered cancelled line (delta 0) loses its stale marker", async () => {
+    const rows = [row("A", 0, 5)];
+    const { tx } = fakeTx([prod(500)], rows);
+    await restoreStockForReopen(deps, tx, "o-1", [
+      { id: "A", productId: "p1", qty: 6, deliveredQty: 6 },
+    ]);
+    expect(marker(rows, "A")).toBe(0);
+  });
+});

@@ -289,4 +289,38 @@ describeDb("backorder marker (SA-714 R1) through OrdersService, real Postgres", 
     });
     expect(Number(row.lineItems[0].backorderedPieces)).toBe(3);
   }, 120_000);
+
+  const replaceAll = (orderId: string, qty: number, opts?: { isCreateMerge?: boolean }) =>
+    inTenant(() =>
+      orders.updateOrderItems(
+        orderId,
+        { items: [{ productId, qty }], replaceAll: true } as any,
+        operator(),
+        opts,
+      ),
+    );
+
+  it("the staff create auto-merge (replace-all + isCreateMerge) CARRIES the marker: 3 + 2 at 0 stock -> 5", async () => {
+    const o = await createOrder(8); // stock 5 -> marker 3, stock -3
+    expect(await marker(o.id)).toBe(3);
+    await replaceAll(o.id, 10, { isCreateMerge: true }); // +2 with nothing available
+    expect(await marker(o.id)).toBe(5);
+    expect(await stockNow()).toBe(-5);
+  }, 120_000);
+
+  it("an operator replace-all that is NOT the create-merge fold stays NONE (the marker is lost)", async () => {
+    const o = await createOrder(8);
+    expect(await marker(o.id)).toBe(3);
+    await replaceAll(o.id, 10);
+    expect(await marker(o.id)).toBe(0);
+  }, 120_000);
+
+  it("a reopen resets a stale marker on a fully delivered re-taken line (SA-716 c)", async () => {
+    const o = await createOrder(8);
+    await inTenant(() => orders.changeStatus(o.id, { status: "CANCELLED" } as any, operator()));
+    await raw.orderItem.updateMany({ where: { orderId: o.id }, data: { deliveredQty: 8 } });
+    await setStock(100);
+    await inTenant(() => orders.reopenOrder(o.id));
+    expect(await marker(o.id)).toBe(0);
+  }, 120_000);
 });

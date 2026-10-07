@@ -5,7 +5,12 @@ import { recordSaleMovement } from "../inventory/sale-movement";
 import { linePieceQty } from "./line-piece-qty";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { saleMarkers } from "./backorder-marker";
-import { applyEditMarkers, writeSaleMarkers } from "./backorder-marker-writes";
+import {
+  applyCarriedMarkers,
+  applyEditMarkers,
+  resetMarkers,
+  writeSaleMarkers,
+} from "./backorder-marker-writes";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -489,6 +494,8 @@ export async function settleStockForEdit(
     lineIdentity?: LineIdentity;
     /** SA-716: "set" for a re-decrement (reopen); the default edit ADJUSTS the backorder marker. */
     markerMode?: "adjust" | "set";
+    /** SA-716 M2: held markers captured before a recreate-mode create-merge fold (product + pack group). */
+    markerCarry?: ReadonlyMap<string, number>;
   },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
@@ -575,7 +582,20 @@ export async function settleStockForEdit(
     return d == null || round3(d.fixed) !== 0 || round3(d.perPack) !== 0;
   });
   const touched = opts?.blockCredits ? [...new Set([...rawTouched, ...effTouched])] : effTouched;
+  // SA-716 M2: the create-merge fold recreated every line; its carried markers must survive a zero delta.
+  const carryOnly = () =>
+    opts?.markerCarry
+      ? applyCarriedMarkers(db, {
+          carry: opts.markerCarry,
+          allowOversell: false,
+          products: [],
+          deltas: new Map(),
+          finalLines,
+          piecesOf: toPieces,
+        })
+      : undefined;
   if (touched.length === 0) {
+    await carryOnly();
     if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
     return;
   }
@@ -617,7 +637,7 @@ export async function settleStockForEdit(
   // from the RAW deltas + the unlisted lines', BEFORE the effective delta can short-circuit (SA-703 M5).
   if (opts?.blockCredits && rawDeltas.length + unlistedDeltas.length > 0)
     carrierLineSetRefusal([...rawDeltas, ...unlistedDeltas]);
-  if (deltas.size === 0) return;
+  if (deltas.size === 0) return carryOnly();
 
   const mayOversell =
     opts?.allowOversell ?? (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER);
@@ -678,7 +698,17 @@ export async function settleStockForEdit(
 
   // SA-714 R1 / SA-716: the backorder marker, from the stock this edit saw (locked, pre-write). A
   // recreate-mode edit has no matching line ids, so it writes none (B1167: the marker is lost).
-  if (opts?.lineIdentity !== "recreated")
+  if (opts?.lineIdentity === "recreated") {
+    if (opts.markerCarry)
+      await applyCarriedMarkers(db, {
+        carry: opts.markerCarry,
+        allowOversell: mayOversell,
+        products,
+        deltas,
+        finalLines,
+        piecesOf: toPieces,
+      });
+  } else
     await applyEditMarkers(db, {
       mode: opts?.markerMode ?? "adjust",
       allowOversell: mayOversell,
@@ -751,6 +781,11 @@ export async function restoreStockForReopen(
     id: li.id ?? `reopen:${i}`,
     qty: Number(li.qty),
   }));
+  // SA-716: a reopen SETS every re-taken line, including a product whose stock delta is 0.
+  await resetMarkers(
+    tx,
+    cancelledLines.flatMap((li) => (li.id ? [li.id] : [])),
+  );
   await settleStockForEdit(
     deps,
     tx,

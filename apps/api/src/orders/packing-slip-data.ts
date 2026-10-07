@@ -8,6 +8,7 @@ import { invoiceLineQtyText } from "@routeflow/pricing";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { carrierLabel } from "../common/shipping";
 import type { BatchShipOutcome } from "./order-batch-ship";
+import { LIVE_BACKORDER_ORDER_STATUSES } from "./backorder-marker";
 
 export interface PackingSlipSeller {
   businessName?: string | null;
@@ -102,6 +103,12 @@ const num = (v: unknown): number =>
 export function buildPackingSlipPages(
   orders: PackingSlipOrderLike[],
   seller: PackingSlipSeller,
+  /**
+   * SA-716 M1: the slip goes to the customer, so the "Backorder" tag is OFF until PR2's visibility policy
+   * (`orders.buyerBackorderVisibility`) is on master and the caller passes it. Even then it follows the
+   * live-order rule (never on a DELIVERED, DRAFT or CANCELLED order or a cancelled line).
+   */
+  opts: { showBackorder?: boolean } = {},
 ): PackingSlipPage[] {
   return orders.map((o) => {
     // Ship-to: the customer's SHIPPING/DELIVERY address first (a billing default must not win), then
@@ -140,7 +147,11 @@ export function buildPackingSlipPages(
             pieces: i.pieces,
             unitLabel: i.unitLabel,
           }),
-          backordered: num(i.backorderedPieces) > 0,
+          backordered:
+            opts.showBackorder === true &&
+            LIVE_BACKORDER_ORDER_STATUSES.has(o.status) &&
+            i.status !== "CANCELLED" &&
+            num(i.backorderedPieces) > 0,
         })),
     };
   });
