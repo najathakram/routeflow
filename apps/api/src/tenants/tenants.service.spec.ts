@@ -177,9 +177,16 @@ describe("TenantsService", () => {
       email: "owner@acme.example",
       username: "acme_admin",
       status: "INACTIVE",
+      role: "TENANT_ADMIN",
+      lastLoginAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
       deletedAt: null,
       tenant: { id: "tenant-1", name: "Acme Distribution", slug: "acme-distribution" },
     };
+
+    beforeEach(() => {
+      (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
+    });
 
     it("returns true and dispatches the email for a real pending account", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
