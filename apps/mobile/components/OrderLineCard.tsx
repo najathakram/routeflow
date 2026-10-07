@@ -53,6 +53,11 @@ export function OrderLineCard({
             <Text style={styles.customTagText}>Custom</Text>
           </View>
         ) : null}
+        {model.backorderPieces > 0 ? (
+          <View style={styles.customTag} testID="line-backorder-tag">
+            <Text style={styles.customTagText}>Backorder</Text>
+          </View>
+        ) : null}
         <Text style={styles.sub}>{model.qtyPriceLine}</Text>
         {model.tag ? (
           <View style={styles.tagRow}>

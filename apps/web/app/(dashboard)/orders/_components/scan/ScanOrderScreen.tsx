@@ -233,7 +233,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
               ? res.message
               : res.kind === "unknown"
                 ? `Not in the catalog: ${code}`
-                : "Couldn't look up that code";
+                : res.kind === "suggested"
+                  ? `No exact match for ${code} - search for ${String(res.product?.name ?? "it")}`
+                  : "Couldn't look up that code";
         outcome = { feedback: { kind: "error", text } };
       }
       // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any

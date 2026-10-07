@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { AdminModal } from "./AdminModal";
 
 /**
@@ -34,6 +35,8 @@ export const TENANT_ACTION_COPY = {
     `${label} has no active admin. Create one in Admin Account, then try again.`,
   statusFailed: "Couldn't change the tenant's status. Try again.",
   extendFailed: "Couldn't extend the trial. Try again.",
+  trialNotAllowed:
+    "This tenant is Active, so it can't be put on a trial. Suspend it or change its plan instead.",
   planFailed: "Couldn't change the plan. Try again.",
   deleteRefused: "Only a suspended tenant can be deleted. Suspend it first, then delete.",
   deleteFailed: "Couldn't delete the tenant. Try again.",
@@ -48,6 +51,14 @@ export function deleteFailureCopy(err: unknown): string {
     : TENANT_ACTION_COPY.deleteFailed;
 }
 
+/** Extend Trial failure: the server's coded refusal of an ACTIVE tenant, else a plain failure. */
+export function extendFailureCopy(err: unknown): string {
+  const code = (err as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
+  return code === API_ERROR_CODES.TENANT_TRIAL_EXTEND_NOT_ALLOWED
+    ? TENANT_ACTION_COPY.trialNotAllowed
+    : TENANT_ACTION_COPY.extendFailed;
+}
+
 /** Days accepted by Extend Trial (the server's own range). */
 export const isValidTrialDays = (days: number): boolean =>
   Number.isInteger(days) && days >= 1 && days <= 365;
@@ -58,7 +69,9 @@ export const longDate = (d: Date): string =>
 
 /** "ACTIVE" → "Active". */
 const statusWord = (status: string): string =>
-  status ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase() : status;
+  status
+    ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase().replace(/_/g, " ")
+    : status;
 
 const CANCEL_CLASS = "rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700";
 const PRIMARY_CLASS =
@@ -143,6 +156,8 @@ export function ExtendTrialDialog({
 }) {
   const cancelRef = useCancelFocus(open);
   const label = tenantTitle(tenant);
+  // A paying (ACTIVE) tenant is never moved to a trial: the server refuses it (409), so the dialog does too.
+  const blocked = status === "ACTIVE";
   const valid = isValidTrialDays(days);
   const newEnd = new Date((now ?? new Date()).getTime() + (valid ? days : 0) * 24 * 60 * 60 * 1000);
   const ends = longDate(newEnd);
@@ -164,7 +179,7 @@ export function ExtendTrialDialog({
           </button>
           <button
             type="button"
-            disabled={busy || !valid}
+            disabled={busy || !valid || blocked}
             onClick={onConfirm}
             className={PRIMARY_CLASS}
           >
@@ -173,7 +188,11 @@ export function ExtendTrialDialog({
         </>
       }
     >
-      {valid ? (
+      {blocked ? (
+        <p role="alert" className="text-sm font-medium text-yellow-400">
+          {TENANT_ACTION_COPY.trialNotAllowed}
+        </p>
+      ) : valid ? (
         <>
           <p className="text-sm text-slate-300">
             {onTrial
@@ -302,7 +321,7 @@ export function DeleteTenantDialog({
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           placeholder={tenant.slug}
-          className="h-9 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-red-500 focus:outline-none"
+          className="h-9 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30"
         />
       </div>
     </AdminModal>

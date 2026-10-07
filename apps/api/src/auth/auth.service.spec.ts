@@ -17,7 +17,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { EntitlementsService } from "../billing/entitlements.service";
 
 const JWT_CONFIG = {
-  secret: "test-secret",
+  secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
   refreshExpiresIn: "7d",

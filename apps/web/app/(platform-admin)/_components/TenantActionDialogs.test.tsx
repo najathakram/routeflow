@@ -7,6 +7,7 @@ import {
   SuspendDialog,
   TENANT_ACTION_COPY,
   deleteFailureCopy,
+  extendFailureCopy,
   isValidTrialDays,
   longDate,
   tenantLabel,
@@ -141,9 +142,8 @@ describe("ExtendTrialDialog", () => {
   });
 
   it.each([
-    ["ACTIVE", "Active"],
     ["SUSPENDED", "Suspended"],
-    ["CANCELLED", "Cancelled"],
+    ["READ_ONLY", "Read only"],
   ])(
     "on a %s tenant it says the status changes to Trial (the server sets TRIAL unconditionally)",
     (status, word) => {
@@ -155,6 +155,17 @@ describe("ExtendTrialDialog", () => {
       ).toBeInTheDocument();
     },
   );
+
+  it("N1: an ACTIVE (paying) tenant is told it can't be put on a trial, and Extend Trial is blocked", () => {
+    const { onConfirm } = setup("ACTIVE", 30);
+    expect(screen.getByRole("alert")).toHaveTextContent(TENANT_ACTION_COPY.trialNotAllowed);
+    expect(screen.queryByText(/changes its status to Trial/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/trial will end/)).not.toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: "Extend Trial" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 
   it("a TRIAL tenant whose current end is LATER than the new date is warned the trial is SHORTENED", () => {
     setup("TRIAL", 14, { trialEndsAt: "2026-12-01T12:00:00.000Z" });
@@ -169,7 +180,7 @@ describe("ExtendTrialDialog", () => {
   });
 
   it("not on a trial: a later current end is not a 'shortening' (the status change is the news)", () => {
-    setup("ACTIVE", 14, { trialEndsAt: "2027-01-01T12:00:00.000Z" });
+    setup("SUSPENDED", 14, { trialEndsAt: "2027-01-01T12:00:00.000Z" });
     expect(screen.queryByText(/shortens/)).not.toBeInTheDocument();
   });
 
@@ -195,7 +206,7 @@ describe("ExtendTrialDialog", () => {
   });
 
   it("focuses Cancel first; Cancel and Escape never confirm; Extend Trial confirms once", () => {
-    const { onClose, onConfirm } = setup("ACTIVE");
+    const { onClose, onConfirm } = setup("TRIAL");
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
     fireEvent.keyDown(window, { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -324,5 +335,38 @@ describe("fixed failure copy", () => {
 describe("longDate", () => {
   it("formats a long US date", () => {
     expect(longDate(new Date("2026-10-21T12:00:00"))).toBe("October 21, 2026");
+  });
+});
+
+describe("extendFailureCopy (back-office P2)", () => {
+  it("the coded refusal reads the fixed 'Active tenant' copy; anything else is the plain failure", () => {
+    const coded = {
+      response: {
+        status: 409,
+        data: { code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED", message: "raw server text" },
+      },
+    };
+    expect(extendFailureCopy(coded)).toBe(TENANT_ACTION_COPY.trialNotAllowed);
+    expect(extendFailureCopy({ response: { status: 409, data: { message: "raw" } } })).toBe(
+      TENANT_ACTION_COPY.extendFailed,
+    );
+    expect(extendFailureCopy(new Error("boom"))).toBe(TENANT_ACTION_COPY.extendFailed);
+    expect(extendFailureCopy(null)).toBe(TENANT_ACTION_COPY.extendFailed);
+  });
+});
+
+describe("DeleteTenantDialog slug input (N2)", () => {
+  it("keeps its visible focus ring (red, like the button it guards)", () => {
+    render(
+      <DeleteTenantDialog
+        open
+        tenant={{ ...acme, slug: "acme" }}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(screen.getByLabelText("Type the tenant slug to confirm deletion").className).toMatch(
+      /focus:ring-2.*focus:ring-red-500\/30/,
+    );
   });
 });
