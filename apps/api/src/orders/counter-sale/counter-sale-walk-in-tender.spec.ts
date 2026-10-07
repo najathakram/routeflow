@@ -133,8 +133,10 @@ describe("CounterSaleService.ring: walk-in tender must cover the server total (B
     await service.ring(walkInSale({ method: "CASH", amount: 40 }), staff);
     const sale = createSale.mock.calls[0][2];
     expect(typeof sale.beforeWrite).toBe("function");
-    await expect(sale.beforeWrite({ total: 37.25 })).resolves.toBeUndefined();
-    await expect(sale.beforeWrite({ total: 40.01 })).rejects.toMatchObject({ status: 409 });
+    expect(() => sale.beforeWrite({ total: 37.25 })).not.toThrow();
+    expect(() => sale.beforeWrite({ total: 40.01 })).toThrow(
+      expect.objectContaining({ status: 409 }),
+    );
   });
 });
 

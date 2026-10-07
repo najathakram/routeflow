@@ -1970,6 +1970,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
+    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
