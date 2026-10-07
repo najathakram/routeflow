@@ -362,6 +362,58 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     });
   });
 
+  describe("leaving a unit is judged on the RESOLVED unit, and an absent label keeps it (SA-070)", () => {
+    const resent = (over: Record<string, unknown>) => ({
+      id: "row-1",
+      productId: "p1",
+      description: "Widget",
+      qty: 1,
+      unitPrice: 48,
+      ...over,
+    });
+    const patched = () => prisma.invoiceItem.update.mock.calls[0][0].data;
+
+    it("an explicit pack label ('Box') on a Case row is a PACK line at the LIVE 24-pack: 48.00, no unitLabel, never the old factor 12", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([resent({ unitLabel: "Box" })]);
+      expect(patched()).toMatchObject({ unitLabel: null, unitsPerBox: 24, boxes: 1, subtotal: 48 });
+    });
+
+    it("'Piece' on a product with no pack (upb <= 1) leaves the Case: a plain loose line", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, unitsPerBox: 1 }]);
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([resent({ unitLabel: "Piece", qty: 3, unitPrice: 5 })]);
+      expect(patched()).toMatchObject({ unitLabel: null, qty: 3, subtotal: 15 });
+      expect(patched().unitsPerBox ?? null).toBeNull();
+    });
+
+    it("an ABSENT unitLabel on an id-matched Case row keeps the unit (the count is a count of Cases, the stored factor 12)", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([resent({ qty: 5, unitPrice: 24 })]);
+      expect(patched()).toMatchObject({
+        unitLabel: "Case",
+        unitsPerBox: 12,
+        boxes: 5,
+        qty: 60,
+        subtotal: 120,
+      });
+    });
+
+    it.each([[null], [""]])(
+      "an explicit %p unitLabel leaves the unit for the pack (live 24-pack)",
+      async (label) => {
+        prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+        await update([resent({ unitLabel: label })]);
+        expect(patched()).toMatchObject({
+          unitLabel: null,
+          unitsPerBox: 24,
+          boxes: 1,
+          subtotal: 48,
+        });
+      },
+    );
+  });
+
   it("a pack-only PATCH reads no ladder and never asks for flag.units_v1", async () => {
     await update([{ productId: "p1", description: "W", qty: 2, unitPrice: 5 }]);
     expect(scopedUnits.findMany).not.toHaveBeenCalled();
