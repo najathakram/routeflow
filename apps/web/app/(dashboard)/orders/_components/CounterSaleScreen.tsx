@@ -49,6 +49,7 @@ import {
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterReturnAction } from "./CounterReturnAction";
 
 interface PickedCustomer {
   id: string;
@@ -575,6 +576,7 @@ export function CounterSaleScreen() {
           <Button variant="secondary" onClick={resetSale}>
             New sale
           </Button>
+          <CounterReturnAction orderId={receipt.orderId} />
         </div>
       </div>
     );

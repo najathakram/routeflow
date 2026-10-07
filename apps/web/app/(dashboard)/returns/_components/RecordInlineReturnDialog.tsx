@@ -47,6 +47,8 @@ export interface RecordInlineReturnDialogProps {
    *  used as the carrying order (capture's `orderId`) with no extra picker. Omit when
    *  opening from customer detail (the order picker below is then required). */
   orderId?: string;
+  /** Optional: called once when a return is recorded (the counter receipt shows its own hand-back note). */
+  onRecorded?: (result: InlineReturnRecord) => void;
 }
 
 type DialogPhase = "capture" | "success" | "refused";
@@ -57,6 +59,7 @@ export function RecordInlineReturnDialog({
   customerId,
   customerName,
   orderId,
+  onRecorded,
 }: RecordInlineReturnDialogProps) {
   const role = useOptionalAuth()?.user?.role;
   const { toast } = useToast();
@@ -121,6 +124,7 @@ export function RecordInlineReturnDialog({
         onSuccess: (data) => {
           setResult(data);
           setPhase("success");
+          onRecorded?.(data);
         },
         onError: (err) => {
           setRefusalMessage(extractRefusalMessage(err));
