@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Button, cn } from "@routeflow/ui/web";
+import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
@@ -16,6 +16,13 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useCustomers } from "@/lib/api/customers";
+import { useCreateDraft } from "@/lib/api/drafts";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
+import {
+  COUNTER_SHIP_FAILED_COPY,
+  COUNTER_SHIP_WALK_IN_CAPTION,
+  counterShipDraftInput,
+} from "@/lib/counter-ship-handoff";
 import {
   useCounterSaleByKey,
   useCounterSaleGate,
@@ -48,7 +55,21 @@ import {
   writeHeldAttempt,
 } from "@/lib/counter-sale";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
+import { useCounterReprice } from "./useCounterReprice";
+import { repriceLines } from "./counter-sale-reprice";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { CounterLineRow } from "./CounterLineRow";
+import {
+  isBoxedLine,
+  lineQtyLabel,
+  restoreLine,
+  setLineQty,
+  type TypedQty,
+  setLineNote,
+  takeLine,
+  toSaleItem,
+  type RemovedLine,
+} from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 
 interface PickedCustomer {
@@ -61,75 +82,19 @@ interface PickedCustomer {
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-/** A pack of 1 (or no pack) has no box/piece split: it reads in pieces. Only unitsPerBox > 1 is a boxed line. */
-const isBoxedLine = (l: SaleLine) => (l.unitsPerBox ?? 0) > 1;
+/** How long the "Line removed. Undo" bar stays. */
+const UNDO_MS = 5000;
 
-/** ONE quantity label for the cart and the receipt: whole boxes, then loose pieces; a plain line reads "× qty". */
-export const lineQtyLabel = (l: SaleLine): string =>
-  isBoxedLine(l)
-    ? `${l.boxes ?? 0} box${(l.boxes ?? 0) === 1 ? "" : "es"}${l.pieces ? ` + ${l.pieces} pcs` : ""}`
-    : `× ${l.qty}`;
-
-/**
- * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product
- * (unitsPerBox > 1) sends `{boxes, pieces, qty}` with `qty` the integer piece count; anything else (no pack, or a pack of 1,
- * which has no box/piece split) sends `qty` alone. Boxes without a qty is what the server reads as 0.
- */
-export const toSaleItem = (l: SaleLine): CounterSaleItem => {
-  const n = normalizeBoxesPieces({
-    boxes: l.boxes,
-    pieces: l.pieces,
-    qty: l.qty,
-    unitsPerBox: l.unitsPerBox,
-  });
-  return n.boxes === null || n.pieces === null
-    ? { productId: l.productId, qty: n.qty }
-    : { productId: l.productId, boxes: n.boxes, pieces: n.pieces, qty: n.qty };
-};
-
-const STEP_BTN = "rounded border px-2 py-0.5 text-xs disabled:opacity-40";
-
-/** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
-function LineStepper({
-  line,
-  locked,
-  onStep,
-}: {
-  line: SaleLine;
-  locked: boolean;
-  onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
-}) {
-  const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
-    <button
-      type="button"
-      className={STEP_BTN}
-      aria-label={label}
-      disabled={locked || stepLine(line, unit, dir) === line}
-      onClick={() => onStep(line.tempId, unit, dir)}
-    >
-      {text}
-    </button>
-  );
-  return isBoxedLine(line) ? (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
-      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
-      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
-      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
-      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
-    </span>
-  ) : (
-    <span className="flex items-center gap-1" role="group" aria-label={`Quantity of ${line.name}`}>
-      {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
-      {btn(`Add one ${line.name}`, "+", "piece", 1)}
-    </span>
-  );
-}
+export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
+/** The receipt's own controls: a full 44 px target with a visible keyboard focus ring. */
+const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visible:ring-navy";
 
 export function CounterSaleScreen() {
   const router = useRouter();
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
   const lookupSale = useCounterSaleByKey();
+  const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
@@ -149,6 +114,13 @@ export function CounterSaleScreen() {
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   const submittingRef = React.useRef(false);
+  const customerFindRef = React.useRef<HTMLInputElement>(null);
+  // B1210: "Ship this order instead" is an intent that completes on its own once the cart can be handed over (a customer is
+  // picked, no scan is still resolving). A walk-in keeps the intent open while the clerk finds a customer.
+  const [shipIntent, setShipIntent] = React.useState(false);
+  const [shipFailed, setShipFailed] = React.useState(false);
+  const shipRunningRef = React.useRef(false);
+  const awaitingCustomerRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -190,14 +162,26 @@ export function CounterSaleScreen() {
     setOutcomeUnknown(true);
   }, [heldKey]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
-  const refocus = React.useCallback(() => window.setTimeout(() => scanRef.current?.focus(), 0), []);
+  // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
+  const refocus = React.useCallback(
+    () =>
+      window.setTimeout(
+        () => (awaitingCustomerRef.current ? customerFindRef.current : scanRef.current)?.focus(),
+        0,
+      ),
+    [],
+  );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
+  const lineLocked = locked || createSale.isPending;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
+  const receiptHeadingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!receipt) refocus();
+    else receiptHeadingRef.current?.focus(); // POS-1: keyboard focus lands on the receipt heading
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
@@ -216,21 +200,88 @@ export function CounterSaleScreen() {
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
+  // POS-2: a customer pick (or a revert to walk-in) re-prices the cart for them; Pay waits on the lookup. Display only.
+  const reprice = useCounterReprice({
+    customer,
+    lines,
+    setLines,
+    locked: lineLocked,
+  });
+  const repriceBlockedRef = React.useRef(false);
+  repriceBlockedRef.current = reprice.blocked;
+
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
-    locked,
+    locked: lineLocked,
     refocus,
     add: (product, level, n) =>
-      setLines((prev) => addScannedProduct(prev, product, level, n, customer?.pricingTier ?? 1)),
+      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id))),
   });
+
+  // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
+  const wasPendingRef = React.useRef(false);
+  React.useEffect(() => {
+    if (wasPendingRef.current && !createSale.isPending && !receipt && !locked) refocus();
+    wasPendingRef.current = createSale.isPending;
+  }, [createSale.isPending, receipt, locked, refocus]);
 
   const scanBusy = scan.waiting > 0;
   const scanBusyRef = React.useRef(false);
   scanBusyRef.current = scanBusy;
+  awaitingCustomerRef.current = shipIntent && customer === null && lines.length > 0;
+
+  const openBuilderToShip = () =>
+    router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`);
+
+  const onShipClick = () => {
+    if (locked || createSale.isPending || submittingRef.current) return; // never both rung up AND parked
+    setShipFailed(false);
+    if (lines.length === 0 && !scanBusy) {
+      openBuilderToShip(); // nothing to carry over: the old hand-off to a blank builder
+      return;
+    }
+    if (customer === null) {
+      awaitingCustomerRef.current = lines.length > 0;
+      customerFindRef.current?.focus();
+    }
+    setShipIntent(true);
+  };
+
+  // Parks the cart + customer as an ORDER draft (fulfillPath SHIP) and resumes it in the builder. The cart is cleared only
+  // once the draft exists; a failed save leaves the sale exactly as it was.
+  const runShip = async (to: PickedCustomer, cart: SaleLine[]) => {
+    if (shipRunningRef.current || createSale.isPending || submittingRef.current) return;
+    shipRunningRef.current = true;
+    try {
+      const draft = await createDraft.mutateAsync(counterShipDraftInput(cart, to));
+      if (!draft?.id) throw new Error("draft has no id");
+      setShipIntent(false);
+      resetSale();
+      router.push(`/orders?resumeDraft=${encodeURIComponent(draft.id)}`);
+    } catch {
+      setShipIntent(false);
+      setShipFailed(true);
+      refocus();
+    } finally {
+      shipRunningRef.current = false;
+    }
+  };
+
+  React.useEffect(() => {
+    if (!shipIntent || locked || scanBusy || reprice.blocked || shipRunningRef.current) return;
+    if (createSale.isPending || submittingRef.current || receipt) return;
+    if (lines.length === 0) {
+      setShipIntent(false); // the cart emptied while we waited: nothing to hand over
+      return;
+    }
+    if (customer === null) return; // waiting for the pick
+    void runShip(customer, lines);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines]);
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (locked) return;
+    if (lineLocked) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     const text = scanText;
     setScanText("");
     scan.submit(text);
@@ -241,12 +292,74 @@ export function CounterSaleScreen() {
     refocus();
   };
 
+  // POS-3: a removed line is held for 5 s in ONE slot (a newer removal makes the older one final). Undo puts it back at
+  // its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
+  const [undo, setUndo] = React.useState<RemovedLine | null>(null);
+  const undoRef = React.useRef<RemovedLine | null>(null);
+  undoRef.current = undo;
+  const undoTimerRef = React.useRef<number | null>(null);
+  const dropUndo = React.useCallback(() => {
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+    undoLeftRef.current = UNDO_MS;
+    setUndo(null);
+  }, []);
+  // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
+  const undoLeftRef = React.useRef(UNDO_MS);
+  const undoStartedRef = React.useRef(0);
+  const armUndo = (ms: number) => {
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    undoLeftRef.current = ms;
+    undoStartedRef.current = Date.now();
+    undoTimerRef.current = window.setTimeout(dropUndo, ms);
+  };
+  const pauseUndo = () => {
+    if (undoTimerRef.current === null) return;
+    window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+    undoLeftRef.current = Math.max(0, undoLeftRef.current - (Date.now() - undoStartedRef.current));
+  };
+  const resumeUndo = () => {
+    if (!undoRef.current || undoTimerRef.current !== null) return;
+    armUndo(undoLeftRef.current);
+  };
+  React.useEffect(
+    () => () => {
+      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    },
+    [],
+  );
+
   const removeLine = (tempId: string) => {
-    setLines((prev) => prev.filter((l) => l.tempId !== tempId));
+    const taken = takeLine(lines, tempId);
+    if (!taken) return;
+    setLines(taken.lines);
+    setUndo(taken.removed);
+    armUndo(UNDO_MS);
     refocus();
   };
 
+  const undoRemove = () => {
+    if (!undo || lineLocked) return;
+    // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
+    setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
+    dropUndo();
+    refocus();
+  };
+
+  // A TYPED quantity (steppers stay): the same normalized split a stepper makes; a refused value changes nothing.
+  const typeQty = (tempId: string, typed: TypedQty): boolean => {
+    const cur = lines.find((l) => l.tempId === tempId);
+    if (!cur || !setLineQty(cur, typed)) return false;
+    setLines((prev) => prev.map((l) => (l.tempId === tempId ? (setLineQty(l, typed) ?? l) : l)));
+    return true;
+  };
+
+  const noteLine = (tempId: string, note: string) =>
+    setLines((prev) => setLineNote(prev, tempId, note));
+
   function resetSale() {
+    dropUndo();
     setCustomer(null);
     setCustomerSearch("");
     setLines([]);
@@ -263,6 +376,9 @@ export function CounterSaleScreen() {
     setOutcomeUnknown(false);
     setHeldCorrupt(false);
     setLookupFailed(false);
+    setShipIntent(false);
+    setShipFailed(false);
+    awaitingCustomerRef.current = false;
     refocus();
   }
 
@@ -343,6 +459,7 @@ export function CounterSaleScreen() {
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       },
     };
+    dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
     estimateRef.current = {
       total: totals.total,
@@ -372,8 +489,9 @@ export function CounterSaleScreen() {
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
+    if (shipRunningRef.current || createDraft.isPending) return; // a ship hand-off is saving this cart
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
-    if (!retry && scanBusyRef.current) return;
+    if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
     submittingRef.current = true;
     try {
       if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
@@ -495,17 +613,24 @@ export function CounterSaleScreen() {
     const changeAsEntered = serverChange == null && shownChange != null;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
-        <h1 className="text-xl font-semibold">Receipt</h1>
+        <h1 ref={receiptHeadingRef} tabIndex={-1} className="text-xl font-semibold outline-none">
+          Receipt
+        </h1>
         <p className="text-sm text-navy/70">
           Order {receipt.orderNumber} · Invoice {receipt.invoiceNumber}
         </p>
         <ul className="divide-y text-sm">
           {lines.map((l) => (
-            <li key={l.tempId} className="flex justify-between py-1">
+            <li key={l.tempId} className="py-1">
               <span>
                 {l.name} {isBoxedLine(l) ? "× " : ""}
                 {lineQtyLabel(l)}
               </span>
+              {l.note?.trim() ? (
+                <p className="break-words text-xs text-navy/70" data-testid="receipt-line-note">
+                  {l.note.trim()}
+                </p>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -528,7 +653,7 @@ export function CounterSaleScreen() {
             <p className="font-semibold">Sale recorded — payment not recorded</p>
             <Link
               href={`/invoices/${receipt.invoiceId}`}
-              className="inline-block text-brand-700 underline print:hidden"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
             >
               Record payment
             </Link>
@@ -572,8 +697,10 @@ export function CounterSaleScreen() {
           ) : null}
         </dl>
         <div className="flex flex-wrap gap-2 print:hidden">
-          <Button onClick={() => window.print()}>Print</Button>
-          <Button variant="secondary" onClick={resetSale}>
+          <Button className={RECEIPT_BTN} onClick={() => window.print()}>
+            Print
+          </Button>
+          <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
             New sale
           </Button>
         </div>
@@ -582,318 +709,436 @@ export function CounterSaleScreen() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-4" data-testid="counter-sale-screen">
+    <div className="mx-auto w-full max-w-5xl space-y-4 p-4" data-testid="counter-sale-screen">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
         {gate.offerShipInstead ? (
           <Button
+            className="min-h-[44px]"
             variant="secondary"
-            disabled={locked}
-            onClick={() =>
-              router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`)
-            }
+            disabled={locked || createSale.isPending || createDraft.isPending}
+            onClick={onShipClick}
           >
             Ship this order instead
           </Button>
         ) : null}
       </div>
 
-      {/* customer: Walk-in by default */}
-      <section aria-label="Customer" className="space-y-2">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="font-medium">
-            {customer ? customer.businessName : "Walk-in customer"}
-          </span>
-          {customer ? (
-            <button
-              type="button"
-              className="text-brand-700 underline"
-              disabled={locked}
-              onClick={() => setCustomer(null)}
-            >
-              Use Walk-in customer
-            </button>
-          ) : null}
-        </div>
-        <input
-          aria-label="Find a customer"
-          className="w-full rounded border px-3 py-2 text-sm"
-          placeholder="Find a customer (optional)"
-          disabled={locked}
-          value={customerSearch}
-          onChange={(e) => setCustomerSearch(e.target.value)}
-        />
-        {matches.length > 0 ? (
-          <ul className="rounded border text-sm">
-            {matches.map((c: any) => (
-              <li key={c.id}>
+      <div
+        className="flex flex-col gap-4 [&>*]:min-w-0 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start xl:grid-cols-[minmax(0,1fr)_380px]"
+        data-testid="counter-sale-columns"
+      >
+        <div className="min-w-0 space-y-4" data-testid="counter-cart-column">
+          {/* customer: Walk-in by default */}
+          <section aria-label="Customer" className="space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium">
+                {customer ? customer.businessName : "Walk-in customer"}
+              </span>
+              {customer ? (
                 <button
                   type="button"
-                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
-                  disabled={locked}
-                  onClick={() => {
-                    setCustomer(c);
-                    setCustomerSearch("");
-                    refocus();
-                  }}
+                  className="min-h-[44px] text-brand-700 underline"
+                  disabled={lineLocked}
+                  onClick={() => setCustomer(null)}
                 >
-                  {c.businessName}
+                  Use Walk-in customer
                 </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-
-      {/* scan / search: always focused; a typed quantity multiplies the next scan */}
-      <form onSubmit={onScanSubmit} className="flex items-center gap-2">
-        <input
-          ref={scanRef}
-          aria-label="Scan or search items"
-          className="w-full rounded border px-3 py-2 text-base"
-          placeholder="Scan or type an item (type a quantity first to multiply)"
-          value={scanText}
-          disabled={locked}
-          onChange={(e) => setScanText(e.target.value)}
-          onBlur={(e) => {
-            // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
-            if (!receipt && !locked && !e.relatedTarget) refocus();
-          }}
-          autoFocus
-        />
-        {scan.pendingQty > 1 ? (
-          <span
-            className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold"
-            data-testid="pending-qty"
-          >
-            ×{scan.pendingQty}
-          </span>
-        ) : null}
-      </form>
-      {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
-      {scan.failed ? (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
-          data-testid="counter-scan-error"
-        >
-          <span>{COUNTER_SCAN_FAILED_COPY}</span>
-          <Button onClick={scan.retry}>Retry</Button>
-          <Button variant="secondary" onClick={scan.dismissFailure}>
-            Skip this scan
-          </Button>
-          {scan.waiting > 1 ? <span>{scan.waiting - 1} more waiting</span> : null}
-        </div>
-      ) : null}
-      {scan.picker ? (
-        <section
-          aria-label="Choose a product"
-          className="space-y-2 rounded border p-3 text-sm"
-          data-testid="counter-scan-picker"
-        >
-          <p className="font-medium">
-            Several products match &ldquo;{scan.picker.code}&rdquo;. Choose one.
-          </p>
-          <ul className="space-y-1">
-            {scan.picker.matches.map((p: any) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className="w-full rounded border px-3 py-2 text-left hover:bg-gray-50"
-                  onClick={() => scan.choose(p)}
-                >
-                  {displayProductName(p)}
-                  {p.sku ? <span className="ml-2 text-xs text-navy/60">{p.sku}</span> : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <Button variant="secondary" onClick={scan.cancelPicker}>
-            Cancel
-          </Button>
-          {scan.waiting > 1 ? <p>{scan.waiting - 1} more scans waiting</p> : null}
-        </section>
-      ) : null}
-
-      <ul className="divide-y rounded border" aria-label="Items">
-        {lines.length === 0 ? <li className="p-3 text-sm text-navy/60">No items yet.</li> : null}
-        {lines.map((l) => (
-          <li key={l.tempId} className="flex items-center justify-between gap-2 p-3 text-sm">
-            <span>
-              {l.name} · {lineQtyLabel(l)}
-            </span>
-            <span className="flex items-center gap-3">
-              <LineStepper line={l} locked={locked} onStep={stepItem} />
-              <span>{money(cartTotals([l], 0).subtotal)}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${l.name}`}
-                disabled={locked}
-                onClick={() => removeLine(l.tempId)}
+              ) : null}
+            </div>
+            <input
+              ref={customerFindRef}
+              aria-label="Find a customer"
+              className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
+              placeholder="Find a customer (optional)"
+              disabled={lineLocked}
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+            />
+            {reprice.noteText ? (
+              <p
+                role="status"
+                className="flex flex-wrap items-center gap-x-3 text-sm text-brand-700"
+                data-testid="counter-reprice-note"
               >
-                ×
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
+                <span>{reprice.noteText}</span>
+                <button
+                  type="button"
+                  className={cn(TAP_TARGET, "underline disabled:opacity-40")}
+                  disabled={lineLocked}
+                  onClick={reprice.undo}
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className={cn(TAP_TARGET, "underline")}
+                  onClick={reprice.dismiss}
+                >
+                  Dismiss
+                </button>
+              </p>
+            ) : null}
+            {shipIntent && isWalkIn && lines.length > 0 ? (
+              <p
+                role="status"
+                className="text-sm font-medium text-brand-700"
+                data-testid="ship-who"
+              >
+                {COUNTER_SHIP_WALK_IN_CAPTION}
+              </p>
+            ) : null}
+            {matches.length > 0 ? (
+              <ul className="rounded border text-sm">
+                {matches.map((c: any) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
+                      disabled={lineLocked}
+                      onClick={() => {
+                        setCustomer(c);
+                        setCustomerSearch("");
+                        refocus();
+                      }}
+                    >
+                      {c.businessName}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
 
-      <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-        <span>Estimated total</span>
-        <span>{money(totals.total)}</span>
-      </div>
-
-      {/* payment on the same screen */}
-      <section aria-label="Payment" className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {paymentMethodOptions(isWalkIn).map((m) => (
-            <button
-              key={m.method}
-              type="button"
-              disabled={m.disabled || locked}
-              aria-pressed={method === m.method}
-              className={cn(
-                "rounded border px-3 py-2 text-sm disabled:opacity-40",
-                method === m.method && "border-brand-600 bg-brand-50 font-semibold",
-              )}
-              onClick={(e) => {
-                setMethod(m.method);
-                refocusAfterPointer(e);
+          {/* scan / search: always focused; a typed quantity multiplies the next scan */}
+          <form
+            onSubmit={onScanSubmit}
+            className="sticky top-0 z-20 flex items-center gap-2 bg-white py-2"
+            data-testid="counter-scan-bar"
+          >
+            <input
+              ref={scanRef}
+              aria-label="Scan or search items"
+              className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
+              placeholder="Scan or type an item (type a quantity first to multiply)"
+              value={scanText}
+              disabled={lineLocked}
+              onChange={(e) => setScanText(e.target.value)}
+              onKeyDown={(e) => {
+                // POS-3: Ctrl/Cmd+Z with an empty scan field takes the last removal back (the same as the Undo button).
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !scanText && undo) {
+                  e.preventDefault();
+                  undoRemove();
+                }
               }}
+              onBlur={(e) => {
+                // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
+                if (!receipt && !locked && !e.relatedTarget) refocus();
+              }}
+              autoFocus
+            />
+            {scan.pendingQty > 1 ? (
+              <span
+                className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold"
+                data-testid="pending-qty"
+              >
+                ×{scan.pendingQty}
+              </span>
+            ) : null}
+          </form>
+          {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
+          {scan.failed ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+              data-testid="counter-scan-error"
             >
-              {m.label}
-            </button>
-          ))}
+              <span>{COUNTER_SCAN_FAILED_COPY}</span>
+              <Button className="min-h-[44px]" onClick={scan.retry}>
+                Retry
+              </Button>
+              <Button className="min-h-[44px]" variant="secondary" onClick={scan.dismissFailure}>
+                Skip this scan
+              </Button>
+              {scan.waiting > 1 ? <span>{scan.waiting - 1} more waiting</span> : null}
+            </div>
+          ) : null}
+          {scan.picker ? (
+            <div className="space-y-1" data-testid="counter-scan-picker">
+              <DidYouMeanPicker
+                matches={scan.picker.matches.map((p: any) => ({
+                  id: p.id,
+                  name: displayProductName(p),
+                }))}
+                onConfirm={(m) =>
+                  scan.choose(scan.picker?.matches.find((p: any) => p.id === m.id) ?? m)
+                }
+                onCancel={scan.cancelPicker}
+              />
+              {scan.waiting > 1 ? (
+                <p className="text-sm">{scan.waiting - 1} more scans waiting</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <ul className="divide-y rounded border" aria-label="Items">
+            {lines.length === 0 ? (
+              <li className="p-3 text-sm text-navy/60">No items yet.</li>
+            ) : null}
+            {lines.map((l) => (
+              <CounterLineRow
+                key={l.tempId}
+                line={l}
+                locked={lineLocked}
+                onStep={stepItem}
+                onRemove={removeLine}
+                onNote={noteLine}
+                onQty={typeQty}
+              />
+            ))}
+          </ul>
+
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Removed item"
+            data-testid="line-undo-bar"
+            className={cn(
+              undo &&
+                "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
+            )}
+            onMouseEnter={pauseUndo}
+            onMouseLeave={resumeUndo}
+            onFocus={pauseUndo}
+            onBlur={resumeUndo}
+          >
+            {undo ? (
+              <>
+                <span>Line removed.</span>
+                <button
+                  type="button"
+                  className={cn(
+                    TAP_TARGET,
+                    "rounded border px-3 font-semibold disabled:opacity-40",
+                  )}
+                  aria-label={`Undo: put back ${undo.line.name}`}
+                  disabled={lineLocked}
+                  onClick={undoRemove}
+                >
+                  Undo
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
 
-        {method === "CASH" ? (
-          <div className="space-y-2">
+        <div
+          className="contents [&>*]:min-w-0 md:sticky md:top-4 md:block md:max-h-[calc(100vh-5rem)] md:min-w-0 md:space-y-4 md:overflow-y-auto"
+          data-testid="counter-payment-column"
+        >
+          {/* payment on the same screen */}
+          <section aria-label="Payment" className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              {quickTenderOptions(totals.total).map((q) => (
+              {paymentMethodOptions(isWalkIn).map((m) => (
                 <button
-                  key={q.label}
+                  key={m.method}
                   type="button"
-                  disabled={q.disabled || locked}
-                  className="rounded border px-3 py-2 text-sm disabled:opacity-40"
+                  disabled={m.disabled || locked}
+                  aria-pressed={method === m.method}
+                  className={cn(
+                    TAP_TARGET,
+                    "rounded border px-3 text-sm disabled:opacity-40",
+                    method === m.method && "border-brand-600 bg-brand-50 font-semibold",
+                  )}
                   onClick={(e) => {
-                    setTendered(String(q.amount));
+                    setMethod(m.method);
                     refocusAfterPointer(e);
                   }}
                 >
-                  {q.label}
+                  {m.label}
                 </button>
               ))}
             </div>
-            <label className="block text-sm">
-              Amount tendered
-              <input
-                aria-label="Amount tendered"
-                inputMode="decimal"
-                className="mt-1 w-full rounded border px-3 py-2"
-                value={tendered}
-                disabled={locked}
-                onChange={(e) => setTendered(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void completeSale(false);
-                  }
-                }}
-              />
-            </label>
-            <p className="text-3xl font-bold" data-testid="change-due">
-              Change {money(changeDue(totals.total, tenderedNum))}
-            </p>
-          </div>
-        ) : null}
 
-        {method === "CHECK" ? (
-          <label className="block text-sm">
-            Check number
+            {method === "CASH" ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {quickTenderOptions(totals.total).map((q) => (
+                    <button
+                      key={q.label}
+                      type="button"
+                      disabled={q.disabled || locked}
+                      className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
+                      onClick={(e) => {
+                        setTendered(String(q.amount));
+                        refocusAfterPointer(e);
+                      }}
+                    >
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="block text-sm">
+                  Amount tendered
+                  <input
+                    aria-label="Amount tendered"
+                    inputMode="decimal"
+                    className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
+                    value={tendered}
+                    disabled={locked}
+                    onChange={(e) => setTendered(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void completeSale(false);
+                      }
+                    }}
+                  />
+                </label>
+                <p className="text-3xl font-bold" data-testid="change-due">
+                  Change {money(changeDue(totals.total, tenderedNum))}
+                </p>
+              </div>
+            ) : null}
+
+            {method === "CHECK" ? (
+              <label className="block text-sm">
+                Check number
+                <input
+                  aria-label="Check number"
+                  className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
+                  value={reference}
+                  disabled={locked}
+                  onChange={(e) => setReference(e.target.value)}
+                />
+              </label>
+            ) : null}
+          </section>
+
+          <label className="flex min-h-[44px] items-center gap-2 text-sm">
             <input
-              aria-label="Check number"
-              className="mt-1 w-full rounded border px-3 py-2"
-              value={reference}
-              disabled={locked}
-              onChange={(e) => setReference(e.target.value)}
+              type="checkbox"
+              className="h-5 w-5"
+              checked={autoPrint}
+              onChange={(e) => toggleAutoPrint(e.target.checked)}
             />
+            Print receipt automatically
           </label>
-        ) : null}
-      </section>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={autoPrint}
-          onChange={(e) => toggleAutoPrint(e.target.checked)}
-        />
-        Print receipt automatically
-      </label>
+          {error ? (
+            <p role="alert" className="text-sm text-red-700">
+              {error}
+            </p>
+          ) : null}
 
-      {error ? (
-        <p role="alert" className="text-sm text-red-700">
-          {error}
-        </p>
-      ) : null}
+          {outcomeUnknown ? (
+            <div
+              role="alert"
+              className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+              data-testid="counter-outcome-unknown"
+            >
+              <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
+              {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
+              {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
+              <div className="flex flex-wrap items-center gap-3">
+                {heldCorrupt ? (
+                  <Button className="min-h-[44px]" variant="secondary" onClick={resetSale}>
+                    Discard and start a new sale
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      className="min-h-[44px]"
+                      onClick={() => void completeSale(false, true)}
+                      disabled={createSale.isPending || lookupSale.isPending}
+                    >
+                      Try again
+                    </Button>
+                    <Button
+                      className="min-h-[44px]"
+                      variant="secondary"
+                      onClick={() => void checkSaleStatus()}
+                      disabled={createSale.isPending || lookupSale.isPending}
+                    >
+                      Check sale status
+                    </Button>
+                  </>
+                )}
+                <Link
+                  href="/orders"
+                  className="inline-flex min-h-[44px] items-center text-brand-700 underline"
+                >
+                  Check recent sales
+                </Link>
+              </div>
+            </div>
+          ) : null}
 
-      {outcomeUnknown ? (
-        <div
-          role="alert"
-          className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
-          data-testid="counter-outcome-unknown"
-        >
-          <p className="font-semibold">{COUNTER_OUTCOME_UNKNOWN_COPY}</p>
-          {lookupFailed ? <p>{COUNTER_LOOKUP_FAILED_COPY}</p> : null}
-          {heldCorrupt ? <p>{COUNTER_DISCARD_COPY}</p> : null}
-          <div className="flex flex-wrap items-center gap-3">
-            {heldCorrupt ? (
-              <Button variant="secondary" onClick={resetSale}>
-                Discard and start a new sale
+          {shipFailed ? (
+            <p role="alert" className="text-sm text-red-700" data-testid="counter-ship-failed">
+              {COUNTER_SHIP_FAILED_COPY}
+            </p>
+          ) : null}
+
+          {reprice.failed ? (
+            <p role="alert" className="text-sm text-red-700" data-testid="counter-reprice-failed">
+              Couldn&apos;t update prices for this customer. The old prices are still showing.{" "}
+              <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
+                Retry price update
+              </button>
+            </p>
+          ) : reprice.blocked ? (
+            <p role="status" className="text-sm text-navy/70" data-testid="counter-reprice-busy">
+              Updating prices…
+            </p>
+          ) : null}
+
+          {scanBusy ? (
+            <p role="status" className="text-sm text-navy/70" data-testid="counter-scan-busy">
+              Adding scanned items…
+            </p>
+          ) : null}
+
+          <div
+            className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
+            data-testid="counter-checkout-bar"
+          >
+            <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
+              <span>Estimated total</span>
+              <span>{money(totals.total)}</span>
+            </div>
+
+            <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
+              <Button
+                className="min-h-[44px]"
+                onClick={() => void completeSale(false)}
+                disabled={
+                  createSale.isPending ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked
+                }
+              >
+                Complete &amp; show receipt
               </Button>
-            ) : (
-              <>
-                <Button
-                  onClick={() => void completeSale(false, true)}
-                  disabled={createSale.isPending || lookupSale.isPending}
-                >
-                  Try again
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => void checkSaleStatus()}
-                  disabled={createSale.isPending || lookupSale.isPending}
-                >
-                  Check sale status
-                </Button>
-              </>
-            )}
-            <Link href="/orders" className="text-brand-700 underline">
-              Check recent sales
-            </Link>
+              <Button
+                className="min-h-[44px]"
+                variant="secondary"
+                onClick={() => void completeSale(true)}
+                disabled={
+                  createSale.isPending ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked
+                }
+              >
+                Complete &amp; next sale
+              </Button>
+            </div>
           </div>
         </div>
-      ) : null}
-
-      {scanBusy ? (
-        <p role="status" className="text-sm text-navy/70" data-testid="counter-scan-busy">
-          Adding scanned items…
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2">
-        <Button
-          onClick={() => void completeSale(false)}
-          disabled={createSale.isPending || locked || scanBusy}
-        >
-          Complete sale
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => void completeSale(true)}
-          disabled={createSale.isPending || locked || scanBusy}
-        >
-          Complete &amp; next sale
-        </Button>
       </div>
     </div>
   );

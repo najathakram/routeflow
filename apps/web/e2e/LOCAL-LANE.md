@@ -206,3 +206,28 @@ needed, and `e2e-routeflow` holds exactly one `ACTIVE` `TENANT_ADMIN` again.
 If your local compose Postgres still has an `e2e_impersonated_admin` row from an earlier seed
 run (before this revert), it's harmless but stale — `npm run local:reset` wipes the volumes and
 drops it along with the rest of the DB (not run here; do so if you want a clean slate).
+
+## Spec 71 (`counter-ship-handoff`): local lane only, and why
+
+`71-counter-ship-handoff.spec.ts` is on the `local:e2e` allow-list but is **never** part of the post-deploy / nightly / CI
+runs. It changes the tenant's fulfilment config: its `beforeAll` applies the `in_store_shipping_retailer` business profile as
+the local super-admin and its `afterAll` (also after a failure) writes the tenant's `TenantFeatureConfig` +
+`TenantFeatureOverride` rows back exactly as read. Because those workflows run `npx playwright test` with no project
+filter, `playwright.config.ts` registers the project only when `PLAYWRIGHT_BASE_URL` is local and `GITHUB_ACTIONS` is not
+`true`; the spec also calls `assertLocalFulfilmentTarget` (localhost web + API, provably local DB, approved test tenant)
+before any write and throws otherwise. It needs the local super-admin: run `npm run local:sa` once after `local:up`
+(credentials stay in the gitignored `local-assets/local-sa.env`, never in a committed file).
+
+Ordering and teardown: the project is registered **last** in `playwright.config.ts` and listed **last** in `local:e2e`, so
+nothing else runs against the tenant while its fulfilment config is changed. The teardown restores the DB rows, then polls
+the operator's `GET /tenants/me/features` (not the DB) for up to 60 s until the API reads the pre-run modes and capability
+back (the API caches modes briefly), and fails with the observed and expected values if it never does.
+
+## Spec 72 (`counter-pos-stack`): same lane, same rules as 71
+
+`72-counter-pos-stack.spec.ts` (the POS counter smoke: typed quantity, note, remove + Undo, tier re-price, 390 / 768 / 1440
+layout, Complete & show receipt) is on the `local:e2e` allow-list right after 71 and is registered under the same local-only
+condition. It reuses 71's helper to turn the counter on and restores the tenant's fulfilment config in `afterAll`; it needs
+`npm run local:sa` for the same reason. It creates a throwaway tier-2 customer and a throwaway product (tier-2 price differs)
+on the approved test tenant through the operator API and deletes both again, so the "Prices updated for ... (<tier>)" note
+is always asserted, never skipped. It rings one real counter sale on that tenant.
