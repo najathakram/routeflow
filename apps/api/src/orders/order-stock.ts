@@ -30,6 +30,14 @@ export interface OrderStockEvent {
 
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 
+/**
+ * OOS PR2 (SA-714 R4): what a CUSTOMER is told when an order is refused for stock. Fixed copy, no
+ * product names and NO stock numbers (the old message leaked "available: N" to a buyer). Staff and
+ * drivers keep the numbers.
+ */
+export const CUSTOMER_INSUFFICIENT_STOCK_MESSAGE =
+  "Some items aren't available in the amount you asked for. Lower the quantity or remove them, then try again.";
+
 /** A stock helper's parameters after `deps`: what OrdersService's thin delegators take. */
 export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
 
@@ -94,7 +102,8 @@ export async function decrementStockForSale(
   tx: any,
   stockLines: StockLine[],
   allowOversell: boolean,
-  event: OrderStockEvent,
+  // `customerFacing`: the caller is a buyer, so a refusal carries the fixed copy and no numbers.
+  event: OrderStockEvent & { customerFacing?: boolean },
 ): Promise<void> {
   if (stockLines.length === 0) return;
   const productIds = stockLines.map((li) => li.productId);
@@ -133,7 +142,12 @@ export async function decrementStockForSale(
     if (allowOversell) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
-      throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+      throw new ConflictException({
+        code: API_ERROR_CODES.INSUFFICIENT_STOCK,
+        message: event.customerFacing
+          ? CUSTOMER_INSUFFICIENT_STOCK_MESSAGE
+          : `Insufficient stock: ${oosItems.join("; ")}`,
+      });
     }
   }
 
@@ -621,6 +635,13 @@ export async function settleStockForEdit(
         );
       } else {
         const first = violations[0];
+        // A buyer gets the fixed copy and no numbers; staff and drivers keep them.
+        if (user?.role === UserRole.CUSTOMER) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.INSUFFICIENT_STOCK,
+            message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+          });
+        }
         throw new ConflictException({
           code: API_ERROR_CODES.INSUFFICIENT_STOCK,
           message:

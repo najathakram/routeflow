@@ -21,6 +21,12 @@ import {
   NO_BUYER_RESTRICTIONS,
 } from "./buyer-product-visibility";
 
+/** The stock fields a favourite carries (no remaining count). */
+const pickStock = (s: Pick<BuyerProduct, "stockStatus" | "canBackorder">) => ({
+  stockStatus: s.stockStatus,
+  canBackorder: s.canBackorder,
+});
+
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
 
@@ -455,6 +461,7 @@ export class BuyerCatalogService {
    * Get all favorite products for this buyer at this seller, with resolved pricing.
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
+    const backorder = await this.resolveBackorderView(customerId);
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
       // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
       where: { buyerAccountId, customerId },
@@ -523,6 +530,8 @@ export class BuyerCatalogService {
         // product as boxes (not loose pieces) — matches getCatalog.
         unitsPerBox: f.product.unitsPerBox ?? null,
         createdAt: f.createdAt,
+        // OOS PR2: the SAME derivation as the catalog row, so a favourite and its tile cannot disagree.
+        ...pickStock(this.deriveStock(f.product, backorder)),
       };
     });
     return [...live, ...stubs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

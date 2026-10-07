@@ -21,6 +21,26 @@ export const OVERSELL_COPY = {
   savedOff: "Customers can no longer order items that are out of stock",
 } as const;
 
+/** OOS PR2: what customers see about backordered items. Only the exact value "hide" hides. */
+export const VISIBILITY_COPY = {
+  title: "What customers see about backordered items",
+  show: 'Show it: the item says "Ships when restocked" and the order is tagged',
+  hide: "Hide it: the item looks in stock and customers see nothing about backorders",
+  needsSwitch: "Turn on out-of-stock ordering to choose this.",
+  savedShow: "Customers will see that backordered items ship when restocked",
+  savedHide: "Customers will no longer see anything about backorders",
+  saveFailed: "Couldn't save what customers see about backordered items",
+} as const;
+
+export function visibilityMode(raw: unknown): "show" | "hide" {
+  return raw === "hide" ? "hide" : "show";
+}
+
+/** May the Show / Hide choice be changed right now? Admin only, and only while backorders are on. */
+export function canEditVisibility(role: string | null | undefined, oversellOn: boolean): boolean {
+  return canEditOversell(role) && oversellOn;
+}
+
 export function oversellIsOn(mode: unknown): boolean {
   return mode === "backorder";
 }

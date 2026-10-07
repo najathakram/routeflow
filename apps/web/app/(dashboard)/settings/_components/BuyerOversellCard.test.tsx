@@ -24,9 +24,9 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast }),
 }));
 
-const loaded = (buyerOversell: string, customerOverrides = 0) =>
+const loaded = (buyerOversell: string, customerOverrides = 0, buyerBackorderVisibility = "show") =>
   query.mockReturnValue({
-    data: { buyerOversell, customerOverrides },
+    data: { buyerOversell, buyerBackorderVisibility, customerOverrides },
     isLoading: false,
     isError: false,
     refetch,
@@ -154,5 +154,69 @@ describe("BuyerOversellCard", () => {
     expect(OVERSELL_COPY.description).toMatch(/backorder/);
     expect(OVERSELL_COPY.description).toMatch(/Staff can always/);
     expect(screen.getByText(OVERSELL_COPY.description)).toBeInTheDocument();
+  });
+});
+
+describe("BuyerOversellCard: what customers see about backordered items (OOS PR2)", () => {
+  const radio = (name: RegExp) => screen.getByRole("radio", { name });
+
+  it("is a Show / Hide choice under the switch; it reads the stored value (unknown reads as Show)", () => {
+    loaded("backorder", 0, "hide");
+    const { unmount } = renderWithProviders(<BuyerOversellCard canEdit />);
+    expect(radio(/^Hide it/)).toBeChecked();
+    expect(radio(/^Show it/)).not.toBeChecked();
+    unmount();
+
+    loaded("backorder", 0, "HIDE");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    expect(radio(/^Show it/)).toBeChecked();
+  });
+
+  it("choosing Hide sends exactly { buyerBackorderVisibility: 'hide' } (never touches the switch)", () => {
+    loaded("backorder", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    fireEvent.click(radio(/^Hide it/));
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toStrictEqual({ buyerBackorderVisibility: "hide" });
+    mutate.mock.calls[0][1].onSuccess();
+    expect(toast).toHaveBeenLastCalledWith({
+      variant: "success",
+      title: OVERSELL_COPY.savedHide,
+    });
+  });
+
+  it("choosing the value it already has sends nothing", () => {
+    loaded("backorder", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    fireEvent.click(radio(/^Show it/));
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("while out-of-stock ordering is OFF the choice is disabled and says why", () => {
+    loaded("off", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    expect(radio(/^Hide it/)).toBeDisabled();
+    expect(radio(/^Show it/)).toBeDisabled();
+    expect(screen.getByText(OVERSELL_COPY.visibilityNeedsSwitch)).toBeInTheDocument();
+  });
+
+  it("an operator (read-only) sees it but cannot change it", () => {
+    loaded("backorder", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit={false} />);
+    expect(radio(/^Hide it/)).toBeDisabled();
+    fireEvent.click(radio(/^Hide it/));
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("a failed save toasts FIXED copy, never the server's text", () => {
+    loaded("backorder", 0, "show");
+    renderWithProviders(<BuyerOversellCard canEdit />);
+    fireEvent.click(radio(/^Hide it/));
+    mutate.mock.calls[0][1].onError(new Error("duplicate key value"));
+    expect(toast).toHaveBeenLastCalledWith({
+      variant: "error",
+      title: OVERSELL_COPY.visibilitySaveFailed,
+    });
+    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/duplicate key/);
   });
 });

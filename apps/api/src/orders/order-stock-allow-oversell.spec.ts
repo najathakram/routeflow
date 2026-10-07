@@ -1,6 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
-import { decrementStockForSale, settleStockForEdit, type OrderStockDeps } from "./order-stock";
+import {
+  CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+  decrementStockForSale,
+  settleStockForEdit,
+  type OrderStockDeps,
+} from "./order-stock";
 
 /**
  * WS9: the locked stock section receives ONLY a resolved boolean (SA-606c — never a policy read
@@ -134,5 +139,67 @@ describe("settleStockForEdit opts.allowOversell", () => {
   it("allowOversell=false + DRIVER is refused", async () => {
     const r = run([prod(3)], { role: UserRole.DRIVER }, { allowOversell: false });
     await expect(r.p).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe("OOS PR2 (R4): the stock refusal is CODED, and a buyer never sees stock numbers", () => {
+  const body = (e: unknown) => (e as ConflictException).getResponse() as Record<string, unknown>;
+  const refuseSale = async (customerFacing?: boolean) => {
+    const { tx } = fakeTx([prod(5)]);
+    return decrementStockForSale(deps, tx, [line(6)], false, { ...event, customerFacing }).then(
+      () => null,
+      (e) => e,
+    );
+  };
+
+  it("sale path, buyer: code INSUFFICIENT_STOCK with the FIXED copy; no product, no numbers", async () => {
+    const err = await refuseSale(true);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(body(err)).toEqual({
+      statusCode: 409,
+      code: "INSUFFICIENT_STOCK",
+      message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+      error: "Conflict",
+    });
+    expect(String(body(err).message)).not.toMatch(/\d|Widget|available|requested/);
+  });
+
+  it("sale path, staff / driver: the same code, and the numbers are kept", async () => {
+    for (const customerFacing of [false, undefined]) {
+      const err = await refuseSale(customerFacing);
+      expect(body(err).code).toBe("INSUFFICIENT_STOCK");
+      expect(String(body(err).message)).toBe(
+        "Insufficient stock: Widget (available: 5, requested: 6)",
+      );
+    }
+  });
+
+  const refuseEdit = (role: UserRole) => {
+    const { tx } = fakeTx([prod(3)]);
+    const order = { id: "o-1", lineItems: [line(1)] } as never;
+    return settleStockForEdit(deps, tx, order, [line(1)], [line(9)], { role }, undefined, undefined)
+      .then(() => null)
+      .catch((e) => e);
+  };
+
+  it("edit path, buyer: code INSUFFICIENT_STOCK, fixed copy, no productId / available / requested", async () => {
+    const err = await refuseEdit(UserRole.CUSTOMER);
+    expect(body(err)).toEqual({
+      statusCode: 409,
+      code: "INSUFFICIENT_STOCK",
+      message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+      error: "Conflict",
+    });
+  });
+
+  it("edit path, a driver keeps the numbers (available / requested / productId)", async () => {
+    const err = await refuseEdit(UserRole.DRIVER);
+    expect(body(err)).toMatchObject({
+      code: "INSUFFICIENT_STOCK",
+      productId: "p",
+      available: 3,
+      requested: 9,
+    });
+    expect(String(body(err).message)).toMatch(/available: 3, requested: 9/);
   });
 });

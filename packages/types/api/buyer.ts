@@ -263,6 +263,10 @@ export interface BuyerFavoriteAvailable {
   unitsPerBox: number | null;
   createdAt: string;
   unavailable: false;
+  /** OOS PR2: the same stock status the catalog row carries (masked where the seller hides backorders). */
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** OOS PR2: this buyer may order the item even when it is out of stock (server-resolved). */
+  canBackorder?: boolean;
 }
 
 /** A favourite the tenant hid from the buyer portal (SA-606 M3): name only, no price, not orderable. */
