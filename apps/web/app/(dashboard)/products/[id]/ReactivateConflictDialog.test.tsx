@@ -1,7 +1,10 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
-import type { ReactivationRefusal } from "@/lib/product-reactivation-refusal";
+import type {
+  ReactivationHolderView,
+  ReactivationRefusal,
+} from "@/lib/product-reactivation-refusal";
 
 const checkCodeAvailable = jest.fn();
 jest.mock("@/lib/api/product-families", () => ({
@@ -9,23 +12,25 @@ jest.mock("@/lib/api/product-families", () => ({
   checkCodeAvailable: (...a: unknown[]) => checkCodeAvailable(...a),
 }));
 
-const holder = (over: Record<string, unknown> = {}) => ({
-  productId: "h1",
-  productName: "Cola 6pk",
-  field: "sku",
-  value: "COLA-6",
-  line: `The SKU "COLA-6" is now used by Cola 6pk.`,
-  blocked: false,
-  ...over,
-});
+const holder = (over: Record<string, unknown> = {}): ReactivationHolderView =>
+  ({
+    productId: "h1",
+    productName: "Cola 6pk",
+    field: "sku",
+    value: "COLA-6",
+    line: `The SKU "COLA-6" is now used by Cola 6pk.`,
+    blocked: false,
+    ...over,
+  }) as ReactivationHolderView;
 
-const holders = (over: Record<string, unknown> = {}) => ({
-  kind: "HOLDERS" as const,
-  holders: [holder()],
-  holderIds: ["h1"],
-  canResolve: true,
-  ...over,
-});
+const holders = (over: Record<string, unknown> = {}): ReactivationRefusal =>
+  ({
+    kind: "HOLDERS",
+    holders: [holder()],
+    holderIds: ["h1"],
+    canResolve: true,
+    ...over,
+  }) as ReactivationRefusal;
 
 function setup(refusal: ReactivationRefusal | null) {
   const onClose = jest.fn();

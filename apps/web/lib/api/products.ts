@@ -99,11 +99,21 @@ export function useReactivateProduct() {
     // The flow renders its own fixed-sentence error UI (dialog / toast): opt out of the global
     // handler's raw `data.message` toast (lib/mutation-error-toast.ts).
     meta: { localErrorToast: true },
-    mutationFn: ({ id, deactivateHolderIds }: { id: string; deactivateHolderIds?: string[] }) =>
+    mutationFn: ({
+      id,
+      deactivateHolderIds,
+      newCodes,
+    }: {
+      id: string;
+      deactivateHolderIds?: string[];
+      /** Reactivate with replacement codes instead of deactivating the holders. */
+      newCodes?: { sku?: string; unitSku?: string; barcode?: string };
+    }) =>
       apiClient
         .patch(`/products/${id}`, {
           isActive: true,
           ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+          ...(newCodes ?? {}),
         })
         .then((r) => r.data),
     onSuccess: (_d, vars) => {

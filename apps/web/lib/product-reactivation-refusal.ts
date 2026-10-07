@@ -19,6 +19,10 @@ export interface ReactivationHolderView {
   line: string;
   /** The server refuses to deactivate this holder in the one call (a family / has active variants). */
   blocked: boolean;
+  /** Which code (or the name) this holder clashes on. */
+  field: ProductReactivationHolder["field"];
+  /** The clashing value. */
+  value: string;
 }
 
 export type ReactivationRefusal =
@@ -32,18 +36,31 @@ export type ReactivationRefusal =
     }
   | { kind: "RETRY" };
 
-const WHAT: Record<"sku" | "unitSku" | "barcode", { noun: string; fix: string }> = {
-  sku: { noun: "the SKU", fix: "a new SKU" },
-  unitSku: { noun: "the unit code", fix: "a new unit code" },
-  barcode: { noun: "the barcode", fix: "a new barcode" },
+export type ReplaceableCodeField = "sku" | "unitSku" | "barcode";
+
+/** Field order for the new-code step. */
+const CODE_FIELD_ORDER: ReplaceableCodeField[] = ["sku", "unitSku", "barcode"];
+
+/** The plain-language noun for a code field ("The {noun} "X" is now used by …"). */
+export const CODE_NOUN: Record<ReplaceableCodeField, string> = {
+  sku: "SKU",
+  unitSku: "unit code",
+  barcode: "barcode",
 };
+
+/** The tail of the blocked sentence, after "Blocked: {Holder}". */
+export const BLOCKED_TAIL =
+  "has active variants, so it can't be deactivated from here. Open it to change the code.";
 
 function holderLine(h: ProductReactivationHolder): string {
   if (h.code === API_ERROR_CODES.NAME_TAKEN || h.field === "name") {
     return `Can't reactivate: an active product is already named "${h.value || h.productName}". Rename one of them first.`;
   }
-  const w = WHAT[h.field as "sku" | "unitSku" | "barcode"] ?? WHAT.sku;
-  return `Can't reactivate: ${w.noun} "${h.value}" is now used by ${h.productName}. Change it on that product, or give this one ${w.fix}.`;
+  const noun = CODE_NOUN[h.field as ReplaceableCodeField] ?? CODE_NOUN.sku;
+  const base = `The ${noun} "${h.value}" is now used by ${h.productName}.`;
+  return h.blocked === "HAS_ACTIVE_VARIANTS"
+    ? `${base} Blocked: ${h.productName} ${BLOCKED_TAIL}`
+    : base;
 }
 
 const isHolder = (h: unknown): h is ProductReactivationHolder => {
@@ -88,6 +105,8 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
           productName: "",
           line: holderLine({ ...(data as ProductReactivationHolder), field: "name" }),
           blocked: false,
+          field: "name" as const,
+          value: data.value as string,
         },
       ],
       holderIds: [],
@@ -99,6 +118,8 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     productName: h.productName,
     line: holderLine(h),
     blocked: h.blocked === "HAS_ACTIVE_VARIANTS",
+    field: h.field,
+    value: h.value,
   }));
   return {
     kind: "HOLDERS",
@@ -106,6 +127,19 @@ export function getReactivationRefusal(err: unknown): ReactivationRefusal | null
     holderIds: [...new Set(holders.map((h) => h.productId))],
     canResolve: holders.every((h) => !h.blocked) && holders.length > 0,
   };
+}
+
+/**
+ * The codes the operator can replace to get past this refusal, in field order and deduped, or null
+ * when a new code cannot help (a name clash anywhere, a stale-holder retry, nothing to name).
+ */
+export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableCodeField[] | null {
+  if (!refusal || refusal.kind !== "HOLDERS" || refusal.holders.length === 0) return null;
+  if (refusal.holders.some((h) => !CODE_FIELD_ORDER.includes(h.field as ReplaceableCodeField))) {
+    return null;
+  }
+  const fields = CODE_FIELD_ORDER.filter((f) => refusal.holders.some((h) => h.field === f));
+  return fields.length ? fields : null;
 }
 
 /** The one-call button text: "Deactivate <holder> and reactivate this". */
