@@ -13,7 +13,16 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/api/products", () => ({
   useProducts: () => ({ data: undefined, isFetching: false }),
 }));
-jest.mock("@/lib/api/customers", () => ({ useCustomers: () => ({ data: { data: [] } }) }));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [] } }),
+  useCustomerPrices: () => ({
+    data: [],
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: { taxRate: 0 } }), post: jest.fn() },
 }));

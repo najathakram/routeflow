@@ -54,6 +54,8 @@ import {
   writeHeldAttempt,
 } from "@/lib/counter-sale";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
+import { useCounterReprice } from "./useCounterReprice";
+import { repriceLines } from "./counter-sale-reprice";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLineRow } from "./CounterLineRow";
 import {
@@ -192,12 +194,17 @@ export function CounterSaleScreen() {
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
+  // POS-2: a customer pick (or a revert to walk-in) re-prices the cart for them; Pay waits on the lookup. Display only.
+  const reprice = useCounterReprice({ customer, lines, setLines, setCustomer, locked });
+  const repriceBlockedRef = React.useRef(false);
+  repriceBlockedRef.current = reprice.blocked;
+
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
     locked,
     refocus,
     add: (product, level, n) =>
-      setLines((prev) => addScannedProduct(prev, product, level, n, customer?.pricingTier ?? 1)),
+      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id))),
   });
 
   const scanBusy = scan.waiting > 0;
@@ -243,7 +250,7 @@ export function CounterSaleScreen() {
   };
 
   React.useEffect(() => {
-    if (!shipIntent || locked || scanBusy || shipRunningRef.current) return;
+    if (!shipIntent || locked || scanBusy || reprice.blocked || shipRunningRef.current) return;
     if (lines.length === 0) {
       setShipIntent(false); // the cart emptied while we waited: nothing to hand over
       return;
@@ -251,7 +258,7 @@ export function CounterSaleScreen() {
     if (customer === null) return; // waiting for the pick
     void runShip(customer, lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipIntent, locked, scanBusy, customer, lines]);
+  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines]);
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -294,7 +301,8 @@ export function CounterSaleScreen() {
 
   const undoRemove = () => {
     if (!undo || lineLocked) return;
-    setLines((prev) => restoreLine(prev, undo));
+    // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
+    setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
     dropUndo();
     refocus();
   };
@@ -434,7 +442,7 @@ export function CounterSaleScreen() {
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
-    if (!retry && scanBusyRef.current) return;
+    if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
     submittingRef.current = true;
     try {
       if (retry) next = attemptRef.current?.next ?? next; // "Try again" finishes the sale the way it was started
@@ -691,6 +699,30 @@ export function CounterSaleScreen() {
               value={customerSearch}
               onChange={(e) => setCustomerSearch(e.target.value)}
             />
+            {reprice.noteText ? (
+              <p
+                role="status"
+                className="flex flex-wrap items-center gap-x-3 text-sm text-brand-700"
+                data-testid="counter-reprice-note"
+              >
+                <span>{reprice.noteText}</span>
+                <button
+                  type="button"
+                  className={cn(TAP_TARGET, "underline disabled:opacity-40")}
+                  disabled={locked}
+                  onClick={reprice.undo}
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className={cn(TAP_TARGET, "underline")}
+                  onClick={reprice.dismiss}
+                >
+                  Dismiss
+                </button>
+              </p>
+            ) : null}
             {shipIntent && isWalkIn && lines.length > 0 ? (
               <p
                 role="status"
@@ -976,6 +1008,19 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
+          {reprice.failed ? (
+            <p role="alert" className="text-sm text-red-700" data-testid="counter-reprice-failed">
+              Couldn&apos;t update prices for this customer. The old prices are still showing.{" "}
+              <button type="button" className={cn(TAP_TARGET, "underline")} onClick={reprice.retry}>
+                Retry price update
+              </button>
+            </p>
+          ) : reprice.blocked ? (
+            <p role="status" className="text-sm text-navy/70" data-testid="counter-reprice-busy">
+              Updating prices…
+            </p>
+          ) : null}
+
           {scanBusy ? (
             <p role="status" className="text-sm text-navy/70" data-testid="counter-scan-busy">
               Adding scanned items…
@@ -995,7 +1040,7 @@ export function CounterSaleScreen() {
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
-                disabled={createSale.isPending || locked || scanBusy}
+                disabled={createSale.isPending || locked || scanBusy || reprice.blocked}
               >
                 Complete &amp; show receipt
               </Button>
@@ -1003,7 +1048,7 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
-                disabled={createSale.isPending || locked || scanBusy}
+                disabled={createSale.isPending || locked || scanBusy || reprice.blocked}
               >
                 Complete &amp; next sale
               </Button>
