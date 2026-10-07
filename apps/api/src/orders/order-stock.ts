@@ -164,8 +164,10 @@ export async function decrementStockForSale(
     tx,
     saleMarkers({
       lines: stockLines,
-      packByProduct: new Map(lockedProducts.map((p: any) => [p.id, p.unitsPerBox])),
-      availableByProduct: new Map(lockedProducts.map((p: any) => [p.id, Number(p.currentStock)])),
+      packByProduct: new Map(lockedProducts.map((lp: any) => [lp.id, lp.unitsPerBox])),
+      availableByProduct: new Map(
+        lockedProducts.map((lp: any) => [lp.id, Number(lp.currentStock)]),
+      ),
       allowOversell,
     }),
   );
