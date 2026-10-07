@@ -9,6 +9,7 @@ import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
@@ -84,6 +85,7 @@ export function StockCountTab() {
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
   const scanContainerRef = React.useRef<HTMLDivElement>(null);
   const [resolving, setResolving] = React.useState(false);
 
@@ -518,6 +520,11 @@ export function StockCountTab() {
         setUnknownCode(code);
         return;
       }
+      if (result.suggestion || result.ambiguous) {
+        // B1219: a fuzzy guess writes a count only after the operator confirms it.
+        setScanSuggestion(result.product);
+        return;
+      }
       addOrIncrementProduct(result.product, qtyPerScan);
       if (result.source !== "barcode") {
         toast({
@@ -802,6 +809,27 @@ export function StockCountTab() {
               <BarcodeScannerButton inputRef={scanInputRef} onScan={handleScan} />
             </div>
             {resolving && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
+
+            {scanSuggestion && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  name={String(scanSuggestion.name ?? "this item")}
+                  confirmLabel="Apply"
+                  onConfirm={async () => {
+                    const product = scanSuggestion;
+                    setScanSuggestion(null);
+                    const sid = await ensureSession();
+                    if (!sid) return;
+                    addOrIncrementProduct(product, qtyPerScan);
+                    scanInputRef.current?.focus();
+                  }}
+                  onCancel={() => {
+                    setScanSuggestion(null);
+                    scanInputRef.current?.focus();
+                  }}
+                />
+              </div>
+            )}
 
             {suggestOpen && suggestions.length > 0 && (
               <ul

@@ -6,6 +6,7 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { unitsLabel } from "@/lib/stock-label";
 import { useRecordPurchase, usePurchaseOrders } from "@/lib/api/inventory";
@@ -62,6 +63,7 @@ export function QuickRestockModal({
   const pickerInputRef = React.useRef<HTMLInputElement | null>(null);
   const qtyInputRef = React.useRef<HTMLInputElement | null>(null);
   const [scanLoading, setScanLoading] = React.useState(false);
+  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
   const { toast: scanToast } = useToast();
   const handleScan = async (code: string) => {
     setScanLoading(true);
@@ -76,6 +78,9 @@ export function QuickRestockModal({
           description: "Reactivate it on the Products page, then restock it.",
           variant: "error",
         });
+      } else if (!result.notFound && (result.suggestion || result.ambiguous)) {
+        // B1219: a fuzzy guess selects the product only after the operator confirms it.
+        setScanSuggestion(result.product);
       } else if (!result.notFound) {
         setForm((f) => ({ ...f, productId: result.product.id }));
         qtyInputRef.current?.focus();
@@ -217,6 +222,21 @@ export function QuickRestockModal({
               />
             </div>
             {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
+            {scanSuggestion && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  name={String(scanSuggestion.name ?? "this item")}
+                  confirmLabel="Apply"
+                  onConfirm={() => {
+                    const product = scanSuggestion;
+                    setScanSuggestion(null);
+                    setForm((f) => ({ ...f, productId: product.id }));
+                    qtyInputRef.current?.focus();
+                  }}
+                  onCancel={() => setScanSuggestion(null)}
+                />
+              </div>
+            )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
                 Current stock:{" "}

@@ -75,6 +75,7 @@ import {
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
@@ -1985,36 +1986,18 @@ export function CreateOrderModal({
             </div>
 
             {scanSuggestion && (
-              <div
-                role="group"
-                aria-label="Did you mean"
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm text-navy"
-              >
-                <span className="min-w-0 flex-1 break-words">
-                  Did you mean {scanSuggestion.name}?
-                </span>
-                <button
-                  type="button"
-                  className="min-h-[44px] rounded bg-brand-600 px-3 text-sm font-medium text-white"
-                  onClick={() => {
-                    const product = scanSuggestion;
-                    setScanSuggestion(null);
-                    addPicked(product);
-                  }}
-                >
-                  Add
-                </button>
-                <button
-                  type="button"
-                  className="min-h-[44px] rounded border border-surface-border bg-white px-3 text-sm text-navy"
-                  onClick={() => {
-                    setScanSuggestion(null);
-                    scheduleScannerRefocus(productSearchRef, 50);
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
+              <DidYouMeanPicker
+                name={String(scanSuggestion.name ?? "this item")}
+                onConfirm={() => {
+                  const product = scanSuggestion;
+                  setScanSuggestion(null);
+                  addPicked(product);
+                }}
+                onCancel={() => {
+                  setScanSuggestion(null);
+                  scheduleScannerRefocus(productSearchRef, 50);
+                }}
+              />
             )}
 
             {lineItemsError && lineItems.length === 0 && (
