@@ -16,6 +16,7 @@ type Row = {
   periodStart: Date | null;
   periodEnd: Date | null;
   periodKey: string | null;
+  needsReview: boolean;
 };
 const row = (over: Partial<Row>): Row => ({
   id: "inv-1",
@@ -26,18 +27,27 @@ const row = (over: Partial<Row>): Row => ({
   periodStart: D("2026-10-10"),
   periodEnd: D("2026-11-03"),
   periodKey: D("2026-10-10").toISOString(),
+  needsReview: false,
   ...over,
 });
 
 /** A tiny in-memory tx that honours the where clauses the helper sends. */
 function fakeTx(rows: Row[]) {
+  const cmp = (v: Date | null, f: any): boolean =>
+    f === undefined ||
+    (v !== null &&
+      (f.gte === undefined || v >= f.gte) &&
+      (f.lte === undefined || v <= f.lte) &&
+      (f.gt === undefined || v > f.gt) &&
+      (f.lt === undefined || v < f.lt));
   const matches = (r: Row, w: any): boolean =>
     (w.id === undefined || r.id === w.id) &&
     (w.tenantId === undefined || r.tenantId === w.tenantId) &&
     (w.status === undefined || r.status === w.status) &&
-    (w.periodStart?.gte === undefined ||
-      (r.periodStart !== null && r.periodStart >= w.periodStart.gte)) &&
-    (w.periodEnd?.lte === undefined || (r.periodEnd !== null && r.periodEnd <= w.periodEnd.lte));
+    (w.needsReview === undefined || r.needsReview === w.needsReview) &&
+    cmp(r.periodStart, w.periodStart) &&
+    cmp(r.periodEnd, w.periodEnd);
+  const audits: any[] = [];
   const tx = {
     rfInvoice: {
       findMany: jest.fn(async ({ where }: any) => rows.filter((r) => matches(r, where))),
@@ -47,7 +57,19 @@ function fakeTx(rows: Row[]) {
         return { count: hit.length };
       }),
     },
-    auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $executeRaw: jest.fn().mockResolvedValue(1),
+    auditLog: {
+      create: jest.fn(async ({ data }: any) => {
+        audits.push(data);
+        return data;
+      }),
+      findFirst: jest.fn(
+        async ({ where }: any) =>
+          audits.find(
+            (a) => a.action === where.action && a.meta?.dedupeKey === where.meta?.equals,
+          ) ?? null,
+      ),
+    },
   };
   return tx;
 }
@@ -114,14 +136,29 @@ describe("voidCoveredRfInvoices (manual activation auto-void)", () => {
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
-  it("leaves a PARTIAL overlap OPEN (ends after the window, or starts before it)", async () => {
+  it("a PARTIAL overlap stays OPEN, is flagged needsReview, and raises exactly one claim-keyed notice", async () => {
     const rows = [
       row({ id: "tail", periodStart: D("2026-10-20"), periodEnd: D("2026-11-20") }),
       row({ id: "head", periodStart: D("2026-09-20"), periodEnd: D("2026-10-20") }),
     ];
     const tx = fakeTx(rows);
-    expect((await run(tx)).voided).toEqual([]);
+    const out = await run(tx);
+    expect(out.voided).toEqual([]);
     expect(rows.map((r) => r.status)).toEqual(["OPEN", "OPEN"]);
+    expect(rows.map((r) => r.needsReview)).toEqual([true, true]);
+    const notices = tx.auditLog.create.mock.calls
+      .map((c: any) => c[0].data)
+      .filter((d: any) => d.action === AdminAuditAction.RF_INVOICE_PARTLY_COVERED);
+    expect(notices).toHaveLength(2); // one per invoice
+    expect(notices[0].meta.message).toBe("Partly covered by manual activation on 2026-10-07");
+    expect(notices[0].meta.dedupeKey).toContain("tail");
+    // a rerun (a second activation touching the same rows) adds no second notice
+    await run(tx);
+    expect(
+      tx.auditLog.create.mock.calls.filter(
+        (c: any) => c[0].data.action === AdminAuditAction.RF_INVOICE_PARTLY_COVERED,
+      ),
+    ).toHaveLength(2);
   });
 
   it("ignores legacy rows with no period, and rows of another tenant", async () => {

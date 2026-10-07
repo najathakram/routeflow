@@ -163,4 +163,34 @@ describeDb("manual activation auto-void (DB)", () => {
     expect(await voidAudits()).toBe(1);
     expect((await subRow())?.externalPayment).toBe(true);
   });
+  it("a partially overlapping OPEN invoice stays OPEN, is flagged needsReview, with exactly one notice", async () => {
+    // a fresh tenant state: roll back to TRIAL-less renewal is fine, the partial case only needs the window
+    const startsBefore = new Date(Date.now() - 5 * DAY);
+    const partial = await prisma.rfInvoice.create({
+      data: {
+        tenantId,
+        number: `RF-2097-PT${Date.now() % 100000}`,
+        amount: 499,
+        status: "OPEN",
+        periodStart: startsBefore,
+        periodEnd: new Date(Date.now() + 10 * DAY),
+        periodKey: startsBefore.toISOString(),
+        dueDate: startsBefore,
+      },
+    });
+    const partlyAudits = () =>
+      prisma.auditLog.count({
+        where: { tenantId, action: AdminAuditAction.RF_INVOICE_PARTLY_COVERED },
+      });
+    const before = await partlyAudits();
+
+    await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
+    await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a"); // a rerun
+
+    const row = await prisma.rfInvoice.findUniqueOrThrow({ where: { id: partial.id } });
+    expect(row.status).toBe("OPEN");
+    expect(row.needsReview).toBe(true);
+    expect(row.periodKey).toBe(startsBefore.toISOString());
+    expect((await partlyAudits()) - before).toBe(1);
+  });
 });

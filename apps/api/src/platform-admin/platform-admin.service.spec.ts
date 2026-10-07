@@ -2784,7 +2784,8 @@ describe("PlatformAdminService — audit provenance", () => {
 
       const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
       expect(where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
-      expect(where.periodEnd.lte.getTime() - where.periodStart.gte.getTime()).toBe(30 * 86_400_000);
+      // the overlap read: the recorded period [now, now+30d) is the window
+      expect(where.periodStart.lt.getTime() - where.periodEnd.gt.getTime()).toBe(30 * 86_400_000);
       expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "inv-1", tenantId: TENANT_ID, status: "OPEN" },
         data: {
