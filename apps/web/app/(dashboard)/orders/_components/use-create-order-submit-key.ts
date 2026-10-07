@@ -14,7 +14,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
  * if the cart is then edited — the server's replay / request hash answers. A precondition 4xx the
  * modal resolves and re-submits itself (merge prompt, license capture) is the SAME attempt: keep.
  */
-export type SubmitOutcome = "success" | "refused" | "unknown" | "same-attempt";
+export type SubmitOutcome = "success" | "refused" | "unknown" | "same-attempt" | "conflict";
 
 export function mintSubmitKey(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -22,10 +22,16 @@ export function mintSubmitKey(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** No response at all, a timeout or a 5xx: the server may or may not have written the order. */
+/**
+ * No response at all, a timeout, a 5xx, or a 409 MERGE_IN_PROGRESS: the server may or may not have
+ * written the order. MERGE_IN_PROGRESS is unknown because mapLockError also wraps the fold's
+ * POST-commit reconcile, so it can arrive after the merge committed. (LOCK_UNAVAILABLE is a 503.)
+ */
 export function isUnknownOutcome(err: unknown): boolean {
-  const status = (err as { response?: { status?: number } } | null)?.response?.status;
-  return status == null || status === 408 || status >= 500;
+  const r = (err as { response?: { status?: number; data?: { code?: string } } } | null)?.response;
+  const status = r?.status;
+  if (status == null || status === 408 || status >= 500) return true;
+  return status === 409 && r?.data?.code === API_ERROR_CODES.MERGE_IN_PROGRESS;
 }
 
 interface State {
@@ -60,13 +66,20 @@ export function useCreateOrderSubmitKey(isOpen: boolean) {
         s.inFlight = true;
         return s.key;
       },
+      /** An earlier attempt ended unknown and no 2xx or key-conflict has resolved it since. */
+      hasUnknown(): boolean {
+        return st.current!.unknown;
+      },
       /** Release the latch and apply the outcome to the key. */
       settle(outcome: SubmitOutcome): void {
         const s = st.current!;
         s.inFlight = false;
         if (outcome === "unknown") {
           s.unknown = true;
-        } else if (outcome === "success" || outcome === "refused") {
+        } else if (outcome === "refused" && s.unknown) {
+          // A 4xx on a RETRY proves only that the retry wrote nothing: the earlier attempt may have.
+          // Release the latch and keep the key. Only a 2xx or a coded key-conflict clears `unknown`.
+        } else if (outcome === "success" || outcome === "refused" || outcome === "conflict") {
           s.key = mintSubmitKey();
           s.fingerprint = null;
           s.unknown = false;
@@ -77,10 +90,16 @@ export function useCreateOrderSubmitKey(isOpen: boolean) {
   );
 }
 
+// Not in the shared API_ERROR_CODES (declared next to the code that throws them, merge-idempotency.ts);
+// mobile spells them the same way.
+const IDEMPOTENCY_KEY_CONFLICT = "IDEMPOTENCY_KEY_CONFLICT"; // reasons CART_MISMATCH / HELD_BY_OTHER_ORDER
+const IDEMPOTENCY_REPLAY_NEEDS_RECONCILE = "IDEMPOTENCY_REPLAY_NEEDS_RECONCILE";
+
 /**
- * SA-715: the server answered "this key already made an order" with a DIFFERENT cart or kind (draft vs
- * real). The order EXISTS: the modal opens it. It must NEVER mint a new key and resubmit - that is the
- * double order this fix exists to stop. Returns the holding order's id, or null for any other error.
+ * SA-715: the server answered "this key already made an order" (a different cart, a draft, another
+ * order's key, or a replay that needs reconciling). The order EXISTS: the modal opens it. It must
+ * NEVER mint a new key and resubmit - that is the double order this fix exists to stop. Returns the
+ * holding order's id, or null for any other error. Checked BEFORE the unknown/refused split.
  */
 export function idempotencyConflictOrderId(err: unknown): string | null {
   const r = (err as { response?: { status?: number; data?: { code?: string; orderId?: string } } })
@@ -89,6 +108,8 @@ export function idempotencyConflictOrderId(err: unknown): string | null {
   const code = r.data?.code;
   const hit =
     code === API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH ||
-    code === API_ERROR_CODES.IDEMPOTENCY_KEY_DRAFT_MISMATCH;
+    code === API_ERROR_CODES.IDEMPOTENCY_KEY_DRAFT_MISMATCH ||
+    code === IDEMPOTENCY_KEY_CONFLICT ||
+    code === IDEMPOTENCY_REPLAY_NEEDS_RECONCILE;
   return hit && r.data?.orderId ? r.data.orderId : null;
 }

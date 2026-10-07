@@ -223,12 +223,12 @@ export async function findOrderIdByKeyCheckingReturn(
   deps: IdempotencyLookupDeps & { prisma: { forTenant(): unknown } },
   idempotencyKey: string,
   customerId: string,
-  requestHash?: string,
-  inlineReturn?: InlineReturnReplayLines, // #2424: its items are compared too, not only its key
-  cart?: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A: the body to compare
+  requestHash: string | undefined,
+  inlineReturn: InlineReturnReplayLines | undefined, // #2424: its items are compared too, not only its key
+  cart: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A: the body to compare
 ): Promise<{ orderId: string; verified: boolean } | null> {
   const hit = await findOrderIdByIdempotencyKey(deps, idempotencyKey, customerId, requestHash);
-  if (hit && !hit.verified && cart) {
+  if (hit && !hit.verified) {
     // An Order-COLUMN hit stores no fingerprint: compare the body to the order the key created.
     const held = await (deps.prisma.forTenant() as any).order.findFirst({
       where: { id: hit.orderId },

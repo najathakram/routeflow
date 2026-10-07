@@ -297,6 +297,88 @@ describe("CreateOrderModal - one order per attempt (BUG-A)", () => {
   });
 });
 
+describe("CreateOrderModal - the key survives refusals after an unknown outcome", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockCustomerPrices = [];
+  });
+  const retry = async () => {
+    await waitFor(() => expect(createBtn()).not.toBeDisabled());
+    fireEvent.click(createBtn());
+    await flush();
+  };
+
+  it("timeout, then an edit the server refuses (400), then a fix: the key is REUSED throughout", async () => {
+    post
+      .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+      .mockRejectedValueOnce({ response: { status: 400, data: {} } })
+      .mockResolvedValue({ data: { id: "o1" } });
+    await openWithLine();
+    fireEvent.click(createBtn());
+    await flush();
+    await waitFor(() => expect(createBtn()).not.toBeDisabled());
+    await addAnotherLine(); // an edit the server then refuses
+    await retry();
+    mockResolveProductByCode.mockResolvedValue(product("p3"));
+    capturedOnScan!("333"); // the operator fixes the cart
+    await screen.findByText("Widget p3");
+    await retry();
+    expect(orderPosts()).toHaveLength(3);
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(keyOf(2)).toBe(keyOf(0));
+  });
+
+  it("timeout, then a 409 MERGE_IN_PROGRESS (it can arrive after the fold committed): the same key", async () => {
+    post
+      .mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"))
+      .mockRejectedValueOnce({ response: { status: 409, data: { code: "MERGE_IN_PROGRESS" } } })
+      .mockResolvedValue({ data: { id: "o1" } });
+    await openWithLine();
+    fireEvent.click(createBtn());
+    await flush();
+    await retry();
+    await retry();
+    expect(orderPosts()).toHaveLength(3);
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(keyOf(2)).toBe(keyOf(0));
+  });
+
+  it("a MERGE_IN_PROGRESS 409 with NO earlier unknown is itself unknown: the retry keeps the key", async () => {
+    post
+      .mockRejectedValueOnce({ response: { status: 409, data: { code: "MERGE_IN_PROGRESS" } } })
+      .mockResolvedValue({ data: { id: "o1" } });
+    await openWithLine();
+    fireEvent.click(createBtn());
+    await flush();
+    await retry();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it("closing the modal after an unknown outcome warns the order may have gone through", async () => {
+    post.mockRejectedValueOnce(new Error("timeout of 30000ms exceeded"));
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    const { rerender } = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    capturedOnScan!("111");
+    await screen.findByText("Widget p1");
+    fireEvent.click(createBtn());
+    await flush();
+    mockToast.mockClear();
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} />);
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: expect.stringMatching(/may have gone through.*check Orders/i),
+      }),
+    );
+  });
+});
+
 describe("CreateOrderModal - the key already made an order (SA-715)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -305,28 +387,30 @@ describe("CreateOrderModal - the key already made an order (SA-715)", () => {
     mockCustomerPrices = [];
   });
 
-  it.each([["IDEMPOTENCY_KEY_CART_MISMATCH"], ["IDEMPOTENCY_KEY_DRAFT_MISMATCH"]])(
-    "a %s 409 opens the existing order and NEVER resubmits on a new key",
-    async (code) => {
-      post.mockRejectedValue({ response: { status: 409, data: { code, orderId: "ord-77" } } });
-      const onClose = jest.fn();
-      const onViewOrder = jest.fn();
-      mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
-      mockResolveProductByCode.mockResolvedValue(product("p1"));
-      renderWithProviders(<CreateOrderModal isOpen onClose={onClose} onViewOrder={onViewOrder} />);
-      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
-        target: { value: "Acm" },
-      });
-      fireEvent.click(await screen.findByText("Acme Foods"));
-      capturedOnScan!("111");
-      await screen.findByText("Widget p1");
-      fireEvent.click(createBtn());
-      await flush();
-      await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-77"));
-      expect(onClose).toHaveBeenCalled();
-      expect(orderPosts()).toHaveLength(1); // no re-mint + resubmit
-    },
-  );
+  it.each([
+    ["IDEMPOTENCY_KEY_CART_MISMATCH"],
+    ["IDEMPOTENCY_KEY_DRAFT_MISMATCH"],
+    ["IDEMPOTENCY_KEY_CONFLICT"], // reasons CART_MISMATCH / HELD_BY_OTHER_ORDER
+    ["IDEMPOTENCY_REPLAY_NEEDS_RECONCILE"],
+  ])("a %s 409 opens the existing order and NEVER resubmits on a new key", async (code) => {
+    post.mockRejectedValue({ response: { status: 409, data: { code, orderId: "ord-77" } } });
+    const onClose = jest.fn();
+    const onViewOrder = jest.fn();
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    renderWithProviders(<CreateOrderModal isOpen onClose={onClose} onViewOrder={onViewOrder} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Acm" },
+    });
+    fireEvent.click(await screen.findByText("Acme Foods"));
+    capturedOnScan!("111");
+    await screen.findByText("Widget p1");
+    fireEvent.click(createBtn());
+    await flush();
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-77"));
+    expect(onClose).toHaveBeenCalled();
+    expect(orderPosts()).toHaveLength(1); // no re-mint + resubmit
+  });
 });
 
 describe("useCreateOrderSubmitKey - lifecycle", () => {
@@ -354,5 +438,34 @@ describe("useCreateOrderSubmitKey - lifecycle", () => {
     expect(result.current.begin("cart-B")).toBe(k1);
     result.current.settle("success");
     expect(result.current.begin("cart-B")).not.toBe(k1);
+  });
+
+  it("after an unknown outcome a refusal ONLY releases the latch: no re-mint, unknown not cleared", () => {
+    const { result } = renderHook(() => useCreateOrderSubmitKey(true));
+    const k1 = result.current.begin("cart-A");
+    result.current.settle("unknown");
+    expect(result.current.begin("cart-B")).toBe(k1);
+    result.current.settle("refused"); // a 4xx on the retry proves only that the retry wrote nothing
+    expect(result.current.begin("cart-C")).toBe(k1);
+    result.current.settle("unknown");
+    expect(result.current.begin("cart-D")).toBe(k1);
+  });
+
+  it("with no earlier unknown a definitive refusal re-mints, as before", () => {
+    const { result } = renderHook(() => useCreateOrderSubmitKey(true));
+    const k1 = result.current.begin("cart-A");
+    result.current.settle("refused");
+    expect(result.current.begin("cart-A")).not.toBe(k1);
+  });
+
+  it("only a 2xx or a coded key-conflict clears unknown", () => {
+    for (const outcome of ["success", "conflict"] as const) {
+      const { result } = renderHook(() => useCreateOrderSubmitKey(true));
+      const k1 = result.current.begin("cart-A");
+      result.current.settle("unknown");
+      result.current.begin("cart-A");
+      result.current.settle(outcome);
+      expect(result.current.begin("cart-B")).not.toBe(k1);
+    }
   });
 });

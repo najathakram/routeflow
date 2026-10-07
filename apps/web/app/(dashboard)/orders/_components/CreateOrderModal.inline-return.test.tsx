@@ -361,7 +361,7 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     expect(screen.queryByLabelText(/qty \(pieces\)/i)).not.toBeInTheDocument();
   });
 
-  it("a discard drops the returnKey/Idempotency-Key pair: the next return gets a fresh pair", async () => {
+  it("a discard after an UNKNOWN outcome: a fresh returnKey, but the attempt key is KEPT (the first save may have been written)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
@@ -378,7 +378,10 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const second = createOrderMutate.mock.calls[1][0];
     expect(second.inlineReturn.returnKey).not.toBe(first.inlineReturn.returnKey);
-    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    // One key per attempt (BUG-A): a 500 is unknown, so the key survives the edit. If the first save did
+    // land, the server refuses this return under that key (assertReplayCarriesReturnKey, a loud 409)
+    // rather than writing a second order.
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
   });
 
   it("a blocked return save closes the merge-vs-separate prompt that led to it", async () => {

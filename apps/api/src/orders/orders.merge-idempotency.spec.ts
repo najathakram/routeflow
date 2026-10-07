@@ -795,7 +795,13 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     });
     prisma.order.findFirst.mockResolvedValue(null);
 
-    const result = await (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1");
+    const result = await (service as any).findOrderIdByIdempotencyKey(
+      "K1",
+      "cust-1",
+      "h1",
+      undefined,
+      { items: [] },
+    );
 
     // B215/R1 (round 2): a matched table hit is VERIFIED — the retry's body is provably the cart
     // the fold applied, so the controller may re-apply its credit selection.
@@ -815,7 +821,7 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     try {
       const err = await (service as any)
-        .findOrderIdByIdempotencyKey("K1", "cust-1", "h-other")
+        .findOrderIdByIdempotencyKey("K1", "cust-1", "h-other", undefined, { items: [] })
         .then(() => null)
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ConflictException);
@@ -846,7 +852,7 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     (prisma.getTenantId as unknown as jest.Mock).mockReturnValue(null);
 
     await expect(
-      (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1"),
+      (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1", undefined, { items: [] }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect((prisma as any).orderIdempotencyKey.findFirst).not.toHaveBeenCalled();
     expect(prisma.order.findFirst).not.toHaveBeenCalled();
@@ -865,7 +871,7 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     prisma.order.findFirst.mockResolvedValue(null);
 
     const err = await (service as any)
-      .findOrderIdByIdempotencyKey("K1", "cust-1", "h1")
+      .findOrderIdByIdempotencyKey("K1", "cust-1", "h1", undefined, { items: [] })
       .then(() => null)
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConflictException);
@@ -896,7 +902,13 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
 
     // D3: before the reorder, the tenant-wide `heldByAnotherOrder` check ran first and turned
     // this legitimate replay into a permanent 409.
-    const result = await (service as any).findOrderIdByIdempotencyKey("K1", "cust-1", "h1");
+    const result = await (service as any).findOrderIdByIdempotencyKey(
+      "K1",
+      "cust-1",
+      "h1",
+      undefined,
+      { items: [] },
+    );
 
     // Column hit → UNVERIFIED (the column stores no fingerprint).
     expect(result).toEqual({ orderId: "ord-mine", verified: false });
@@ -912,7 +924,13 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     // The Order column stores no fingerprint and its main producer is the create -> retry
     // path, so a column-only hit stays replay-eligible; only the key TABLE refuses on a
     // mismatch. Guarding this behaviour against a future "compare the hash here too" change.
-    const result = await (service as any).findOrderIdByIdempotencyKey("K0", "cust-1", "h-other");
+    const result = await (service as any).findOrderIdByIdempotencyKey(
+      "K0",
+      "cust-1",
+      "h-other",
+      undefined,
+      { items: [] },
+    );
 
     expect(result).toEqual({ orderId: "ord-col", verified: false });
   });
@@ -923,7 +941,9 @@ describe("OrdersService.findOrderIdByIdempotencyKey — table-first replay (REG-
     const service = await buildOrdersService(prisma, gateway);
     prisma.order.findFirst.mockResolvedValue({ id: "ord-1" });
 
-    const result = await service.findOrderIdByIdempotencyKey("K0", "cust-1");
+    const result = await service.findOrderIdByIdempotencyKey("K0", "cust-1", undefined, undefined, {
+      items: [],
+    });
 
     expect(result).toEqual({ orderId: "ord-1", verified: false });
   });

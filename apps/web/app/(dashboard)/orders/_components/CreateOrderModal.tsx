@@ -79,6 +79,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -208,7 +209,7 @@ function isSameAttemptRefusal(err: any): boolean {
   const body = err?.response?.data;
   if (
     err?.response?.status === 409 &&
-    body?.code === "MERGE_CHOICE_REQUIRED" &&
+    body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
     body?.activeOrder
   ) {
     return true;
@@ -226,6 +227,17 @@ export function CreateOrderModal({
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
   const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
+  // reopen (accepted residual risk), so tell the operator to check before re-entering it.
+  React.useEffect(() => {
+    if (!isOpen && submitKey.hasUnknown()) {
+      toast({
+        title: "Your last order may have gone through. Check Orders before re-entering it.",
+        variant: "warning",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -1332,7 +1344,7 @@ export function CreateOrderModal({
       // the create-order payload needs threading here.
       ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
       // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
-      ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
+      ...(inlineReturn ? { inlineReturn } : {}),
     } as any;
     // BUG-A: ONE request in flight per modal (a synchronous latch — `isPending` is stale for the
     // second click of a double click) and one Idempotency-Key per attempt. mergeChoice is NOT part
@@ -1340,69 +1352,75 @@ export function CreateOrderModal({
     const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
     const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
     if (attemptKey === null) return;
-    createOrder.mutate(inlineReturn ? payload : { ...payload, idempotencyKey: attemptKey }, {
-      onSuccess: (created: any) => {
-        submitKey.settle("success");
-        toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
-        // The parked draft has become a real order — clear it from the dock.
-        if (activeDraftId) deleteDraft.mutate(activeDraftId);
-        setMergePrompt(null);
-        pendingFormValuesRef.current = null;
-        pendingAsDraftRef.current = false;
-        returnSave.onSuccess();
-        onClose();
-      },
-      onError: (err: any) => {
-        submitKey.settle(
-          isUnknownOutcome(err)
-            ? "unknown"
-            : isSameAttemptRefusal(err)
-              ? "same-attempt"
-              : "refused",
-        );
-        // SA-715: the key already made an order (different cart, or a draft): open it, never resubmit.
-        const heldOrderId = idempotencyConflictOrderId(err);
-        if (heldOrderId) {
-          toast({
-            title: "Your earlier submit went through. Opening that order.",
-            variant: "success",
-          });
+    createOrder.mutate(
+      { ...payload, idempotencyKey: attemptKey },
+      {
+        onSuccess: (created: any) => {
+          submitKey.settle("success");
+          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+          // The parked draft has become a real order — clear it from the dock.
+          if (activeDraftId) deleteDraft.mutate(activeDraftId);
+          setMergePrompt(null);
+          pendingFormValuesRef.current = null;
+          pendingAsDraftRef.current = false;
+          returnSave.onSuccess();
           onClose();
-          onViewOrder?.(heldOrderId);
-          return;
-        }
-        // Belt-and-braces: if our pre-check missed an active order (race) the API
-        // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
-        const body = err?.response?.data;
-        if (
-          err?.response?.status === 409 &&
-          body?.code === "MERGE_CHOICE_REQUIRED" &&
-          body?.activeOrder
-        ) {
-          pendingFormValuesRef.current = data;
-          pendingAsDraftRef.current = !!asDraft;
-          setMergePrompt(body.activeOrder as ActiveOrderSummary);
-          return;
-        }
-        const restricted = parseSellingRestricted(err);
-        if (restricted) {
-          setRestrictedBlock(restricted);
-          return;
-        }
-        // A regulated line needs a verified license (or a §8 override / removal).
-        const blocked = parseRegulatedAuthError(err);
-        if (blocked && blocked.length > 0) {
-          licenseRetryRef.current = { data, options };
-          setLicenseBlock(blocked);
-          return;
-        }
-        // #2406: none of the precondition flows above matched (each re-submits the SAME
-        // attempt and must keep the returnKey) — an inline-return-carrying save refused
-        // for any other 4xx reason mints a fresh one and surfaces the message near the
-        // Returns section. The modal itself stays open (no onClose() on this path already).
-        if (inlineReturn) returnSave.onError(err, false);
+        },
+        onError: (err: any) => {
+          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+          // key-conflict code can fall through to the refused / re-mint branch.
+          const heldOrderId = idempotencyConflictOrderId(err);
+          submitKey.settle(
+            heldOrderId
+              ? "conflict"
+              : isUnknownOutcome(err)
+                ? "unknown"
+                : isSameAttemptRefusal(err)
+                  ? "same-attempt"
+                  : "refused",
+          );
+          if (heldOrderId) {
+            toast({
+              title: "Your earlier submit went through. Opening that order.",
+              variant: "success",
+            });
+            onClose();
+            onViewOrder?.(heldOrderId);
+            return;
+          }
+          // Belt-and-braces: if our pre-check missed an active order (race) the API
+          // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
+          const body = err?.response?.data;
+          if (
+            err?.response?.status === 409 &&
+            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+            body?.activeOrder
+          ) {
+            pendingFormValuesRef.current = data;
+            pendingAsDraftRef.current = !!asDraft;
+            setMergePrompt(body.activeOrder as ActiveOrderSummary);
+            return;
+          }
+          const restricted = parseSellingRestricted(err);
+          if (restricted) {
+            setRestrictedBlock(restricted);
+            return;
+          }
+          // A regulated line needs a verified license (or a §8 override / removal).
+          const blocked = parseRegulatedAuthError(err);
+          if (blocked && blocked.length > 0) {
+            licenseRetryRef.current = { data, options };
+            setLicenseBlock(blocked);
+            return;
+          }
+          // #2406: none of the precondition flows above matched (each re-submits the SAME
+          // attempt and must keep the returnKey) — an inline-return-carrying save refused
+          // for any other 4xx reason mints a fresh one and surfaces the message near the
+          // Returns section. The modal itself stays open (no onClose() on this path already).
+          if (inlineReturn) returnSave.onError(err, false);
+        },
       },
-    });
+    );
   };
 
   /**
