@@ -8,7 +8,7 @@ import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 // web form. A prefix ending in a digit merges into the padded number ("INV2" + "0043" ->
 // "INV20043"), so the numeric-max scan reads it as INV + 20043 and the series corrupts.
 describe("validateDocumentPrefix (shared, B1188)", () => {
-  it.each(["INV-", "EST-", "CN-", "2026-", "A/B-", "INV_", "INV.", "#", ""])(
+  it.each(["INV-", "EST-", "CN-", "2026-", "A/B-", "INV.", "INV_", "A", "INV-2026-"])(
     "accepts %j",
     (prefix) => {
       expect(validateDocumentPrefix(prefix)).toBeNull();
@@ -26,12 +26,16 @@ describe("validateDocumentPrefix (shared, B1188)", () => {
     );
   });
 
-  it.each(["IN V-", "INV;", "INV'-", "INV%", "ÉCOLE-", "INV\n"])(
+  it.each(["IN V-", "INV;", "INV'-", "INV%", "ÉCOLE-", "INV\n", "#", "-INV-", "/X-", ".X-", "_X-"])(
     "rejects %j: characters outside the allowed set",
     (prefix) => {
       expect(validateDocumentPrefix(prefix)).toMatch(/letters, numbers/i);
     },
   );
+
+  it("rejects an empty prefix", () => {
+    expect(validateDocumentPrefix("")).toMatch(/enter a prefix/i);
+  });
 
   it("rejects a non-string", () => {
     expect(validateDocumentPrefix(42)).not.toBeNull();

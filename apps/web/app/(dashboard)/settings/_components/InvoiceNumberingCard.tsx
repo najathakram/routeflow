@@ -12,7 +12,6 @@ import {
   type NumberingPrefixPreview,
   type NumberingSetting,
 } from "@/lib/api/numbering";
-import { useInvoiceSettings } from "@/lib/api/invoices";
 
 /** The invoice payment terms the api accepts (`VALID_TERMS`); due days are TERM_DAYS 0/15/30/45/60. */
 export const INVOICE_TERMS_OPTIONS = [
@@ -22,8 +21,6 @@ export const INVOICE_TERMS_OPTIONS = [
   { value: "Net 45", label: "Net 45" },
   { value: "Net 60", label: "Net 60" },
 ];
-
-const DEFAULT_TERMS = "Net 30";
 
 function errorMessage(e: unknown): string {
   const m = (e as any)?.response?.data?.message;
@@ -39,10 +36,18 @@ function errorMessage(e: unknown): string {
  *  - payment due days -> the `invoice.defaultTerms` setting (`PATCH /settings/invoice`).
  * Nothing here PATCHes `/settings` any more (the api now 400s `invoicePrefix`/`paymentDueDays`).
  */
-export function InvoiceNumberingCard() {
+export function InvoiceNumberingCard({
+  terms,
+  onTermsChange,
+  termsDisabled = false,
+}: {
+  /** The ONE payment-terms value, shared with the "Payment Terms" select (saved by the parent). */
+  terms: string;
+  onTermsChange: (value: string) => void;
+  termsDisabled?: boolean;
+}) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: invoiceSettings } = useInvoiceSettings();
   const { data: numbering } = useQuery<NumberingSetting[]>({
     queryKey: NUMBERING_QUERY_KEY,
     queryFn: () => apiClient.get("/import/numbering").then((r) => r.data),
@@ -50,27 +55,21 @@ export function InvoiceNumberingCard() {
   const row = numbering?.find((n) => n.docType === "INVOICE");
 
   const [prefixDraft, setPrefixDraft] = React.useState<string | null>(null);
-  const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
   const [prefixError, setPrefixError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<NumberingPrefixPreview | null>(null);
   const [saving, setSaving] = React.useState(false);
 
-  const savedPrefix = row?.prefix ?? "";
-  const savedTerms = invoiceSettings?.defaultTerms ?? DEFAULT_TERMS;
+  // An unconfigured tenant mints the yearly series (INV-2026-0039): the field stays empty and the
+  // placeholder shows the server's current format; the server preview says what comes next.
+  const unconfigured = !!row && !row.configured;
+  const savedPrefix = unconfigured ? "" : (row?.prefix ?? "");
+  const formatPlaceholder = row ? row.preview.replace(/\d+$/, "") : "INV-";
   const prefix = prefixDraft ?? savedPrefix;
-  const terms = termsDraft ?? savedTerms;
   const prefixChanged = prefix !== savedPrefix;
-  const termsChanged = terms !== savedTerms;
-
-  const saveTerms = async () => {
-    await apiClient.patch("/settings/invoice", { defaultTerms: terms });
-    setTermsDraft(null);
-    await qc.invalidateQueries({ queryKey: ["invoice-settings"] });
-  };
 
   const handleSave = async () => {
     setPrefixError(null);
-    if (!prefixChanged && !termsChanged) {
+    if (!prefixChanged) {
       toast({ title: "Nothing to save", variant: "info" });
       return;
     }
@@ -94,15 +93,6 @@ export function InvoiceNumberingCard() {
       }
       return; // the confirm dialog finishes the save
     }
-    setSaving(true);
-    try {
-      await saveTerms();
-      toast({ title: "Payment terms saved", variant: "success" });
-    } catch (e) {
-      toast({ title: "Failed to save", description: errorMessage(e), variant: "error" });
-    } finally {
-      setSaving(false);
-    }
   };
 
   const handleConfirm = async () => {
@@ -117,7 +107,6 @@ export function InvoiceNumberingCard() {
         .then((r) => r.data as NumberingSetting);
       setPrefixDraft(null);
       await qc.invalidateQueries({ queryKey: NUMBERING_QUERY_KEY });
-      if (termsChanged) await saveTerms();
       toast({
         title: "Invoice numbering saved",
         description: `Next invoice will be ${saved.preview}`,
@@ -162,7 +151,7 @@ export function InvoiceNumberingCard() {
               setPrefixDraft(e.target.value);
               setPrefixError(null);
             }}
-            placeholder="INV-"
+            placeholder={formatPlaceholder}
             maxLength={DOCUMENT_PREFIX_MAX_LENGTH}
             aria-invalid={prefixError ? true : undefined}
             aria-describedby={prefixError ? "invoice-number-prefix-error" : undefined}
@@ -176,6 +165,11 @@ export function InvoiceNumberingCard() {
           <p className="mt-1 text-xs text-navy/70">
             Prepended to invoice numbers (e.g. INV-, 2026-).
           </p>
+          {unconfigured && row ? (
+            <p className="mt-1 text-xs text-navy/70" data-testid="invoice-next-preview">
+              Next invoice: {row.preview} (yearly numbering)
+            </p>
+          ) : null}
         </div>
         <div>
           <label htmlFor="invoice-due-days" className="mb-1.5 block text-sm font-medium text-navy">
@@ -184,7 +178,8 @@ export function InvoiceNumberingCard() {
           <select
             id="invoice-due-days"
             value={terms}
-            onChange={(e) => setTermsDraft(e.target.value)}
+            onChange={(e) => onTermsChange(e.target.value)}
+            disabled={termsDisabled}
             className={inputClass}
           >
             {INVOICE_TERMS_OPTIONS.map((opt) => (

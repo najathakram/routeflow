@@ -16,6 +16,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
+let serverTerms = "Net 30";
 const mockGet = jest.fn();
 const mockPatch = jest.fn();
 jest.mock("@/lib/api-client", () => ({
@@ -46,12 +47,16 @@ beforeEach(() => {
         ],
       });
     if (url === "/settings/invoice")
-      return Promise.resolve({ data: { defaultTerms: "Net 30", hideOriginalPrice: false } });
+      return Promise.resolve({ data: { defaultTerms: serverTerms, hideOriginalPrice: false } });
     if (url === "/settings")
       return Promise.resolve({ data: { invoiceNotes: "thanks", invoiceTerms: "terms" } });
     return Promise.resolve({ data: {} });
   });
-  mockPatch.mockResolvedValue({ data: {} });
+  serverTerms = "Net 30";
+  mockPatch.mockImplementation((url: string, body: { defaultTerms?: string }) => {
+    if (url === "/settings/invoice" && body.defaultTerms) serverTerms = body.defaultTerms;
+    return Promise.resolve({ data: {} });
+  });
 });
 
 describe("Settings > Invoicing: control inventory (B1188)", () => {
@@ -79,5 +84,25 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
     expect(body).toEqual({ invoiceNotes: "thanks", invoiceTerms: "terms" });
     expect(body).not.toHaveProperty("invoicePrefix");
     expect(body).not.toHaveProperty("paymentDueDays");
+  });
+
+  it("Payment Terms and Payment Due Days are ONE value: either change shows in both at once", async () => {
+    renderWithProviders(<SettingsPage />);
+    const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
+    const terms = (await screen.findByLabelText("Payment Terms")) as HTMLSelectElement;
+    await waitFor(() => expect(days.value).toBe("Net 30"));
+
+    await userEvent.selectOptions(days, "Net 45");
+    expect(terms.value).toBe("Net 45");
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { defaultTerms: "Net 45" }),
+    );
+
+    await userEvent.selectOptions(terms, "Net 15");
+    expect(days.value).toBe("Net 15");
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { defaultTerms: "Net 15" }),
+    );
+    expect(mockPatch.mock.calls.filter((c) => c[0] === "/settings")).toHaveLength(0);
   });
 });

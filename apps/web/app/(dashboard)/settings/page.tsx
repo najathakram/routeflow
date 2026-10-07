@@ -2430,10 +2430,18 @@ function InvoicingTab() {
     }
   }, [savedSettings]);
 
+  // ONE value for the "Payment Terms" select and the Invoice Numbering "Payment Due Days" select
+  // (B1188): the draft shows the pick at once in both; it is dropped once the save settles, when
+  // the refetched server value takes over (or the pick reverts on failure).
+  const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
+  const shownTerms = termsDraft ?? invoiceSettings?.defaultTerms ?? "Net 30";
+
   const handleTermsChange = (value: string) => {
+    setTermsDraft(value);
     updateSettings.mutate(
       { defaultTerms: value },
       {
+        onSettled: () => setTermsDraft(null),
         onSuccess: () =>
           toast({
             title: "Invoice settings saved",
@@ -2567,7 +2575,8 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment Terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={invoiceSettings?.defaultTerms ?? "Net 30"}
+                aria-label="Payment Terms"
+                value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
@@ -2666,7 +2675,11 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <InvoiceNumberingCard />
+      <InvoiceNumberingCard
+        terms={shownTerms}
+        onTermsChange={handleTermsChange}
+        termsDisabled={isLoading || updateSettings.isPending}
+      />
 
       <Card title="Invoice Defaults">
         <div className="space-y-4">

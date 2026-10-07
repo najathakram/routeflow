@@ -42,6 +42,7 @@ const numberingRows = [
 ];
 
 beforeEach(() => {
+  onTermsChange.mockReset();
   mockGet.mockReset();
   mockPut.mockReset();
   mockPatch.mockReset();
@@ -66,6 +67,19 @@ beforeEach(() => {
   mockPatch.mockResolvedValue({ data: {} });
 });
 
+const onTermsChange = jest.fn();
+function Harness({ initial = "Net 30" }: { initial?: string }) {
+  const [terms, setTerms] = React.useState(initial);
+  return (
+    <InvoiceNumberingCard
+      terms={terms}
+      onTermsChange={(v) => {
+        onTermsChange(v);
+        setTerms(v);
+      }}
+    />
+  );
+}
 const prefixInput = () => screen.findByLabelText(/invoice number prefix/i);
 
 async function typePrefix(value: string) {
@@ -80,7 +94,7 @@ const patchesTo = (url: string) => mockPatch.mock.calls.filter((c) => c[0] === u
 
 describe("InvoiceNumberingCard (B1188)", () => {
   it("inventory: prefix input, payment-terms select, Save Numbering button, all present", async () => {
-    renderWithProviders(<InvoiceNumberingCard />);
+    renderWithProviders(<Harness />);
     const prefix = (await prefixInput()) as HTMLInputElement;
     await waitFor(() => expect(prefix.value).toBe("INV-"));
     expect(prefix).toHaveAttribute("placeholder", "INV-");
@@ -93,13 +107,13 @@ describe("InvoiceNumberingCard (B1188)", () => {
         .getAllByRole("option")
         .map((o) => o.textContent),
     ).toEqual(["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"]);
-    await waitFor(() => expect(days.value).toBe("Net 30"));
+    expect(days.value).toBe("Net 30");
     expect(screen.getByText(/default days until payment is due/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save numbering/i })).toBeInTheDocument();
   });
 
   it("shows the server's next number for the NEW prefix and does NOT save until confirmed", async () => {
-    renderWithProviders(<InvoiceNumberingCard />);
+    renderWithProviders(<Harness />);
     await typePrefix("NEW-");
     await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
 
@@ -119,7 +133,7 @@ describe("InvoiceNumberingCard (B1188)", () => {
   });
 
   it("Cancel on the confirmation sends nothing", async () => {
-    renderWithProviders(<InvoiceNumberingCard />);
+    renderWithProviders(<Harness />);
     await typePrefix("NEW-");
     await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
     await screen.findByText(/NEW-0042/);
@@ -129,7 +143,7 @@ describe("InvoiceNumberingCard (B1188)", () => {
   });
 
   it("refuses a trailing-digit prefix inline (shared validator): no preview, no save", async () => {
-    renderWithProviders(<InvoiceNumberingCard />);
+    renderWithProviders(<Harness />);
     await typePrefix("INV2");
     await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
     expect(await screen.findByText(/ends with a digit|digit/i)).toBeInTheDocument();
@@ -140,17 +154,40 @@ describe("InvoiceNumberingCard (B1188)", () => {
     expect(putCalls()).toHaveLength(0);
   });
 
-  it("saves the days select to /settings/invoice defaultTerms, never to /settings", async () => {
-    renderWithProviders(<InvoiceNumberingCard />);
+  it("the days select reports its pick to the shared terms value, never PATCHing /settings", async () => {
+    renderWithProviders(<Harness />);
     const days = (await screen.findByLabelText(/payment due days/i)) as HTMLSelectElement;
-    await waitFor(() => expect(days.value).toBe("Net 30"));
     await userEvent.selectOptions(days, "Net 45");
-    await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
-
-    await waitFor(() => expect(patchesTo("/settings/invoice")).toHaveLength(1));
-    expect(patchesTo("/settings/invoice")[0][1]).toEqual({ defaultTerms: "Net 45" });
+    expect(onTermsChange).toHaveBeenCalledWith("Net 45");
+    expect(days.value).toBe("Net 45");
     expect(patchesTo("/settings")).toHaveLength(0);
-    // Prefix untouched -> no preview, no numbering write.
+    expect(putCalls()).toHaveLength(0);
+  });
+
+  it("unconfigured tenant: empty prefix, format placeholder and the server's next number", async () => {
+    mockGet.mockImplementation((url: string) =>
+      url === "/import/numbering"
+        ? Promise.resolve({
+            data: [
+              {
+                docType: "INVOICE",
+                prefix: "INV-",
+                nextNumber: 1,
+                padding: 4,
+                preview: "INV-2026-0039",
+                configured: false,
+              },
+            ],
+          })
+        : Promise.resolve({ data: {} }),
+    );
+    renderWithProviders(<Harness />);
+    const input = (await prefixInput()) as HTMLInputElement;
+    await screen.findByText("Next invoice: INV-2026-0039 (yearly numbering)");
+    expect(input.value).toBe("");
+    expect(input).toHaveAttribute("placeholder", "INV-2026-");
+    // Untouched field + Save = nothing to save: no preview, no write.
+    await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
     expect(putCalls()).toHaveLength(0);
   });
 
@@ -161,7 +198,7 @@ describe("InvoiceNumberingCard (B1188)", () => {
         data: { message: "invoice numbering changed since you opened it — reload and try again." },
       },
     });
-    renderWithProviders(<InvoiceNumberingCard />);
+    renderWithProviders(<Harness />);
     await typePrefix("NEW-");
     await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
     await userEvent.click(await screen.findByRole("button", { name: /^confirm$/i }));
