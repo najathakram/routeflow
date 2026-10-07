@@ -16,6 +16,13 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useCustomers } from "@/lib/api/customers";
+import { useCreateDraft } from "@/lib/api/drafts";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
+import {
+  COUNTER_SHIP_FAILED_COPY,
+  COUNTER_SHIP_WALK_IN_CAPTION,
+  counterShipDraftInput,
+} from "@/lib/counter-ship-handoff";
 import {
   useCounterSaleByKey,
   useCounterSaleGate,
@@ -64,10 +71,18 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 const isBoxedLine = (l: SaleLine) => (l.unitsPerBox ?? 0) > 1;
 
 /** ONE quantity label for the cart and the receipt: whole boxes, then loose pieces; a plain line reads "× qty". */
-export const lineQtyLabel = (l: SaleLine): string =>
-  isBoxedLine(l)
-    ? `${l.boxes ?? 0} box${(l.boxes ?? 0) === 1 ? "" : "es"}${l.pieces ? ` + ${l.pieces} pcs` : ""}`
-    : `× ${l.qty}`;
+export const lineQtyLabel = (l: SaleLine): string => {
+  if (!isBoxedLine(l)) return `× ${l.qty}`;
+  // Always the normalized split (pieces < pack), so a stored 0 boxes + 30 pcs on a 24-pack still reads "1 box + 6 pcs".
+  const n = normalizeBoxesPieces({
+    boxes: l.boxes,
+    pieces: l.pieces,
+    qty: l.qty,
+    unitsPerBox: l.unitsPerBox,
+  });
+  const boxes = n.boxes ?? 0;
+  return `${boxes} box${boxes === 1 ? "" : "es"}${n.pieces ? ` + ${n.pieces} pcs` : ""}`;
+};
 
 /**
  * The wire item for one line, shaped the way the server's normaliser reads it (`normalizeBoxesPieces`): a boxed product
@@ -129,6 +144,7 @@ export function CounterSaleScreen() {
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
   const lookupSale = useCounterSaleByKey();
+  const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
@@ -148,6 +164,13 @@ export function CounterSaleScreen() {
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
   const submittingRef = React.useRef(false);
+  const customerFindRef = React.useRef<HTMLInputElement>(null);
+  // B1210: "Ship this order instead" is an intent that completes on its own once the cart can be handed over (a customer is
+  // picked, no scan is still resolving). A walk-in keeps the intent open while the clerk finds a customer.
+  const [shipIntent, setShipIntent] = React.useState(false);
+  const [shipFailed, setShipFailed] = React.useState(false);
+  const shipRunningRef = React.useRef(false);
+  const awaitingCustomerRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -189,7 +212,15 @@ export function CounterSaleScreen() {
     setOutcomeUnknown(true);
   }, [heldKey]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
-  const refocus = React.useCallback(() => window.setTimeout(() => scanRef.current?.focus(), 0), []);
+  // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
+  const refocus = React.useCallback(
+    () =>
+      window.setTimeout(
+        () => (awaitingCustomerRef.current ? customerFindRef.current : scanRef.current)?.focus(),
+        0,
+      ),
+    [],
+  );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
@@ -226,6 +257,55 @@ export function CounterSaleScreen() {
   const scanBusy = scan.waiting > 0;
   const scanBusyRef = React.useRef(false);
   scanBusyRef.current = scanBusy;
+  awaitingCustomerRef.current = shipIntent && customer === null && lines.length > 0;
+
+  const openBuilderToShip = () =>
+    router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`);
+
+  const onShipClick = () => {
+    if (locked) return;
+    setShipFailed(false);
+    if (lines.length === 0 && !scanBusy) {
+      openBuilderToShip(); // nothing to carry over: the old hand-off to a blank builder
+      return;
+    }
+    if (customer === null) {
+      awaitingCustomerRef.current = lines.length > 0;
+      customerFindRef.current?.focus();
+    }
+    setShipIntent(true);
+  };
+
+  // Parks the cart + customer as an ORDER draft (fulfillPath SHIP) and resumes it in the builder. The cart is cleared only
+  // once the draft exists; a failed save leaves the sale exactly as it was.
+  const runShip = async (to: PickedCustomer, cart: SaleLine[]) => {
+    if (shipRunningRef.current) return;
+    shipRunningRef.current = true;
+    try {
+      const draft = await createDraft.mutateAsync(counterShipDraftInput(cart, to));
+      if (!draft?.id) throw new Error("draft has no id");
+      setShipIntent(false);
+      resetSale();
+      router.push(`/orders?resumeDraft=${encodeURIComponent(draft.id)}`);
+    } catch {
+      setShipIntent(false);
+      setShipFailed(true);
+      refocus();
+    } finally {
+      shipRunningRef.current = false;
+    }
+  };
+
+  React.useEffect(() => {
+    if (!shipIntent || locked || scanBusy || shipRunningRef.current) return;
+    if (lines.length === 0) {
+      setShipIntent(false); // the cart emptied while we waited: nothing to hand over
+      return;
+    }
+    if (customer === null) return; // waiting for the pick
+    void runShip(customer, lines);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipIntent, locked, scanBusy, customer, lines]);
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -262,6 +342,9 @@ export function CounterSaleScreen() {
     setOutcomeUnknown(false);
     setHeldCorrupt(false);
     setLookupFailed(false);
+    setShipIntent(false);
+    setShipFailed(false);
+    awaitingCustomerRef.current = false;
     refocus();
   }
 
@@ -585,13 +668,7 @@ export function CounterSaleScreen() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
         {gate.offerShipInstead ? (
-          <Button
-            variant="secondary"
-            disabled={locked}
-            onClick={() =>
-              router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`)
-            }
-          >
+          <Button variant="secondary" disabled={locked} onClick={onShipClick}>
             Ship this order instead
           </Button>
         ) : null}
@@ -615,6 +692,7 @@ export function CounterSaleScreen() {
           ) : null}
         </div>
         <input
+          ref={customerFindRef}
           aria-label="Find a customer"
           className="w-full rounded border px-3 py-2 text-sm"
           placeholder="Find a customer (optional)"
@@ -622,6 +700,11 @@ export function CounterSaleScreen() {
           value={customerSearch}
           onChange={(e) => setCustomerSearch(e.target.value)}
         />
+        {shipIntent && isWalkIn && lines.length > 0 ? (
+          <p role="status" className="text-sm font-medium text-brand-700" data-testid="ship-who">
+            {COUNTER_SHIP_WALK_IN_CAPTION}
+          </p>
+        ) : null}
         {matches.length > 0 ? (
           <ul className="rounded border text-sm">
             {matches.map((c: any) => (
@@ -685,33 +768,21 @@ export function CounterSaleScreen() {
         </div>
       ) : null}
       {scan.picker ? (
-        <section
-          aria-label="Choose a product"
-          className="space-y-2 rounded border p-3 text-sm"
-          data-testid="counter-scan-picker"
-        >
-          <p className="font-medium">
-            Several products match &ldquo;{scan.picker.code}&rdquo;. Choose one.
-          </p>
-          <ul className="space-y-1">
-            {scan.picker.matches.map((p: any) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className="w-full rounded border px-3 py-2 text-left hover:bg-gray-50"
-                  onClick={() => scan.choose(p)}
-                >
-                  {displayProductName(p)}
-                  {p.sku ? <span className="ml-2 text-xs text-navy/60">{p.sku}</span> : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <Button variant="secondary" onClick={scan.cancelPicker}>
-            Cancel
-          </Button>
-          {scan.waiting > 1 ? <p>{scan.waiting - 1} more scans waiting</p> : null}
-        </section>
+        <div className="space-y-1" data-testid="counter-scan-picker">
+          <DidYouMeanPicker
+            matches={scan.picker.matches.map((p: any) => ({
+              id: p.id,
+              name: displayProductName(p),
+            }))}
+            onConfirm={(m) =>
+              scan.choose(scan.picker?.matches.find((p: any) => p.id === m.id) ?? m)
+            }
+            onCancel={scan.cancelPicker}
+          />
+          {scan.waiting > 1 ? (
+            <p className="text-sm">{scan.waiting - 1} more scans waiting</p>
+          ) : null}
+        </div>
       ) : null}
 
       <ul className="divide-y rounded border" aria-label="Items">
@@ -870,6 +941,12 @@ export function CounterSaleScreen() {
             </Link>
           </div>
         </div>
+      ) : null}
+
+      {shipFailed ? (
+        <p role="alert" className="text-sm text-red-700" data-testid="counter-ship-failed">
+          {COUNTER_SHIP_FAILED_COPY}
+        </p>
       ) : null}
 
       {scanBusy ? (

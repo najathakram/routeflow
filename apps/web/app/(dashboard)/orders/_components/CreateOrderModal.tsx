@@ -203,6 +203,8 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
+  initialFulfillPath?: "SHIP" | null;
   /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
   onViewOrder?: (orderId: string) => void;
 }
@@ -225,6 +227,7 @@ export function CreateOrderModal({
   onClose,
   resumeDraftId,
   initialScanCode,
+  initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
@@ -318,7 +321,7 @@ export function CreateOrderModal({
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
-  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
+  // B1219: a scan with no exact code match but fuzzy hits (one OR several) is offered here, never auto-added.
   const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
@@ -485,7 +488,10 @@ export function CreateOrderModal({
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false, fulfillPath: "ROUTE" });
+    reset({
+      urgent: false,
+      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : "ROUTE",
+    });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);

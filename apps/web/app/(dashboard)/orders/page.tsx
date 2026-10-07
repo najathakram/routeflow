@@ -279,6 +279,8 @@ export default function OrdersPage() {
   // an optional barcode to add on open.
   const [resumeDraftId, setResumeDraftId] = React.useState<string | null>(null);
   const [initialScanCode, setInitialScanCode] = React.useState<string | null>(null);
+  // B1210: ?preselect=SHIP (the counter sale's "Ship this order instead") opens a FRESH builder on "Ship via carrier".
+  const [initialFulfillPath, setInitialFulfillPath] = React.useState<"SHIP" | null>(null);
 
   // Open the builder from URL intents: ?action=new (fresh), ?resumeDraft=<id>
   // (resume a parked draft), optional &scan=<code> (add on open). Runs on mount and
@@ -306,6 +308,7 @@ export default function OrdersPage() {
       setResumeDraftId(null);
     }
     setInitialScanCode(scan);
+    setInitialFulfillPath(!resume && searchParams.get("preselect") === "SHIP" ? "SHIP" : null);
     setIsCreateOpen(true);
     // Strip ONLY the intent params. This used to replace with a bare "/orders",
     // which also discarded the status/date chips and the search — so opening the
@@ -1329,9 +1332,11 @@ export default function OrdersPage() {
           setIsCreateOpen(false);
           setResumeDraftId(null);
           setInitialScanCode(null);
+          setInitialFulfillPath(null);
         }}
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
+        initialFulfillPath={initialFulfillPath}
         onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
       />
 

@@ -212,7 +212,7 @@ export function InlineReturnSection({
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
-  // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
+  // B1219: fuzzy matches (one or several, no exact code) are offered here ("Did you mean ...?"), never added unasked.
   const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const addScanned = (product: any) => {
     const created = !linesRef.current.some((l) => l.productId === product.id);

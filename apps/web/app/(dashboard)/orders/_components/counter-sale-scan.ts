@@ -1,4 +1,9 @@
-import { getTierPrice, normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
+import {
+  getTierPrice,
+  isSpecialTier,
+  normalizeBoxesPieces,
+  type SellLevel,
+} from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
 import { mergePieceIntoLine, mergeQtyIntoLine, newLineQtyForLevel } from "./add-line-merge";
 
@@ -17,6 +22,16 @@ export interface SaleLine {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /**
+   * B1210: the product snapshot taken when the line was added, so "Ship this order instead" can park the line without a
+   * second lookup. `unitPrice` is the TIER price the clerk saw; `listPrice` is the catalogue price. Absent on a line held
+   * before this existed (the hand-off falls back to `unitPrice` / "each" / STANDARD).
+   */
+  listPrice?: number;
+  unit?: string;
+  priceType?: "STANDARD" | "SPECIAL";
+  unitCost?: number;
+  category?: string;
 }
 
 /**
@@ -38,6 +53,9 @@ export function addScannedProduct(
       i === idx ? (unitScan ? mergePieceIntoLine(l, n) : mergeQtyIntoLine(l, n)) : l,
     );
   }
+  // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
+  const born = newLineQtyForLevel(upb, level, n);
+  const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
   return [
     ...prev,
     {
@@ -46,7 +64,12 @@ export function addScannedProduct(
       name: displayProductName(product),
       unitPrice: getTierPrice(product, tier),
       unitsPerBox: upb,
-      ...newLineQtyForLevel(upb, level, n),
+      listPrice: Number(product.pricePerUnit ?? 0),
+      unit: product.unit ?? "each",
+      priceType: isSpecialTier(tier) ? "SPECIAL" : "STANDARD",
+      ...(product.averageCost != null ? { unitCost: Number(product.averageCost) } : {}),
+      ...(product.category ? { category: String(product.category) } : {}),
+      ...(qty ? { qty: qty.qty, boxes: qty.boxes ?? 0, pieces: qty.pieces ?? 0 } : born),
     },
   ];
 }
