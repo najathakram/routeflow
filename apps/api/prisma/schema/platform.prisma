@@ -366,14 +366,38 @@ model RfInvoice {
   tenantId String
   number   String       @unique // RF-YYYY-NNNN
   amount   Decimal      @db.Decimal(10, 2)
-  status   String // PAID | OPEN | FAILED
+  status   String // OPEN | PAID | VOID (legacy FAILED is never written; deliberately not a Prisma enum)
   cycle    BillingCycle @default(MONTHLY)
   pdfKey   String?
   issuedAt DateTime     @default(now())
 
+  // Manual-pay lifecycle (manual invoices due, PR1). All nullable/defaulted: the table had no
+  // writer before this, so existing rows (none expected) are untouched.
+  periodStart DateTime?
+  periodEnd   DateTime?
+  /// ISO of periodStart; "<iso>:void:<id>" once voided so a new live invoice can take the period.
+  periodKey   String?
+  /// Net 0: equal to periodStart.
+  dueDate     DateTime?
+  currency    String    @default("USD")
+  /// [{ kind: PLAN | ADDON, code, label, quantity, unitAmount, amount }]
+  lines       Json?
+  issuedById  String?
+  paidAt      DateTime?
+  paidMethod  String?
+  paidRef     String?
+  paidNote    String?
+  paidById    String?
+  lastSentAt  DateTime?
+  sendCount   Int       @default(0)
+  voidedAt    DateTime?
+  voidReason  String?
+
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, periodKey])
   @@index([tenantId, issuedAt])
+  @@index([status, dueDate])
 }
 
 model SystemConfig {
