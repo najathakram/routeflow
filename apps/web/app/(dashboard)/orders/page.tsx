@@ -26,7 +26,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
-import { useShippedWeekFrom } from "@/lib/tenant-timezone";
+import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -265,7 +265,8 @@ export default function OrdersPage() {
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
   const shipView = (urlFilters.shipView as string) ?? "";
   // Sunday 00:00 in the business's timezone — the dashboard card uses the same helper.
-  const weekStart = useShippedWeekFrom(shipView === "week");
+  const week = useShippedWeek(shipView === "week");
+  const weekStart = week.from;
   const shipParams = {
     hasTracking: shipView === "no-tracking" ? (false as const) : undefined,
     shippedFrom: shipView === "week" ? weekStart : undefined,
@@ -1016,7 +1017,17 @@ export default function OrdersPage() {
 
       {/* Results — loading/error/empty are shared across both layouts below; only "has
           data" branches into the mobile card list (below md) vs. the desktop table (md+). */}
-      {isLoading ? (
+      {weekPending && week.isError ? (
+        <div
+          role="alert"
+          className="flex flex-col items-center gap-3 rounded-lg border border-surface-border bg-white py-16 text-center text-sm text-danger shadow-card"
+        >
+          <span>Couldn&apos;t load your time zone.</span>
+          <Button variant="secondary" size="sm" onClick={week.retry}>
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-surface-border bg-white py-16 shadow-card">
           <Loader2 className="h-6 w-6 animate-spin text-navy/70" />
         </div>

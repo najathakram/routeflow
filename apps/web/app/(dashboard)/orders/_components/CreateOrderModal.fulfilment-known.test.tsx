@@ -8,6 +8,8 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
 // `caps` = capabilities.fulfilment (undefined = UNSET: loading, an older API, no fulfilment mode set).
 let caps: Record<string, unknown> | undefined;
 const createOrderMutate = jest.fn();
+let featuresError = false;
+const refetchFeatures = jest.fn();
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
 const account = (over: Record<string, unknown>) => ({
   methods: ["SHIP"],
@@ -21,7 +23,11 @@ const account = (over: Record<string, unknown>) => ({
   ...over,
 });
 jest.mock("@/lib/tenant-features", () => ({
-  useTenantFeatures: () => ({ data: caps ? { capabilities: { fulfilment: caps } } : undefined }),
+  useTenantFeatures: () => ({
+    data: caps ? { capabilities: { fulfilment: caps } } : undefined,
+    isError: featuresError,
+    refetch: refetchFeatures,
+  }),
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [cust] } }),
@@ -76,7 +82,36 @@ const pickCustomer = async () => {
 };
 
 describe("CreateOrderModal — submit waits for the fulfilment answer", () => {
-  beforeEach(() => createOrderMutate.mockClear());
+  beforeEach(() => {
+    createOrderMutate.mockClear();
+    refetchFeatures.mockClear();
+    featuresError = false;
+  });
+
+  it("features FAILED: inline notice + Retry, submit stays disabled, nothing is sent; Retry then ship-only sends SHIP", async () => {
+    caps = undefined;
+    featuresError = true;
+    const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    expect(screen.getByText("Couldn't load your delivery settings.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create order/i })).toBeDisabled();
+    const draft = screen.getByRole("button", { name: /save as draft/i });
+    expect(draft).toBeDisabled();
+    fireEvent.click(draft);
+    expect(createOrderMutate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetchFeatures).toHaveBeenCalledTimes(1);
+    featuresError = false;
+    caps = account({});
+    view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+    );
+    expect(screen.queryByText("Couldn't load your delivery settings.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[0][0].fulfillPath).toBe("SHIP");
+  });
 
   it("features pending: Create Order and Save as Draft are disabled and nothing is sent", async () => {
     caps = undefined;

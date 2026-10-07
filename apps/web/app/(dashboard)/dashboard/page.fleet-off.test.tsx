@@ -159,6 +159,19 @@ describe("Dashboard — fleet-off clean UI", () => {
     expect(card.closest("a")).not.toHaveTextContent("9");
   });
 
+  it("Shipped this week shows — when the timezone read fails", async () => {
+    fleet = false;
+    ship = true;
+    const { apiClient } = jest.requireMock("@/lib/api-client");
+    apiClient.get.mockRejectedValueOnce(new Error("403"));
+    renderWithProviders(<DashboardPage />);
+    const card = (await screen.findAllByText("Shipped this week")).find(
+      (el) => el.tagName === "P",
+    )!;
+    expect(card.closest("a")).toHaveTextContent("—");
+    expect(card.closest("a")).not.toHaveTextContent("9");
+  });
+
   it.each([
     ["an unset account", false],
     ["a fleet account", true],

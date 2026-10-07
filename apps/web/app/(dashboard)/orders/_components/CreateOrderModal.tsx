@@ -470,8 +470,8 @@ export function CreateOrderModal({
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
   // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
-  // ROUTE). A FAILED answer proceeds with today's behaviour instead of blocking forever.
-  const fulfilmentPending = !staffFulfilment.known && !staffFulfilment.failed;
+  // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
+  const fulfilmentPending = !staffFulfilment.known;
   // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
@@ -1718,6 +1718,18 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {staffFulfilment.failed && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>Couldn&apos;t load your delivery settings.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={staffFulfilment.retry}>
+                Retry
+              </Button>
             </div>
           )}
 

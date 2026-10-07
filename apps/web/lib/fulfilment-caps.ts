@@ -31,7 +31,7 @@ const toFormPath = (m: string | null | undefined): FormFulfilPath =>
 
 /** Staff-side fulfilment: whether to show the picker, what to start from, and the options to offer. */
 export function useStaffFulfilment() {
-  const { data, isError } = useTenantFeatures();
+  const { data, isError, refetch } = useTenantFeatures();
   const caps = useFulfilmentCaps();
   // The form can only hold ROUTE | SHIP: options come from `methods` (never a hard-coded pair).
   const formMethods = caps.methods.filter(
@@ -40,9 +40,10 @@ export function useStaffFulfilment() {
   return {
     /** The capability answer has arrived (a form must not commit a path before this). */
     known: data !== undefined,
-    /** The answer FAILED (not just pending): a form then proceeds with today's UNSET behaviour instead of
-     *  waiting forever. Submit gates use `known || failed`. */
+    /** The answer FAILED (not just pending). A form must NOT commit a path then: it shows a Retry. */
     failed: data === undefined && isError === true,
+    /** Re-ask for the capability answer (the Retry button). */
+    retry: () => void refetch?.(),
     /** Show the per-order / per-customer fulfilment picker (more than one method the form can hold). */
     choice: formMethods.length > 1,
     methods: caps.methods as FulfilmentMethod[],

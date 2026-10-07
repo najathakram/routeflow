@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { startOfTenantWeek } from "@/lib/tenant-week";
 import OrdersPage from "./page";
 
@@ -8,6 +8,7 @@ import OrdersPage from "./page";
 
 const calls: Array<{ params: Record<string, unknown>; enabled?: boolean }> = [];
 let settings: { timezone?: string } = { timezone: "Asia/Tokyo" };
+let settingsFails = false;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -33,12 +34,17 @@ jest.mock("@/lib/api/addons", () => ({
 }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
-  apiClient: { get: jest.fn(() => Promise.resolve({ data: settings })) },
+  apiClient: {
+    get: jest.fn(() =>
+      settingsFails ? Promise.reject(new Error("403")) : Promise.resolve({ data: settings }),
+    ),
+  },
 }));
 
 describe("OrdersPage — shipView=week", () => {
   beforeEach(() => {
     calls.length = 0;
+    settingsFails = false;
   });
 
   it("sends Sunday 00:00 in the tenant's zone, not a rolling 7 days", async () => {
@@ -56,5 +62,21 @@ describe("OrdersPage — shipView=week", () => {
     await screen.findByRole("heading", { name: /orders/i }).catch(() => undefined);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((c) => c.enabled === false)).toBe(true);
+  });
+
+  it("settings error: inline error + Retry, no week-view orders request; Retry success loads the week view", async () => {
+    settings = { timezone: "Asia/Tokyo" };
+    settingsFails = true;
+    renderWithProviders(<OrdersPage />);
+    expect(await screen.findByText("Couldn't load your time zone.")).toBeInTheDocument();
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.enabled === false && !c.params.shippedFrom)).toBe(true);
+
+    settingsFails = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.enabled !== false && c.params.shippedFrom)).toBe(true),
+    );
+    expect(screen.queryByText("Couldn't load your time zone.")).not.toBeInTheDocument();
   });
 });
