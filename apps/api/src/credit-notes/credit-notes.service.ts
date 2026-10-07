@@ -19,6 +19,7 @@ import { NumberingService } from "../import/numbering.service";
 import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   lockCreditNotes,
@@ -936,13 +937,7 @@ export class CreditNotesService {
     // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
     // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
     const tenantId = this.prisma.getTenantId();
-    const cfg = tenantId
-      ? await tx.tenantConfig.findUnique({
-          where: { tenantId },
-          select: { creditAutoApplyOnSend: true },
-        })
-      : null;
-    if (!cfg?.creditAutoApplyOnSend) return nothing;
+    if (!(await creditAutoApplyOnSend(tx, tenantId))) return nothing;
     // B1052: lock the invoice and the customer's live notes BEFORE reading any balance.
     await lockCustomerCreditsForSweep(tx, tenantId, invoiceId, customerId);
 
@@ -958,13 +953,12 @@ export class CreditNotesService {
 
     const now = new Date();
     const candidates = await tx.creditNote.findMany({
-      where: {
+      // The ONE candidate predicate (shared with the counter sale's walk-in open-credit guard).
+      where: autoApplyCandidateWhere({
         customerId,
-        status: { not: "VOID" },
-        autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-        ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
-      },
+        now,
+        excludeCreditNoteIds: opts?.excludeCreditNoteIds,
+      }),
       orderBy: { createdAt: "asc" },
     });
     // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.

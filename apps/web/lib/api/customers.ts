@@ -7,6 +7,8 @@ export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
   id: string;
+  /** SA-655: the tenant's system walk-in customer (counter sales): never deactivated, deleted or merged. */
+  isWalkIn?: boolean | null;
   businessName: string;
   contactName: string;
   phone?: string;

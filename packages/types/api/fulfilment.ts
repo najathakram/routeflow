@@ -68,3 +68,13 @@ export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }
+
+/**
+ * `GET /buyer/capabilities` (business profiles 1B): the ONLY fulfilment facts a buyer gets about
+ * its seller — how portal orders ship and whether the seller runs its own fleet. No staff fields
+ * (`methods`, `staffDefault`, `staffOpensAs`, `counter`) and no `consistent`.
+ */
+export type BuyerSellerCapability = Pick<
+  FulfilmentCapability,
+  "portalMethods" | "portalDefault" | "fleet"
+>;
