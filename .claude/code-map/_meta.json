@@ -1,5 +1,5 @@
 {
-  "mappedSha": "W17-MASTER-SHA-PLACEHOLDER",
+  "mappedSha": "b22689aa8bec2d07ed76bf6a8d951973cffa39c4",
   "generatedAt": "2026-10-08T00:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1050,
-  "notes": "**2026-10-08 — W17 landings #3256, #3257, #3213 and #3263 (master `W17-MASTER-SHA-PLACEHOLDER`) (docs-only bookkeeping).** W17 sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`: #3256 same-cart replay guard and web submit key, #3257 `common/prisma-unique.ts`, #3213 `credit-notes/credit-note-locks.ts` and `retryCreditTx`/`retryRouteTx`, #3263 `SkipToContentLink`. `mappedSha` is the W17 placeholder until the merge sha exists. No source changed. See CHANGELOG.md."
+  "notes": "**2026-10-08 — W17 landings #3256, #3257, #3213 and #3263 (master `b22689aa8`) (docs-only bookkeeping).** W17 sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`: #3256 same-cart replay guard and web submit key, #3257 `common/prisma-unique.ts`, #3213 `credit-notes/credit-note-locks.ts` and `retryCreditTx`/`retryRouteTx`, #3263 `SkipToContentLink`. `mappedSha` = W17 master `b22689aa8`. No source changed. See CHANGELOG.md."
 }

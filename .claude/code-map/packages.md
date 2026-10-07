@@ -514,4 +514,4 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 
 ## Landed 2026-10-07 (W17)
 
-- `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master W17-MASTER-SHA-PLACEHOLDER`).
+- `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master b22689aa8`).
