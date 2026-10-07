@@ -40,7 +40,8 @@ const live = (method: "CASH" | "CARD" | "ON_ACCOUNT", over = {}) =>
     now: SOLD,
     ...over,
   });
-const reprint = (methods: ("CASH" | "CARD" | "ON_ACCOUNT")[], paid: number, balanceDue: number) =>
+type Tender = { method: "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT"; amount: number };
+const reprint = (methods: Tender[], paymentState: "PAID" | "ON_ACCOUNT" | "PARTLY_PAID" = "PAID") =>
   receiptModelFromOrder({
     order: {
       orderNumber: "ORD-1",
@@ -51,7 +52,14 @@ const reprint = (methods: ("CASH" | "CARD" | "ON_ACCOUNT")[], paid: number, bala
         { id: "l3", name: "Voided line", qty: 1, unitPrice: 99, status: "CANCELLED" },
       ],
     },
-    sale: { invoiceId: "i1", invoiceNumber: "INV-1", paid, balanceDue, methods, soldAt: SOLD },
+    sale: {
+      invoiceId: "i1",
+      invoiceNumber: "INV-1",
+      paymentState,
+      methods,
+      createdAt: SOLD.toISOString(),
+      timezone: "America/New_York",
+    },
     profile: PROFILE,
     cashier: "pat",
   });
@@ -78,24 +86,34 @@ describe("receipt golden: live vs reprint", () => {
     "%s sale: same header, lines, subtotal, adjustment, total, method, numbers",
     (m) => {
       const a = live(m);
-      const b = reprint([m], 24.5, 0);
+      const b = reprint([{ method: m, amount: 24.5 }]);
       for (const k of SHARED) expect(b[k]).toEqual(a[k]);
       expect(b.lines).toEqual(a.lines.map((l) => ({ ...l, key: l.key })));
     },
   );
   it("on-account sale agrees too", () => {
     const a = live("ON_ACCOUNT");
-    const b = reprint(["ON_ACCOUNT"], 0, 24.5);
+    const b = reprint([], "ON_ACCOUNT");
     for (const k of SHARED) expect(b[k]).toEqual(a[k]);
   });
   it("the reprint never invents tendered or change; the live cash receipt has them", () => {
     expect(live("CASH").tendered).toBe(30);
     expect(live("CASH").change).toBe(5.5);
-    const b = reprint(["CASH"], 24.5, 0);
+    const b = reprint([{ method: "CASH", amount: 24.5 }]);
     expect(b.tendered).toBeNull();
     expect(b.change).toBeNull();
   });
   it("a split tender reads 'Cash + Card'", () => {
-    expect(reprint(["CASH", "CARD"], 24.5, 0).methodLabel).toBe("Cash + Card");
+    expect(
+      reprint([
+        { method: "CASH", amount: 10 },
+        { method: "CARD", amount: 14.5 },
+      ]).methodLabel,
+    ).toBe("Cash + Card");
+  });
+  it("store credit is labelled, not hidden, and the date reads in the sale timezone", () => {
+    const b = reprint([{ method: "STORE_CREDIT", amount: 24.5 }]);
+    expect(b.methodLabel).toBe("Store credit");
+    expect(b.dateLabel).toMatch(/11:15/);
   });
 });

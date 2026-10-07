@@ -5,34 +5,51 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
-import type { CounterSalePaymentMethod } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
 import {
   COUNTER_SALE_TODAY_KEY,
   useCounterSaleToday,
-  type CounterSaleTodayRow,
-  type CounterSaleTodaySummary,
+  type TodaysSaleRow,
+  type TodaysSalesSummary,
+  type TodaysTenderMethod,
 } from "@/lib/api/counter-sale-today";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
 import {
   formatReceiptMoney as money,
+  formatSaleTime,
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 
-const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
+const METHOD_LABEL: Record<TodaysTenderMethod, string> = {
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",
+  OTHER: "Other",
+  STORE_CREDIT: "Store credit",
+};
+const PAYMENT_LABEL: Record<TodaysSaleRow["paymentState"], string> = {
+  PAID: "Paid",
+  PARTLY_PAID: "Partly paid",
   ON_ACCOUNT: "On account",
+  UNPAID: "Unpaid",
+};
+const RETURN_LABEL: Record<TodaysSaleRow["returned"]["state"], string | null> = {
+  NONE: null,
+  PARTLY: "Partly returned",
+  FULL: "Returned",
+  PENDING: "Return pending",
 };
 const TAP = "min-h-11 inline-flex items-center justify-center rounded border px-3 text-sm";
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+const BADGE = "rounded bg-navy/10 px-2 py-0.5 text-xs font-semibold";
+const timeOf = (iso: string, timeZone: string) =>
+  new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone }).format(
+    new Date(iso),
+  );
 
 function Stat({ label, value, testId }: { label: string; value: string; testId?: string }) {
   return (
@@ -43,9 +60,9 @@ function Stat({ label, value, testId }: { label: string; value: string; testId?:
   );
 }
 
-function Summary({ s }: { s: CounterSaleTodaySummary }) {
+/** Server numbers only: nothing here adds, subtracts or derives a figure. */
+function Summary({ s }: { s: TodaysSalesSummary }) {
   const r = s.refunds;
-  const refundTotal = r.cash + r.card + r.check + r.other;
   return (
     <section
       aria-label="Today's summary"
@@ -60,17 +77,36 @@ function Summary({ s }: { s: CounterSaleTodaySummary }) {
         <Stat label="Cash in" value={money(s.moneyIn.cash)} testId="today-in-cash" />
         <Stat label="Card in" value={money(s.moneyIn.card)} testId="today-in-card" />
         <Stat label="Check in" value={money(s.moneyIn.check)} testId="today-in-check" />
-        <Stat label="Refunds" value={money(refundTotal)} testId="today-refunds" />
+        <Stat label="Other in" value={money(s.moneyIn.other)} testId="today-in-other" />
+        <Stat label="Money in" value={money(s.moneyIn.total)} testId="today-in-total" />
+        <Stat
+          label="Store credit used"
+          value={money(s.storeCreditUsed)}
+          testId="today-store-credit-used"
+        />
+        <Stat label="On account" value={money(s.onAccount)} testId="today-on-account" />
+        <Stat
+          label={r.tenderKnown ? "Refunds" : "Refunds (method not recorded)"}
+          value={money(r.total)}
+          testId="today-refunds"
+        />
         {r.tenderKnown ? (
           <>
             <Stat label="Cash refunds" value={money(r.cash)} testId="today-refunds-cash" />
             <Stat label="Card refunds" value={money(r.card)} testId="today-refunds-card" />
             <Stat label="Check refunds" value={money(r.check)} testId="today-refunds-check" />
+            <Stat label="Other refunds" value={money(r.other)} testId="today-refunds-other" />
           </>
         ) : null}
         <Stat
-          label="Cash expected in drawer"
-          value={money(s.cashExpected)}
+          label="Store credit issued"
+          value={money(s.storeCreditIssued.amount)}
+          testId="today-store-credit-issued"
+        />
+        <Stat label="Net collected" value={money(s.netCollected)} testId="today-net-collected" />
+        <Stat
+          label={r.tenderKnown ? "Cash expected in drawer" : "Cash expected, before refunds"}
+          value={money(s.cashExpectedInDrawer)}
           testId="today-cash-expected"
         />
       </dl>
@@ -78,7 +114,15 @@ function Summary({ s }: { s: CounterSaleTodaySummary }) {
   );
 }
 
-function Reprint({ row, onBack }: { row: CounterSaleTodayRow; onBack: () => void }) {
+function Reprint({
+  row,
+  timezone,
+  onBack,
+}: {
+  row: TodaysSaleRow;
+  timezone: string;
+  onBack: () => void;
+}) {
   const { branding } = useTenant();
   const cashier = useOptionalAuth()?.user?.username ?? null;
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
@@ -94,10 +138,10 @@ function Reprint({ row, onBack }: { row: CounterSaleTodayRow; onBack: () => void
         sale: {
           invoiceId: row.invoiceId,
           invoiceNumber: row.invoiceNumber,
-          paid: row.paid,
-          balanceDue: row.balanceDue,
+          paymentState: row.paymentState,
           methods: row.methods,
-          soldAt: row.soldAt,
+          createdAt: row.createdAt,
+          timezone,
         },
       })
     : null;
@@ -115,10 +159,7 @@ function Reprint({ row, onBack }: { row: CounterSaleTodayRow; onBack: () => void
         <CounterReceiptView
           model={model}
           logoUrl={branding?.logoUrl ?? null}
-          reprintLabel={`Reprint · sold ${new Date(row.soldAt).toLocaleString("en-US", {
-            dateStyle: "medium",
-            timeStyle: "short",
-          })}`}
+          reprintLabel={`Reprint · sold ${formatSaleTime(row.createdAt, timezone)}`}
         />
       ) : isError ? (
         <div role="alert" className="space-y-2 text-sm">
@@ -138,17 +179,18 @@ function Reprint({ row, onBack }: { row: CounterSaleTodayRow; onBack: () => void
 
 function SaleRow({
   row,
+  timezone,
   onReprint,
   onDone,
 }: {
-  row: CounterSaleTodayRow;
+  row: TodaysSaleRow;
+  timezone: string;
   onReprint: () => void;
   onDone: () => void;
 }) {
-  const who = row.walkIn ? "Walk-in" : (row.customerName ?? "Customer");
-  const methods = row.methods.length
-    ? row.methods.map((m) => METHOD_LABEL[m]).join(" + ")
-    : "On account";
+  const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
+  const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
+  const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
   return (
     <li className="space-y-2 py-3" data-testid={`today-row-${row.orderId}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -160,17 +202,17 @@ function SaleRow({
         </span>
       </div>
       <p className="text-xs text-navy/70">
-        {timeOf(row.soldAt)} · {who} · {methods}
-        {row.voided ? <strong className="ml-2 text-red-700">Voided</strong> : null}
-        {!row.voided && row.returnState !== "NONE" ? (
-          <strong className="ml-2">
-            {row.returnState === "FULL" ? "Returned" : "Part returned"}
-          </strong>
-        ) : null}
-        {!row.voided && row.balanceDue > 0 ? (
-          <strong className="ml-2">{money(row.balanceDue)} due</strong>
-        ) : null}
+        {timeOf(row.createdAt, timezone)} · {who}
+        {methods ? ` · ${methods}` : ""}
       </p>
+      <div className="flex flex-wrap gap-1">
+        {row.voided ? (
+          <span className={cn(BADGE, "bg-red-100 text-red-700")}>Voided</span>
+        ) : (
+          <span className={BADGE}>{PAYMENT_LABEL[row.paymentState]}</span>
+        )}
+        {returnLabel ? <span className={BADGE}>{returnLabel}</span> : null}
+      </div>
       <div className="flex flex-wrap gap-2">
         {row.voided ? null : (
           <>
@@ -190,15 +232,16 @@ function SaleRow({
 
 export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
-  const [reprint, setReprint] = React.useState<CounterSaleTodayRow | null>(null);
+  const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
   const qc = useQueryClient();
   const q = useCounterSaleToday(open);
   const refetchList = React.useCallback(
     () => void qc.invalidateQueries({ queryKey: COUNTER_SALE_TODAY_KEY }),
     [qc],
   );
-  const rows = q.data?.pages.flatMap((p) => p.rows) ?? [];
+  const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
   const summary = q.data?.pages[0]?.summary;
+  const timezone = q.data?.pages[0]?.meta.timezone ?? "UTC";
 
   return (
     <>
@@ -216,7 +259,7 @@ export function CounterTodaysSales() {
         className="max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none"
       >
         {reprint ? (
-          <Reprint row={reprint} onBack={() => setReprint(null)} />
+          <Reprint row={reprint} timezone={timezone} onBack={() => setReprint(null)} />
         ) : q.isError ? (
           <div role="alert" className="space-y-2 text-sm">
             <p>Could not load today&apos;s sales.</p>
@@ -239,6 +282,7 @@ export function CounterTodaysSales() {
                   <SaleRow
                     key={r.orderId}
                     row={r}
+                    timezone={timezone}
                     onReprint={() => setReprint(r)}
                     onDone={refetchList}
                   />

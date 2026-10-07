@@ -1,59 +1,84 @@
-// Mirrors POS-7b-1 API contract; dedupe into @routeflow/types at train time.
-// `GET /orders/counter-sale/today?page=N`: today's counter sales, newest first, page 1 also carries the summary.
+// Replace with the @routeflow/types import when POS-7b-1 lands; do not keep both.
+// Mirrors packages/types/api/counter-sale.ts (TodaysSalesResponse / TodaysSaleRow / TodaysSalesSummary).
+// `GET /orders/counter-sale/today?page=N`: today's counter sales, newest first.
+// ASSUMPTION: `summary` is an optional top-level field (page 1 carries it); later pages may omit it.
 import { useInfiniteQuery } from "@tanstack/react-query";
-import type { CounterSalePaymentMethod } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
-export interface CounterSaleTodayRow {
+export type TodaysTenderMethod = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+
+export interface TodaysSaleRow {
   orderId: string;
   invoiceId: string;
-  /** the receipt number the clerk reads out: the order number */
   orderNumber: string;
   invoiceNumber: string;
-  /** ISO time of the sale */
-  soldAt: string;
+  /** ISO time of the sale: format it in `meta.timezone` */
+  createdAt: string;
   total: number;
-  paid: number;
-  balanceDue: number;
-  /** the tenders on the sale; empty or ON_ACCOUNT only = left on account */
-  methods: CounterSalePaymentMethod[];
-  returnState: "NONE" | "PARTIAL" | "FULL";
+  customerId: string;
   customerName: string | null;
-  walkIn: boolean;
+  isWalkIn: boolean;
+  status: string;
+  paymentState: "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
+  /** STORE_CREDIT is a payment against the sale but is never money in */
+  methods: { method: TodaysTenderMethod; amount: number }[];
+  returned: {
+    amount: number;
+    state: "NONE" | "PARTLY" | "FULL" | "PENDING";
+    returns: unknown[];
+  };
   /** a cancelled sale: shown struck through, no Return action */
   voided: boolean;
 }
 
-export interface CounterSaleTodaySummary {
+export interface TodaysSalesSummary {
   sales: { count: number; total: number };
-  /** money taken in, by tender (on-account sales take no money in) */
-  moneyIn: { cash: number; card: number; check: number };
-  /** `tenderKnown: false` until a refund-tender column exists: only the single total is meaningful, all in `other` */
-  refunds: { cash: number; card: number; check: number; other: number; tenderKnown: boolean };
-  cashExpected: number;
+  moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+  storeCreditUsed: number;
+  onAccount: number;
+  /** `tenderKnown: false` until a refund-tender column exists: show only `total` */
+  refunds: {
+    count: number;
+    cash: number;
+    card: number;
+    check: number;
+    other: number;
+    total: number;
+    tenderKnown: boolean;
+  };
+  storeCreditIssued: { count: number; amount: number };
+  cashExpectedInDrawer: number;
+  netCollected: number;
 }
 
-export interface CounterSaleTodayPage {
-  rows: CounterSaleTodayRow[];
-  page: number;
-  /** the next page number, or null on the last page */
-  nextPage: number | null;
-  /** page 1 only */
-  summary?: CounterSaleTodaySummary;
+export interface TodaysSalesResponse {
+  data: TodaysSaleRow[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    day: string;
+    timezone: string;
+    windowStart: string;
+    windowEnd: string;
+  };
+  summary?: TodaysSalesSummary;
 }
 
 /** Under ["orders"], so a completed counter sale (which invalidates ["orders"]) refreshes the sheet with no extra wiring. */
 export const COUNTER_SALE_TODAY_KEY = ["orders", "counter-sale-today"] as const;
 
 export function useCounterSaleToday(enabled = true) {
-  return useInfiniteQuery<CounterSaleTodayPage>({
+  return useInfiniteQuery<TodaysSalesResponse>({
     queryKey: COUNTER_SALE_TODAY_KEY,
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
       apiClient
-        .get<CounterSaleTodayPage>("/orders/counter-sale/today", { params: { page: pageParam } })
+        .get<TodaysSalesResponse>("/orders/counter-sale/today", { params: { page: pageParam } })
         .then((r) => r.data),
-    getNextPageParam: (last) => last.nextPage ?? undefined,
+    getNextPageParam: (last) =>
+      last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
     enabled,
   });
 }

@@ -206,10 +206,31 @@ export interface ReprintOrderLike {
 export interface ReprintSaleFacts {
   invoiceId: string;
   invoiceNumber: string;
-  paid: number;
-  balanceDue: number;
-  methods: readonly CounterSalePaymentMethod[];
-  soldAt: string | Date;
+  paymentState: "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
+  methods: ReadonlyArray<{ method: ReprintTender; amount: number }>;
+  createdAt: string | Date;
+  /** IANA zone the sale time is read in (the server's `meta.timezone`) */
+  timezone?: string;
+}
+
+export type ReprintTender = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+
+const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
+  CASH: "Cash",
+  CARD: "Card",
+  CHECK: "Check",
+  OTHER: "Other",
+  STORE_CREDIT: "Store credit",
+};
+
+/** "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). */
+export function formatSaleTime(at: string | Date, timeZone?: string): string {
+  const d = at instanceof Date ? at : new Date(at);
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone,
+  }).format(d);
 }
 
 /**
@@ -250,28 +271,31 @@ export function receiptModelFromOrder(input: {
       };
     });
   const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
-  const tenders = sale.methods.filter((m) => m !== "ON_ACCOUNT");
-  const hasTender = tenders.length > 0;
-  const onAccount = !hasTender && sale.balanceDue > 0;
-  const soldAt = sale.soldAt instanceof Date ? sale.soldAt : new Date(sale.soldAt);
+  const hasTender = sale.methods.length > 0;
+  // the receipt's own Paid / Balance rows: what the stored tenders add up to against the order total
+  const paid = roundMoney(sale.methods.reduce((sum, m) => sum + m.amount, 0));
+  const balanceDue = sale.paymentState === "PAID" ? 0 : Math.max(0, roundMoney(order.total - paid));
+  const onAccount = !hasTender && balanceDue > 0;
   return {
     header: receiptHeader(profile),
     orderNumber: order.orderNumber,
     invoiceNumber: sale.invoiceNumber,
     invoiceId: sale.invoiceId,
-    dateLabel: soldAt.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+    dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal,
     adjustment: roundMoney(order.total - subtotal),
     total: order.total,
-    paid: sale.paid,
-    balanceDue: sale.balanceDue,
+    paid,
+    balanceDue,
     onAccount,
     paymentNotRecorded: false,
     showPaid: hasTender,
-    showBalance: onAccount || sale.balanceDue > 0,
-    methodLabel: hasTender ? tenders.map((m) => METHOD_LABEL[m]).join(" + ") : null,
+    showBalance: onAccount || balanceDue > 0,
+    methodLabel: hasTender
+      ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+      : null,
     tendered: null,
     tenderedAsEntered: false,
     change: null,

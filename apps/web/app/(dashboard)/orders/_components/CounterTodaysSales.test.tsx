@@ -1,7 +1,11 @@
 import * as React from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within, act } from "@/test-utils/render";
 import { useCreateCounterSale } from "@/lib/api/counter-sale";
-import type { CounterSaleTodayPage, CounterSaleTodayRow } from "@/lib/api/counter-sale-today";
+import type {
+  TodaysSaleRow,
+  TodaysSalesResponse,
+  TodaysSalesSummary,
+} from "@/lib/api/counter-sale-today";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -43,36 +47,52 @@ jest.mock("@/app/(dashboard)/returns/_components/RecordInlineReturnDialog", () =
   },
 }));
 
-const row = (over: Partial<CounterSaleTodayRow> = {}): CounterSaleTodayRow => ({
+const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
   orderId: "o1",
   invoiceId: "i1",
   orderNumber: "ORD-1",
   invoiceNumber: "INV-1",
-  soldAt: "2026-10-07T15:15:00.000Z",
+  createdAt: "2026-10-07T15:15:00.000Z",
   total: 22.5,
-  paid: 22.5,
-  balanceDue: 0,
-  methods: ["CASH"],
-  returnState: "NONE",
+  customerId: "c1",
   customerName: null,
-  walkIn: true,
+  isWalkIn: true,
+  status: "DELIVERED",
+  paymentState: "PAID",
+  methods: [{ method: "CASH", amount: 22.5 }],
+  returned: { amount: 0, state: "NONE", returns: [] },
   voided: false,
   ...over,
 });
-const SUMMARY = {
+const SUMMARY: TodaysSalesSummary = {
   sales: { count: 2, total: 45 },
-  moneyIn: { cash: 30, card: 15, check: 0 },
-  refunds: { cash: 0, card: 0, check: 0, other: 5, tenderKnown: false },
-  cashExpected: 25,
+  moneyIn: { cash: 30, card: 15, check: 0, other: 1, total: 46 },
+  storeCreditUsed: 4,
+  onAccount: 7,
+  refunds: { count: 1, cash: 0, card: 0, check: 0, other: 0, total: 5, tenderKnown: false },
+  storeCreditIssued: { count: 1, amount: 2 },
+  cashExpectedInDrawer: 25,
+  netCollected: 41,
 };
-const page1 = (over: Partial<CounterSaleTodayPage> = {}): CounterSaleTodayPage => ({
-  rows: [row()],
-  page: 1,
-  nextPage: null,
-  summary: SUMMARY,
-  ...over,
+const resp = (
+  rows: TodaysSaleRow[],
+  over: { page?: number; totalPages?: number; summary?: TodaysSalesSummary | null } = {},
+): TodaysSalesResponse => ({
+  data: rows,
+  meta: {
+    total: rows.length,
+    page: over.page ?? 1,
+    limit: 25,
+    totalPages: over.totalPages ?? 1,
+    day: "2026-10-07",
+    timezone: "America/New_York",
+    windowStart: "2026-10-07T04:00:00.000Z",
+    windowEnd: "2026-10-08T04:00:00.000Z",
+  },
+  ...(over.summary === null ? {} : { summary: over.summary ?? SUMMARY }),
 });
-const serve = (pages: Record<number, CounterSaleTodayPage>) =>
+const page1 = (rows: TodaysSaleRow[] = [row()], over = {}) => resp(rows, over);
+const serve = (pages: Record<number, TodaysSalesResponse>) =>
   get.mockImplementation((url: string, cfg?: { params?: { page?: number } }) => {
     if (url === "/orders/counter-sale/today")
       return Promise.resolve({ data: pages[cfg?.params?.page ?? 1] });
@@ -109,7 +129,7 @@ describe("CounterTodaysSales", () => {
   });
 
   it("shows the empty copy when there are no sales", async () => {
-    serve({ 1: page1({ rows: [], summary: { ...SUMMARY, sales: { count: 0, total: 0 } } }) });
+    serve({ 1: page1([], { summary: { ...SUMMARY, sales: { count: 0, total: 0 } } }) });
     await open();
     expect(await screen.findByText("No sales yet today")).toBeInTheDocument();
   });
@@ -128,8 +148,12 @@ describe("CounterTodaysSales", () => {
 
   it("Show more fetches the next page and appends its rows; gone on the last page", async () => {
     serve({
-      1: page1({ nextPage: 2 }),
-      2: { rows: [row({ orderId: "o2", orderNumber: "ORD-2" })], page: 2, nextPage: null },
+      1: page1([row()], { totalPages: 2 }),
+      2: resp([row({ orderId: "o2", orderNumber: "ORD-2" })], {
+        page: 2,
+        totalPages: 2,
+        summary: null,
+      }),
     });
     await open();
     await screen.findByText("ORD-1");
@@ -148,7 +172,12 @@ describe("CounterTodaysSales", () => {
     expect(within(s).getByTestId("today-in-cash")).toHaveTextContent("$30.00");
     expect(within(s).getByTestId("today-in-card")).toHaveTextContent("$15.00");
     expect(within(s).getByTestId("today-in-check")).toHaveTextContent("$0.00");
-    expect(within(s).getByTestId("today-cash-expected")).toHaveTextContent("$25.00");
+    expect(within(s).getByTestId("today-in-other")).toHaveTextContent("$1.00");
+    expect(within(s).getByTestId("today-in-total")).toHaveTextContent("$46.00");
+    expect(within(s).getByTestId("today-store-credit-used")).toHaveTextContent("$4.00");
+    expect(within(s).getByTestId("today-on-account")).toHaveTextContent("$7.00");
+    expect(within(s).getByTestId("today-store-credit-issued")).toHaveTextContent("$2.00");
+    expect(within(s).getByTestId("today-net-collected")).toHaveTextContent("$41.00");
   });
 
   it("refunds are ONE total with no per-method split while the tender is unknown", async () => {
@@ -157,24 +186,38 @@ describe("CounterTodaysSales", () => {
     expect(within(s).getByTestId("today-refunds")).toHaveTextContent("$5.00");
     expect(within(s).queryByTestId("today-refunds-cash")).toBeNull();
     expect(within(s).queryByTestId("today-refunds-card")).toBeNull();
+    expect(within(s).getByTestId("today-cash-expected")).toHaveTextContent(
+      "Cash expected, before refunds",
+    );
+    expect(within(s).getByTestId("today-cash-expected")).toHaveTextContent("$25.00");
+  });
+  it("shows the server's refund total as-is: no client sum of the parts", async () => {
+    serve({
+      1: page1([row()], {
+        summary: { ...SUMMARY, refunds: { ...SUMMARY.refunds, other: 1, total: 99 } },
+      }),
+    });
+    await open();
+    expect(await screen.findByTestId("today-refunds")).toHaveTextContent("$99.00");
   });
 
   it("splits refunds by method once the tender is known", async () => {
     serve({
-      1: page1({
+      1: page1([row()], {
         summary: {
           ...SUMMARY,
-          refunds: { cash: 3, card: 2, check: 0, other: 0, tenderKnown: true },
+          refunds: { count: 2, cash: 3, card: 2, check: 0, other: 0, total: 5, tenderKnown: true },
         },
       }),
     });
     await open();
     expect(await screen.findByTestId("today-refunds-cash")).toHaveTextContent("$3.00");
     expect(screen.getByTestId("today-refunds-card")).toHaveTextContent("$2.00");
+    expect(screen.getByTestId("today-cash-expected")).not.toHaveTextContent("before refunds");
   });
 
   it("a voided row is labelled Voided, struck through, with no Reprint or Return", async () => {
-    serve({ 1: page1({ rows: [row({ voided: true })] }) });
+    serve({ 1: page1([row({ voided: true })]) });
     await open();
     const r = await screen.findByTestId("today-row-o1");
     expect(within(r).getByText("Voided")).toBeInTheDocument();
@@ -188,7 +231,9 @@ describe("CounterTodaysSales", () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");
-    expect(within(root).getByTestId("receipt-reprint")).toHaveTextContent(/^Reprint · sold /);
+    expect(within(root).getByTestId("receipt-reprint")).toHaveTextContent(
+      /^Reprint · sold .*11:15 AM/,
+    );
     expect(within(root).getByTestId("receipt-numbers")).toHaveTextContent("Order ORD-1");
     expect(within(root).getByTestId("receipt-total")).toHaveTextContent("$22.50");
     expect(within(root).getByTestId("receipt-method")).toHaveTextContent("Cash");
@@ -213,6 +258,59 @@ describe("CounterTodaysSales", () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Return items" }));
     expect(screen.getByTestId("return-dialog")).toBeInTheDocument();
+  });
+
+  it("shows the payment-state and returned-state badges", async () => {
+    serve({
+      1: page1([
+        row({
+          paymentState: "PARTLY_PAID",
+          returned: { amount: 2, state: "PARTLY", returns: [] },
+        }),
+        row({
+          orderId: "o2",
+          orderNumber: "ORD-2",
+          paymentState: "ON_ACCOUNT",
+          methods: [],
+          returned: { amount: 0, state: "PENDING", returns: [] },
+        }),
+        row({
+          orderId: "o3",
+          orderNumber: "ORD-3",
+          returned: { amount: 22.5, state: "FULL", returns: [] },
+        }),
+      ]),
+    });
+    await open();
+    const r1 = await screen.findByTestId("today-row-o1");
+    expect(within(r1).getByText("Partly paid")).toBeInTheDocument();
+    expect(within(r1).getByText("Partly returned")).toBeInTheDocument();
+    const r2 = screen.getByTestId("today-row-o2");
+    expect(within(r2).getByText("On account")).toBeInTheDocument();
+    expect(within(r2).getByText("Return pending")).toBeInTheDocument();
+    expect(within(screen.getByTestId("today-row-o3")).getByText("Returned")).toBeInTheDocument();
+  });
+
+  it("store credit on a row is labelled store credit, not a tender", async () => {
+    serve({
+      1: page1([
+        row({
+          methods: [
+            { method: "CASH", amount: 10 },
+            { method: "STORE_CREDIT", amount: 12.5 },
+          ],
+        }),
+      ]),
+    });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    expect(r).toHaveTextContent("Cash + Store credit");
+  });
+
+  it("formats times in the server's timezone", async () => {
+    await open();
+    // 15:15Z in America/New_York (EDT) is 11:15 AM
+    expect(await screen.findByTestId("today-row-o1")).toHaveTextContent("11:15 AM");
   });
 
   it("View order links to the order detail route", async () => {
