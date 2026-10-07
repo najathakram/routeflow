@@ -22,6 +22,8 @@ export type ScanResolution =
   /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
   | { kind: "refused"; message: string }
   | { kind: "archived"; name: string }
+  /** B1219: one fuzzy match, no exact code - NOT added; the caller offers "Did you mean ...?". */
+  | { kind: "suggested"; product: any }
   | { kind: "unknown" }
   | {
       kind: "error";
@@ -93,6 +95,8 @@ export interface ScanCodeHandlerDeps {
   ) => { created: boolean; refused?: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
+  /** B1219: a single fuzzy match to confirm ("Did you mean ...?"). Absent = a toast, nothing added. */
+  onSuggestion?: (product: any, code: string) => void;
   toast: ToastFn;
 }
 
@@ -154,6 +158,18 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
         title: `${name} is archived — reactivate to sell`,
       });
       return { kind: "archived", name };
+    }
+    if (result.suggestion && result.product) {
+      // B1219: no exact code matched and the fuzzy search found exactly one product - a guess, so
+      // it is offered, never added. A surface with no picker says so instead of dropping the scan.
+      if (deps.onSuggestion) deps.onSuggestion(result.product, code);
+      else
+        deps.toast({
+          variant: "error",
+          title: `No exact match for ${code}`,
+          description: `Closest: ${result.product?.name || "Item"}. Search for it to add it.`,
+        });
+      return { kind: "suggested", product: result.product };
     }
     if (!result.notFound && result.product) {
       // addLineItem clears search + refocuses — outside the try above: a throw here is a real

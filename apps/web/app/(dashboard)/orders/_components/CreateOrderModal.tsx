@@ -315,6 +315,8 @@ export function CreateOrderModal({
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
+  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
@@ -440,6 +442,7 @@ export function CreateOrderModal({
       const { created, refused } = addLineItem(product, level, opts);
       return { created, refused };
     },
+    onSuggestion: (product) => setScanSuggestion(product),
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -501,6 +504,7 @@ export function CreateOrderModal({
     setAppliedCredits([]);
     setFloorAcked(new Set());
     setCreateProductOpen(false);
+    setScanSuggestion(null);
     setCreateProductInitialName("");
     setCreateProductInitialSku("");
     createOrder.reset();
@@ -1979,6 +1983,39 @@ export function CreateOrderModal({
                   </ul>
                 )}
             </div>
+
+            {scanSuggestion && (
+              <div
+                role="group"
+                aria-label="Did you mean"
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm text-navy"
+              >
+                <span className="min-w-0 flex-1 break-words">
+                  Did you mean {scanSuggestion.name}?
+                </span>
+                <button
+                  type="button"
+                  className="min-h-[44px] rounded bg-brand-600 px-3 text-sm font-medium text-white"
+                  onClick={() => {
+                    const product = scanSuggestion;
+                    setScanSuggestion(null);
+                    addPicked(product);
+                  }}
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="min-h-[44px] rounded border border-surface-border bg-white px-3 text-sm text-navy"
+                  onClick={() => {
+                    setScanSuggestion(null);
+                    scheduleScannerRefocus(productSearchRef, 50);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
             {lineItemsError && lineItems.length === 0 && (
               <p className="text-xs text-danger">{lineItemsError}</p>
