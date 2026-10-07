@@ -65,10 +65,18 @@ export function fulfilmentRefusalOf(error: unknown): FulfilmentRefusal {
   };
 }
 
-/** The 409 STALE body is a fresh GET body inside the coded envelope; this is the GET body. */
+/** The 409 STALE body is a fresh GET body inside the coded envelope; this picks the GET fields (the envelope's text is never read). */
 export function settingsFromStaleBody(data: Record<string, unknown>): FulfilmentSettings | null {
-  const { code: _c, message: _m, statusCode: _s, ...rest } = data;
-  return rest.fingerprint && rest.fulfilmentModel ? (rest as unknown as FulfilmentSettings) : null;
+  if (!data.fingerprint || !data.fulfilmentModel) return null;
+  return {
+    fulfilmentModel: data.fulfilmentModel,
+    counterSales: data.counterSales,
+    capability: data.capability,
+    selfServe: data.selfServe,
+    canEdit: data.canEdit,
+    fingerprint: data.fingerprint,
+    lastChange: data.lastChange ?? null,
+  } as FulfilmentSettings;
 }
 
 export const FULFILMENT_REFUSAL = {
