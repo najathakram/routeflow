@@ -515,3 +515,9 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 ## Landed 2026-10-07 (W17)
 
 - `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master b22689aa8`).
+
+## Landed 2026-10-07 (W18/W18b)
+
+- `api/error-codes.ts` (#3273) — `ORDER_SAVED_CREDITS_PENDING` added (API literal pinned by the parity spec, `master a14627e85`).
+- `api/settings-registry.ts` (#3266) — buyer-oversell setting entry; `api/inventory-settings.ts` (#3274) — `INVENTORY_BACKORDER_VISIBILITY_MODES`, `InventoryBackorderVisibility`, `buyerBackorderVisibility` on the settings shape (update body: either setting alone); `api/buyer.ts` (#3274) — `canBackorder?`, `stockStatus?` on the catalog and product shapes; `BUYER_BACKORDER_VISIBILITY_MODES`/`orders.buyerBackorderVisibility` in the policy registry (api).
+- `packages/ui/src/web/Table.tsx` (#3264) — header and cell take `columnDef.meta.className`; `EmptyState.tsx` description wraps (`break-words`).
