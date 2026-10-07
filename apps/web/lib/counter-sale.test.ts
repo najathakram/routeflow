@@ -14,7 +14,17 @@ import {
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
+  PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
+  PICKUP_NOT_READY_COPY,
+  PICKUP_ONLY_COPY,
+  PICKUP_KEY_CONFLICT_COPY,
+  PICKUP_INVOICE_MISSING_COPY,
+  PICKUP_WALK_IN_CREDIT_COPY,
+  PICKUP_TENDER_SHORT_COPY,
+  PICKUP_PAYMENT_REQUIRED_COPY,
+  pickupBalanceDue,
+  pickupCompleteErrorCopy,
   parseScanField,
   preselectFulfilment,
   quickTenderOptions,
@@ -362,6 +372,86 @@ describe("auto-print preference: per device, local, never throws", () => {
  * storage cannot say whether "no tender" means On account or a failed tender, nor whether a partial was intended:
  * expected = ON_ACCOUNT 0 / CASH min(tendered, total) / CARD, CHECK total.
  */
+
+describe("pickupBalanceDue (what is left to collect before pickup-complete)", () => {
+  it("no invoice yet: the order total", () => {
+    expect(pickupBalanceDue(42.5, [])).toBe(42.5);
+  });
+  it("sums the server's balanceDue over live invoices; VOID is ignored", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10.1 },
+        { status: "PARTIAL", total: 40, balanceDue: 0.2 },
+        { status: "VOID", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10.3);
+  });
+  it("WRITTEN_OFF is ignored like VOID", () => {
+    expect(
+      pickupBalanceDue(100, [
+        { status: "SENT", total: 60, balanceDue: 10 },
+        { status: "WRITTEN_OFF", total: 40, balanceDue: 40 },
+      ]),
+    ).toBe(10);
+    expect(pickupBalanceDue(25, [{ status: "WRITTEN_OFF", total: 25, balanceDue: 25 }])).toBe(25);
+  });
+  it("a settled invoice is nothing to collect", () => {
+    expect(pickupBalanceDue(30, [{ status: "PAID", total: 30, balanceDue: 0 }])).toBe(0);
+  });
+  it("an invoice without a balanceDue falls back to its total", () => {
+    expect(pickupBalanceDue(30, [{ status: "DRAFT", total: 30 }])).toBe(30);
+  });
+});
+
+describe("pickupCompleteErrorCopy", () => {
+  const err = (status: number, code: string) => ({ response: { status, data: { code } } });
+  it("maps PICKUP_NOT_READY and PICKUP_ONLY to fixed copy", () => {
+    expect(pickupCompleteErrorCopy(err(409, "PICKUP_NOT_READY"))).toBe(PICKUP_NOT_READY_COPY);
+    expect(pickupCompleteErrorCopy(err(400, "PICKUP_ONLY"))).toBe(PICKUP_ONLY_COPY);
+  });
+  it("maps WALK_IN_NO_ACCOUNT and COUNTER_CHECK_NUMBER_REQUIRED to fixed copy, not the server text", () => {
+    const walk = pickupCompleteErrorCopy({
+      response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "raw server text" } },
+    });
+    expect(walk).toBe(PAYMENT_PROBLEM_COPY.WALK_IN_ON_ACCOUNT);
+    const check = pickupCompleteErrorCopy({
+      response: {
+        status: 400,
+        data: { code: "COUNTER_CHECK_NUMBER_REQUIRED", message: "raw server text" },
+      },
+    });
+    expect(check).toBe(PAYMENT_PROBLEM_COPY.CHECK_NUMBER_REQUIRED);
+  });
+  it.each([
+    [409, "PICKUP_KEY_CONFLICT", PICKUP_KEY_CONFLICT_COPY],
+    [409, "PICKUP_INVOICE_MISSING", PICKUP_INVOICE_MISSING_COPY],
+    [409, "WALK_IN_OPEN_CREDIT", PICKUP_WALK_IN_CREDIT_COPY],
+    [400, "COUNTER_TENDER_SHORT", PICKUP_TENDER_SHORT_COPY],
+    [200, "PICKUP_PAYMENT_REQUIRED", PICKUP_PAYMENT_REQUIRED_COPY],
+  ])("%s %s maps to fixed copy, never the server text", (status, code, copy) => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status, data: { code, message: "raw server text" } } }),
+    ).toBe(copy);
+  });
+  it("the copy is the agreed wording", () => {
+    expect(PICKUP_PAYMENT_REQUIRED_COPY).toBe(
+      "A balance is due on this order now. Take payment to finish.",
+    );
+    expect(PICKUP_TENDER_SHORT_COPY).toBe("A walk-in customer must pay the full balance.");
+    expect(PICKUP_KEY_CONFLICT_COPY).toBe("Already picked up. Record any payment on the invoice.");
+    expect(PICKUP_INVOICE_MISSING_COPY).toBe(
+      "The order may be picked up, but its invoice isn't ready yet. Retry to finish.",
+    );
+    expect(PICKUP_WALK_IN_CREDIT_COPY).toBe(
+      "This walk-in has open credit. Resolve it on the customer before handing over.",
+    );
+  });
+  it("anything else is the generic retry copy, never the server message", () => {
+    expect(
+      pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),
+    ).toBe("Couldn't complete the pickup. Check the order and try again.");
+  });
+});
 
 describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
   it("WALK_IN_OPEN_CREDIT and COUNTER_SALE_KEY_CONFLICT have their own copy", () => {

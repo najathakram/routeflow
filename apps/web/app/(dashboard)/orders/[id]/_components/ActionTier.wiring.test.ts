@@ -102,6 +102,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
         "Confirm Order",
         "Mark shipped",
         "Out for Delivery",
+        "Ready for pickup",
         "Mark delivered",
         "Mark as Delivered",
       ]),

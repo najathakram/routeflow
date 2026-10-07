@@ -23,6 +23,9 @@ jest.mock("@/lib/buyer-cart", () => ({
     clearCart,
   }),
 }));
+jest.mock("@/lib/api/buyer-capabilities", () => ({
+  useBuyerSellerCapabilities: () => ({ data: undefined, isLoading: false, isError: false }),
+}));
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerProducts: () => ({ data: { data: [] } }),
   useBuyerCreateOrder: () => ({ mutateAsync, isPending: false }),

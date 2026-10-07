@@ -24,6 +24,8 @@ import {
   type ShelfEstimate,
 } from "@/lib/api/buyer";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { buyerFulfilmentChoice } from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -216,6 +218,11 @@ export default function BuyerShelfPage() {
   const snoozed = estimates.filter((e) => e.snoozed);
   const rest = estimates.filter((e) => e.state === "ok" && !e.snoozed);
 
+  // Order ahead: a quick order carries the seller's default method when it offers one. Loading /
+  // error => no capability => nothing sent (server default).
+  const { data: capability } = useBuyerSellerCapabilities();
+  const quickFulfillPath = buyerFulfilmentChoice(capability).defaultMethod;
+
   const handleAdd = async (e: ShelfEstimate) => {
     if (pendingAdd) return;
     setPendingAdd(e.productId);
@@ -235,6 +242,7 @@ export default function BuyerShelfPage() {
               : {}),
           },
         ],
+        ...(quickFulfillPath ? { fulfillPath: quickFulfillPath } : {}),
       });
     } finally {
       setPendingAdd(null);

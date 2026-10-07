@@ -1,9 +1,11 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CounterSalePaymentMethod,
   CounterSaleRequest,
   CounterSaleResponse,
   FulfilmentCapability,
+  PickupCompleteRequest,
+  PickupCompleteResponse,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { counterSaleGate } from "../counter-sale";
@@ -58,5 +60,49 @@ export function useCounterSaleByKey() {
           { params: { method } },
         )
         .then((r) => r.data),
+  });
+}
+
+/**
+ * `POST /orders/:id/pickup-complete`: staff hand a PICKUP order over ("Picked up"). The `Idempotency-Key` is REQUIRED and is
+ * the DIALOG's (one per open, kept across retries), so it is passed in, never minted here. A 200 with `paymentRecorded: false`
+ * is still a hand-over that happened, so the order and its invoices refresh on every 2xx.
+ */
+export function usePickupComplete(orderId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      body,
+      idempotencyKey,
+    }: {
+      body: PickupCompleteRequest;
+      idempotencyKey: string;
+    }) =>
+      apiClient
+        .post<PickupCompleteResponse>(`/orders/${orderId}/pickup-complete`, body, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        })
+        .then((r) => r.data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+      void qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
+
+/** The order's live invoices read in full, for their server-computed `balanceDue` (the order payload carries no paid figure). */
+export function usePickupInvoiceBalances(invoiceIds: readonly string[], enabled: boolean) {
+  return useQuery({
+    queryKey: ["invoices", "pickup-balance", ...invoiceIds],
+    enabled: enabled && invoiceIds.length > 0,
+    staleTime: 0,
+    queryFn: () =>
+      Promise.all(
+        invoiceIds.map((id) =>
+          apiClient
+            .get<{ status: string; total: number; balanceDue?: number }>(`/invoices/${id}`)
+            .then((r) => r.data),
+        ),
+      ),
   });
 }
