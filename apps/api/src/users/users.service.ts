@@ -238,10 +238,12 @@ export class UsersService {
     const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
-    // Email and username keys are omitted unless they actually changed; a change writes the normalized value.
-    const { email: _ignoredEmail, username: _ignoredUsername, ...dtoRest } = dto;
+    // An EXPLICIT field pick, never a spread of the body (SA-726 M5): whatever a caller manages to put on
+    // the DTO, only these three columns are ever written here. `status`, `canActAsDriver`, `tenantId` and
+    // the permission columns have their own endpoints. Email and username are omitted unless they
+    // actually changed; a change writes the normalized value.
     const data = {
-      ...dtoRest,
+      ...(dto.role !== undefined ? { role: dto.role } : {}),
       ...(emailChanged ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };

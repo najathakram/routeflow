@@ -16,7 +16,7 @@ import { UpdateNumberingDto } from "./dto/update-numbering.dto";
  */
 @Controller("import/numbering")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.OPERATOR)
+@Roles(UserRole.TENANT_ADMIN)
 export class NumberingController {
   constructor(private readonly numbering: NumberingService) {}
 

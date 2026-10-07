@@ -100,7 +100,7 @@ export class ProductsController {
 
   // Must be declared before :id to avoid route collision
   @Post("import")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   importFromZoho(@Body() dto: ImportProductsDto) {
     return this.productsService.importFromZoho(dto);
   }
@@ -131,7 +131,7 @@ export class ProductsController {
   // real outcomes and the response carries the {deleted, softDeleted, skipped}
   // breakdown rather than a bare count that would under-report the result.
   @Delete("clear-all")
-  @Roles(UserRole.OPERATOR)
+  @Roles(UserRole.TENANT_ADMIN)
   clearAll(@Query("confirm") confirm?: string) {
     if (confirm !== "true") {
       throw new BadRequestException(

@@ -136,6 +136,7 @@ export class SettingsBillingController {
   }
 
   @Get("export")
+  @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: "Export billing data (works while READ_ONLY)" })
   export(@CurrentUser() user: AuthUser) {
     return this.subscription.getExport(this.tenantIdOf(user));

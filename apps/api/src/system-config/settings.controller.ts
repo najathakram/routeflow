@@ -198,6 +198,7 @@ export class SettingsController {
   // ─── Anthropic API Key ───────────────────────────────────────────────────────
 
   @Get("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async getAnthropicSettings() {
     const stored = await this.svc.get("anthropic.apiKey");
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
@@ -212,6 +213,7 @@ export class SettingsController {
   }
 
   @Patch("anthropic")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateAnthropicSettings(@Body() dto: { apiKey?: string }) {
     if (dto.apiKey !== undefined) {
       if (dto.apiKey === "") {
@@ -227,6 +229,7 @@ export class SettingsController {
   // ─── Email Settings ──────────────────────────────────────────────────────────
 
   @Get("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async getEmailSettings() {
     const all = await this.svc.getAll("email.");
     return {
@@ -251,6 +254,7 @@ export class SettingsController {
   }
 
   @Post("email")
+  @Roles(UserRole.TENANT_ADMIN)
   async updateEmailSettings(@Body() dto: Record<string, unknown>) {
     const allowed = [
       "fromName",
@@ -290,6 +294,7 @@ export class SettingsController {
   }
 
   @Post("email/test")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async testEmailSettings(@Body() dto: { toEmail: string }) {
     return this.emailService.sendTestEmail(dto.toEmail);
@@ -302,6 +307,7 @@ export class SettingsController {
    * never 500s for a connection problem.
    */
   @Post("email/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifyEmailConnection(
     @Body()
@@ -325,34 +331,40 @@ export class SettingsController {
   // ─── Sending domain (Resend, per-tenant own-domain verification) ──────────────
 
   @Get("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async getSendingDomain() {
     return this.emailService.getSendingDomainStatus();
   }
 
   @Post("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async addSendingDomain(@Body() dto: { domain: string }) {
     return this.emailService.addSendingDomain(dto.domain);
   }
 
   @Post("email/domain/refresh")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async refreshSendingDomain() {
     return this.emailService.refreshSendingDomain();
   }
 
   @Post("email/domain/verify")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async verifySendingDomain() {
     return this.emailService.verifySendingDomain();
   }
 
   @Post("email/domain/from")
+  @Roles(UserRole.TENANT_ADMIN)
   @HttpCode(HttpStatus.OK)
   async setSendingFrom(@Body() dto: { address: string }) {
     return this.emailService.setSendingFromAddress(dto.address);
   }
 
   @Delete("email/domain")
+  @Roles(UserRole.TENANT_ADMIN)
   async removeSendingDomain() {
     return this.emailService.removeSendingDomain();
   }
