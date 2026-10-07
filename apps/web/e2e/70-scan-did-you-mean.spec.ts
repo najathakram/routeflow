@@ -102,6 +102,13 @@ for (const vp of VIEWPORTS) {
       await expect(picker).toBeHidden();
       await expect(lines).toHaveCount(0);
 
+      // Escape is Cancel too, and does not also dismiss the Create Order dialog.
+      await scan();
+      await page.keyboard.press("Escape");
+      await expect(picker).toBeHidden();
+      await expect(lines()).toHaveCount(0);
+      await expect(search).toBeVisible();
+
       await scan();
       await picker.getByRole("button", { name: "Add" }).click();
       await expect(picker).toBeHidden();

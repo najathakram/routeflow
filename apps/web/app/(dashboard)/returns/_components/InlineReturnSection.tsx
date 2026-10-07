@@ -213,7 +213,7 @@ export function InlineReturnSection({
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
   // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
-  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const addScanned = (product: any) => {
     const created = !linesRef.current.some((l) => l.productId === product.id);
     setLines(
@@ -228,7 +228,7 @@ export function InlineReturnSection({
   };
   const scanHandlerRef = useScanCodeHandler({
     addLineItem: (product) => addScanned(product),
-    onSuggestion: (product) => setScanSuggestion(product),
+    onSuggestion: (matches) => setScanMatches(matches),
     onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
     toast,
   });
@@ -441,16 +441,15 @@ export function InlineReturnSection({
                 title="Scan barcode"
               />
             </div>
-            {scanSuggestion && (
+            {scanMatches.length > 0 && (
               <div className="mt-2">
                 <DidYouMeanPicker
-                  name={String(scanSuggestion.name ?? "this item")}
-                  onConfirm={() => {
-                    const product = scanSuggestion;
-                    setScanSuggestion(null);
+                  matches={scanMatches}
+                  onConfirm={(product) => {
+                    setScanMatches([]);
                     addScanned(product);
                   }}
-                  onCancel={() => setScanSuggestion(null)}
+                  onCancel={() => setScanMatches([])}
                 />
               </div>
             )}

@@ -95,8 +95,13 @@ export interface ScanCodeHandlerDeps {
   ) => { created: boolean; refused?: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
-  /** B1219: a single fuzzy match to confirm ("Did you mean ...?"). Absent = a toast, nothing added. */
-  onSuggestion?: (product: any, code: string) => void;
+  /**
+   * B1219: the fuzzy matches (one, or several) to confirm - "Did you mean ...?". Never auto-added.
+   * Absent = a toast, nothing added.
+   */
+  onSuggestion?: (matches: any[], code: string) => void;
+  /** B1219: true while another surface (the scan_v2 screen) owns the scan - no picker is raised. */
+  suggestionsSuppressed?: () => boolean;
   toast: ToastFn;
 }
 
@@ -159,10 +164,14 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       });
       return { kind: "archived", name };
     }
-    if (result.suggestion && result.product) {
-      // B1219: no exact code matched and the fuzzy search found exactly one product - a guess, so
+    if ((result.suggestion || result.ambiguous) && result.product) {
+      // B1219: no exact code matched and the fuzzy search found one or more products - a guess, so
       // it is offered, never added. A surface with no picker says so instead of dropping the scan.
-      if (deps.onSuggestion) deps.onSuggestion(result.product, code);
+      // 2+ fuzzy hits used to add the FIRST row here; they are offered together instead.
+      const matches = result.matches?.length ? result.matches : [result.product];
+      if (deps.suggestionsSuppressed?.()) {
+        // The scan screen owns the scan and reports `suggested` itself; no picker is left behind.
+      } else if (deps.onSuggestion) deps.onSuggestion(matches, code);
       else
         deps.toast({
           variant: "error",
@@ -176,11 +185,9 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
       // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
-      // SA-626a: a multi-match (first row wins) is a picker-style pick, so it starts on the default unit too.
-      const added =
-        result.ambiguous || scanCodeIsShared(code, result.product)
-          ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
-          : deps.addLineItem(result.product, level);
+      const added = scanCodeIsShared(code, result.product)
+        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+        : deps.addLineItem(result.product, level);
       if (added?.refused) return { kind: "refused", message: UNITS_LOADING_SCAN_MESSAGE };
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }

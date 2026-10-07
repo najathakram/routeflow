@@ -63,7 +63,7 @@ export function QuickRestockModal({
   const pickerInputRef = React.useRef<HTMLInputElement | null>(null);
   const qtyInputRef = React.useRef<HTMLInputElement | null>(null);
   const [scanLoading, setScanLoading] = React.useState(false);
-  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const { toast: scanToast } = useToast();
   const handleScan = async (code: string) => {
     setScanLoading(true);
@@ -80,7 +80,7 @@ export function QuickRestockModal({
         });
       } else if (!result.notFound && (result.suggestion || result.ambiguous)) {
         // B1219: a fuzzy guess selects the product only after the operator confirms it.
-        setScanSuggestion(result.product);
+        setScanMatches(result.matches?.length ? result.matches : [result.product]);
       } else if (!result.notFound) {
         setForm((f) => ({ ...f, productId: result.product.id }));
         qtyInputRef.current?.focus();
@@ -222,18 +222,17 @@ export function QuickRestockModal({
               />
             </div>
             {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
-            {scanSuggestion && (
+            {scanMatches.length > 0 && (
               <div className="mt-2">
                 <DidYouMeanPicker
-                  name={String(scanSuggestion.name ?? "this item")}
+                  matches={scanMatches}
                   confirmLabel="Apply"
-                  onConfirm={() => {
-                    const product = scanSuggestion;
-                    setScanSuggestion(null);
+                  onConfirm={(product) => {
+                    setScanMatches([]);
                     setForm((f) => ({ ...f, productId: product.id }));
                     qtyInputRef.current?.focus();
                   }}
-                  onCancel={() => setScanSuggestion(null)}
+                  onCancel={() => setScanMatches([])}
                 />
               </div>
             )}

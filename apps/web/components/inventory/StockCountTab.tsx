@@ -85,7 +85,7 @@ export function StockCountTab() {
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
-  const [scanSuggestion, setScanSuggestion] = React.useState<any | null>(null);
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const scanContainerRef = React.useRef<HTMLDivElement>(null);
   const [resolving, setResolving] = React.useState(false);
 
@@ -522,7 +522,7 @@ export function StockCountTab() {
       }
       if (result.suggestion || result.ambiguous) {
         // B1219: a fuzzy guess writes a count only after the operator confirms it.
-        setScanSuggestion(result.product);
+        setScanMatches(result.matches?.length ? result.matches : [result.product]);
         return;
       }
       addOrIncrementProduct(result.product, qtyPerScan);
@@ -810,21 +810,20 @@ export function StockCountTab() {
             </div>
             {resolving && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
 
-            {scanSuggestion && (
+            {scanMatches.length > 0 && (
               <div className="mt-2">
                 <DidYouMeanPicker
-                  name={String(scanSuggestion.name ?? "this item")}
+                  matches={scanMatches}
                   confirmLabel="Apply"
-                  onConfirm={async () => {
-                    const product = scanSuggestion;
-                    setScanSuggestion(null);
+                  onConfirm={async (product) => {
+                    setScanMatches([]);
                     const sid = await ensureSession();
                     if (!sid) return;
                     addOrIncrementProduct(product, qtyPerScan);
                     scanInputRef.current?.focus();
                   }}
                   onCancel={() => {
-                    setScanSuggestion(null);
+                    setScanMatches([]);
                     scanInputRef.current?.focus();
                   }}
                 />
