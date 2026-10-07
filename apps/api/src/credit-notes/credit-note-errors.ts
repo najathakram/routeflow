@@ -51,7 +51,7 @@ export function asReadableConflict(err: unknown, logger: { warn(message: string)
     );
   if ((err as { code?: string })?.code === "P2002") {
     logger.warn(`Credit note write failed code=P2002 target=${describeUniqueViolation(err)}`);
-    if (uniqueViolationOn(err, "creditNoteNumber"))
+    if (uniqueViolationOn(err, "CreditNote_tenantId_creditNoteNumber_key", { exact: true }))
       return cnConflict(
         API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
         "Credit note number conflict — please retry.",

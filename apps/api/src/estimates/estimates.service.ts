@@ -280,7 +280,7 @@ export class EstimatesService {
         this.logger.warn(
           `Estimate create failed customer=${dto.customerId} code=P2002 target=${describeUniqueViolation(err)}`,
         );
-        if (uniqueViolationOn(err, "estimateNumber"))
+        if (uniqueViolationOn(err, "Estimate_tenantId_estimateNumber_key", { exact: true }))
           throw new ConflictException("Estimate number conflict — please retry.");
       }
       throw err;
@@ -587,7 +587,12 @@ export class EstimatesService {
         // B100/F16b (REG-B100-F): had no P2002 catch — a concurrent convert's
         // unique-constraint hit propagated as a raw 500 (same message as the
         // sibling catches in invoices.service.ts).
-        if (err?.code === "P2002")
+        // B1186: only the two constraints this transaction can race on (the invoice number, or the
+        // estimate's own one-invoice link) are that conflict; any other unique violation propagates.
+        if (
+          uniqueViolationOn(err, "Invoice_tenantId_invoiceNumber_key", { exact: true }) ||
+          uniqueViolationOn(err, "Estimate_invoiceId_key", { exact: true })
+        )
           throw new ConflictException("Invoice number conflict — please retry.");
         throw err;
       }

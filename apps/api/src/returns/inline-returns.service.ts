@@ -146,7 +146,7 @@ export class InlineReturnsService {
    * (B1186: read through common/prisma-unique, so the pg adapter's shape counts, and an
    * unreported or unrelated constraint - a returnNumber collision - does not). */
   private isReturnKeyConflict(err: any): boolean {
-    return uniqueViolationOn(err, "returnKey");
+    return uniqueViolationOn(err, "Return_tenantId_returnKey_key", { exact: true });
   }
 
   private async reverseLedgerForReturn(tx: any, ret: { id: string; items: any[] }): Promise<void> {

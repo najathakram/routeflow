@@ -277,7 +277,7 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
     });
   });
 
-  describe("BUG-A (#3256): the fold's Order-column key hit compares the body's cart", () => {
+  describe("BUG-A (#3256): wiring - the fold passes the request's cart to the key lookup (the compare itself lives in OrdersService)", () => {
     it("hands the lookup the request's own items as the cart to compare, beside the hash", async () => {
       seedOpenOrder();
       await controller.createOrder(dto() as any, CTX as any, "key-1");

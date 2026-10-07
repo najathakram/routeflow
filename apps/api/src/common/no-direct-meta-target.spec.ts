@@ -31,6 +31,7 @@ describe("no direct meta.target read outside common/prisma-unique.ts (B1186)", (
   });
 
   it("finds none in non-spec sources", () => {
+    expect(walk(SRC).length).toBeGreaterThan(100); // the scan really walks the tree (no-bare-cron precedent)
     const offenders = walk(SRC)
       .filter((f) => !ALLOWED.has(f))
       .flatMap((f) =>
