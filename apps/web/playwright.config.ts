@@ -496,6 +496,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
+    {
+      name: "counter-ship-handoff",
+      testMatch: /71-counter-ship-handoff\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
