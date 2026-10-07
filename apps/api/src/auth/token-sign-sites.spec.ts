@@ -7,7 +7,6 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { JwtStrategy } from "./strategies/jwt.strategy";
@@ -132,7 +131,7 @@ describe("session token admission by shape", () => {
   const jwt = new JwtService({ secret: SECRET });
   const strategy = new JwtStrategy({
     get: () => ({ secret: SECRET }),
-  } as unknown as ConfigService);
+  } as unknown as ConstructorParameters<typeof JwtStrategy>[0]);
 
   const staffRow = (p: any) => ({
     id: p.sub,
