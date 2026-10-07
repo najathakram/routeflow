@@ -18,6 +18,8 @@ export interface SaleOptions {
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
   onReplay?: (order: { id: string; status?: string; counterSale?: boolean }) => void;
+  /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
+  beforeWrite?: (priced: { total: number }) => void | Promise<void>;
 }
 
 /**
@@ -74,6 +76,7 @@ export function saleCreateOptions(
     skipAutoMerge: true,
     ...(sale.fulfillPath ? { fulfillPath: sale.fulfillPath } : {}),
     ...(sale.counterSale ? { counterSale: true } : {}),
+    ...(sale.beforeWrite ? { beforeWrite: sale.beforeWrite } : {}),
     ...(idempotencyKey
       ? {
           onReplay: (order) => {
