@@ -14,6 +14,8 @@ export interface CounterSaleItem {
   pieces?: number;
   unitPrice?: number;
   priceReason?: string;
+  /** an optional per-line note (max 200, HTML stripped server-side); stored on the order line */
+  note?: string;
 }
 
 export interface CounterSalePayment {
