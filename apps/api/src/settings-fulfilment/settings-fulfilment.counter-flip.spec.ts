@@ -59,6 +59,16 @@ describe("flipping the counter in Settings drives the counter-sale gate", () => 
     (prisma.getTenantId as jest.Mock).mockReturnValue(TENANT_ID);
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
+    // What the sale reads back once it is created (the order row, and its invoice with the cash tender).
+    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "O-1" });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv-1",
+        invoiceNumber: "I-1",
+        total: 5,
+        payments: [{ id: "pay-1", amount: 5, method: "CASH", status: "PAID" }],
+      },
+    ]);
     const createSale = jest.fn(async () => ({
       id: "inv-1",
       orderId: "ord-1",
