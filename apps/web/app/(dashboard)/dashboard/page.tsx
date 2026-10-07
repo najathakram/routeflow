@@ -28,6 +28,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShipSlotReserve } from "@/lib/ship-caps-hint";
 import { useTenantFeatures } from "@/lib/tenant-features";
 import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
@@ -591,10 +592,16 @@ export default function DashboardPage() {
   // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
   // route / driver ones. Any other account, including an unset one, is untouched.
   const fulfilmentCaps = useFulfilmentCaps();
-  // The answer is still in flight: reserve the three shipping slots (a SHIP-default account must not pop in).
-  const capsLoading = useTenantFeatures().isLoading === true;
+  // Answer in flight: reserve the three shipping slots only if this tenant LAST resolved to SHIP (ship-caps-hint).
+  const caps = useTenantFeatures();
+  const capsLoading = caps.isLoading === true;
   const shippingAccount =
     !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
+  const reserveShipSlots = useShipSlotReserve(
+    user?.tenantSlug,
+    capsLoading,
+    caps.data === undefined ? null : shippingAccount,
+  );
 
   const baseIsOperator =
     !user?.role ||
@@ -904,7 +911,7 @@ export default function DashboardPage() {
             />
           </Link>
         )}
-        {isOperator && capsLoading && (
+        {isOperator && reserveShipSlots && (
           <>
             <StatSkeleton testId="ship-stat-skeleton" />
             <StatSkeleton testId="ship-stat-skeleton" />

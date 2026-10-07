@@ -15,12 +15,13 @@ jest.mock("next/navigation", () => ({
 }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useAuth: () => ({ user: { role: authRole, canActAsDriver: true } }),
+  useAuth: () => ({ user: { role: authRole, canActAsDriver: true, tenantSlug: "acme" } }),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 let fleet = true;
 let ship = false;
 let capsLoading = false;
+let nonShipAnswer = false;
 jest.mock("@/lib/tenant-features", () => ({
   useTenantFeatures: () => ({
     isLoading: capsLoading,
@@ -40,7 +41,22 @@ jest.mock("@/lib/tenant-features", () => ({
               },
             },
           }
-        : undefined,
+        : nonShipAnswer
+          ? {
+              capabilities: {
+                fulfilment: {
+                  methods: ["ROUTE"],
+                  staffDefault: "ROUTE",
+                  portalMethods: [],
+                  portalDefault: null,
+                  counter: "off",
+                  fleet: true,
+                  staffOpensAs: "order",
+                  consistent: true,
+                },
+              },
+            }
+          : undefined,
   }),
 }));
 jest.mock("@/lib/api/addons", () => ({
@@ -89,15 +105,20 @@ jest.mock("@/lib/api/products", () => ({ useProducts: () => page(0) }));
 
 const SHIP_LABELS = ["Ready to ship", "Shipped, no tracking", "Shipped this week"];
 const minH = (n: Element | null | undefined) => n?.className.match(/min-h-\[[^\]]+\]/)?.[0];
+const KEY = "rf-ship-caps:acme";
 
 beforeEach(() => {
   capsLoading = false;
   authRole = "OPERATOR";
+  nonShipAnswer = false;
+  fleet = false;
+  window.localStorage.clear();
+  jest.restoreAllMocks();
 });
 
-describe("Dashboard W19-1 shipping slots", () => {
-  it("while capabilities load, three shipping skeleton slots carry the stat min-height; no cards yet", () => {
-    fleet = false;
+describe("Dashboard W19-1 shipping slots (last-known hint)", () => {
+  it("hint SHIP + capabilities loading: three reserved slots with the stat min-height, no cards", () => {
+    window.localStorage.setItem(KEY, "1");
     ship = true;
     capsLoading = true;
     renderWithProviders(<DashboardPage />);
@@ -107,8 +128,27 @@ describe("Dashboard W19-1 shipping slots", () => {
     SHIP_LABELS.forEach((l) => expect(screen.queryByText(l)).not.toBeInTheDocument());
   });
 
-  it("once loaded, the SHIP cards render with the same min-height and no skeleton slots", async () => {
-    fleet = false;
+  it.each([
+    ["non-SHIP hint", "0"],
+    ["no hint", null],
+  ])("%s + loading: no slots", (_n, v) => {
+    if (v !== null) window.localStorage.setItem(KEY, v);
+    ship = true;
+    capsLoading = true;
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryAllByTestId("ship-stat-skeleton")).toHaveLength(0);
+  });
+
+  it("hint SHIP but a non-operator: no slots", () => {
+    window.localStorage.setItem(KEY, "1");
+    ship = true;
+    capsLoading = true;
+    authRole = "CUSTOMER";
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryAllByTestId("ship-stat-skeleton")).toHaveLength(0);
+  });
+
+  it("loaded SHIP: cards with the min-height, no slots, hint written as 1", async () => {
     ship = true;
     renderWithProviders(<DashboardPage />);
     await screen.findByText("9");
@@ -117,22 +157,39 @@ describe("Dashboard W19-1 shipping slots", () => {
       const a = screen.getByText(l).closest("a");
       expect(minH(a?.firstElementChild)).toBe("min-h-[104px]");
     });
+    expect(window.localStorage.getItem(KEY)).toBe("1");
   });
 
-  it("non-SHIP account once loaded: no shipping cards, no skeleton slots", () => {
-    fleet = false;
+  it("loaded non-SHIP (answer present): no ship cards or slots, hint written as 0", () => {
     ship = false;
+    nonShipAnswer = true;
     renderWithProviders(<DashboardPage />);
     expect(screen.queryAllByTestId("ship-stat-skeleton")).toHaveLength(0);
     SHIP_LABELS.forEach((l) => expect(screen.queryByText(l)).not.toBeInTheDocument());
+    expect(window.localStorage.getItem(KEY)).toBe("0");
   });
 
-  it("non-operator while capabilities load: no shipping slots", () => {
-    fleet = false;
+  it("storage throwing on get and set: no crash, no slots", () => {
+    const realGet = Storage.prototype.getItem;
+    const realSet = Storage.prototype.setItem;
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+      this: Storage,
+      k: string,
+    ) {
+      if (k.startsWith("rf-ship-caps")) throw new Error("blocked");
+      return realGet.call(this, k);
+    });
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      k: string,
+      v: string,
+    ) {
+      if (k.startsWith("rf-ship-caps")) throw new Error("blocked");
+      realSet.call(this, k, v);
+    });
     ship = true;
     capsLoading = true;
-    authRole = "CUSTOMER";
-    renderWithProviders(<DashboardPage />);
+    expect(() => renderWithProviders(<DashboardPage />)).not.toThrow();
     expect(screen.queryAllByTestId("ship-stat-skeleton")).toHaveLength(0);
   });
 });

@@ -32,10 +32,6 @@ jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => routes,
   useDeliveryAccess: () => ({ enabled: delivery, resolved: true }),
 }));
-// Capabilities are not under test here (the shipping slots have their own file): settled, non-SHIP.
-jest.mock("@/lib/tenant-features", () => ({
-  useTenantFeatures: () => ({ data: undefined, isLoading: false }),
-}));
 let counterButton = false;
 jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => ({ showButton: counterButton }),
