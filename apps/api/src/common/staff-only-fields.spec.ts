@@ -226,3 +226,70 @@ describe("orderFor / ordersFor / invoiceDetailFor: the CUSTOMER gate", () => {
     }
   });
 });
+
+// ─── OOS PR2 (SA-714 R3d): the buyer-visible `backordered` flag is DERIVED, never the raw marker ───
+describe("toCustomerOrder: the derived backordered flag follows the seller's visibility", () => {
+  const order = (marker?: unknown) => ({
+    id: "o1",
+    status: "CONFIRMED",
+    lineItems: [
+      {
+        id: "li-1",
+        qty: 2,
+        unitPrice: 5,
+        // Seller-internal columns: never in a buyer response, the marker included.
+        ...(marker !== undefined ? { backorderPieces: marker } : {}),
+        costPrice: 3,
+      },
+    ],
+  });
+  const line = (res: unknown) =>
+    (res as { lineItems: Array<Record<string, unknown>> }).lineItems[0];
+
+  it("show: a backordered line carries backordered:true and a normal line backordered:false", () => {
+    expect(line(toCustomerOrder(order(4), { backorderVisibility: "show" })).backordered).toBe(true);
+    expect(line(toCustomerOrder(order(0), { backorderVisibility: "show" })).backordered).toBe(
+      false,
+    );
+  });
+
+  it("hide (and no option at all): NO trace of backorders reaches the buyer", () => {
+    for (const out of [
+      toCustomerOrder(order(4), { backorderVisibility: "hide" }),
+      toCustomerOrder(order(4)),
+      toCustomerOrder(order(4), {}),
+    ]) {
+      expect("backordered" in line(out)).toBe(false);
+      expect("backorderPieces" in line(out)).toBe(false);
+    }
+  });
+
+  it("the raw marker is NEVER in a buyer response, under show either", () => {
+    const out = line(toCustomerOrder(order(4), { backorderVisibility: "show" }));
+    expect("backorderPieces" in out).toBe(false);
+    expect("costPrice" in out).toBe(false);
+    expect(Object.keys(out).sort()).toEqual(["backordered", "id", "qty", "unitPrice"]);
+  });
+
+  it("a line with no marker column yet (today) gets no flag even under show", () => {
+    expect("backordered" in line(toCustomerOrder(order(), { backorderVisibility: "show" }))).toBe(
+      false,
+    );
+  });
+
+  it("no marker or backorder column name is in the line allowlist (a new column stays staff-only)", () => {
+    for (const k of CUSTOMER_ORDER_ITEM_FIELDS) {
+      expect(k).not.toMatch(/backorder/i);
+    }
+  });
+
+  it("orderFor / ordersFor pass the option to a CUSTOMER and leave staff untouched", () => {
+    const o = order(4);
+    const customer = { role: "CUSTOMER" };
+    expect(line(orderFor(customer, o, { backorderVisibility: "show" })).backordered).toBe(true);
+    expect(line(ordersFor(customer, [o], { backorderVisibility: "show" })[0]).backordered).toBe(
+      true,
+    );
+    expect(orderFor({ role: "OPERATOR" }, o, { backorderVisibility: "show" })).toBe(o);
+  });
+});

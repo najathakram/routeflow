@@ -36,6 +36,19 @@ const TRIAL_ROW = {
 };
 
 describe("addon-ledger.emitAddonDelta", () => {
+  it("B1187: a payload carrying its own sku can never overwrite the real sku", async () => {
+    const tx = makeTx(PAYING_ROW);
+    const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+    await emitAddonDelta(tx, events, {
+      tenantId: "t1",
+      sku: "CUSTOMER_PACK_100",
+      before: { priceSnapshot: 0, quantity: 0 },
+      after: { priceSnapshot: 12, quantity: 1 },
+      payload: { sku: "other", quantity: 1 },
+    });
+    expect(events.emit.mock.calls[0][2]).toEqual({ sku: "CUSTOMER_PACK_100", quantity: 1 });
+  });
+
   it("REG-B865-LEDGER emitAddonDelta books the before/after CHANGE only for a paying row", async () => {
     // Paying tenant, before {snap 0, qty 0} → after {snap 12, qty 2} → books 24 and forwards the
     // SAME tx to the emit, so the row write and the ledger row are atomic.

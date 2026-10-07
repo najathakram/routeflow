@@ -119,6 +119,18 @@ export class SettingsController {
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
+    // B1188: these two used to be accepted here and silently dropped (neither is stored by this
+    // endpoint). Refuse them loudly, before ANY write, naming where each really lives.
+    if (dto.invoicePrefix !== undefined) {
+      throw new BadRequestException(
+        "invoicePrefix is not saved by PATCH /settings. Change the invoice prefix in Settings > Invoicing > Invoice Numbering (PUT /import/numbering/INVOICE).",
+      );
+    }
+    if (dto.paymentDueDays !== undefined) {
+      throw new BadRequestException(
+        "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
+      );
+    }
     // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
     // bypass the web form's min(0).max(100) and store an out-of-range value
     // that later gets divided by 100 into a fraction (see common/tax-rate.ts).

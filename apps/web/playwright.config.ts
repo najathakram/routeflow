@@ -188,6 +188,18 @@ export default defineConfig({
       },
     },
 
+    // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
+    // /dashboard layout shift with every read delayed 2 s; read-only.
+    {
+      name: "dashboard-cls",
+      testMatch: /69-dashboard-cls\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── CSV export then and there ──────────────────────────────────────────────
     // Products export popover, per-card analytics CSVs, product insights export;
     // every endpoint mocked. Self-skips on builds predating each control.
@@ -468,10 +480,27 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── PKG-6: dashboard shell skip link (no hash, one Back) + reduced-motion pin + shell no-regress (spec 66).
+    {
+      name: "shell-skip-link-motion",
+      testMatch: /66-shell-skip-link-motion\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
       testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
+    // never clicks Confirm; asserts no write request leaves the page.
+    {
+      name: "invoice-numbering-card",
+      testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -910,6 +939,15 @@ export default defineConfig({
     // affected list page. Operator auth, same shape as "orders" et al.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
+    {
+      name: "customers-list-ux",
+      testMatch: /65-customers-list-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     {
       name: "pageheader-action-wrap",
       testMatch: /57-pageheader-action-wrap\.spec\.ts/,

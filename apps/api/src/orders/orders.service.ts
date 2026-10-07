@@ -48,7 +48,8 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   atStopConflict,
@@ -104,9 +105,10 @@ import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-s
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
+import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
-  cartMismatchConflict,
   otherOrderConflict,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
@@ -1362,10 +1364,18 @@ export class OrdersService implements OnApplicationBootstrap {
   async findOrderIdByIdempotencyKey(
     idempotencyKey: string,
     customerId: string,
-    requestHash?: string,
-    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
+    requestHash: string | undefined,
+    inlineReturn: { returnKey?: string; items?: any[]; reason?: string | null } | undefined, // #2424
+    cart: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
+    return findOrderIdByKey(
+      this.idemDeps(),
+      idempotencyKey,
+      customerId,
+      requestHash,
+      inlineReturn,
+      cart,
+    );
   }
 
   /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
@@ -1542,31 +1552,11 @@ export class OrdersService implements OnApplicationBootstrap {
         if (existing.customerId !== customerId) {
           throw otherOrderConflict();
         }
-        // R4 (close-out): a replay must be a replay OF THE SAME CART. A client
-        // that edited its cart after a timed-out-but-committed submit and
-        // reused the key would otherwise get the STALE order back as if the
-        // edit had been saved. Compare the incoming line multiset against the
-        // stored order; a mismatch is a client bug surfaced loudly, never a
-        // silent wrong-cart acknowledgment.
-        {
-          const norm = (rows: never[], stored: boolean) =>
-            rows
-              .map((r) => unitLines.replayLineKey(r, stored))
-              .sort()
-              .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[], false);
-          const storedNorm = norm(
-            (existing.lineItems ?? []).filter(
-              (li: { status?: string }) => li.status !== "CANCELLED",
-            ) as never[],
-            true,
-          );
-          if (incomingNorm !== storedNorm) {
-            throw cartMismatchConflict();
-          }
-        }
+        // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
+        assertReplaySameCart(existing, dto);
         options.onReplay?.(existing);
-        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
 
@@ -1982,6 +1972,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
+    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -2023,6 +2014,10 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
+    // B1186: this reserve is a NON-transactional numbering write that runs before the retry loop. A
+    // request that then loses the same-key race (the P2002 exit below, now replayed) has burned its
+    // number: a GAP in the return / credit-note series, never a duplicate. Gaps are accepted for these
+    // documents (lead ruling 2026-10-06) - do not "fix" this by moving the reserve into the tx.
     const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -2056,6 +2051,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
+                customerFacing: user.role === UserRole.CUSTOMER,
               });
             }
 
@@ -2126,14 +2122,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // return the order IT just created instead of retrying (retrying
           // would mint a fresh order number and create a genuine duplicate,
           // exactly what the key exists to prevent).
-          const target = e?.meta?.target;
-          const hitIdempotencyConstraint =
-            idempotencyKey != null &&
-            (Array.isArray(target)
-              ? target.some((t: unknown) => String(t).toLowerCase().includes("idempotencykey"))
-              : String(target ?? "")
-                  .toLowerCase()
-                  .includes("idempotencykey"));
+          const hitIdempotencyConstraint = idempotencyKey != null && isIdempotencyKeyViolation(e);
           if (hitIdempotencyConstraint) {
             // B215: same table-then-column lookup as the pre-check above, so the row that won
             // the race is found whether it was stamped on the column or written to the table.
@@ -2144,8 +2133,10 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
+              assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
               options.onReplay?.(existing);
-              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
@@ -2202,24 +2193,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
-    // Credit-note intents: store the operator's selection against the FINAL order
-    // id, then settle (a harmless no-op until an invoice exists — settle bails
-    // early when the order has no invoices yet). Short, dedicated Serializable tx
-    // — NOT inside the stock/create transaction above.
-    if (appliedCreditNotes !== undefined) {
-      await this.prisma.tenantTransaction(
-        async (tx) => {
-          await this.creditNotes.syncOrderCreditSelections(
-            tx,
-            order.id,
-            customerId,
-            appliedCreditNotes,
-          );
-          await this.creditNotes.settleOrderCreditsInTx(tx, order.id);
-        },
-        { isolationLevel: "Serializable" },
-      );
-    }
+    // Credit-note intents: store the selection against the FINAL order id, then settle (a no-op
+    // until an invoice exists). Short Serializable tx - NOT inside the create transaction above.
+    await this.syncCreateCredits(order.id, customerId, appliedCreditNotes);
 
     return order;
   }
@@ -2511,6 +2487,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId: id,
               notes: "PROMOTE",
               performedById: user.sub,
+              customerFacing: user.role === UserRole.CUSTOMER,
             });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
@@ -4407,20 +4384,31 @@ export class OrdersService implements OnApplicationBootstrap {
     // Credit-note intents: sync operator selection changes, then settle (shrink or
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
-    // SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
-    await retryOnTxConflict(`credit sync order=${orderId}`, () =>
+    await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
+  }
+
+  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
+    if (n === undefined) return;
+    await savedCreditsPending(id, () => this.syncAndSettleOrderCredits(id, cId, n));
+  }
+
+  /**
+   * The credit tx shared by create() and reconcileOrderAfterEdit (SA-706 MUST 2): the Order row
+   * FIRST (SA-218 house order; tenant-less sessions lock by id), so the sync's OrderCreditNote insert
+   * (FK KEY SHARE on the Order and the note) never upgrades against a second create applying the same
+   * note. SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
+   * `undefined` skips the sync (an unverified replay must not re-point credits); settle still runs.
+   */
+  private async syncAndSettleOrderCredits(
+    orderId: string,
+    customerId: string,
+    appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
+  ): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    await retryCreditTx(`credit sync order=${orderId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
-          // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST,
-          // before the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an
-          // FK KEY SHARE on this Order) is a no-wait on a row this tx holds, never Invoice → Order.
-          // No caller still holds the Order when this opens (updateOrderItems' fold tx committed;
-          // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session
-          // is unscoped anyway, so it locks by id rather than silently locking nothing.
-          const tenantId = this.prisma.getTenantId();
-          await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
-          // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
-          // comment) — an unverified replay lands here and must not re-point this order's credits.
+          await lockOrderRow(tx, tenantId, orderId);
           if (appliedCreditNotes !== undefined) {
             await this.creditNotes.syncOrderCreditSelections(
               tx,

@@ -214,7 +214,7 @@ export class BuyerController {
     // findAll runs as an OPERATOR pseudo-user, so the service-layer customer
     // redaction never fires — strip upsell bases and project the customer-facing allowlist here at
     // the buyer boundary.
-    return { ...result, data: result.data.map(toCustomerOrder) };
+    return { ...result, data: result.data.map((o) => toCustomerOrder(o)) };
   }
 
   @Get("invoices")
@@ -615,7 +615,13 @@ export class BuyerController {
             // already folded this cart must replay it, not fold it in a second time (2 + 3 + 3 = 8).
             if (idempotencyKey) {
               const replayed = await this.ordersService
-                .findOrderIdByIdempotencyKey(idempotencyKey, ctx.customerId, requestHash)
+                .findOrderIdByIdempotencyKey(
+                  idempotencyKey,
+                  ctx.customerId,
+                  requestHash,
+                  undefined,
+                  { items: dto.items }, // BUG-A: a column hit compares the body to the order it made
+                )
                 .catch(scrubForeignOrderId); // never hand a buyer another customer's order id
               if (replayed) {
                 // The fold's convergent tail may not have run (the key commits inside the fold's tx).

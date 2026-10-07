@@ -59,6 +59,7 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeLeafHref } from "./_components/nav-active";
 
@@ -226,9 +227,10 @@ function NavLink({
       href={item.href}
       title={collapsed ? item.label : undefined}
       onClick={onNavigate}
+      data-testid="sidebar-nav-link"
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 rounded-[7px] px-2.5 py-2 text-[13px] font-medium transition-colors",
+        "flex items-center gap-3 rounded-[7px] px-2.5 py-2 text-[13px] font-medium transition-colors motion-reduce:transition-none",
         collapsed && "justify-center",
         active
           ? "bg-white/10 text-white shadow-[inset_2.5px_0_0_theme(colors.brand.300)]"
@@ -310,9 +312,10 @@ function NavGroupSection({
     <li>
       <button
         onClick={() => onToggle(group.label)}
+        data-testid="sidebar-nav-group-toggle"
         aria-expanded={expanded}
         className={cn(
-          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold transition-colors motion-reduce:transition-none",
           // /70 (5.28:1) clears WCAG AA; the old /40 inactive label was 3.23:1.
           isAnyChildActive ? "text-white" : "text-white/70 hover:text-white",
         )}
@@ -321,7 +324,7 @@ function NavGroupSection({
         <span className="flex-1 text-left">{group.label}</span>
         <ChevronRight
           className={cn(
-            "h-3.5 w-3.5 shrink-0 transition-transform duration-150",
+            "h-3.5 w-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
             expanded && "rotate-90",
           )}
         />
@@ -1158,16 +1161,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="surface-operator flex h-screen overflow-hidden">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-500 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"
-      >
-        Skip to content
-      </a>
+      <SkipToContentLink />
       {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
+        data-testid="sidebar-aside"
         className={cn(
-          "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out lg:flex",
+          "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out motion-reduce:transition-none motion-reduce:duration-0 lg:flex",
           collapsed ? "lg:w-16" : "lg:w-60",
         )}
       >
@@ -1196,7 +1195,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           <button
             onClick={toggle}
             className={cn(
-              "flex w-full items-center rounded-lg px-3 py-2.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white",
+              "flex w-full items-center rounded-lg px-3 py-2.5 text-white/60 transition-colors motion-reduce:transition-none hover:bg-white/10 hover:text-white",
               collapsed ? "justify-center" : "gap-3",
             )}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -1226,7 +1225,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             aria-hidden="true"
             onClick={() => setMobileNavOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-navy shadow-modal animate-in slide-in-from-left duration-200">
+          <aside
+            data-testid="sidebar-drawer-aside"
+            className="absolute inset-y-0 left-0 flex w-64 max-w-[82%] flex-col bg-navy shadow-modal animate-in slide-in-from-left duration-200 motion-reduce:animate-none"
+          >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-3">
               <TenantLogo
                 className="h-8 w-8"
@@ -1279,7 +1281,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             tab, making the form look like it has no save action. */}
         <main
           id="main-content"
-          className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
+          tabIndex={-1}
+          className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
           {children}
         </main>

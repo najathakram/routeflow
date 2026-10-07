@@ -35,6 +35,21 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
   }
 }
 
+/**
+ * B1209: a walk-in has no account, so a stated tender below the SERVER total is refused (400 COUNTER_TENDER_SHORT, the status pickup-complete uses for the same code)
+ * before anything is written. `total` is create()'s own, handed over through `beforeWrite`. An omitted amount is the
+ * exact balance; ON_ACCOUNT takes no money (assertPaymentShape already refuses it for a walk-in).
+ */
+export function assertWalkInTenderCoversTotal(payment: CounterPaymentInput, total: number): void {
+  if (payment.method === "ON_ACCOUNT" || payment.amount == null) return;
+  if (roundMoney(payment.amount) < roundMoney(total)) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.COUNTER_TENDER_SHORT,
+      message: "A walk-in customer must pay the full balance",
+    });
+  }
+}
+
 /** The Prisma `PaymentMethod` for a counter method; ON_ACCOUNT is not a payment (null). */
 export function toPrismaMethod(
   method: CounterPaymentMethod,

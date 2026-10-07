@@ -5,6 +5,7 @@ import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { bogoChipLabel, deriveTilePrice } from "../../_components/tile-pricing";
+import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 import { QtyStepper } from "../../_components/QtyStepper";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -69,7 +70,9 @@ export function DetailActions({
   // Cent-parity anchor — MUST equal the tile's and cart's number for this product+qty.
   const priced = deriveTilePrice(product, promoRules, cartItem);
   const chip = computeChip(product, priced, bogoChipLabel(product, promotions));
-  const outOfStock = (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";
+  // OOS PR2: an out-of-stock item this buyer may order anyway gets "Add" and the note, not Notify me.
+  const outOfStock = isOrderBlocked(product);
+  const shipsWhenRestocked = canOrderOutOfStock(product);
 
   return (
     <div className="flex flex-col gap-4">
@@ -117,6 +120,11 @@ export function DetailActions({
           >
             <Plus className="h-4 w-4" /> Add to cart
           </button>
+        )}
+        {shipsWhenRestocked && !cartItem && (
+          <p data-testid="ships-when-restocked" className="mt-2 text-sm font-medium text-warning">
+            {SHIPS_WHEN_RESTOCKED}
+          </p>
         )}
       </div>
     </div>

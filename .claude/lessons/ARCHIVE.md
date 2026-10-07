@@ -3535,3 +3535,92 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
   (Archived 2026-10-07 whole and verbatim to make room at cap: L-263 is guarded by `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); least-cited and fully guarded.)
 
+
+### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
+
+- **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
+  (b) a scratch worktree junctioned to a SIBLING's `node_modules` (to dodge `npm install` under
+  disk pressure), then `git worktree remove --force` on the scratch tree cascaded a recursive
+  delete through the junction, wiping the sibling's `node_modules` and ~2,388 tracked files.
+  RECURRED 2026-09-22: a PC reviewer agent's own worktree-cleanup `git worktree remove --force`
+  followed the SAME shape into the main checkout's `node_modules/@routeflow/*` links (which
+  point back into `apps/` and `packages/`), deleting 2,814 tracked files there.
+- **Root cause:** Windows npm junctions are absolute-path reparse points, invisible to git and
+  not junction-aware to a naive recursive delete — `worktree move` leaves one pointing at the OLD
+  path forever; `worktree remove --force`/`rm -rf` walks THROUGH one into its real target.
+- **Lesson:** **Never let a junction outlive the git worktree op around it. After
+  `git worktree move`, treat `node_modules` as stale — `npm ci` (+ `prisma generate` for
+  apps/api) at the final path. Before removing/recursively deleting ANY worktree, prove no
+  junction remains (`dir /AL` or check `LinkType`), then unlink each one individually with
+  `cmd /c rmdir <link>` (no `/s`, which recurses through it) — never a bare `rm -rf`/
+  `--force` on a tree that might still hold one. Best: never junction `node_modules` between two
+  DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
+  agents (whose job is to read, not build) should run read-only against the target checkout with
+  no worktree of their own at all.**
+- **Recurred 2026-10-03:** a reviewer's `cmd /c rmdir` of its `node_modules` junction was blocked by the harness, and the following plain `git worktree remove` still deleted THROUGH the junction, emptying the builder's live install (restored with `npm ci`). If a junction cannot be removed, NEVER remove the worktree: leave it and report the path. Better, reviewers do not junction into a builder's live install at all.
+- **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
+  `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
+  junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
+  agent prompts/instructions carry the read-only, no-worktree rule explicitly. Recovery from a
+  hit: `git ls-files --deleted -z -- <dirs> | xargs -0 git restore --`, then confirm
+  `git ls-files --deleted` is empty and diff clean before resuming any work in that checkout.
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-180 is fully guarded (still none automated after two incidents — the proposed pre-remove check (refusing   `git worktree remove` while a junction exists under the...); least-cited.)
+
+### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
+
+- **Symptom:** `docs-truth.spec.ts` (in `apps/api`) hardcoded the lessons-register byte cap as a
+  second literal, mirroring `.claude/lessons/_meta.json`'s value. Editing that JSON file (a
+  docs-only change in a different part of the repo) broke this API-workspace spec and took CI
+  down repo-wide — nothing signalled that an unrelated API test would fail.
+- **Root cause:** a test asserting "doc X says N" by hardcoding N itself creates a coupling
+  invisible from either side — the doc's author has no reason to grep `apps/api` before editing
+  a `.claude/` config file, and the test's author has no reason to expect the doc to ever
+  change.
+- **Lesson:** **A test that pins a literal sourced from a prose document or config file elsewhere
+  in the repo must read that value at test time, never re-type it as a second hardcoded literal —
+  and because of this, a "docs-only" change is NOT exempt from the full verify chain whenever it
+  touches a value some other workspace's test might have pinned. Grep for the literal itself
+  (not just the file) across every workspace before treating a docs edit as safe to skip CI on.**
+- **Guard:** `docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide
+  grep-for-pinned-literals check exists — propose one in the docs-only-push exemption logic.
+- Renumbered from L-199: an unrelated "dead CSS" lesson landed on master at that id via #909.
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-206 is fully guarded (`docs-truth.spec.ts` now reads `_meta.json.maxBytes` dynamically (#889); no repo-wide   grep-for-pinned-literals check exists — propose one...); least-cited.)
+
+### L-124 · 2026-09-13 · domain · cron sweep silently dropped null-tenant orders
+
+- **Symptom:** a cron grouped pending orders by `(customerId, tenantId)` and filtered on
+  group-count > 1; a customer with one real-tenant order and one legacy null-tenant order
+  produced two separate one-row groups, both filtered out before the null-tenant branch ever
+  ran — nothing merged, nothing logged.
+- **Root cause:** the null-tenant warn lived only inside the per-group loop, downstream of the
+  count filter, so a lone null-tenant row beside a lone real-tenant row for the same customer
+  was invisible to both the merge and the log.
+- **Lesson:** **A cron or bootstrap entry point has NO ambient tenant: group the work by
+  tenantId first and run each group inside `tenantCtx.run(tenantId)`; `forTenant()` silently
+  returns the unscoped client otherwise. Rows without a tenant must be skipped AND counted,
+  never dropped silently.**
+- **Guard:** `REG-B323` — a dedicated unscoped groupBy on null tenantId runs alongside the main
+  query and counts every null-tenant customer regardless of their real-tenant group's count;
+  the sweep's return shape carries the count as `skipped`.
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-124 is fully guarded (`REG-B323` — a dedicated unscoped groupBy on null tenantId runs alongside the main   query and counts every null-tenant customer regardless...); least-cited.)
+
+### L-195 · 2026-09-17 · deploy · landing a stale branch reverted #861's live fix (#862)
+
+- **Symptom:** landing PR #862 silently reverted a live P1 fix from #861 that had merged after
+  #862's branch was cut and never rebased — both PRs touched the same file in non-overlapping
+  regions.
+- **Root cause:** the landing computed a raw diff between #862's stale branch and current master
+  to isolate "its own changes" — but since #861's hunk exists on master and NOT on #862's stale
+  branch, that raw diff read #861's own fix as a REMOVAL belonging to #862 and applied it as one.
+  A byte-identity check against the stale branch can't catch this either, since the stale
+  content IS what's wrong.
+- **Lesson:** **A landing diff meant to isolate "this PR's own changes" must be taken against
+  the branch's OWN MERGE-BASE, never against current master directly. Whenever two in-flight
+  PRs touch the same file, diff them against EACH OTHER for overlapping regions first. A
+  post-deploy visual check is not a correctness check — verify the actual computed state, not a
+  screenshot that can look right for the wrong reason.**
+- **Guard:** the merge session's live post-deploy verification caught this one, plus the
+  pre-existing e2e T13 opacity assertion. Propose: the landing tool diffs against
+  `git merge-base <branch> master`, never `master` directly, and warns when two open PRs' diffs
+  touch the same file.
+  (Archived 2026-10-07 whole and verbatim to make room at cap: L-195 is fully guarded (the merge session's live post-deploy verification caught this one, plus the   pre-existing e2e T13 opacity assertion. Propose: the landing t...); least-cited.)
