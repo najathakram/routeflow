@@ -182,7 +182,8 @@ export function chooseUnit<T extends InvoiceUnitFields>(
   };
   if (option.kind === "level") return run(items, option, true, refresh);
 
-  const piece = option.kind === "piece" && (target.unitsPerBox ?? 0) > 1;
+  const packUpb = target.packBase?.unitsPerBox ?? target.unitsPerBox ?? 0;
+  const piece = option.kind === "piece" && packUpb > 1;
   if (piece && refresh && !target.unitLabel) {
     // a tier refresh of the Piece option: only the informational per-piece price moves
     return items.map((i) => (i.key === key ? { ...i, pieceUnitPrice: option.price } : i));

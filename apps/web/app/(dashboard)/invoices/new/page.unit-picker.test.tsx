@@ -163,6 +163,8 @@ const posted = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   Element.prototype.scrollIntoView = jest.fn();
+  URL.createObjectURL = jest.fn(() => "blob:preview");
+  URL.revokeObjectURL = jest.fn();
   mockRole = "OPERATOR";
   mockFlags = ["flag.units_v1"];
   mockLadder = [level({})];
