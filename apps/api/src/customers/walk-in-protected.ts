@@ -22,9 +22,10 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
  * so the filter is the explicit null-or-false (Prisma's `not: true` drops NULL rows) and rides in `AND`,
  * because `OR` is already the search clause's key. Mutates and returns `where`.
  */
-export function excludeWalkIn<T extends { AND?: unknown }>(where: T): T {
-  const and = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : [];
-  where.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
+export function excludeWalkIn<T extends object>(where: T): T {
+  const w = where as { AND?: unknown };
+  const and = Array.isArray(w.AND) ? w.AND : w.AND ? [w.AND] : [];
+  w.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
   return where;
 }
 

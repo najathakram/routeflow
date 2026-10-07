@@ -217,6 +217,9 @@ export class UsersService {
     const usernameEdit =
       normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
     if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
+    if (emailEdit || usernameEdit || (dto.role && dto.role !== user.role)) {
+      await this.assertNotWalkInAccount(userId);
+    }
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
