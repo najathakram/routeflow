@@ -2499,6 +2499,43 @@ describe("CustomersService", () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it("B1216: a FAMILY container cannot carry a price override (coded 400, nothing written)", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "fam", name: "Acme Soda", kind: "FAMILY" });
+      const err = await service
+        .upsertCustomerPrice("cust-1", { productId: "fam", pricingTier: 3 }, operatorPayload)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "FAMILY_NOT_PRICEABLE",
+        productIds: ["fam"],
+      });
+      expect(prisma.customerPrice.upsert).not.toHaveBeenCalled();
+    });
+
+    it("B1216: a VARIANT or standalone product still takes a price override", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "v1", name: "Cherry", kind: "VARIANT" });
+      prisma.customerPrice.upsert.mockResolvedValue({ id: "cp-9" });
+      await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "v1", pricingTier: 3 },
+        operatorPayload,
+      );
+      expect(prisma.customerPrice.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("B1216: clearing a legacy override on a FAMILY stays possible", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "fam", name: "Acme Soda", kind: "FAMILY" });
+      prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: null });
+      prisma.customerPrice.delete.mockResolvedValue({ id: "cp-1" });
+      const result = await service.upsertCustomerPrice(
+        "cust-1",
+        { productId: "fam", pricingTier: null },
+        operatorPayload,
+      );
+      expect(result).toBeNull();
+      expect(prisma.customerPrice.delete).toHaveBeenCalled();
+    });
+
     it("a tier-only update preserves an existing MSRP override (partial update)", async () => {
       prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 2, msrp: 5 });
       prisma.customerPrice.upsert.mockResolvedValue({ id: "cp-1" });
