@@ -94,7 +94,7 @@ export interface CaptureInlineReturnRequest {
   notes?: string;
   photoUrls?: string[];
   /** POS-4b: what the customer gets back. Omitted = STORE_CREDIT (today's behaviour). REFUND mints no credit note;
-   *  the client then POSTs /returns/:id/refund. */
+   *  the client then POSTs /returns/inline/:id/refund (or /returns/inline/:id/store-credit, SA-727b). */
   resolution?: InlineReturnResolution;
 }
 

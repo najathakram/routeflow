@@ -21,6 +21,7 @@ import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import {
   refundReturn,
+  storeCreditInstead,
   useCaptureInlineReturn,
   useInlineReturnQuote,
 } from "@/lib/api/inline-returns";
@@ -78,6 +79,8 @@ export interface RecordedInfo {
   resolution: InlineReturnResolution;
   tender?: InlineReturnRefundTender;
   amount?: number;
+  /** SA-727b: the return is saved but its refund is still pending (nothing paid out). */
+  pending?: boolean;
 }
 
 type DialogPhase = "capture" | "success" | "refused";
@@ -138,6 +141,10 @@ export function RecordInlineReturnDialog({
     null,
   );
   const busyRef = React.useRef(false);
+  // a refund POST already failed once: a later RETURN_ALREADY_RESOLVED means "check before handing over"
+  const retriedRef = React.useRef(false);
+  const pendingReportedRef = React.useRef(false);
+  const [crediting, setCrediting] = React.useState(false);
 
   // Fresh attempt every time the dialog opens — bumps `openSeq`, which InlineReturnSection
   // takes as its own reset signal (clearing lines/quote/reason and re-seeding from the entry
@@ -158,6 +165,9 @@ export function RecordInlineReturnDialog({
     setRefundError(null);
     setRefundDone(null);
     setRequoteOverride(null);
+    setCrediting(false);
+    retriedRef.current = false;
+    pendingReportedRef.current = false;
     busyRef.current = false;
   }, [open, orderId]);
 
@@ -173,21 +183,76 @@ export function RecordInlineReturnDialog({
   const effTender: InlineReturnRefundTender = tender ?? quoted?.paidMethods?.[0] ?? "CASH";
   const quotedAmount = quoted?.total ?? 0;
 
+  /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
+  function savedAmountOf(ret: InlineReturnRecord): number {
+    if (requoteOverride) return quotedAmount;
+    return refundAmountOf(ret.refundAmount) ?? quotedAmount;
+  }
+
+  function classify(err: unknown): RefundErrorKind {
+    const kind = refundErrorKind(err);
+    return kind === "resolved" && retriedRef.current ? "resolvedAfterRetry" : kind;
+  }
+
   function doRetry(ret: InlineReturnRecord) {
     if (busyRef.current) return;
     busyRef.current = true;
+    retriedRef.current = true;
     doRefund(ret);
+  }
+
+  // SA-727b: a saved REFUND-intent return whose refund is pending is credited instead (never re-captured).
+  function doStoreCredit(ret: InlineReturnRecord) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    retriedRef.current = true;
+    setCrediting(true);
+    setRefundError(null);
+    storeCreditInstead(ret.id).then(
+      (rec) => {
+        busyRef.current = false;
+        setCrediting(false);
+        pendingReportedRef.current = true;
+        setResult(rec);
+        setPhase("success");
+        onRecorded?.(rec, {
+          resolution: "STORE_CREDIT",
+          amount: refundAmountOf(rec.refundAmount) ?? savedAmountOf(ret),
+        });
+      },
+      (err: unknown) => {
+        busyRef.current = false;
+        setCrediting(false);
+        setRefundError(classify(err));
+      },
+    );
+  }
+
+  /** Closing with a saved return whose refund never went through reports it as pending, once. */
+  function handleClose() {
+    const unresolved = !refundError || refundError === "failed" || refundError === "changed";
+    if (saved && !refundDone && phase === "capture" && unresolved && !pendingReportedRef.current) {
+      pendingReportedRef.current = true;
+      onRecorded?.(saved, {
+        resolution: "REFUND",
+        tender: effTender,
+        amount: savedAmountOf(saved),
+        pending: true,
+      });
+    }
+    onClose();
   }
 
   function doRefund(ret: InlineReturnRecord) {
     setRefunding(true);
     setRefundError(null);
-    const amount = quotedAmount;
+    const amount = savedAmountOf(ret);
     const used = effTender;
     refundReturn(ret.id, { tender: used, expectedAmount: amount }).then(
       () => {
         busyRef.current = false;
         setRefunding(false);
+        pendingReportedRef.current = true;
         setRefundDone({ tender: used, amount });
         setResult(ret);
         setPhase("success");
@@ -196,7 +261,7 @@ export function RecordInlineReturnDialog({
       (err: unknown) => {
         busyRef.current = false;
         setRefunding(false);
-        const kind = refundErrorKind(err);
+        const kind = classify(err);
         setRefundError(kind);
         if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
@@ -241,7 +306,10 @@ export function RecordInlineReturnDialog({
           busyRef.current = false;
           setResult(data);
           setPhase("success");
-          onRecorded?.(data, { resolution: "STORE_CREDIT", amount: quotedAmount });
+          onRecorded?.(data, {
+            resolution: "STORE_CREDIT",
+            amount: refundAmountOf(data.refundAmount) ?? quotedAmount,
+          });
         },
         onError: (err) => {
           busyRef.current = false;
@@ -263,7 +331,7 @@ export function RecordInlineReturnDialog({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
@@ -296,6 +364,7 @@ export function RecordInlineReturnDialog({
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
         quoteOverride={requoteOverride}
+        hideBack={!!saved}
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice
@@ -305,7 +374,7 @@ export function RecordInlineReturnDialog({
               onResolution={setResolution}
               tender={effTender}
               onTender={setTender}
-              locked={!!saved || refunding}
+              locked={!!saved || refunding || crediting || captureMutation.isPending}
               error={refundError}
             />
           ) : null
@@ -319,16 +388,31 @@ export function RecordInlineReturnDialog({
           showChoice &&
           (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
             refundError === "failed" && saved ? (
-              <Button loading={refunding} onClick={() => saved && doRetry(saved)}>
-                Retry refund
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={refunding}
+                  loading={crediting}
+                  onClick={() => saved && doStoreCredit(saved)}
+                >
+                  Give store credit instead
+                </Button>
+                <Button
+                  loading={refunding}
+                  disabled={crediting}
+                  onClick={() => saved && doRetry(saved)}
+                >
+                  Retry refund
+                </Button>
+              </>
             ) : (
-              <Button onClick={onClose}>Close</Button>
+              <Button onClick={handleClose}>Close</Button>
             )
           ) : (
             <Button
               disabled={
                 refunding ||
+                requoteMutation.isPending ||
                 !sectionState.captureReason ||
                 // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
                 (!!sectionState.quote &&
@@ -470,8 +554,8 @@ function RefundChoice({
 }) {
   const refund = resolution === "REFUND";
   return (
-    <div className="mt-4 space-y-2 rounded-lg border border-surface-border p-3">
-      <p className="text-sm font-medium text-navy">{REFUND_COPY.heading}</p>
+    <fieldset className="mt-4 space-y-2 rounded-lg border border-surface-border p-3">
+      <legend className="px-1 text-sm font-medium text-navy">{REFUND_COPY.heading}</legend>
       {!walkIn && (
         <label className="flex items-center gap-2 text-sm text-navy">
           <input
@@ -512,6 +596,6 @@ function RefundChoice({
           {REFUND_COPY[error]}
         </p>
       )}
-    </div>
+    </fieldset>
   );
 }

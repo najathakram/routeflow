@@ -92,6 +92,8 @@ export interface InlineReturnSectionProps {
   onStateChange?: (state: InlineReturnSectionState) => void;
   /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
   renderLinesActions?: () => React.ReactNode;
+  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
+  hideBack?: boolean;
   /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
   /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
@@ -118,6 +120,7 @@ export function InlineReturnSection({
   renderLinesActions,
   renderQuoteActions,
   renderQuoteFooter,
+  hideBack,
   quoteOverride,
   onQuoteRefused,
   hidden = false,
@@ -646,10 +649,12 @@ export function InlineReturnSection({
           />
 
           {renderQuoteFooter?.(quote)}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setStep("lines")}>
-              Back
-            </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {!hideBack && (
+              <Button variant="ghost" onClick={() => setStep("lines")}>
+                Back
+              </Button>
+            )}
             {renderQuoteActions?.(quote)}
           </div>
         </div>
