@@ -14,176 +14,61 @@ import {
   ChevronRight,
   Search as SearchIcon,
 } from "lucide-react";
-import { Card, Input, cn } from "@routeflow/ui/web";
+import { Button, Card, Input, cn } from "@routeflow/ui/web";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
+import {
+  GROUP_TITLES,
+  ROUTE_DEFAULTS_ID,
+  breadcrumb,
+  buildIndex,
+  normalize,
+  searchIndex,
+  type IndexEntry,
+} from "./settings-index";
 
 /**
  * Settings hub — the grouped-card landing for /settings (full-hub redesign). Every
  * setting screen is reachable from here; clicking a link opens that screen (an
- * existing `?tab=` panel or a standalone /settings sub-page) with a back link. Kept
- * data-driven so the hub, search, and "frequently used" chips stay in sync, and so
- * role-gated screens (Regulated = admin-only) are hidden the same way the sidebar
+ * existing `?tab=` panel or a standalone /settings sub-page) with a back link. The
+ * links and the search read ONE data file (`settings-index.ts`), so they cannot drift,
+ * and role-gated screens (Regulated = admin-only) are hidden the same way the sidebar
  * hides them.
  */
-
-type HubItem = {
-  label: string;
-  desc: string;
-  href: string;
-  /** When set, the item is only shown if the flag is true (preserves gating). */
-  show?: "admin";
-};
 
 type HubGroup = {
   key: string;
   title: string;
   blurb: string;
   icon: React.ComponentType<{ className?: string }>;
-  items: HubItem[];
+  items: IndexEntry[];
 };
 
-const RESTRICTIONS_ITEM: HubItem = {
-  label: "Selling restrictions",
-  desc: "Block restricted products by the customer's state",
-  href: "/settings/restrictions",
-};
-
-const ROUTE_DEFAULTS_HREF = "#route-defaults";
-
-const GROUPS: HubGroup[] = [
+/** The group cards, in order: the key (which names the index entries), a blurb and an icon. */
+const GROUP_META: { key: string; blurb: string; icon: HubGroup["icon"] }[] = [
   {
     key: "business",
-    title: "Business & team",
     blurb: "Your company identity and the people in your workspace.",
     icon: Building2,
-    items: [
-      {
-        label: "Business profile",
-        desc: "Name, address, logo & default tax rate",
-        href: "/settings?tab=profile",
-      },
-      {
-        label: "User management",
-        desc: "Operators & drivers, roles, passwords",
-        href: "/settings?tab=users",
-      },
-    ],
   },
   {
     key: "selling",
-    title: "Selling & catalog",
     blurb: "Pricing, invoicing, restrictions and bringing your catalog in.",
     icon: ShoppingBag,
-    items: [
-      {
-        label: "Invoicing",
-        desc: "Numbering, terms & default notes",
-        href: "/settings?tab=invoicing",
-      },
-      { label: "Costing", desc: "Costing method & margin floors", href: "/settings?tab=costing" },
-      {
-        label: "How to pay",
-        desc: "Remit-to & payment instructions",
-        href: "/settings?tab=remittance",
-      },
-      RESTRICTIONS_ITEM,
-      {
-        label: "Import data",
-        desc: "CSV importers, numbering & finish setup",
-        href: "/settings/import",
-      },
-      {
-        label: "Migration",
-        desc: "Move from Zoho, QuickBooks, CSV or paper",
-        href: "/settings/migration",
-      },
-    ],
   },
   {
     key: "orders",
-    title: "Orders & stock",
     blurb: "How orders, routes and bills are handled day to day.",
     icon: Truck,
-    items: [
-      {
-        label: "Route defaults",
-        desc: "Service time, start time, speed & depot location",
-        href: ROUTE_DEFAULTS_HREF,
-      },
-      {
-        label: "Batch invoice import",
-        desc: "Scan a stack of bills/photos into invoices",
-        href: "/settings/batch-import",
-      },
-    ],
   },
-  {
-    key: "notifications",
-    title: "Notifications",
-    blurb: "What gets sent, to whom, and from where.",
-    icon: Bell,
-    items: [
-      {
-        label: "Notifications",
-        desc: "Event rules, message templates, quiet hours & low-stock digest",
-        href: "/settings?tab=notifications",
-      },
-      {
-        label: "Email (SMTP)",
-        desc: "Sender identity & delivery settings",
-        href: "/settings?tab=email",
-      },
-    ],
-  },
+  { key: "notifications", blurb: "What gets sent, to whom, and from where.", icon: Bell },
   {
     key: "compliance",
-    title: "Compliance",
     blurb: "Regulated products, licensing and reporting.",
     icon: ShieldCheck,
-    items: [
-      {
-        label: "Regulated sections",
-        desc: "Tracked categories, tax rules & subcategories",
-        href: "/settings?tab=regulated",
-        show: "admin",
-      },
-      RESTRICTIONS_ITEM,
-      {
-        label: "Product labels",
-        desc: "Restriction categories applied to products",
-        href: "/settings/product-categories",
-        show: "admin",
-      },
-    ],
   },
-  {
-    key: "integrations",
-    title: "Integrations",
-    blurb: "Connect external tools and services.",
-    icon: Sparkles,
-    items: [
-      {
-        label: "Claude AI scanner",
-        desc: "API key for invoice/bill scanning",
-        href: "/settings?tab=integrations",
-      },
-      {
-        label: "GoHighLevel",
-        desc: "Create customers from won leads",
-        href: "/settings?tab=gohighlevel",
-      },
-    ],
-  },
-  {
-    key: "billing",
-    title: "Billing",
-    blurb: "Your subscription, usage and add-ons.",
-    icon: Wallet,
-    items: [
-      { label: "Plan & billing", desc: "Subscription, usage & add-ons", href: "/settings/billing" },
-    ],
-  },
+  { key: "integrations", blurb: "Connect external tools and services.", icon: Sparkles },
+  { key: "billing", blurb: "Your subscription, usage and add-ons.", icon: Wallet },
 ];
 
 const CHIPS: { label: string; href: string }[] = [
@@ -201,10 +86,10 @@ function GroupIcon({ icon: Icon }: { icon: HubGroup["icon"] }) {
   );
 }
 
-function HubLink({ item }: { item: HubItem }) {
+function HubLink({ item }: { item: IndexEntry }) {
   return (
     <Link
-      href={item.href}
+      href={item.href!}
       className="group -mx-2 flex items-start justify-between gap-3 rounded-md px-2 py-2 transition-colors hover:bg-brand-50/60"
     >
       <span className="min-w-0">
@@ -218,37 +103,55 @@ function HubLink({ item }: { item: HubItem }) {
   );
 }
 
-/** The card shows exactly when its hub item is listed: same label + description + group title. */
-function routeDefaultsMatches(q: string): boolean {
-  const group = GROUPS.find((g) => g.items.some((it) => it.href === ROUTE_DEFAULTS_HREF))!;
-  const item = group.items.find((it) => it.href === ROUTE_DEFAULTS_HREF)!;
-  // Per field, like the hub's own filter — a query spanning two fields matches neither.
-  return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
+/** One search result: the label, what it is, and where it lives. An answer row is not a link. */
+function SearchRow({ entry }: { entry: IndexEntry }) {
+  const body = (
+    <span className="min-w-0">
+      <span className="block text-sm font-medium text-navy group-hover:text-brand-700">
+        {entry.label}
+      </span>
+      <span className="block text-xs text-navy/55">
+        {entry.affects ?? entry.answer ?? entry.desc}
+      </span>
+      <span className="mt-0.5 block text-[11px] text-navy/40">{breadcrumb(entry)}</span>
+    </span>
+  );
+  if (entry.kind === "info" || !entry.href) {
+    return <div className="-mx-2 rounded-md px-2 py-2">{body}</div>;
+  }
+  return (
+    <Link
+      href={entry.href}
+      className="group -mx-2 flex items-start justify-between gap-3 rounded-md px-2 py-2 transition-colors hover:bg-brand-50/60"
+    >
+      {body}
+      <ChevronRight className="mt-0.5 h-4 w-4 flex-none text-navy/30 group-hover:text-brand-500" />
+    </Link>
+  );
 }
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
-  const canShow = React.useCallback(
-    (item: HubItem) => (item.show === "admin" ? isAdmin : true),
-    [isAdmin],
+  // The tenant-has-a-fleet gate arrives with the fleet-off work; until then every tenant sees Route defaults.
+  const entries = React.useMemo(() => buildIndex({ isAdmin, fleet: true }), [isAdmin]);
+
+  // A query with no letters or digits ("&", "?") is no search: the hub shows as it always did.
+  const searching = normalize(query) !== "";
+  const results = React.useMemo(
+    () => (searching ? searchIndex(query, entries) : []),
+    [searching, query, entries],
   );
 
-  const q = query.trim().toLowerCase();
-  const groups = React.useMemo(
+  const groups: HubGroup[] = React.useMemo(
     () =>
-      GROUPS.map((g) => {
-        const items = g.items.filter(
-          (it) =>
-            canShow(it) &&
-            (!q ||
-              it.label.toLowerCase().includes(q) ||
-              it.desc.toLowerCase().includes(q) ||
-              g.title.toLowerCase().includes(q)),
-        );
-        return { ...g, items };
-      }).filter((g) => g.items.length > 0),
-    [q, canShow],
+      GROUP_META.map((g) => ({
+        ...g,
+        title: GROUP_TITLES[g.key],
+        items: entries.filter((e) => e.kind === "item" && e.groupKey === g.key),
+      })).filter((g) => g.items.length > 0),
+    [entries],
   );
 
   return (
@@ -262,6 +165,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/40" />
           <Input
             value={query}
+            ref={inputRef}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search settings…"
             className="pl-9"
@@ -273,7 +177,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
       <ReadinessBanner isAdmin={isAdmin} />
 
       {/* Frequently used */}
-      {!q && (
+      {!searching && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-navy/50">
           <span>Frequently used:</span>
           {CHIPS.map((c) => (
@@ -288,9 +192,34 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {/* Groups */}
-      {groups.length === 0 ? (
-        <Card className="text-sm text-navy/60">No settings match “{query}”.</Card>
+      {/* Groups, or the flat search results */}
+      {searching ? (
+        results.length === 0 ? (
+          <Card className="space-y-2 text-sm text-navy/60">
+            <p>No settings match “{query}”.</p>
+            <p>Try another word, or browse all settings.</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setQuery("");
+                inputRef.current?.focus();
+              }}
+            >
+              Clear Search
+            </Button>
+          </Card>
+        ) : (
+          <Card>
+            <ul aria-label="Search results" className="flex flex-col">
+              {results.map((e) => (
+                <li key={e.id}>
+                  <SearchRow entry={e} />
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )
       ) : (
         // Masonry columns so each card is only as tall as its content (no empty
         // stretch to match a taller neighbour) — keeps the grid balanced whatever the
@@ -304,7 +233,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
             const content =
               g.items.length === 1 ? (
                 <Link
-                  href={g.items[0].href}
+                  href={g.items[0].href!}
                   className={cn(cardClass, "group flex items-start gap-3")}
                 >
                   <GroupIcon icon={g.icon} />
@@ -327,7 +256,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                   <div className="flex flex-col">
                     {g.items.map((it) => (
-                      <HubLink key={it.href + it.label} item={it} />
+                      <HubLink key={it.id} item={it} />
                     ))}
                   </div>
                 </div>
@@ -345,14 +274,15 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || routeDefaultsMatches(q)) && (
+      {(!searching || results.some((r) => r.id === ROUTE_DEFAULTS_ID)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
         </div>
       )}
 
       {/* My account footer */}
-      {(!q || "my account password sessions sign-in".includes(q)) && (
+      {/* While searching, My account is one of the results. */}
+      {!searching && (
         <Link
           href="/settings?tab=account"
           className={cn(
