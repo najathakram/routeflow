@@ -79,6 +79,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -94,6 +95,11 @@ import {
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import {
+  idempotencyConflictOrderId,
+  isUnknownOutcome,
+  useCreateOrderSubmitKey,
+} from "./use-create-order-submit-key";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
@@ -199,6 +205,19 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+/** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
+function isSameAttemptRefusal(err: any): boolean {
+  const body = err?.response?.data;
+  if (
+    err?.response?.status === 409 &&
+    body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+    body?.activeOrder
+  ) {
+    return true;
+  }
+  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
+}
+
 export function CreateOrderModal({
   isOpen,
   onClose,
@@ -208,6 +227,18 @@ export function CreateOrderModal({
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
+  // reopen (accepted residual risk), so tell the operator to check before re-entering it.
+  React.useEffect(() => {
+    if (!isOpen && submitKey.hasUnknown()) {
+      toast({
+        title: "Your last order may have gone through. Check Orders before re-entering it.",
+        variant: "warning",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -1301,30 +1332,38 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    const payload = {
+      customerId: selectedCustomer!.id,
+      items: itemsForSubmit,
+      notes: data.notes,
+      urgent: data.urgent,
+      fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
+      requestedDeliveryDate: requestedDeliveryDate || undefined,
+      orderDate: orderDate || undefined,
+      ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+      ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
+      // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
+      // blank field (null) is omitted so the agent/customer default applies.
+      ...(commissionRatePct != null ? { commissionRatePct } : {}),
+      ...(asDraft ? { status: "DRAFT" as const } : {}),
+      ...(mergeChoice ? { mergeChoice } : {}),
+      // Bill-now (createSale) has no path through this modal today — only
+      // the create-order payload needs threading here.
+      ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+      // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+      ...(inlineReturn ? { inlineReturn } : {}),
+    } as any;
+    // BUG-A: ONE request in flight per modal (a synchronous latch — `isPending` is stale for the
+    // second click of a double click) and one Idempotency-Key per attempt. mergeChoice is NOT part
+    // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
+    const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
+    const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
+    if (attemptKey === null) return;
     createOrder.mutate(
-      {
-        customerId: selectedCustomer!.id,
-        items: itemsForSubmit,
-        notes: data.notes,
-        urgent: data.urgent,
-        fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-        orderDate: orderDate || undefined,
-        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-        ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
-        // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
-        // blank field (null) is omitted so the agent/customer default applies.
-        ...(commissionRatePct != null ? { commissionRatePct } : {}),
-        ...(asDraft ? { status: "DRAFT" as const } : {}),
-        ...(mergeChoice ? { mergeChoice } : {}),
-        // Bill-now (createSale) has no path through this modal today — only
-        // the create-order payload needs threading here.
-        ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
-        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
-        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
-      } as any,
+      { ...payload, idempotencyKey: attemptKey },
       {
         onSuccess: (created: any) => {
+          submitKey.settle("success");
           toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
@@ -1335,12 +1374,33 @@ export function CreateOrderModal({
           onClose();
         },
         onError: (err: any) => {
+          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+          // key-conflict code can fall through to the refused / re-mint branch.
+          const heldOrderId = idempotencyConflictOrderId(err);
+          submitKey.settle(
+            heldOrderId
+              ? "conflict"
+              : isUnknownOutcome(err)
+                ? "unknown"
+                : isSameAttemptRefusal(err)
+                  ? "same-attempt"
+                  : "refused",
+          );
+          if (heldOrderId) {
+            toast({
+              title: "Your earlier submit went through. Opening that order.",
+              variant: "success",
+            });
+            onClose();
+            onViewOrder?.(heldOrderId);
+            return;
+          }
           // Belt-and-braces: if our pre-check missed an active order (race) the API
           // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
           const body = err?.response?.data;
           if (
             err?.response?.status === 409 &&
-            body?.code === "MERGE_CHOICE_REQUIRED" &&
+            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
             body?.activeOrder
           ) {
             pendingFormValuesRef.current = data;
@@ -1615,6 +1675,7 @@ export function CreateOrderModal({
               variant="secondary"
               type="button"
               loading={createOrder.isPending}
+              disabled={createOrder.isPending}
               onClick={onSaveDraft}
             >
               Save as Draft
@@ -1624,7 +1685,7 @@ export function CreateOrderModal({
               form="create-order-form"
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
-              disabled={lineItems.some(isPendingDefaultUnit)}
+              disabled={createOrder.isPending || lineItems.some(isPendingDefaultUnit)}
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order

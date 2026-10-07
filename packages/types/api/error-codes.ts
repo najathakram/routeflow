@@ -16,6 +16,8 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
+//                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
 //                    invoices no longer match its lines (orphaned invoice line / counter out of step,
 //                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
@@ -191,6 +193,7 @@ export const API_ERROR_CODES = {
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
+  ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
@@ -426,6 +429,11 @@ export const API_ERROR_CODES = {
    * for a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
    */
   IDEMPOTENCY_KEY_CART_MISMATCH: "IDEMPOTENCY_KEY_CART_MISMATCH",
+  /**
+   * 409 from create(): this Idempotency-Key already created the order as a DRAFT and the new request is a real
+   * order (or the reverse). The body carries `orderId`: open that order to confirm it, never resubmit on a new key.
+   */
+  IDEMPOTENCY_KEY_DRAFT_MISMATCH: "IDEMPOTENCY_KEY_DRAFT_MISMATCH",
   IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
   /** 400 from POST /orders/:id/pickup-complete: the order is not a PICKUP order. Nothing was written. */
   PICKUP_ONLY: "PICKUP_ONLY",

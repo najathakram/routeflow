@@ -32,7 +32,10 @@ describe("db-locks — lockRowsNoWait", () => {
       const tx = fakeTx();
       await lockRowsNoWait(tx, table, ["id-1"], "REASON");
       expect(sqlOf(tx)).toContain(`"${table}"`);
-      expect(sqlOf(tx)).toContain("FOR NO KEY UPDATE NOWAIT");
+      // B1053: Order is the one FOR UPDATE (it must conflict with an invoice insert's KEY SHARE).
+      expect(sqlOf(tx)).toContain(
+        table === "Order" ? "ORDER BY id FOR UPDATE NOWAIT" : "FOR NO KEY UPDATE NOWAIT",
+      );
     }
   });
 
@@ -83,7 +86,9 @@ describe("db-locks — lockRowsNoWait", () => {
   it("P14g: a table outside the allow-list throws before any query", async () => {
     const tx = fakeTx();
 
-    await expect(lockRowsNoWait(tx, "Order" as any, ["o-1"], "X")).rejects.toThrow(/unknown table/);
+    await expect(lockRowsNoWait(tx, "Customer" as any, ["o-1"], "X")).rejects.toThrow(
+      /unknown table/,
+    );
     expect(tx.$executeRaw).not.toHaveBeenCalled();
   });
 });

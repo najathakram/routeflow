@@ -16,11 +16,18 @@ import { roundMoney, sumConfirmed, remainingCapacity } from "@routeflow/pricing"
 import { InvoiceStatus, PaymentMethod } from "@prisma/client";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
+import {
+  lockCreditNotes,
+  lockCustomerCreditsForSweep,
+  lockInvoiceForCredit,
+  lockOrderCreditSettle,
+} from "./credit-note-locks";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
   loadLineCredits,
@@ -660,13 +667,10 @@ export class CreditNotesService {
           // Anything else (a future unique on CreditNoteItem or the ledger) must
           // propagate untouched rather than reach the operator as a retry advice
           // that cannot help — and either way the real constraint gets logged.
-          const target = Array.isArray(err?.meta?.target)
-            ? err.meta.target.join(",")
-            : String(err?.meta?.target ?? "");
           this.logger.warn(
-            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${target}`,
+            `Credit note create failed [${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"} code=P2002 target=${describeUniqueViolation(err)}`,
           );
-          if (target === "" || target.includes("creditNoteNumber"))
+          if (uniqueViolationOn(err, "CreditNote_tenantId_creditNoteNumber_key", { exact: true }))
             throw new ConflictException("Credit note number conflict — please retry.");
           throw err;
         }
@@ -799,6 +803,10 @@ export class CreditNotesService {
    * own. Every monetary figure via roundMoney. Returns {applied:0} instead of
    * throwing so the auto-apply loop can skip; the manual path throws on 0 itself.
    * Callers pre-filter VOID + expired credits (expiry is a computed filter).
+   *
+   * B1052: `cn` MUST have been read AFTER the caller locked the note's row (credit-note-locks.ts:
+   * settle, sweep and manual apply all lock before they read). The balance below comes from `cn`;
+   * an unlocked read let two transactions spend the same dollars.
    */
   private async applyCreditInTx(
     tx: any,
@@ -881,6 +889,8 @@ export class CreditNotesService {
       data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
     });
 
+    // B1052: `cn` was read under its row lock (see the doc above), so this absolute value can't
+    // overwrite another writer's spend.
     const newAmountUsed = roundMoney(Number(cn.amountUsed) + applyAmount);
     const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
     await tx.creditNote.update({
@@ -924,7 +934,10 @@ export class CreditNotesService {
     if (!invoiceId || !customerId) return nothing;
     // SA-436 (#2401): the tenant's send-time sweep switch, OFF by default (owner ruling). No config
     // row reads as OFF. Read inside the caller's send tx; the order's own intents settle regardless.
-    if (!(await creditAutoApplyOnSend(tx, this.prisma.getTenantId()))) return nothing;
+    const tenantId = this.prisma.getTenantId();
+    if (!(await creditAutoApplyOnSend(tx, tenantId))) return nothing;
+    // B1052: lock the invoice and the customer's live notes BEFORE reading any balance.
+    await lockCustomerCreditsForSweep(tx, tenantId, invoiceId, customerId);
 
     const first = await tx.invoice.findUnique({
       where: { id: invoiceId },
@@ -994,9 +1007,13 @@ export class CreditNotesService {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded); the
     // body is DB-only and idempotent, and the in-tx commission sync now rethrows a conflict.
-    return retryOnTxConflict(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit apply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
+          // B1052: the invoice (with its Order), then the note, BEFORE reading the balance.
+          const tenantId = this.prisma.getTenantId();
+          await lockInvoiceForCredit(tx, tenantId, invoiceId);
+          await lockCreditNotes(tx, tenantId, [creditNoteId]);
           const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
           if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
             throw new BadRequestException("Credit note is not available for application");
@@ -1252,13 +1269,15 @@ export class CreditNotesService {
     const invoiceIds = [
       ...new Set([...seen.map((p) => p.invoiceId as string), ...(extra?.invoiceIds ?? [])]),
     ].sort();
+    // B1052: every lock is tenant-scoped (credit-note-locks.ts): a foreign id can't lock another tenant's rows.
+    const lockTenantId = this.prisma.getTenantId();
     for (const orderId of orderIds) {
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
     for (const invoiceId of invoiceIds) {
-      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR UPDATE`;
     }
-    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} FOR UPDATE`;
+    await tx.$executeRaw`SELECT id FROM "CreditNote" WHERE id = ${id} AND (${lockTenantId}::text IS NULL OR "tenantId" = ${lockTenantId}) FOR NO KEY UPDATE`;
 
     const cn = await tx.creditNote.findFirst({
       where: { id },
@@ -1409,6 +1428,9 @@ export class CreditNotesService {
       });
     }
 
+    // B1052: lock the note before reading its balance (the write below takes this lock anyway, so
+    // the lock order is unchanged); a concurrent apply can no longer overwrite the restore.
+    await lockCreditNotes(tx, this.prisma.getTenantId(), [payment.creditNoteId]);
     const cn = await tx.creditNote.findUnique({ where: { id: payment.creditNoteId } });
     if (cn) {
       const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
@@ -1423,7 +1445,7 @@ export class CreditNotesService {
       await tx.creditNote.update({
         where: { id: cn.id },
         data: {
-          amountUsed: newUsed,
+          amountUsed: newUsed, // B1052: from the balance read under the lock above
           // Wallet state follows consumption: fully consumed = APPLIED, else ISSUED.
           status: fullyApplied && cn.status !== "VOID" ? "APPLIED" : "ISSUED",
           appliedToInvoiceId: fullyApplied ? cn.appliedToInvoiceId : null,
@@ -1826,6 +1848,11 @@ export class CreditNotesService {
   ): Promise<{ applied: number; unapplied: number }> {
     const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
+    // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
+    // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles
+    // (or office then driver) of orders sharing a note used to both read amountUsed=0 and both
+    // spend it; now the second waits here and reads the first's committed balance.
+    await lockOrderCreditSettle(tx, tenantId, orderId);
     const intents = await tx.orderCreditNote.findMany({
       where: { orderId },
       orderBy: { createdAt: "asc" },
@@ -1952,7 +1979,7 @@ export class CreditNotesService {
   async unapplyFromInvoice(creditNoteId: string, invoiceId: string, actorId: string | null = null) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
     // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    return retryOnTxConflict(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
+    return retryCreditTx(`credit unapply cn=${creditNoteId} inv=${invoiceId}`, () =>
       this.prisma.tenantTransaction(
         async (tx: any) => {
           // scan-ok: draft-payment-not-void — method-scoped to CREDIT_NOTE (see
