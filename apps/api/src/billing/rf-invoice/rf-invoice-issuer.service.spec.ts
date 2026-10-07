@@ -110,8 +110,14 @@ function make(
   const builder = {
     build: jest.fn(async () => opts.draft ?? DRAFT),
   } as unknown as RfInvoiceBuilder;
-  const svc = new RfInvoiceIssuerService(prisma, builder);
-  return { svc, prisma, builder, invoices, audits };
+  // PR3: the mailer sends the issue email (live mode only); a stub here, proved in rf-invoice-mailer.service.spec.ts
+  const mailer = { sendAuto: jest.fn(async () => undefined) };
+  const svc = new (RfInvoiceIssuerService as any)(
+    prisma,
+    builder,
+    mailer,
+  ) as RfInvoiceIssuerService;
+  return { svc, prisma, builder, invoices, audits, mailer };
 }
 
 const writes = (prisma: any) =>
@@ -152,6 +158,45 @@ describe("RfInvoiceIssuerService", () => {
     expect(audits.filter((a) => a.action === "RF_INVOICE_ISSUED")).toHaveLength(1);
     expect(first).toMatchObject({ mode: "live", issued: 1 });
     expect(again).toMatchObject({ issued: 0, existing: 1 });
+  });
+
+  it("PR3: live - the issue email is sent for the invoice just created, once (a rerun finds it existing)", async () => {
+    const { svc, mailer, invoices } = make({ subs: [sub()] });
+    await svc.runIssueDue(NOW);
+    expect(mailer.sendAuto).toHaveBeenCalledTimes(1);
+    expect(mailer.sendAuto).toHaveBeenCalledWith(invoices[0].id, "issue", NOW);
+    await svc.runIssueDue(NOW);
+    expect(mailer.sendAuto).toHaveBeenCalledTimes(1);
+  });
+
+  it("PR3: silent - the invoice is issued and NO email is sent", async () => {
+    process.env.RF_INVOICING_MODE = "silent";
+    const { svc, mailer, invoices } = make({ subs: [sub()] });
+    await svc.runIssueDue(NOW);
+    expect(invoices).toHaveLength(1);
+    expect(mailer.sendAuto).not.toHaveBeenCalled();
+  });
+
+  it("PR3: off - nothing is issued and nothing is sent", async () => {
+    process.env.RF_INVOICING_MODE = "off";
+    const { svc, mailer, invoices } = make({ subs: [sub()] });
+    await svc.runIssueDue(NOW);
+    expect(invoices).toHaveLength(0);
+    expect(mailer.sendAuto).not.toHaveBeenCalled();
+  });
+
+  it("PR3: a mailer that throws never fails or undoes the issue", async () => {
+    const { svc, mailer, invoices } = make({ subs: [sub()] });
+    mailer.sendAuto.mockRejectedValue(new Error("smtp down"));
+    const r = await svc.runIssueDue(NOW);
+    expect(invoices).toHaveLength(1);
+    expect(r).toMatchObject({ issued: 1, failed: 0 });
+  });
+
+  it("PR3: no email when the issue is a no-price notice (no invoice was created)", async () => {
+    const { svc, mailer } = make({ subs: [sub()], draft: { ok: false, message: "no price" } });
+    await svc.runIssueDue(NOW);
+    expect(mailer.sendAuto).not.toHaveBeenCalled();
   });
 
   it("CRON-1: nothing is issued while the period end is more than 7 days away", async () => {
