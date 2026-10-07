@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, useToast } from "@routeflow/ui/web";
 import { DOCUMENT_PREFIX_MAX_LENGTH, validateDocumentPrefix } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
+import { describeSaveError } from "@/lib/reason-copy";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   NUMBERING_QUERY_KEY,
@@ -22,10 +23,14 @@ export const INVOICE_TERMS_OPTIONS = [
   { value: "Net 60", label: "Net 60" },
 ];
 
-function errorMessage(e: unknown): string {
-  const m = (e as any)?.response?.data?.message;
-  if (Array.isArray(m)) return m.join(" ");
-  return typeof m === "string" ? m : ((e as Error)?.message ?? "Request failed");
+/** Fixed sentence for a moved sequence (no server text is echoed: B986). */
+export const STALE_SEQUENCE_COPY =
+  "The invoice sequence changed since your preview. Review the new next number and confirm again.";
+
+/** 409 -> fixed copy; a prefix the rule rejects -> the shared validator's message; else generic. */
+function failureCopy(e: unknown, prefix: string): string {
+  if ((e as any)?.response?.status === 409) return STALE_SEQUENCE_COPY;
+  return validateDocumentPrefix(prefix) ?? describeSaveError(e);
 }
 
 /**
@@ -85,7 +90,7 @@ export function InvoiceNumberingCard({
       } catch (e) {
         toast({
           title: "Could not preview the new prefix",
-          description: errorMessage(e),
+          description: failureCopy(e, prefix),
           variant: "error",
         });
       } finally {
@@ -121,7 +126,7 @@ export function InvoiceNumberingCard({
       }
       toast({
         title: stale ? "Numbering changed since you opened this page" : "Could not save numbering",
-        description: errorMessage(e),
+        description: failureCopy(e, pending.prefix),
         variant: "error",
       });
     } finally {

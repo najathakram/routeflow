@@ -202,7 +202,11 @@ describe("InvoiceNumberingCard (B1188)", () => {
     await typePrefix("NEW-");
     await userEvent.click(screen.getByRole("button", { name: /save numbering/i }));
     await userEvent.click(await screen.findByRole("button", { name: /^confirm$/i }));
-    expect(await screen.findByText(/numbering changed since you opened it/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "The invoice sequence changed since your preview. Review the new next number and confirm again.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/numbering saved/i)).not.toBeInTheDocument();
   });
 });
