@@ -21,10 +21,19 @@ import { FormField, FormSection, FormTextInput } from "../../../components/FormS
 import {
   useAdminUsers,
   useBusinessSettings,
+  useInventorySettings,
   useToggleUserStatus,
   useUpdateBusinessSettings,
+  useUpdateInventorySettings,
   type AppUser,
 } from "../../../lib/api/admin";
+import { useAuthStore } from "../../../lib/auth-store";
+import {
+  OVERSELL_COPY,
+  canEditOversell,
+  nextOversellMode,
+  oversellIsOn,
+} from "../../../lib/oversell-settings";
 import {
   getPushEnabled,
   setPushEnabled as persistPushEnabled,
@@ -32,6 +41,57 @@ import {
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
 import { alertInfo } from "../../../lib/confirm";
+
+// ─── Ordering (out-of-stock) ──────────────────────────────────────────────────
+
+/** Mirror of web's "Out-of-stock ordering" card. No switch until the setting has loaded. */
+function OversellSection() {
+  const { user } = useAuthStore();
+  const canEdit = canEditOversell(user?.role);
+  const { data, isLoading, isError, refetch } = useInventorySettings();
+  const update = useUpdateInventorySettings();
+
+  const toggle = () => {
+    if (!data || !canEdit) return;
+    const turningOn = !oversellIsOn(data.buyerOversell);
+    update.mutate(
+      { buyerOversell: nextOversellMode(oversellIsOn(data.buyerOversell)) },
+      {
+        onSuccess: () => showToast(turningOn ? OVERSELL_COPY.savedOn : OVERSELL_COPY.savedOff),
+        onError: () => showToast(OVERSELL_COPY.saveFailed),
+      },
+    );
+  };
+
+  return (
+    <FormSection title={OVERSELL_COPY.section}>
+      {isLoading ? (
+        <ActivityIndicator color={ios.brand} />
+      ) : isError || !data ? (
+        <Pressable onPress={() => void refetch()}>
+          <Text style={styles.switchHint}>{OVERSELL_COPY.loadFailed} Tap to retry.</Text>
+        </Pressable>
+      ) : (
+        <>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchLabel}>{OVERSELL_COPY.label}</Text>
+              <Text style={styles.switchHint}>{OVERSELL_COPY.hint}</Text>
+            </View>
+            <Switch
+              value={oversellIsOn(data.buyerOversell)}
+              disabled={!canEdit || update.isPending}
+              onValueChange={toggle}
+              trackColor={{ true: ios.brand }}
+              accessibilityLabel={OVERSELL_COPY.label}
+            />
+          </View>
+          {!canEdit && <Text style={styles.switchHint}>{OVERSELL_COPY.readOnly}</Text>}
+        </>
+      )}
+    </FormSection>
+  );
+}
 
 // ─── General tab ──────────────────────────────────────────────────────────────
 
@@ -133,6 +193,8 @@ function GeneralTab() {
             <FormTextInput value={taxRate} onChangeText={setTaxRate} keyboardType="decimal-pad" />
           </FormField>
         </FormSection>
+
+        <OversellSection />
 
         <FormSection title="Notifications">
           <View style={styles.switchRow}>

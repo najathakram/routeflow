@@ -154,6 +154,7 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -2621,6 +2622,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </p>
                     )}
                   </div>
+
+                  <CustomerOversellOverride customerId={id} />
 
                   {/* Credit limit (D6/B462 + B576): from the statement, the same figure the
                       server's hard block is checked against. */}
