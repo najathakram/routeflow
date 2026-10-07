@@ -7,6 +7,7 @@ import { setImpersonation } from "@/lib/impersonation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
+import { ImpersonateDialog } from "../../_components/TenantActionDialogs";
 import { usePlanOptions, withCurrentPlan } from "../../_components/usePlanOptions";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
@@ -122,6 +123,7 @@ export default function AdminTenantsPage() {
   const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = React.useState("");
   const [suspendingTenant, setSuspendingTenant] = React.useState<Tenant | null>(null);
+  const [impersonatingTenant, setImpersonatingTenant] = React.useState<Tenant | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [bulkError, setBulkError] = React.useState<string | null>(null);
 
@@ -314,6 +316,18 @@ export default function AdminTenantsPage() {
           </button>
         </div>
       )}
+
+      {/* Impersonate confirmation: the session starts only from this dialog's confirm. */}
+      <ImpersonateDialog
+        open={!!impersonatingTenant}
+        tenant={impersonatingTenant ?? { name: "" }}
+        onClose={() => setImpersonatingTenant(null)}
+        onConfirm={() => {
+          const tenant = impersonatingTenant;
+          setImpersonatingTenant(null);
+          if (tenant) void impersonate(tenant);
+        }}
+      />
 
       {/* Suspend confirmation modal */}
       <AdminModal
@@ -711,7 +725,7 @@ export default function AdminTenantsPage() {
                           {t.status !== "CANCELLED" && (
                             <button
                               disabled={actionLoading === t.id + "-imp"}
-                              onClick={() => impersonate(t)}
+                              onClick={() => setImpersonatingTenant(t)}
                               className="rounded px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
                             >
                               Impersonate

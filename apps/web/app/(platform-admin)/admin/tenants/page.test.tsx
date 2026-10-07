@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import AdminTenantsPage from "./page";
 
 jest.mock("next/link", () => ({
@@ -10,6 +10,7 @@ jest.mock("next/link", () => ({
 }));
 
 const mockPatch = jest.fn();
+const mockPost = jest.fn();
 
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
@@ -35,6 +36,7 @@ jest.mock("@/lib/admin-api", () => ({
       }),
     ),
     patch: (...args: unknown[]) => mockPatch(...args),
+    post: (...args: unknown[]) => mockPost(...args),
   },
 }));
 
@@ -60,6 +62,8 @@ function entry(planKey: string, sortOrder: number) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPatch.mockResolvedValue({ data: {} });
+  // Rejects so a confirmed impersonation never navigates jsdom; only the request is asserted.
+  mockPost.mockRejectedValue({ response: { data: { message: "No active admin" } } });
   mockFetchPlanCatalog.mockResolvedValue({
     version: 11,
     effectiveAt: null,
@@ -100,5 +104,37 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["STARTER"]);
     expect(select.value).toBe("STARTER");
+  });
+});
+
+describe("Back office P1: Impersonate on the tenants list asks first", () => {
+  it("click opens a dialog naming the tenant and sends NOTHING; Cancel sends nothing; Confirm sends one request", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Impersonate" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    expect(mockPost).not.toHaveBeenCalled();
+    // The list row does not know the acting user, so the dialog says so plainly.
+    expect(within(dialog).getByText("its admin")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    const again = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    fireEvent.click(within(again).getByRole("button", { name: "Impersonate" }));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(mockPost).toHaveBeenCalledWith("/platform-admin/tenants/t-1/impersonate");
+  });
+
+  it("Escape closes the dialog without a request", async () => {
+    render(<AdminTenantsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Impersonate" }));
+    await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });

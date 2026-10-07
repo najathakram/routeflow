@@ -14,6 +14,12 @@ import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOpt
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { DisabledHint } from "../../../_components/DisabledHint";
+import {
+  ExtendTrialDialog,
+  ImpersonateDialog,
+  longDate,
+  tenantLabel,
+} from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
@@ -135,9 +141,12 @@ interface TenantAdminUser {
 function TenantAdminSection({
   tenantId,
   onRefreshTenant,
+  onAdminChange,
 }: {
   tenantId: string;
   onRefreshTenant: () => void;
+  /** The admin's username once known (null when there is none): the Impersonate dialog names it. */
+  onAdminChange?: (username: string | null) => void;
 }) {
   const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
@@ -152,9 +161,15 @@ function TenantAdminSection({
   const fetchAdmin = React.useCallback(() => {
     superAdminClient
       .get(`/platform-admin/tenants/${tenantId}/admin`)
-      .then((res) => setAdmin(res.data.admin))
-      .catch(() => setAdmin(null));
-  }, [tenantId]);
+      .then((res) => {
+        setAdmin(res.data.admin);
+        onAdminChange?.(res.data.admin?.username ?? null);
+      })
+      .catch(() => {
+        setAdmin(null);
+        onAdminChange?.(null);
+      });
+  }, [tenantId, onAdminChange]);
 
   React.useEffect(() => {
     fetchAdmin();
@@ -351,6 +366,9 @@ function OverviewTab({
   } | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [trialDays, setTrialDays] = React.useState(14);
+  // Impersonate and Extend Trial act immediately, so each asks first (the dialogs only gate the call).
+  const [confirming, setConfirming] = React.useState<"impersonate" | "extend-trial" | null>(null);
+  const [adminUsername, setAdminUsername] = React.useState<string | null>(null);
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -495,7 +513,35 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <TenantAdminSection tenantId={tenant.id} onRefreshTenant={onRefreshTenant} />
+      <TenantAdminSection
+        tenantId={tenant.id}
+        onRefreshTenant={onRefreshTenant}
+        onAdminChange={setAdminUsername}
+      />
+
+      <ImpersonateDialog
+        open={confirming === "impersonate"}
+        tenant={tenant}
+        adminUsername={adminUsername}
+        busy={actionLoading === "impersonate"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          void onAction("impersonate");
+        }}
+      />
+      <ExtendTrialDialog
+        open={confirming === "extend-trial"}
+        tenant={tenant}
+        status={tenant.status}
+        days={trialDays}
+        busy={actionLoading === "extend-trial"}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          void onAction("extend-trial", { days: trialDays });
+        }}
+      />
 
       {/* Quick Actions */}
       <AdminCard title="Quick Actions" className="lg:col-span-2">
@@ -531,7 +577,7 @@ function OverviewTab({
           {tenant.status !== "CANCELLED" && (
             <button
               disabled={actionLoading === "impersonate"}
-              onClick={() => onAction("impersonate")}
+              onClick={() => setConfirming("impersonate")}
               className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
             >
               Impersonate
@@ -583,7 +629,7 @@ function OverviewTab({
             />
             <button
               disabled={actionLoading === "extend-trial"}
-              onClick={() => onAction("extend-trial", { days: trialDays })}
+              onClick={() => setConfirming("extend-trial")}
               className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
             >
               {actionLoading === "extend-trial" ? "Extending..." : "Extend Trial"}
@@ -1841,7 +1887,7 @@ export default function AdminTenantDetailPage() {
               "";
             if (msg.toLowerCase().includes("tenant_admin")) {
               setStatusMsg(
-                "⚠️ No admin account found for this tenant. Please create one using the Admin Account section below, then try again.",
+                `${tenantLabel(tenant)} has no active admin. Create one in Admin Account, then try again.`,
               );
             } else {
               setStatusMsg(msg || "Impersonation failed");
@@ -1854,9 +1900,7 @@ export default function AdminTenantDetailPage() {
           const res = await superAdminClient.post(`/platform-admin/tenants/${id}/extend-trial`, {
             days,
           });
-          setStatusMsg(
-            `Trial extended — new end: ${new Date(res.data.trialEndsAt).toLocaleString()}`,
-          );
+          setStatusMsg(`Trial extended. It ends ${longDate(new Date(res.data.trialEndsAt))}.`);
           break;
         }
         case "delete": {

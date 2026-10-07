@@ -2,6 +2,7 @@ import * as React from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
 import TenantDetailPage from "./page";
+import { superAdminClient } from "@/lib/admin-api";
 import { REGISTRY_FIXTURE } from "./_features/__fixtures__/registry.fixtures";
 import { EFFECTIVE_FIXTURE } from "./_features/__fixtures__/effective.fixtures";
 import { diffsFixture } from "./_features/__fixtures__/diffs.fixtures";
@@ -43,6 +44,8 @@ jest.mock("@/lib/platform-admin/features", () => ({
 }));
 
 let tenantOverrides: Record<string, unknown> = {};
+// The tenant's admin account card (GET .../admin); null = no admin yet.
+let mockAdmin: unknown = null;
 
 function tenantFixture() {
   return {
@@ -90,7 +93,7 @@ let fulfilmentModeValue = "delivery";
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
     get: jest.fn((url: string) => {
-      if (/\/admin$/.test(url)) return Promise.resolve({ data: { admin: null } });
+      if (/\/admin$/.test(url)) return Promise.resolve({ data: { admin: mockAdmin } });
       if (/\/audit-logs/.test(url))
         return Promise.resolve({ data: { data: [], meta: { total: 0, pages: 1 } } });
       if (/\/addons$/.test(url)) return Promise.resolve({ data: [] });
@@ -157,6 +160,7 @@ beforeEach(() => {
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
   tenantOverrides = {};
+  mockAdmin = null;
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
@@ -357,5 +361,90 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     ).toBeInTheDocument();
     // The feature console behind it reloaded too.
     await waitFor(() => expect(mockFetchRegistry.mock.calls.length).toBeGreaterThan(registryCalls));
+  });
+});
+
+describe("Tenant detail page — Impersonate and Extend Trial ask first (back office P1)", () => {
+  const post = () => superAdminClient.post as unknown as jest.Mock;
+  const calls = (re: RegExp) => post().mock.calls.filter((c) => re.test(String(c[0])));
+  const ADMIN = {
+    id: "u-1",
+    username: "acme_admin",
+    email: null,
+    status: "ACTIVE",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    forcePasswordChange: false,
+  };
+
+  it("Impersonate: click sends nothing and opens a dialog naming the tenant and its admin; Cancel sends nothing; Confirm sends one request", async () => {
+    mockAdmin = ADMIN;
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    await waitFor(() => expect(screen.getAllByText("acme_admin").length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    expect(within(dialog).getByText("acme_admin")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(calls(/impersonate$/)).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls(/impersonate$/)).toHaveLength(0);
+
+    // The confirmed request fails (no admin) so jsdom never navigates; only the request is asserted.
+    post().mockRejectedValueOnce({ response: { data: { message: "No active TENANT_ADMIN" } } });
+    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    const again = await screen.findByRole("dialog", { name: "Impersonate Acme?" });
+    fireEvent.click(within(again).getByRole("button", { name: "Impersonate" }));
+    await waitFor(() => expect(calls(/impersonate$/)).toHaveLength(1));
+    expect(calls(/impersonate$/)[0][0]).toBe("/platform-admin/tenants/tenant-1/impersonate");
+    expect(
+      await screen.findByText(
+        "Acme has no active admin. Create one in Admin Account, then try again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Extend Trial on an ACTIVE tenant: nothing is sent until Confirm, and the dialog says the status becomes Trial", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    expect(
+      within(dialog).getByText(
+        /Acme is Active\. Extending the trial changes its status to Trial until /,
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(calls(/extend-trial$/)).toHaveLength(0);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls(/extend-trial$/)).toHaveLength(0);
+
+    post().mockResolvedValueOnce({ data: { trialEndsAt: "2026-10-21T12:00:00.000Z" } });
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const again = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    fireEvent.click(within(again).getByRole("button", { name: "Extend Trial" }));
+    await waitFor(() => expect(calls(/extend-trial$/)).toHaveLength(1));
+    expect(calls(/extend-trial$/)[0]).toEqual([
+      "/platform-admin/tenants/tenant-1/extend-trial",
+      { days: 14 },
+    ]);
+    expect(
+      await screen.findByText("Trial extended. It ends October 21, 2026."),
+    ).toBeInTheDocument();
+  });
+
+  it("Extend Trial on a TRIAL tenant: the dialog states the end date and says nothing about a status change", async () => {
+    tenantOverrides = { status: "TRIAL" };
+    render(<TenantDetailPage />);
+    await screen.findByText("Quick Actions");
+    fireEvent.click(screen.getByRole("button", { name: "Extend Trial" }));
+    const dialog = await screen.findByRole("dialog", { name: "Extend the trial for Acme?" });
+    expect(within(dialog).getByText(/^The trial will end on /)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/changes its status to Trial/)).not.toBeInTheDocument();
   });
 });
