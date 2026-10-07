@@ -30,9 +30,12 @@ import {
 import { useAuthStore } from "../../../lib/auth-store";
 import {
   OVERSELL_COPY,
+  VISIBILITY_COPY,
   canEditOversell,
+  canEditVisibility,
   nextOversellMode,
   oversellIsOn,
+  visibilityMode,
 } from "../../../lib/oversell-settings";
 import {
   getPushEnabled,
@@ -63,6 +66,21 @@ function OversellSection() {
     );
   };
 
+  // OOS PR2: what customers see about backordered items (the seller's choice; off while the switch is off).
+  const visibility = visibilityMode(data?.buyerBackorderVisibility);
+  const canEditVis = canEditVisibility(user?.role, oversellIsOn(data?.buyerOversell));
+  const chooseVisibility = (next: "show" | "hide") => {
+    if (!data || !canEditVis || next === visibility) return;
+    update.mutate(
+      { buyerBackorderVisibility: next },
+      {
+        onSuccess: () =>
+          showToast(next === "show" ? VISIBILITY_COPY.savedShow : VISIBILITY_COPY.savedHide),
+        onError: () => showToast(VISIBILITY_COPY.saveFailed),
+      },
+    );
+  };
+
   return (
     <FormSection title={OVERSELL_COPY.section}>
       {isLoading ? (
@@ -86,6 +104,30 @@ function OversellSection() {
               accessibilityLabel={OVERSELL_COPY.label}
             />
           </View>
+          <Text style={styles.switchLabel}>{VISIBILITY_COPY.title}</Text>
+          {(
+            [
+              ["show", VISIBILITY_COPY.show],
+              ["hide", VISIBILITY_COPY.hide],
+            ] as const
+          ).map(([value, label]) => (
+            <Pressable
+              key={value}
+              onPress={() => chooseVisibility(value)}
+              disabled={!canEditVis || update.isPending}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: visibility === value, disabled: !canEditVis }}
+              style={[styles.switchRow, !canEditVis && { opacity: 0.5 }]}
+            >
+              <Ionicons
+                name={visibility === value ? "radio-button-on" : "radio-button-off"}
+                size={20}
+                color={ios.brand}
+              />
+              <Text style={[styles.switchHint, { flex: 1 }]}>{label}</Text>
+            </Pressable>
+          ))}
+          <Text style={styles.switchHint}>{VISIBILITY_COPY.needsSwitch}</Text>
           {!canEdit && <Text style={styles.switchHint}>{OVERSELL_COPY.readOnly}</Text>}
         </>
       )}

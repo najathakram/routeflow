@@ -17,6 +17,7 @@
  * (balanceDue, paidAmount ...) must be computed BEFORE it runs.
  */
 import { redactUpsellForCustomer } from "./upsell-redaction";
+import { derivedBackordered, type BackorderVisibility } from "../orders/backorder-visibility";
 
 /** Order scalars + relations a buyer screen reads. `customer`, `routeRun`, `editWindow` are projected below. */
 export const CUSTOMER_ORDER_FIELDS = [
@@ -193,8 +194,20 @@ function shape(value: unknown, fn: (row: Row) => Row): unknown {
 const customerProduct = (p: Row) => pick(p, CUSTOMER_PRODUCT_FIELDS);
 const customerComponent = (c: Row) => pick(c, CUSTOMER_COMPONENT_FIELDS);
 
-function customerOrderItem(line: Row): Row {
+/** What the order projection may derive from the seller's settings (never from a client). */
+export interface CustomerOrderOptions {
+  /**
+   * OOS PR2: the seller's `orders.buyerBackorderVisibility`. Only "show" adds the derived
+   * `backordered` flag to a line (and only when the line carries the persisted marker); "hide" and
+   * an absent option add NOTHING, and the raw marker column is in no allowlist.
+   */
+  backorderVisibility?: BackorderVisibility;
+}
+
+function customerOrderItem(line: Row, opts: CustomerOrderOptions = {}): Row {
   const out = pick(line, CUSTOMER_ORDER_ITEM_FIELDS);
+  const backordered = derivedBackordered(opts.backorderVisibility ?? "hide", line);
+  if (backordered !== undefined) out.backordered = backordered;
   if ("product" in line) out.product = shape(line.product, customerProduct);
   if ("components" in line) out.components = shape(line.components, customerComponent);
   return out;
@@ -256,21 +269,21 @@ export function customerInvoiceList<T>(rows: T[], isCustomer: boolean): T[] {
  * base price is redacted first (in place, on the freshly read row — `redactUpsellForCustomer`),
  * then the allowlist projects a copy. Use this at every customer-reachable order route.
  */
-export function toCustomerOrder<T>(order: T): T {
-  return pickCustomerOrderFields(redactUpsellForCustomer(order));
+export function toCustomerOrder<T>(order: T, opts: CustomerOrderOptions = {}): T {
+  return pickCustomerOrderFields(redactUpsellForCustomer(order), opts);
 }
 
 const CUSTOMER_ROLE = "CUSTOMER";
 type Caller = { role?: string } | null | undefined;
 
 /** `toCustomerOrder` for a CUSTOMER caller; anyone else gets the order as read. */
-export function orderFor<T>(user: Caller, order: T): T {
-  return user?.role === CUSTOMER_ROLE ? toCustomerOrder(order) : order;
+export function orderFor<T>(user: Caller, order: T, opts: CustomerOrderOptions = {}): T {
+  return user?.role === CUSTOMER_ROLE ? toCustomerOrder(order, opts) : order;
 }
 
 /** `orderFor` over a page of orders. */
-export function ordersFor<T>(user: Caller, rows: T[]): T[] {
-  return user?.role === CUSTOMER_ROLE ? rows.map(toCustomerOrder) : rows;
+export function ordersFor<T>(user: Caller, rows: T[], opts: CustomerOrderOptions = {}): T[] {
+  return user?.role === CUSTOMER_ROLE ? rows.map((r) => toCustomerOrder(r, opts)) : rows;
 }
 
 /**
@@ -286,13 +299,15 @@ export function invoiceDetailFor<T>(user: Caller, detail: T): T {
  * run's status and its invoice stubs. The order's own invoice list (when present) loses its DRAFT
  * invoices (the seller's unissued working copies).
  */
-export function pickCustomerOrderFields<T>(order: T): T {
+export function pickCustomerOrderFields<T>(order: T, opts: CustomerOrderOptions = {}): T {
   if (!isRow(order)) return order;
   const out = pick(order, CUSTOMER_ORDER_FIELDS);
   if ("customer" in order) {
     out.customer = shape(order.customer, (c) => pick(c, ["id", "businessName"]));
   }
-  if ("lineItems" in order) out.lineItems = shape(order.lineItems, customerOrderItem);
+  if ("lineItems" in order) {
+    out.lineItems = shape(order.lineItems, (line) => customerOrderItem(line, opts));
+  }
   if ("changeRequests" in order) {
     out.changeRequests = shape(order.changeRequests, (c) =>
       pick(c, CUSTOMER_CHANGE_REQUEST_FIELDS),
