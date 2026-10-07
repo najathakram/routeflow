@@ -132,6 +132,14 @@ describeDb("B1187 — billing export projection (real Postgres)", () => {
     expect(byType("trial.expired")[0].actor).toBe("system");
   });
 
+  it("internal bookkeeping event types are absent from the export", async () => {
+    const out = await svc.getExport(tenantA);
+    const types = out.billingEvents.map((e) => e.type);
+    expect(types).not.toContain("tenant.class_changed");
+    expect(types).not.toContain("reconciliation.snapshot_backfilled");
+    expect(types).toContain("seat.added");
+  });
+
   it("exports the projected shape only", async () => {
     const out = await svc.getExport(tenantA);
     const json = JSON.stringify(out);

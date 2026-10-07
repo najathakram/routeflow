@@ -55,14 +55,25 @@ export const BILLING_EVENT_PAYLOAD_FIELDS: Readonly<Record<string, readonly stri
   [BILLING_EVENTS.SUBSCRIPTION_CANCELED]: ["fromStatus", "toStatus", "effectiveAt", "appliedAt"],
   [BILLING_EVENTS.SUBSCRIPTION_SUSPENDED]: ["fromStatus", "toStatus"],
   [BILLING_EVENTS.SUBSCRIPTION_RESUMED]: ["fromStatus", "toStatus"],
-  // Internal staff classification and a backfill marker: type/createdAt/amountDelta only.
-  [BILLING_EVENTS.TENANT_CLASS_CHANGED]: [],
-  [BILLING_EVENTS.RECONCILIATION_SNAPSHOT_BACKFILLED]: [],
 };
 
 function isScalar(v: unknown): boolean {
   return v === null || ["string", "number", "boolean"].includes(typeof v);
 }
+
+/**
+ * Internal bookkeeping event types that are NOT tenant-facing billing history: they are excluded
+ * from the export entirely (filtered in the Prisma `where`, so they never consume the row limit).
+ * - tenant.class_changed: platform staff reclassifying a tenant (production/demo/...) so MRR scope
+ *   moves; an internal ledger row, not a charge the tenant sees.
+ * - reconciliation.snapshot_backfilled: a one-off ops script marker writing subscription snapshots.
+ * Every declared BILLING_EVENTS type must be EITHER allowlisted above OR listed here (inventory spec).
+ * Literal strings: the .mjs backfill re-types its own copy of the second one.
+ */
+export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
+  "tenant.class_changed",
+  "reconciliation.snapshot_backfilled",
+];
 
 export function projectInvoiceForExport(row: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -88,7 +99,13 @@ export function projectEventPayloadForExport(
   return out;
 }
 
-/** Only a positively identified user of THIS tenant is "you"; any other actor id is staff. */
+/**
+ * Only a positively identified user of THIS tenant is "you"; any other actor id is staff.
+ * The lookup is tenant-scoped and skips nothing silently: a hard-deleted user (the id no longer
+ * resolves), another tenant's user and platform staff all fall to "RouteFlow support". That is the
+ * safe default because the wrong label is never "you" (which would claim the tenant did something
+ * it may not have), and no id or identity of the actor is revealed either way.
+ */
 export function deriveExportActor(
   actorId: string | null | undefined,
   user: { role: string; tenantId: string | null } | undefined,

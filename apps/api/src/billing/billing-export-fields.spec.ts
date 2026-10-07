@@ -3,6 +3,7 @@ import { join } from "path";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import {
   BILLING_EVENT_PAYLOAD_FIELDS,
+  EXPORT_EXCLUDED_EVENT_TYPES,
   BILLING_EXPORT_INVOICE_FIELDS,
   projectBillingEventForExport,
   projectInvoiceForExport,
@@ -115,6 +116,40 @@ describe("billing export projection (B1187)", () => {
     expect(projectBillingEventForExport(eventRow({ payload: null }), "system").payload).toEqual({});
   });
 
+  it("the per-type payload allowlist is pinned EXACTLY (widening any list fails)", () => {
+    expect(BILLING_EVENT_PAYLOAD_FIELDS).toEqual({
+      "plan.changed": [
+        "fromPlan",
+        "toPlan",
+        "planKey",
+        "cycle",
+        "instant",
+        "prorated",
+        "scheduled",
+        "applied",
+        "oldMonthly",
+        "newMonthly",
+      ],
+      "plan.downgrade_scheduled": ["fromPlan", "toPlan", "effectiveAt"],
+      "addon.enabled": ["sku", "quantity", "prorated"],
+      "addon.disabled": ["sku", "quantity", "prorated"],
+      "seat.added": ["quantity"],
+      "seat.freed": ["quantity"],
+      "grace.started": [],
+      "grace.expired": [],
+      "trial.converted": ["planKey"],
+      "trial.expired": ["at"],
+      "trial.cancelled": ["at"],
+      "subscription.canceled": ["fromStatus", "toStatus", "effectiveAt", "appliedAt"],
+      "subscription.suspended": ["fromStatus", "toStatus"],
+      "subscription.resumed": ["fromStatus", "toStatus"],
+    });
+    expect([...EXPORT_EXCLUDED_EVENT_TYPES]).toEqual([
+      "tenant.class_changed",
+      "reconciliation.snapshot_backfilled",
+    ]);
+  });
+
   describe("emit-site inventory", () => {
     const files = walk(SRC);
     const used = new Set<string>();
@@ -134,10 +169,17 @@ describe("billing export projection (B1187)", () => {
       for (const name of used) expect(Object.keys(BILLING_EVENTS)).toContain(name);
     });
 
-    it("every declared event type has a payload allowlist entry (a new type fails here)", () => {
+    it("every declared event type is EITHER allowlisted OR excluded, never both (a new type fails here)", () => {
       for (const type of Object.values(BILLING_EVENTS)) {
-        expect(Object.keys(BILLING_EVENT_PAYLOAD_FIELDS)).toContain(type);
+        const listed = Object.keys(BILLING_EVENT_PAYLOAD_FIELDS).includes(type);
+        const excluded = EXPORT_EXCLUDED_EVENT_TYPES.includes(type);
+        expect(listed !== excluded).toBe(true);
       }
+    });
+
+    it("excluded types are declared types", () => {
+      const declared = new Set<string>(Object.values(BILLING_EVENTS));
+      for (const type of EXPORT_EXCLUDED_EVENT_TYPES) expect(declared.has(type)).toBe(true);
     });
 
     it("no allowlist entry names a type that is not declared", () => {

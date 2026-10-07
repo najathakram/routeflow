@@ -12,6 +12,7 @@ import {
 import { computeServedFlags } from "./plan-flag-policy";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
+  EXPORT_EXCLUDED_EVENT_TYPES,
   deriveExportActor,
   projectBillingEventForExport,
   projectInvoiceForExport,
@@ -136,7 +137,7 @@ export class SubscriptionService {
       this.getSubscription(tenantId),
       this.getUsage(tenantId),
       this.prisma.billingEvent.findMany({
-        where: { tenantId },
+        where: { tenantId, type: { notIn: [...EXPORT_EXCLUDED_EVENT_TYPES] } },
         orderBy: { createdAt: "desc" },
         take: 500,
       }),

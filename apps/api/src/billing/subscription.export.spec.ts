@@ -156,10 +156,13 @@ describe("SubscriptionService.getExport (B1187)", () => {
     ]);
   });
 
-  it("scopes event and invoice reads by tenantId", async () => {
+  it("scopes event and invoice reads by tenantId and excludes internal event types", async () => {
     const { svc, prisma } = build([], []);
     await svc.getExport(TENANT);
-    expect(prisma.billingEvent.findMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT });
+    expect(prisma.billingEvent.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: TENANT,
+      type: { notIn: ["tenant.class_changed", "reconciliation.snapshot_backfilled"] },
+    });
     expect(prisma.rfInvoice.findMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT });
   });
 });
