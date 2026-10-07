@@ -716,7 +716,13 @@ function HeaderTools({
                     >
                       <NotificationIcon type={n.type} />
                       {n.href ? (
-                        <Link href={n.href} className="min-w-0 flex-1">
+                        <Link
+                          href={n.href}
+                          className="min-w-0 flex-1"
+                          onClick={(e) => {
+                            if (guardCounterLeave()) e.preventDefault(); // POS-7: not mid-sale
+                          }}
+                        >
                           <p className="text-sm font-medium text-navy">{n.title}</p>
                           <p className="mt-0.5 text-xs text-navy/70 leading-snug">
                             {n.description}
