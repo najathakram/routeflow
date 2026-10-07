@@ -25,11 +25,27 @@ const ALWAYS = ["Today's Revenue", "Overdue Invoices", "Active Orders", "Low Sto
 
 async function installObserver(page: Page) {
   await page.addInitScript(() => {
-    const w = window as unknown as { __cls: number };
+    const w = window as unknown as { __cls: number; __shifts: string[] };
     w.__cls = 0;
+    w.__shifts = [];
+    const describe = (n: Node | null) =>
+      n instanceof Element
+        ? `${n.tagName.toLowerCase()}.${String(n.className).split(" ").slice(0, 3).join(".")}[${(n.textContent ?? "").trim().slice(0, 20)}]`
+        : "?";
     new PerformanceObserver((list) => {
-      for (const e of list.getEntries() as unknown as { value: number; hadRecentInput: boolean }[])
-        if (!e.hadRecentInput) w.__cls += e.value;
+      for (const e of list.getEntries() as unknown as {
+        value: number;
+        hadRecentInput: boolean;
+        sources?: { node: Node | null; previousRect: DOMRect; currentRect: DOMRect }[];
+      }[]) {
+        if (e.hadRecentInput) continue;
+        w.__cls += e.value;
+        const src = (e.sources ?? []).map(
+          (x) =>
+            `${describe(x.node)} y${Math.round(x.previousRect.y)}>${Math.round(x.currentRect.y)} h${Math.round(x.previousRect.height)}>${Math.round(x.currentRect.height)}`,
+        );
+        w.__shifts.push(`${e.value.toFixed(4)} ${src.join(" | ")}`);
+      }
     }).observe({ type: "layout-shift", buffered: true });
   });
 }
@@ -85,10 +101,13 @@ for (const leg of LEGS) {
           await waitForDataLoaded(page);
           await page.waitForTimeout(1000);
 
-          const cls = await page.evaluate(() => (window as unknown as { __cls: number }).__cls);
+          const { cls, shifts } = await page.evaluate(() => {
+            const w = window as unknown as { __cls: number; __shifts: string[] };
+            return { cls: w.__cls, shifts: w.__shifts };
+          });
           // eslint-disable-next-line no-console
           console.log(
-            `CLS ${leg.slug} ${width} run${run} = ${cls.toFixed(4)} (api calls ${apiCalls})`,
+            `CLS ${leg.slug} ${width} run${run} = ${cls.toFixed(4)} (api calls ${apiCalls})\n  ${shifts.join("\n  ")}`,
           );
           expect(cls).toBeLessThan(0.1);
           const stats = page.getByTestId("dashboard-stats");

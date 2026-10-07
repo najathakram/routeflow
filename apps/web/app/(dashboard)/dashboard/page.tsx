@@ -182,7 +182,9 @@ const STAT_CARD_MIN_H = "min-h-[104px]";
 const URGENT_MIN_H = "min-h-[86px]";
 const OVERDUE_PANEL_MIN_H = "min-h-[176px]";
 const AR_AGING_MIN_H = "min-h-[226px]";
-const LOW_STOCK_MIN_H = "min-h-[110px]";
+const LOW_STOCK_MIN_H = "min-h-[127px]";
+const ROUTE_RUNS_MIN_H = "min-h-[455px]";
+const DRIVER_STATUS_MIN_H = "min-h-[116px]";
 
 function StatSkeleton() {
   return (
@@ -314,6 +316,7 @@ function OverdueInvoicesPanel({
   if (isLoading) {
     return (
       <div
+        key="skeleton"
         data-testid="list-skeleton"
         className={cn(
           "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
@@ -332,6 +335,7 @@ function OverdueInvoicesPanel({
 
   return (
     <div
+      key="loaded"
       className={cn(
         "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
         OVERDUE_PANEL_MIN_H,
@@ -417,6 +421,7 @@ function LowStockPanel({
   if (isLoading) {
     return (
       <div
+        key="skeleton"
         data-testid="list-skeleton"
         className={cn(
           "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
@@ -435,6 +440,7 @@ function LowStockPanel({
 
   return (
     <div
+      key="loaded"
       className={cn(
         "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
         LOW_STOCK_MIN_H,
@@ -911,6 +917,7 @@ export default function DashboardPage() {
       {/* ── Order pipeline strip (operator only) ── */}
       {isOperator && (
         <div
+          key={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
           data-testid={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
           aria-busy={ordersLoading}
           className={cn(
@@ -975,6 +982,7 @@ export default function DashboardPage() {
           {/* AR Aging */}
           {financeLoading ? (
             <div
+              key="ar-skeleton"
               data-testid="list-skeleton"
               className={cn(
                 "animate-pulse rounded-lg border border-surface-border bg-white p-5",
@@ -1006,6 +1014,7 @@ export default function DashboardPage() {
             {isOperator &&
               (urgentLoading ? (
                 <div
+                  key="urgent-skeleton"
                   data-testid="list-skeleton"
                   className={cn(
                     "animate-pulse rounded-lg border border-surface-border bg-white p-5",
@@ -1015,7 +1024,10 @@ export default function DashboardPage() {
                   <div className="h-4 w-48 rounded bg-navy/10" />
                 </div>
               ) : urgentOrders.length > 0 ? (
-                <div className="overflow-hidden rounded-lg border border-danger/40 bg-danger-bg/40 shadow-card">
+                <div
+                  key="urgent-list"
+                  className="overflow-hidden rounded-lg border border-danger/40 bg-danger-bg/40 shadow-card"
+                >
                   <div className="flex items-center justify-between border-b border-danger/30 px-5 py-3.5">
                     <h3 className="flex items-center gap-2 text-base font-semibold text-[#B91C1C]">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -1045,6 +1057,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div
+                  key="urgent-clear"
                   className={cn(
                     "flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-5 py-5 shadow-card",
                     URGENT_MIN_H,
@@ -1059,8 +1072,8 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            {routesAccess && (
-              <Card>
+            {(routesAccess || reserveRoutesSlot) && (
+              <Card className={ROUTE_RUNS_MIN_H}>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
                   <Link
@@ -1070,14 +1083,14 @@ export default function DashboardPage() {
                     All routes <ArrowRight className="h-3 w-3" />
                   </Link>
                 </div>
-                {runsLoading ? (
-                  <div className="animate-pulse space-y-3 py-4">
+                {!routesAccess || runsLoading ? (
+                  <div key="runs-skeleton" className="animate-pulse space-y-3 py-4">
                     {[1, 2, 3].map((i) => (
                       <div key={i} className="h-10 rounded bg-navy/10" />
                     ))}
                   </div>
                 ) : (
-                  <div className="-mx-6 -mb-6">
+                  <div key="runs-loaded" className="-mx-6 -mb-6">
                     <Table
                       data={activeRoutes}
                       columns={routeColumns}
@@ -1100,22 +1113,14 @@ export default function DashboardPage() {
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              {routesAccess && (
-                <Card title="Driver Status">
-                  {driversLoading ? (
-                    <div className="animate-pulse space-y-4 py-2">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="flex items-center gap-3">
-                          <div className="h-2 w-2 rounded-full bg-navy/10" />
-                          <div className="flex-1 space-y-1">
-                            <div className="h-3 w-24 rounded bg-navy/10" />
-                            <div className="h-3 w-16 rounded bg-navy/10" />
-                          </div>
-                        </div>
-                      ))}
+              {(routesAccess || reserveRoutesSlot) && (
+                <Card title="Driver Status" className={DRIVER_STATUS_MIN_H}>
+                  {!routesAccess || driversLoading ? (
+                    <div key="drivers-skeleton" className="-mx-6 -mb-6 animate-pulse px-6 py-4">
+                      <div className="h-5 w-32 rounded bg-navy/10" />
                     </div>
                   ) : (
-                    <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                    <ul key="drivers-loaded" className="-mx-6 -mb-6 divide-y divide-surface-border">
                       {drivers.length === 0 ? (
                         <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
                       ) : (
@@ -1170,7 +1175,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           {recentLoading ? (
-            <div className="animate-pulse space-y-3">
+            <div key="recent-skeleton" className="animate-pulse space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="h-10 rounded bg-navy/10" />
               ))}
@@ -1184,7 +1189,7 @@ export default function DashboardPage() {
               }
             />
           ) : (
-            <div className="-mx-6 -mb-6">
+            <div key="recent-loaded" className="-mx-6 -mb-6">
               <Table
                 data={recentOrders}
                 columns={orderColumns}

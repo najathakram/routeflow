@@ -112,6 +112,19 @@ describe("D2 routes/drivers slot reservation (last-known access)", () => {
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(6);
   });
+  it("known-routes tenant: the Route Runs and Driver Status panels are reserved too", () => {
+    window.localStorage.setItem(KEY, "1");
+    routes = { enabled: false, resolved: false };
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByText("Scheduled Route Runs")).toBeTruthy();
+    expect(screen.getByText("Driver Status")).toBeTruthy();
+  });
+  it("known-no-routes / first visit: no Route Runs or Driver Status panel while unresolved", () => {
+    routes = { enabled: false, resolved: false };
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
+    expect(screen.queryByText("Driver Status")).toBeNull();
+  });
   it("first visit (nothing stored): not reserved", () => {
     routes = { enabled: false, resolved: false };
     renderWithProviders(<DashboardPage />);
