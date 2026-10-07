@@ -38,6 +38,7 @@ import { saveTripDraft } from "@/lib/trip-draft";
 import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { BatchShipActions } from "./_components/BatchShipActions";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -646,6 +647,16 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          <BatchShipActions
+            orders={filtered
+              .filter((o) => selected.has(o.id))
+              .map((o) => ({
+                id: o.id,
+                orderNumber: o.orderNumber,
+                customerName: o.customer?.businessName,
+              }))}
+            onDone={exitSelectMode}
+          />
           {deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />

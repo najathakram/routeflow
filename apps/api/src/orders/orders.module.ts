@@ -42,6 +42,9 @@ import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
 } from "./counter-sale/fulfilment-capability-reader";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
+import { StorageModule } from "../storage/storage.module";
 
 @Module({
   imports: [
@@ -67,6 +70,7 @@ import {
     // DefaultFulfilmentCapabilityReader needs AddonService (FeatureConfigService is global, and
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
+    StorageModule,
   ],
   controllers: [OrdersController, CounterSaleController],
   providers: [
@@ -76,6 +80,8 @@ import {
     CounterSaleService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
+    OrderBatchShipService,
+    PackingSlipService,
   ],
   exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
 })
