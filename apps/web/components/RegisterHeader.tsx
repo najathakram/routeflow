@@ -3,10 +3,13 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Menu } from "lucide-react";
-import { Avatar, Button, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
-import { useAuth } from "@/lib/auth-context";
+import { Button, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
 import { useTenant } from "@/components/tenant-provider";
-import { getCounterCartHasLines, subscribeCounterCart } from "@/lib/counter-cart-signal";
+import {
+  getCounterCartBusy,
+  getCounterCartHasLines,
+  subscribeCounterCart,
+} from "@/lib/counter-cart-signal";
 import { readExitTarget } from "@/lib/register-mode";
 import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 
@@ -18,12 +21,17 @@ import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 export function RegisterHeader({
   onOpenMobileNav,
   actions,
+  drivePill,
+  tools,
 }: {
   onOpenMobileNav: () => void;
   /** A slot on the right, after the store name, for counter actions mounted later (e.g. "Today's sales"). Empty by default. */
   actions?: React.ReactNode;
+  /** The shell's drive-mode exit pill (same component the full header renders). */
+  drivePill?: React.ReactNode;
+  /** The shell's bell, palette trigger and avatar/user menu (same component the full header renders). */
+  tools?: React.ReactNode;
 }) {
-  const { user } = useAuth();
   const { branding } = useTenant();
   const router = useRouter();
   const hasLines = React.useSyncExternalStore(
@@ -31,9 +39,20 @@ export function RegisterHeader({
     getCounterCartHasLines,
     () => false,
   );
+  const busy = React.useSyncExternalStore(subscribeCounterCart, getCounterCartBusy, () => false);
   const [asking, setAsking] = React.useState(false);
+  const [blocked, setBlocked] = React.useState(false);
+  React.useEffect(() => {
+    if (!busy) setBlocked(false);
+  }, [busy]);
   const keepRef = React.useRef<HTMLButtonElement>(null);
   const leave = () => {
+    if (getCounterCartBusy()) {
+      // A sale is being recorded: leaving now would drop the receipt and invite a second ring-up.
+      setAsking(false);
+      setBlocked(true);
+      return;
+    }
     setAsking(false);
     router.push(readExitTarget());
   };
@@ -42,11 +61,12 @@ export function RegisterHeader({
   return (
     <header
       data-testid="register-header"
-      className="flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4"
+      className="relative flex h-16 shrink-0 items-center gap-3 border-b border-surface-border bg-white px-4"
     >
       <button
         type="button"
-        onClick={() => (hasLines ? setAsking(true) : leave())}
+        aria-disabled={busy || undefined}
+        onClick={() => (busy ? setBlocked(true) : hasLines ? setAsking(true) : leave())}
         className={cn(
           TAP_TARGET,
           "gap-2 rounded-lg px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-raised",
@@ -72,15 +92,19 @@ export function RegisterHeader({
       >
         {storeName}
       </p>
+      {drivePill}
       <div data-testid="register-header-actions" className="flex shrink-0 items-center gap-2">
         {actions}
       </div>
-      <div className="flex items-center gap-2">
-        <Avatar name={user?.username ?? ""} size="sm" />
-        <span data-testid="register-clerk" className="text-sm font-medium text-navy">
-          {user?.username}
-        </span>
-      </div>
+      {tools}
+      {blocked && (
+        <p
+          role="status"
+          className="absolute inset-x-0 top-full z-10 border-b border-danger/30 bg-danger-bg px-4 py-2 text-xs font-medium text-danger"
+        >
+          A sale is in progress. Wait for the receipt or check its status before leaving.
+        </p>
+      )}
 
       <Modal
         open={asking}

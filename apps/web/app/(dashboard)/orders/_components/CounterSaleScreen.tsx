@@ -15,7 +15,7 @@ import type {
 import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { setCounterCartHasLines } from "@/lib/counter-cart-signal";
+import { setCounterCartBusy, setCounterCartHasLines } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -120,6 +120,13 @@ export function CounterSaleScreen() {
   const [shipIntent, setShipIntent] = React.useState(false);
   const [shipFailed, setShipFailed] = React.useState(false);
   const shipRunningRef = React.useRef(false);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const awaitingCustomerRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
@@ -177,6 +184,12 @@ export function CounterSaleScreen() {
     setCounterCartHasLines(hasLines);
     return () => setCounterCartHasLines(false);
   }, [hasLines]);
+  // A sale POST, a ship draft save or an unknown sale outcome: the register's Exit must not leave (it would drop the receipt).
+  const busy = createSale.isPending || createDraft.isPending || outcomeUnknown;
+  React.useEffect(() => {
+    setCounterCartBusy(busy);
+    return () => setCounterCartBusy(false);
+  }, [busy]);
   // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
   const lineLocked = locked || createSale.isPending;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
@@ -260,6 +273,7 @@ export function CounterSaleScreen() {
     try {
       const draft = await createDraft.mutateAsync(counterShipDraftInput(cart, to));
       if (!draft?.id) throw new Error("draft has no id");
+      if (!mountedRef.current) return; // the clerk left the counter meanwhile: the draft stays parked, no navigation
       setShipIntent(false);
       resetSale();
       router.push(`/orders?resumeDraft=${encodeURIComponent(draft.id)}`);
@@ -310,8 +324,7 @@ export function CounterSaleScreen() {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoTimerRef.current = null;
     undoLeftRef.current = UNDO_MS;
-    undoHoverRef.current = false;
-    undoFocusRef.current = false;
+    undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
     setUndo(null);
   }, []);
   // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
@@ -320,6 +333,7 @@ export function CounterSaleScreen() {
   const armUndo = (ms: number) => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoLeftRef.current = ms;
+    if (undoHoverRef.current || undoFocusRef.current) return; // held: the leave/blur handler starts the countdown
     undoStartedRef.current = Date.now();
     undoTimerRef.current = window.setTimeout(dropUndo, ms);
   };

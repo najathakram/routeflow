@@ -742,7 +742,10 @@ function HeaderTools({
             <Avatar name={user?.username ?? ""} size="sm" />
             <span
               data-testid={clerkTestId}
-              className="hidden text-sm font-medium text-navy sm:block"
+              className={cn(
+                "hidden text-sm font-medium text-navy sm:block",
+                clerkTestId && "max-w-[8rem] truncate", // the register header is tight at 390 px
+              )}
             >
               {user?.username}
             </span>
@@ -1369,7 +1372,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           />
         )}
         {register ? (
-          <RegisterHeader onOpenMobileNav={() => setMobileNavOpen(true)} />
+          <RegisterHeader
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+            drivePill={<DriveModePill />}
+            tools={
+              <HeaderTools
+                onOpenPalette={() => setPaletteOpen(true)}
+                showCounterPref={isStaff && counterEnabled}
+                clerkTestId="register-clerk"
+              />
+            }
+          />
         ) : (
           <Header
             onOpenPalette={() => setPaletteOpen(true)}

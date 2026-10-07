@@ -114,6 +114,12 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId("register-store")).not.toBeEmpty();
       expect(await overflow(page), "no horizontal overflow").toBeLessThanOrEqual(0);
 
+      // the shell's own controls are still here: the user menu (Sign out), the bell and the palette
+      await expect(header.getByRole("button", { name: /notifications/i })).toBeVisible();
+      await header.getByLabel("Open user menu").click();
+      await expect(page.getByRole("menuitem", { name: /Sign out/i })).toBeVisible();
+      await page.keyboard.press("Escape");
+
       if (hasRail) {
         // 64 px collapsed rail; the peek expands it and never writes the saved preference
         await expect.poll(() => railWidth(page)).toBe(64); // the width eases over 200 ms
@@ -139,7 +145,7 @@ for (const vp of VIEWPORTS) {
       await expect(scanField).toBeVisible({ timeout: 15_000 });
       await scanField.fill(sku);
       await scanField.press("Enter");
-      // the list always holds a "No items yet." placeholder row: count only real lines
+      // the list shows a "No items yet." placeholder row only while the cart is empty: count only real lines
       const lineRows = page
         .getByRole("list", { name: "Items" })
         .getByRole("listitem")
@@ -155,7 +161,7 @@ for (const vp of VIEWPORTS) {
       await expect(lineRows).toHaveCount(1); // Escape keeps the cart
 
       await page.getByRole("button", { name: "Exit counter" }).click();
-      await page.getByRole("button", { name: "Discard" }).click();
+      await page.getByRole("button", { name: "Discard", exact: true }).click();
       await expect(page).toHaveURL(/\/orders$/);
     });
 
