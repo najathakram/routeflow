@@ -313,7 +313,13 @@ export function RecordInlineReturnDialog({
         },
         onError: (err) => {
           busyRef.current = false;
-          setRefusalMessage(extractRefusalMessage(err));
+          // A refused REFUND capture (service 403 REFUND_NOT_ALLOWED, or a plain guard 403) gets the fixed
+          // refund-permission copy; the shared mapper would show "returns not enabled" or the server text.
+          const refundDenied =
+            showChoice &&
+            effResolution === "REFUND" &&
+            (err as { response?: { status?: number } } | undefined)?.response?.status === 403;
+          setRefusalMessage(refundDenied ? REFUND_COPY.forbidden : extractRefusalMessage(err));
           // #2647: the earlier capture WAS recorded: link it and clear the draft (a fresh key and a
           // re-seeded section), so the same goods are not re-entered and credited twice.
           const recorded = keyReusedReturnOf(err);

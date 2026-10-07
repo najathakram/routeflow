@@ -499,4 +499,62 @@ describe("refund flow", () => {
     });
     expect(screen.queryByText(/already recorded|already done/i)).toBeNull();
   });
+
+  it("refund 403 with code REFUND_NOT_ALLOWED: fixed permission copy, terminal", async () => {
+    refundReturn.mockRejectedValue(apiErr(403, "REFUND_NOT_ALLOWED"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("You don't have permission to refund this return.");
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+  });
+
+  it.each([
+    ["coded", "REFUND_NOT_ALLOWED"],
+    ["plain (guard-level)", undefined],
+  ])("a %s 403 on the REFUND capture shows the fixed refund-permission copy", async (_k, code) => {
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    act(() => lastCall(captureMutate)[1].onError(apiErr(403, code)));
+    await screen.findByText("You don't have permission to refund this return.");
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+    expect(screen.queryByText(/returns.*not.*enabled|not enabled/i)).toBeNull();
+    expect(refundReturn).not.toHaveBeenCalled();
+  });
+
+  it("a 403 on 'Give store credit instead' is terminal with the fixed copy", async () => {
+    refundReturn.mockRejectedValue(apiErr(500));
+    storeCreditInstead.mockRejectedValue(apiErr(403, "REFUND_NOT_ALLOWED"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: "Give store credit instead" }));
+    await screen.findByText("You don't have permission to refund this return.");
+    expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+  });
+
+  it("(c) a pending REFUND capture (refundAmount null, refundPending) refunds the quoted amount", async () => {
+    refundReturn.mockRejectedValue(apiErr(500));
+    const onClose = jest.fn();
+    const { onRecorded } = await toQuote(quote({ paidMethods: ["CASH"] }), { onClose });
+    fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({ ...RECORD, status: "RECEIVED", refundAmount: null, refundPending: true });
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+    expect(refundReturn).toHaveBeenCalledWith("ret-1", { tender: "CASH", expectedAmount: 12.4 });
+    const x = screen.getAllByRole("button", { name: "Close" }).find((b) => b.textContent === "");
+    fireEvent.click(x as HTMLElement);
+    expect(onRecorded).toHaveBeenCalledWith(expect.anything(), {
+      resolution: "REFUND",
+      tender: "CASH",
+      amount: 12.4,
+      pending: true,
+    });
+  });
 });
