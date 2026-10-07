@@ -1566,17 +1566,34 @@ describe("CounterSaleScreen: held attempt hardening", () => {
           method: "CASH",
         }),
     ],
-  ])("MUST2: %s stays locked on check-recent-sales, no crash, entry removed", (_n, payload) => {
-    window.sessionStorage.setItem(STORE_KEY, payload());
-    renderWithProviders(<CounterSaleScreen />);
-    expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
-    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
-    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
-    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
-  });
+  ])(
+    "MUST2: %s stays locked on check-recent-sales, no crash, marker kept until Discard",
+    (_n, payload) => {
+      window.sessionStorage.setItem(STORE_KEY, payload());
+      const first = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      expect(JSON.parse(window.sessionStorage.getItem(STORE_KEY) as string)).toEqual({
+        state: "unknown",
+      });
+      // a reload (remount) is STILL locked
+      first.unmount();
+      renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      // the Discard copy says the sale may have gone through
+      expect(
+        screen.getByText(
+          "The previous sale may have gone through. Check recent sales before ringing it again.",
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
+      expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    },
+  );
 
   it("restores the locked sale with a slimmed customer (name still shown)", async () => {
     window.sessionStorage.setItem(
