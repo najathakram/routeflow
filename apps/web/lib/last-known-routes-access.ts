@@ -35,10 +35,11 @@ function write(key: string, value: boolean): void {
 
 const useIsoLayoutEffect = typeof window !== "undefined" ? React.useLayoutEffect : React.useEffect;
 
-/** `reserve` is true only while the add-on is unresolved AND it last resolved to ON. */
+/** `reserve` is true only while the add-on read is PENDING (in flight) AND it last resolved to ON.
+ *  An errored read is not pending, so a stored ON never keeps skeletons pulsing forever. */
 export function useLastKnownRoutesAccess(
   user: { id?: string; tenantSlug?: string | null } | null | undefined,
-  routes: { enabled: boolean; resolved: boolean },
+  routes: { enabled: boolean; resolved: boolean; pending?: boolean },
 ): boolean {
   const key = user?.id ? lastKnownRoutesKey(user.tenantSlug, user.id) : null;
   const [known, setKnown] = React.useState(false);
@@ -51,5 +52,5 @@ export function useLastKnownRoutesAccess(
       setKnown(read(key));
     }
   }, [key, routes.resolved, routes.enabled]);
-  return !routes.resolved && known;
+  return routes.pending === true && !routes.resolved && known;
 }

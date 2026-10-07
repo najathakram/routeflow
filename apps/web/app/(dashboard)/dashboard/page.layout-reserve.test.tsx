@@ -23,7 +23,10 @@ jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: authUser }),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
-let routes = { enabled: true, resolved: true };
+let routes: { enabled: boolean; resolved: boolean; pending?: boolean } = {
+  enabled: true,
+  resolved: true,
+};
 let delivery = false;
 jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => routes,
@@ -102,31 +105,39 @@ describe("D1 stat grid skeleton parity", () => {
 describe("D2 routes/drivers slot reservation (last-known access)", () => {
   it("known-no-routes tenant: no routes/drivers slot while unresolved", () => {
     window.localStorage.setItem(KEY, "0");
-    routes = { enabled: false, resolved: false };
+    routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
   });
   it("known-routes tenant: slots reserved while unresolved", () => {
     window.localStorage.setItem(KEY, "1");
-    routes = { enabled: false, resolved: false };
+    routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(6);
   });
   it("known-routes tenant: the Route Runs and Driver Status panels are reserved too", () => {
     window.localStorage.setItem(KEY, "1");
-    routes = { enabled: false, resolved: false };
+    routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.getByText("Scheduled Route Runs")).toBeTruthy();
     expect(screen.getByText("Driver Status")).toBeTruthy();
   });
   it("known-no-routes / first visit: no Route Runs or Driver Status panel while unresolved", () => {
-    routes = { enabled: false, resolved: false };
+    routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
     expect(screen.queryByText("Driver Status")).toBeNull();
   });
+  it("stored ON but the addons read ERRORED: no routes/drivers skeletons and no Route Runs panel", () => {
+    window.localStorage.setItem(KEY, "1");
+    routes = { enabled: false, resolved: false, pending: false };
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
+    expect(screen.queryByText("Scheduled Route Runs")).toBeNull();
+    expect(screen.queryByText("Driver Status")).toBeNull();
+  });
   it("first visit (nothing stored): not reserved", () => {
-    routes = { enabled: false, resolved: false };
+    routes = { enabled: false, resolved: false, pending: true };
     renderWithProviders(<DashboardPage />);
     expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
   });
@@ -140,7 +151,7 @@ describe("D2 routes/drivers slot reservation (last-known access)", () => {
       return real.call(this, k);
     });
     try {
-      routes = { enabled: false, resolved: false };
+      routes = { enabled: false, resolved: false, pending: true };
       renderWithProviders(<DashboardPage />);
       expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
     } finally {
@@ -160,6 +171,30 @@ describe("D2 routes/drivers slot reservation (last-known access)", () => {
     renderWithProviders(<DashboardPage />);
     expect(labelsShown()).toEqual(ALL_LABELS);
     expect(window.localStorage.getItem(KEY)).toBe("1");
+  });
+});
+
+describe("skeleton and loaded twins share one min-h constant per region", () => {
+  const minH = (el: Element | null | undefined) => el?.className.match(/min-h-\[[^\]]+\]/)?.[0];
+  it("AR aging, overdue, urgent and low stock", () => {
+    const a = renderWithProviders(<DashboardPage />);
+    const [ar, overdue, urgent, low] = screen.getAllByTestId("list-skeleton").map((n) => minH(n));
+    a.unmount();
+    loading = false;
+    renderWithProviders(<DashboardPage />);
+    const up = (text: string, sel: string) =>
+      screen.getByRole("heading", { name: text }).closest(sel);
+    expect(ar).toBeDefined();
+    expect(minH(up("AR Aging", "div.overflow-hidden"))).toBe(ar);
+    expect(minH(up("Overdue Invoices", "div.overflow-hidden"))).toBe(overdue);
+    expect(minH(screen.getByText("All clear").closest("div.flex.items-center"))).toBe(urgent);
+    expect(minH(up("Low Stock", "div.overflow-hidden"))).toBe(low);
+  });
+  it("the pipeline skeleton is hidden from assistive tech and not focusable", () => {
+    renderWithProviders(<DashboardPage />);
+    const p = screen.getByTestId("pipeline-skeleton");
+    expect(p.getAttribute("aria-hidden")).toBe("true");
+    p.querySelectorAll("a").forEach((l) => expect(l.getAttribute("tabindex")).toBe("-1"));
   });
 });
 

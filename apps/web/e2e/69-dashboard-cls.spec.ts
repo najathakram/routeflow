@@ -51,13 +51,26 @@ async function installObserver(page: Page) {
 }
 
 const LEGS = [
-  { name: "e2e-routeflow (routes ON)", slug: TENANT_SLUG, login: false, routes: true },
-  { name: "qa-lite (no routes)", slug: LITE_TENANT_SLUG, login: true, routes: false },
+  {
+    name: "e2e-routeflow (routes ON)",
+    slug: TENANT_SLUG,
+    login: false,
+    routes: true,
+    maxApiCalls: 22,
+  },
+  {
+    name: "qa-lite (no routes)",
+    slug: LITE_TENANT_SLUG,
+    login: true,
+    routes: false,
+    maxApiCalls: 19,
+  },
 ] as const;
 
 for (const leg of LEGS) {
   for (const [width, height] of [
     [1440, 900],
+    [768, 1024],
     [390, 844],
   ] as const) {
     test.describe(`Dashboard CLS @ ${width} - ${leg.name}`, () => {
@@ -110,6 +123,8 @@ for (const leg of LEGS) {
             `CLS ${leg.slug} ${width} run${run} = ${cls.toFixed(4)} (api calls ${apiCalls})\n  ${shifts.join("\n  ")}`,
           );
           expect(cls).toBeLessThan(0.1);
+          // This PR adds no fetch; the ceiling is the count measured on this branch (19 / 16) plus headroom.
+          expect(apiCalls).toBeLessThanOrEqual(leg.maxApiCalls);
           const stats = page.getByTestId("dashboard-stats");
           for (const label of ALWAYS) await expect(stats.getByText(label)).toBeVisible();
           for (const label of ["Scheduled Routes", "Active Drivers"]) {

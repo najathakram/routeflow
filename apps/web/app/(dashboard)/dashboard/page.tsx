@@ -560,13 +560,18 @@ export default function DashboardPage() {
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
   // otherwise a recurring_routes tenant can enter drive mode but lands back
   // here with no mode pill and no driver content.
-  const { enabled: routesAccess, resolved: addonsResolved } = useRoutesAccess();
+  const {
+    enabled: routesAccess,
+    resolved: addonsResolved,
+    pending: addonsPending,
+  } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // PKG-8: reserve the Routes/Drivers stat slots while the add-on is unresolved, but only for a
   // tenant+user that last resolved to routes ON (see lib/last-known-routes-access.ts).
   const reserveRoutesSlot = useLastKnownRoutesAccess(user, {
     enabled: routesAccess,
     resolved: addonsResolved,
+    pending: addonsPending,
   });
 
   const baseIsOperator =
@@ -920,6 +925,7 @@ export default function DashboardPage() {
           key={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
           data-testid={ordersLoading ? "pipeline-skeleton" : "pipeline-strip"}
           aria-busy={ordersLoading}
+          aria-hidden={ordersLoading ? true : undefined}
           className={cn(
             "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
             ordersLoading && "animate-pulse [&_span]:invisible",
@@ -956,6 +962,7 @@ export default function DashboardPage() {
               <Link
                 key={key}
                 href={`/orders?status=${key}`}
+                tabIndex={ordersLoading ? -1 : undefined}
                 className={cn(
                   "flex flex-col gap-1 px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
                   bg && orderPipeline[key] > 0 && bg,
@@ -1073,7 +1080,7 @@ export default function DashboardPage() {
 
             {/* Scheduled route runs */}
             {(routesAccess || reserveRoutesSlot) && (
-              <Card className={ROUTE_RUNS_MIN_H}>
+              <Card className={!routesAccess || runsLoading ? ROUTE_RUNS_MIN_H : undefined}>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
                   <Link
@@ -1114,7 +1121,10 @@ export default function DashboardPage() {
           {isOperator && (
             <div className="flex flex-col gap-6">
               {(routesAccess || reserveRoutesSlot) && (
-                <Card title="Driver Status" className={DRIVER_STATUS_MIN_H}>
+                <Card
+                  title="Driver Status"
+                  className={!routesAccess || driversLoading ? DRIVER_STATUS_MIN_H : undefined}
+                >
                   {!routesAccess || driversLoading ? (
                     <div key="drivers-skeleton" className="-mx-6 -mb-6 animate-pulse px-6 py-4">
                       <div className="h-5 w-32 rounded bg-navy/10" />
