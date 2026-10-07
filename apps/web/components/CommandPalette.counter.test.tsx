@@ -15,8 +15,14 @@ jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => ({ enabled: true }),
   useDeliveryAccess: () => ({ enabled: true }),
 }));
+const mockGateCalls: Array<{ enabled?: boolean } | undefined> = [];
 let mockGate = { showButton: false };
-jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => mockGate }));
+jest.mock("@/lib/api/counter-sale", () => ({
+  useCounterSaleGate: (o?: { enabled?: boolean }) => {
+    mockGateCalls.push(o);
+    return mockGate;
+  },
+}));
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -44,5 +50,16 @@ describe("CommandPalette counter action", () => {
     mockRole = "CUSTOMER";
     render(<CommandPalette open onClose={() => {}} />);
     expect(screen.queryByText("New counter sale")).toBeNull();
+  });
+
+  it("does not enable the features fetch for a driver or customer", () => {
+    for (const role of ["DRIVER", "CUSTOMER"]) {
+      cleanup();
+      mockGateCalls.length = 0;
+      mockRole = role;
+      render(<CommandPalette open onClose={() => {}} />);
+      expect(mockGateCalls.length).toBeGreaterThan(0);
+      expect(mockGateCalls.every((o) => o?.enabled === false)).toBe(true);
+    }
   });
 });

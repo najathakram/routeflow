@@ -13,19 +13,25 @@ import DashboardLayout from "./layout";
  */
 
 const mockPush = jest.fn();
+let mockPath = "/orders";
+let mockRole = "OPERATOR";
+const mockGateCalls: Array<{ enabled?: boolean } | undefined> = [];
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/orders",
+  usePathname: () => mockPath,
   useRouter: () => ({ push: mockPush, replace: jest.fn(), prefetch: jest.fn() }),
 }));
 let mockGate = { showButton: false };
 jest.mock("@/lib/api/counter-sale", () => ({
-  useCounterSaleGate: () => mockGate,
+  useCounterSaleGate: (o?: { enabled?: boolean }) => {
+    mockGateCalls.push(o);
+    return mockGate;
+  },
 }));
 jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
-    user: { id: "u1", role: "OPERATOR", firstName: "Ada", lastName: "Op", email: "a@example.com" },
+    user: { id: "u1", role: mockRole, firstName: "Ada", lastName: "Op", email: "a@example.com" },
     logout: jest.fn(),
   }),
 }));
@@ -103,6 +109,9 @@ const navLabels = (testId: string) =>
 
 beforeEach(() => {
   mockPush.mockClear();
+  mockPath = "/orders";
+  mockRole = "OPERATOR";
+  mockGateCalls.length = 0;
   mockGate = { showButton: false };
 });
 afterEach(() => {
@@ -190,5 +199,33 @@ describe("POS-7a counter entry", () => {
     press("g");
     press("o");
     expect(mockPush).toHaveBeenCalledWith("/orders");
+  });
+
+  it("exactly ONE nav item is active: Counter on /orders/counter-sale, All Orders on /orders", () => {
+    mockGate = { showButton: true };
+    const active = () =>
+      Array.from(screen.getByTestId("sidebar-aside").querySelectorAll('[aria-current="page"]')).map(
+        (a) => a.textContent?.trim(),
+      );
+    mockPath = "/orders/counter-sale";
+    renderShell();
+    expect(active()).toEqual(["Counter"]);
+    cleanup();
+    mockPath = "/orders";
+    renderShell();
+    expect(active()).toEqual(["All Orders"]);
+  });
+
+  it("staff ask the gate to fetch; driver and customer renders never enable it", () => {
+    renderShell();
+    expect(mockGateCalls.every((o) => o?.enabled === true)).toBe(true);
+    for (const role of ["DRIVER", "CUSTOMER"]) {
+      cleanup();
+      mockGateCalls.length = 0;
+      mockRole = role;
+      renderShell();
+      expect(mockGateCalls.length).toBeGreaterThan(0);
+      expect(mockGateCalls.every((o) => o?.enabled === false)).toBe(true);
+    }
   });
 });
