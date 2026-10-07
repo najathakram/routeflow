@@ -104,9 +104,9 @@ import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-s
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
+import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
-  cartMismatchConflict,
   otherOrderConflict,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
@@ -1362,10 +1362,18 @@ export class OrdersService implements OnApplicationBootstrap {
   async findOrderIdByIdempotencyKey(
     idempotencyKey: string,
     customerId: string,
-    requestHash?: string,
-    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
+    requestHash: string | undefined,
+    inlineReturn: { returnKey?: string; items?: any[]; reason?: string | null } | undefined, // #2424
+    cart: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
+    return findOrderIdByKey(
+      this.idemDeps(),
+      idempotencyKey,
+      customerId,
+      requestHash,
+      inlineReturn,
+      cart,
+    );
   }
 
   /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
@@ -1542,29 +1550,8 @@ export class OrdersService implements OnApplicationBootstrap {
         if (existing.customerId !== customerId) {
           throw otherOrderConflict();
         }
-        // R4 (close-out): a replay must be a replay OF THE SAME CART. A client
-        // that edited its cart after a timed-out-but-committed submit and
-        // reused the key would otherwise get the STALE order back as if the
-        // edit had been saved. Compare the incoming line multiset against the
-        // stored order; a mismatch is a client bug surfaced loudly, never a
-        // silent wrong-cart acknowledgment.
-        {
-          const norm = (rows: never[], stored: boolean) =>
-            rows
-              .map((r) => unitLines.replayLineKey(r, stored))
-              .sort()
-              .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[], false);
-          const storedNorm = norm(
-            (existing.lineItems ?? []).filter(
-              (li: { status?: string }) => li.status !== "CANCELLED",
-            ) as never[],
-            true,
-          );
-          if (incomingNorm !== storedNorm) {
-            throw cartMismatchConflict();
-          }
-        }
+        // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
+        assertReplaySameCart(existing, dto);
         options.onReplay?.(existing);
         return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
       }
@@ -2126,14 +2113,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // return the order IT just created instead of retrying (retrying
           // would mint a fresh order number and create a genuine duplicate,
           // exactly what the key exists to prevent).
-          const target = e?.meta?.target;
-          const hitIdempotencyConstraint =
-            idempotencyKey != null &&
-            (Array.isArray(target)
-              ? target.some((t: unknown) => String(t).toLowerCase().includes("idempotencykey"))
-              : String(target ?? "")
-                  .toLowerCase()
-                  .includes("idempotencykey"));
+          const hitIdempotencyConstraint = idempotencyKey != null && isIdempotencyKeyViolation(e);
           if (hitIdempotencyConstraint) {
             // B215: same table-then-column lookup as the pre-check above, so the row that won
             // the race is found whether it was stamped on the column or written to the table.
@@ -2144,6 +2124,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
+              assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
               options.onReplay?.(existing);
               return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
             }
