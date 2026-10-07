@@ -72,14 +72,28 @@ describe("CounterReturnAction", () => {
       /w-full sm:w-auto/,
     );
   });
-  it("store credit: says the credit was issued", () => {
+  it("store credit: names the amount and the customer, and never says to hand money back", () => {
+    orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Acme Deli" } } };
     const { container } = render(<CounterReturnAction orderId="o1" />);
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
-    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT" }));
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit was issued to the customer.",
+      "Return recorded. Store credit of $12.40 added to Acme Deli.",
+    );
+    expect(screen.getByRole("status").textContent).not.toMatch(
+      /hand|cash|back to the customer|card/i,
     );
     expect(container.textContent).not.toMatch(/void/i);
+  });
+  it("store credit with no amount or name still never says to hand money back", () => {
+    orderState = { data: { id: "o1", customerId: "c1" } };
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, undefined));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Store credit added to the customer's account.",
+    );
+    expect(screen.getByRole("status").textContent).not.toMatch(/hand|cash|back to the customer/i);
   });
   it("cash refund: repeats the hand-back line", () => {
     render(<CounterReturnAction orderId="o1" />);

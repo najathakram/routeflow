@@ -172,11 +172,16 @@ export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown {
   /** Per-productId sub-breakdown — same shape as the top-level totals, scoped to one
    *  requested item. */
   productBreakdown: Record<string, InlineReturnQuoteBreakdown>;
-  /** POS-4b (optional until the API ships them): may this return be refunded instead of credited? */
-  canRefund?: boolean;
-  paidInFull?: boolean;
-  paidMethods?: InlineReturnRefundTender[];
-  customerIsWalkIn?: boolean;
+}
+
+/** POS-4b: refund eligibility the quote will carry once the API ships it. Kept OUT of
+ *  `InlineReturnQuoteResponse` (pinned to the engine's real shape by the API parity spec) until then;
+ *  web reads it as `InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>`. */
+export interface InlineReturnRefundEligibility {
+  canRefund: boolean;
+  paidInFull: boolean;
+  paidMethods: InlineReturnRefundTender[];
+  customerIsWalkIn: boolean;
 }
 
 // ─── Response: what POST /returns/inline/capture (and approve/reject/cancel) return ────

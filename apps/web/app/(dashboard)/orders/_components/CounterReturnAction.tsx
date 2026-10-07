@@ -21,6 +21,15 @@ function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+/** Store credit stays on the account: this line must never tell the clerk to hand money back
+ *  (that would give the value twice). Only the refund path says "Hand $X back". */
+function storeCreditLine(amount: number | undefined, customer: string | null | undefined): string {
+  const who = customer?.trim() || "the customer's account";
+  return amount !== undefined
+    ? `Return recorded. Store credit of ${money(amount)} added to ${who}.`
+    : `Return recorded. Store credit added to ${who}.`;
+}
+
 export function CounterReturnAction({ orderId }: { orderId: string }) {
   const [open, setOpen] = React.useState(false);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
@@ -53,7 +62,7 @@ export function CounterReturnAction({ orderId }: { orderId: string }) {
         <p role="status" className="order-last basis-full text-sm font-medium text-navy">
           {recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
             ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
-            : "Return recorded. Store credit was issued to the customer."}
+            : storeCreditLine(recorded.amount, order.customer?.businessName)}
         </p>
       ) : null}
     </>

@@ -28,6 +28,7 @@ import { useOptionalAuth } from "@/lib/auth-context";
 import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
+  InlineReturnRefundEligibility,
   InlineReturnRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
@@ -159,7 +160,8 @@ export function RecordInlineReturnDialog({
     busyRef.current = false;
   }, [open, orderId]);
 
-  const quoted = sectionState.quote;
+  const quoted = sectionState.quote as
+    (InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>) | null;
   const showChoice = allowRefund && !!quoted?.canRefund;
   const walkIn = showChoice && !!quoted?.customerIsWalkIn;
   const effResolution: InlineReturnResolution = !showChoice
@@ -238,7 +240,7 @@ export function RecordInlineReturnDialog({
           busyRef.current = false;
           setResult(data);
           setPhase("success");
-          onRecorded?.(data, showChoice ? { resolution: "STORE_CREDIT" } : undefined);
+          onRecorded?.(data, { resolution: "STORE_CREDIT", amount: quotedAmount });
         },
         onError: (err) => {
           busyRef.current = false;

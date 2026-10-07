@@ -2,7 +2,10 @@ import * as React from "react";
 import { act } from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
-import type { InlineReturnQuoteResponse } from "@routeflow/types";
+import type { InlineReturnQuoteResponse, InlineReturnRefundEligibility } from "@routeflow/types";
+
+/** The quote as the POS-4b API will answer it (refund eligibility alongside the breakdown). */
+type RefundQuote = InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>;
 
 // POS-4b: refund vs store credit in the return dialog. Mocks follow RecordInlineReturnDialog.test.tsx.
 const ORDER = {
@@ -36,7 +39,7 @@ jest.mock("@/lib/api/inline-returns", () => ({
   refundReturn: (...a: unknown[]) => refundReturn(...a),
 }));
 
-function quote(extra: Partial<InlineReturnQuoteResponse> = {}): InlineReturnQuoteResponse {
+function quote(extra: Partial<RefundQuote> = {}): RefundQuote {
   return {
     chunks: [
       {
@@ -77,7 +80,7 @@ const apiErr = (status: number, code?: string) => ({
 });
 const lastCall = (m: jest.Mock) => m.mock.calls[m.mock.calls.length - 1];
 
-async function toQuote(q: InlineReturnQuoteResponse, props: Record<string, unknown> = {}) {
+async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
   const onRecorded = jest.fn();
   renderWithProviders(
     <RecordInlineReturnDialog
@@ -208,17 +211,24 @@ describe("refund flow", () => {
     captureOk({ ...RECORD, creditNoteId: "cn-1" });
     await screen.findByText(/return recorded/i);
     expect(refundReturn).not.toHaveBeenCalled();
-    expect(onRecorded).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "ret-1" }),
-      expect.objectContaining({ resolution: "STORE_CREDIT" }),
-    );
+    expect(onRecorded).toHaveBeenCalledWith(expect.objectContaining({ id: "ret-1" }), {
+      resolution: "STORE_CREDIT",
+      amount: 12.4,
+    });
   });
 
   it("hidden block: capture request carries no resolution field (today's payload)", async () => {
-    await toQuote(quote({ canRefund: false }));
+    const { onRecorded } = await toQuote(quote({ canRefund: false }));
     fireEvent.click(confirmBtn(/^issue credit note and receive goods$/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect("resolution" in captureMutate.mock.calls[0][0]).toBe(false);
+    // a not-fully-paid sale is credited too: the caller still learns it was store credit, and how much
+    captureOk({ ...RECORD, creditNoteId: "cn-1" });
+    await screen.findByText(/return recorded/i);
+    expect(onRecorded).toHaveBeenCalledWith(expect.objectContaining({ id: "ret-1" }), {
+      resolution: "STORE_CREDIT",
+      amount: 12.4,
+    });
   });
 
   it("double-click: one capture, one refund, same key", async () => {
