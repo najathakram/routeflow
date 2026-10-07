@@ -237,7 +237,7 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
     await scan("COLA");
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await screen.findByTestId("counter-outcome-unknown");
     expect(shipBtn()).toBeDisabled();
     fireEvent.click(shipBtn());

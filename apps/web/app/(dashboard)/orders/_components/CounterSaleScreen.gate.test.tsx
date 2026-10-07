@@ -27,7 +27,7 @@ const expectDark = () => {
   expect(screen.getByTestId("counter-sale-off")).toHaveTextContent(DISABLED_COPY);
   expect(screen.getByTestId("counter-sale-off").textContent).toBe(DISABLED_COPY);
   expect(screen.queryByLabelText("Scan or search items")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Complete sale" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Complete & show receipt" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Cash" })).toBeNull();
   expect(screen.queryByTestId("counter-sale-screen")).toBeNull();
   expect(screen.queryByTestId("counter-sale-loading")).toBeNull();
@@ -99,7 +99,7 @@ describe("CounterSaleScreen: the capability gate (missing means dark)", () => {
     features = { data: { capabilities: { fulfilment: { counter } } } };
     renderWithProviders(<CounterSaleScreen />);
     expect(screen.getByLabelText("Scan or search items")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Complete sale" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeInTheDocument();
     expect(screen.queryByTestId("counter-sale-off")).toBeNull();
   });
 });

@@ -212,7 +212,7 @@ describe("B1208: the scanned level decides the line", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
 
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
       { productId: "p-pack", boxes: 0, pieces: 1, qty: 1 },
@@ -368,12 +368,12 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
     fireEvent.click(screen.getByRole("button", { name: name }));
   };
 
-  it("Complete sale: window.print runs with the receipt rendered", async () => {
+  it("Complete & show receipt: window.print runs with the receipt rendered", async () => {
     let receiptShown = false;
     printSpy.mockImplementationOnce(() => {
       receiptShown = screen.queryByTestId("counter-sale-receipt") !== null;
     });
-    await ring("Complete sale");
+    await ring("Complete & show receipt");
     await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
     expect(receiptShown).toBe(true);
   });
@@ -392,7 +392,7 @@ describe("D6: the receipt is on screen BEFORE it prints", () => {
 
 describe("pay guard: a sale never posts without the last scanned item", () => {
   const completeBtns = () => [
-    screen.getByRole("button", { name: "Complete sale" }),
+    screen.getByRole("button", { name: "Complete & show receipt" }),
     screen.getByRole("button", { name: /Complete & next sale/ }),
   ];
 
@@ -467,7 +467,7 @@ describe("B1208 nit: a UNIT multiplier at or over the pack size is labelled norm
     expect(screen.getByTestId("running-total")).toHaveTextContent("$37.50"); // 30.00 + 6 x 1.25
 
     fireEvent.click(screen.getByRole("button", { name: "$50" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(mutateAsync.mock.calls[0][0].dto.items).toEqual([
       { productId: "p-pack", boxes: 1, pieces: 6, qty: 30 },
@@ -478,7 +478,7 @@ describe("B1208 nit: a UNIT multiplier at or over the pack size is labelled norm
 describe("B1219 on the counter: a fuzzy scan asks 'Did you mean ...?' and never auto-adds", () => {
   const picker = () => screen.findByRole("group", { name: /did you mean/i });
   const payButtons = () => [
-    screen.getByRole("button", { name: "Complete sale" }),
+    screen.getByRole("button", { name: "Complete & show receipt" }),
     screen.getByRole("button", { name: /Complete & next sale/ }),
   ];
 
@@ -555,7 +555,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
     await scan("200000000002"); // arrives while the picker is open
     await new Promise((r) => setTimeout(r, 30));
     expect(lines()).toHaveLength(0); // queued behind the open suggestion, not applied around it
-    expect(screen.getByRole("button", { name: "Complete sale" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeDisabled();
 
     fireEvent.click(
       within(screen.getByRole("group", { name: /did you mean/i })).getByRole("button", {
@@ -565,7 +565,7 @@ describe("scan queue: edge cases around the picker and removal", () => {
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Sample Chips");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Complete sale" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeEnabled(),
     );
   });
 

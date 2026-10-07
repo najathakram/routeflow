@@ -960,7 +960,7 @@ export function CounterSaleScreen() {
           onClick={() => void completeSale(false)}
           disabled={createSale.isPending || locked || scanBusy}
         >
-          Complete sale
+          Complete &amp; show receipt
         </Button>
         <Button
           variant="secondary"
