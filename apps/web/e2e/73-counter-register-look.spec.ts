@@ -99,7 +99,7 @@ for (const vp of VIEWPORTS) {
       // a known saved state: the rail EXPANDED (the register must not change this)
       await page.evaluate(() => localStorage.setItem("rf-sidebar-collapsed", "false"));
       await page.reload();
-      if (hasRail) expect(await railWidth(page)).toBe(240);
+      if (hasRail) await expect.poll(() => railWidth(page)).toBe(240);
 
       await enterCounterFromNav(page, vp.width);
 
@@ -116,7 +116,7 @@ for (const vp of VIEWPORTS) {
 
       if (hasRail) {
         // 64 px collapsed rail; the peek expands it and never writes the saved preference
-        expect(await railWidth(page)).toBe(64);
+        await expect.poll(() => railWidth(page)).toBe(64); // the width eases over 200 ms
         expect(await savedSidebar(page)).toBe("false");
         await page.getByRole("button", { name: "Peek navigation" }).click();
         await expect.poll(() => railWidth(page)).toBe(240);
@@ -139,8 +139,12 @@ for (const vp of VIEWPORTS) {
       await expect(scanField).toBeVisible({ timeout: 15_000 });
       await scanField.fill(sku);
       await scanField.press("Enter");
-      const items = page.getByRole("list", { name: "Items" });
-      await expect(items.getByRole("listitem")).toHaveCount(1, { timeout: 15_000 });
+      // the list always holds a "No items yet." placeholder row: count only real lines
+      const lineRows = page
+        .getByRole("list", { name: "Items" })
+        .getByRole("listitem")
+        .filter({ hasNotText: "No items yet" });
+      await expect(lineRows).toHaveCount(1, { timeout: 15_000 });
 
       await page.getByRole("button", { name: "Exit counter" }).click();
       await expect(page.getByText("Discard this sale?")).toBeVisible();
@@ -148,7 +152,7 @@ for (const vp of VIEWPORTS) {
       await page.keyboard.press("Escape");
       await expect(page.getByText("Discard this sale?")).toHaveCount(0);
       await expect(page).toHaveURL(new RegExp(`${COUNTER}$`));
-      await expect(items.getByRole("listitem")).toHaveCount(1); // Escape keeps the cart
+      await expect(lineRows).toHaveCount(1); // Escape keeps the cart
 
       await page.getByRole("button", { name: "Exit counter" }).click();
       await page.getByRole("button", { name: "Discard" }).click();
@@ -172,7 +176,7 @@ for (const vp of VIEWPORTS) {
 
         await page.goto("/dashboard");
         await expect(page).toHaveURL(new RegExp(`${COUNTER}$`), { timeout: 20_000 });
-        await expect(page.getByText("Counter opened")).toBeVisible();
+        await expect(page.getByText("Counter opened", { exact: true })).toBeVisible();
 
         // Exit lands on /dashboard and stays there (the redirect is once per session)
         await page.getByRole("button", { name: "Exit counter" }).click();
