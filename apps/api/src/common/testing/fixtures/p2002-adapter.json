@@ -1,0 +1,128 @@
+{
+  "Tenant.slug (single-col unique)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"Tenant_slug_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "Tenant_slug_key"
+          },
+          "table": "Tenant"
+        }
+      },
+      "modelName": "Tenant"
+    },
+    "message": "Unique constraint failed on the constraint: `Tenant_slug_key`"
+  },
+  "Order (tenantId,idempotencyKey)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"Order_tenantId_idempotencyKey_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "Order_tenantId_idempotencyKey_key"
+          },
+          "table": "Order"
+        }
+      },
+      "modelName": "Order"
+    },
+    "message": "Unique constraint failed on the constraint: `Order_tenantId_idempotencyKey_key`"
+  },
+  "Order (tenantId,orderNumber)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"Order_tenantId_orderNumber_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "Order_tenantId_orderNumber_key"
+          },
+          "table": "Order"
+        }
+      },
+      "modelName": "Order"
+    },
+    "message": "Unique constraint failed on the constraint: `Order_tenantId_orderNumber_key`"
+  },
+  "Estimate (tenantId,estimateNumber)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"Estimate_tenantId_estimateNumber_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "Estimate_tenantId_estimateNumber_key"
+          },
+          "table": "Estimate"
+        }
+      },
+      "modelName": "Estimate"
+    },
+    "message": "Unique constraint failed on the constraint: `Estimate_tenantId_estimateNumber_key`"
+  },
+  "CreditNote (tenantId,creditNoteNumber)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"CreditNote_tenantId_creditNoteNumber_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "CreditNote_tenantId_creditNoteNumber_key"
+          },
+          "table": "CreditNote"
+        }
+      },
+      "modelName": "CreditNote"
+    },
+    "message": "Unique constraint failed on the constraint: `CreditNote_tenantId_creditNoteNumber_key`"
+  },
+  "Return (tenantId,returnKey)": {
+    "name": "PrismaClientKnownRequestError",
+    "code": "P2002",
+    "clientVersion": "7.10.0",
+    "meta": {
+      "driverAdapterError": {
+        "name": "DriverAdapterError",
+        "cause": {
+          "originalCode": "23505",
+          "originalMessage": "duplicate key value violates unique constraint \"Return_tenantId_returnKey_key\"",
+          "kind": "UniqueConstraintViolation",
+          "constraint": {
+            "index": "Return_tenantId_returnKey_key"
+          },
+          "table": "Return"
+        }
+      },
+      "modelName": "Return"
+    },
+    "message": "Unique constraint failed on the constraint: `Return_tenantId_returnKey_key`"
+  }
+}

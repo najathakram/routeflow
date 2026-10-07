@@ -78,7 +78,8 @@ describe("credit-note Serializable txs run under retryOnTxConflict (SA-392, #220
 
   it.each(SITES)("%s: retryOnTxConflict( opens before the tenantTransaction(", (name) => {
     const body = methodSource(name);
-    const retry = body.indexOf("retryOnTxConflict(");
+    // SA-706c: the credit-spend sites use `retryCreditTx` (the same retry, a coded 503 on exhaustion).
+    const retry = Math.max(body.indexOf("retryOnTxConflict("), body.indexOf("retryCreditTx("));
     const tx = body.indexOf("this.prisma.tenantTransaction(");
     expect(retry).toBeGreaterThan(-1);
     expect(tx).toBeGreaterThan(retry);
