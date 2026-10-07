@@ -12,6 +12,7 @@ import {
 import { computeServedFlags } from "./plan-flag-policy";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
+  BILLING_EXPORT_INVOICE_FIELDS,
   EXPORT_EXCLUDED_EVENT_TYPES,
   deriveExportActor,
   projectBillingEventForExport,
@@ -141,8 +142,13 @@ export class SubscriptionService {
         orderBy: { createdAt: "desc" },
         take: 500,
       }),
+      // B1187 / SA-718: select exactly the allowlist (ONE list, billing-export-fields.ts); never the whole row.
       this.prisma.rfInvoice.findMany({
         where: { tenantId },
+        select: Object.fromEntries(BILLING_EXPORT_INVOICE_FIELDS.map((f) => [f, true])) as Record<
+          (typeof BILLING_EXPORT_INVOICE_FIELDS)[number],
+          true
+        >,
         orderBy: { issuedAt: "desc" },
         take: 500,
       }),

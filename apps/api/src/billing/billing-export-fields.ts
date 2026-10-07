@@ -4,7 +4,9 @@
  * column on RfInvoice / BillingEvent, or a new key in an event payload, stays internal until it is
  * listed here.
  *
- * - Invoices: exactly the fields below (never pdfKey, tenantId, id).
+ * - Invoices: exactly the fields below (never pdfKey, tenantId, id, nor the admin-only manual-invoice
+ *   columns: issuedById, paid{Method,Ref,Note,ById}, lastSentAt, sendCount, voidedAt, voidReason,
+ *   periodKey, needsReview). `getExport` derives its Prisma `select` from this ONE list.
  * - Events: {type, createdAt, amountDelta, actor, payload}. `actorId` is REPLACED by a derived
  *   `actor` label and never exported as an id. `payload` keeps only the keys listed for that
  *   event type (scalar values only); a type with no entry exports an empty payload.
@@ -14,9 +16,15 @@ import { BILLING_EVENTS } from "./plan-catalog.constants";
 export const BILLING_EXPORT_INVOICE_FIELDS = [
   "number",
   "amount",
+  "currency",
   "status",
   "cycle",
   "issuedAt",
+  "dueDate",
+  "periodStart",
+  "periodEnd",
+  "paidAt",
+  "lines",
 ] as const;
 
 export type BillingExportActor = "you" | "RouteFlow support" | "system";

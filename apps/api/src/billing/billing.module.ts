@@ -19,6 +19,8 @@ import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
+import { RfInvoiceBuilder } from "./rf-invoice/rf-invoice-builder";
+import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
 import { MrrService } from "./mrr.service";
 import { FeatureOverrideReviewJob } from "./feature-override-review.job";
 import { FeatureOverrideExpiryJob } from "./feature-override-expiry.job";
@@ -49,6 +51,9 @@ import { EntitlementsModule } from "./entitlements.module";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
+    // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
+    RfInvoiceBuilder,
+    RfInvoiceIssuerService,
     MrrService,
     BillingNotificationService,
     // Feature grants v2 PR-3 (brief B): nightly review sweep for expired-unrevoked overrides.
