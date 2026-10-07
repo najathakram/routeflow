@@ -371,6 +371,8 @@ export type CreateSaleItemInput =
       qty: number;
       boxes?: number;
       pieces?: number;
+      /** VU-4b: a unit-ladder level ("Case"); the server prices it off the ladder. */
+      unitLabel?: string;
       unitPrice?: number;
       /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
       overrideReason?: string;

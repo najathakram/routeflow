@@ -33,25 +33,56 @@ import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
 import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
-import {
-  decideTrayPrice,
-  reasonRequiredMessage,
-  saleLinePriceFields,
-} from "../../../../lib/staff-price-override";
+import { decideTrayPrice, reasonRequiredMessage } from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
 import {
-  decrementLine,
-  addScannedLevelToLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
   setLineUnits,
+  stepLineQty,
 } from "../../../../lib/sale-line";
+import { useQueryClient } from "@tanstack/react-query";
+import { UnitPickerRow } from "../../../../components/UnitPickerRow";
+import { useDefaultUnitResolver } from "../../../../hooks/useDefaultUnitResolver";
+import {
+  anyLineLoading,
+  applyAddToItems,
+  editItemLine,
+  refusedScanOutcome,
+  reserveAdd,
+  settleBeforeConfirm,
+  UNITS_BLOCKED_MESSAGE,
+} from "../../../../lib/pending-unit-adapter";
+import {
+  isStaffRole,
+  mergeResolvedDefaults,
+  refusesLineEdit,
+} from "../../../../lib/default-unit-line";
+import { fetchProductUnits, productUnitsKey } from "../../../../lib/api/product-units";
+import { unitPriceBase, type UnitOption } from "../../../../lib/unit-options";
+import { needsUnitLabelConfirm } from "../../../../lib/scan-unit-confirm";
+import {
+  UNIT_NOT_OFFERED_MESSAGE,
+  chooseInvoiceUnit,
+  dropStaleUnitLines,
+  invoiceItemDto,
+  invoiceTotalsLine,
+  pickerLineOf,
+  saleItemDto,
+  unitNotOfferedCode,
+  type InvoiceLineState,
+} from "../../../../lib/invoice-unit-pick";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../lib/loose-units";
-import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
+import {
+  makeScanHandler,
+  runWedgeSubmit,
+  scanAcceptOpts,
+  type ScanLadderDeps,
+} from "../../../../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
 import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
 import { resolveScanSellLevel } from "@routeflow/scanning";
@@ -86,7 +117,6 @@ import { InlineToast, useInlineToast } from "../../../../components/InlineToast"
 import { ProductRow } from "../../../../components/ProductRow";
 import { ScanOrderSheet } from "../../../../components/ScanOrderSheet";
 import type { CreatedProduct } from "../../../../lib/api/products";
-import { ScanOutcome } from "../../../../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../../../../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -151,18 +181,6 @@ type Product = {
 // Wave 2 exception fields (all optional, survive the sale-line helpers' ...prev):
 // `discount` = flat $ off the line, `taxable` maps to the tenant tax rate at
 // submit (web's exact model), `note` prints under the description on the PDF.
-type LineState = {
-  qty: number;
-  boxes?: number;
-  pieces?: number;
-  unitPrice?: number;
-  /** #2696(c) SA-558e: why a New-sale line's price moves off the customer's special price. */
-  overrideReason?: string;
-  discount?: number;
-  taxable?: boolean;
-  note?: string;
-  noteOpen?: boolean;
-};
 
 /**
  * An ad-hoc, non-catalog ("unlisted") invoice line: free-text description +
@@ -182,7 +200,7 @@ function newLocalId(): string {
  * customer on mobile-built invoices; the server takes unitPrice verbatim).
  */
 function effectiveUnitPrice(
-  line: LineState | undefined,
+  line: InvoiceLineState | undefined,
   p: Product,
   catalogPrice?: number,
 ): number {
@@ -358,7 +376,10 @@ function InvoiceComposer({
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
 }) {
   const [category, setCategory] = useState("All");
-  const [items, setItems] = useState<Record<string, LineState>>({});
+  const [items, setItems] = useState<Record<string, InvoiceLineState>>({});
+  const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
+  itemsRef.current = items;
+  const qc = useQueryClient();
   // Ad-hoc lines not in the catalog (no productId on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
@@ -388,6 +409,7 @@ function InvoiceComposer({
   // screen did not.
   const userRole = useAuthStore((s) => s.user?.role);
   const canCreateProducts = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole); // only staff may sell by a unit (the server rejects any other role)
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
@@ -440,6 +462,7 @@ function InvoiceComposer({
     return m;
   }, [customerPrices]);
   const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
   // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
   const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
@@ -491,79 +514,63 @@ function InvoiceComposer({
     [products, scannedById],
   );
 
-  const addOne = (id: string, snapshot?: Product, level: SellLevel = "BOX") => {
+  const addOne = (
+    id: string,
+    snapshot?: Product,
+    level: SellLevel = "BOX",
+    dflt?: boolean,
+    viaRow?: boolean,
+    code?: string,
+  ): boolean => {
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    setItems((m) => {
-      const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice. The level the scanned code
-      // carries decides (SA-580 R1/R2): UNIT adds one loose piece, rolling into a box at upb; BOX
-      // adds a box. upb <= 1: today's plain +1 (R4).
-      return { ...m, [id]: addScannedLevelToLine(prev, level, isBoxed, upb) };
-    });
+    // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
+    const input = { id, level, dflt, viaRow, code, role: userRole, upb };
+    if (!reserveAdd(itemsRef, input)) return false; // moves the ref forward: a same-render second add sees this one (B992)
+    setItems((m) => applyAddToItems(m, input));
     // Retain a snapshot for EVERY added line, not just scanned ones — see
-    // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
-    // dropped out of the total as soon as the page changed underneath.
+    // NewOrderScreen.addOne. A row added by TAPPING it dropped out of the
+    // total as soon as the page changed underneath.
     if (p) {
       setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
+    return true;
   };
 
-  const removeOne = (id: string) => {
-    const p = productById.get(id);
-    const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const next = { ...m };
-      const line = decrementLine(prev, isBoxed, upb);
-      if (!line) delete next[id];
-      else next[id] = line;
-      return next;
-    });
-  };
+  const upbNum = (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0);
+  const removeOne = (id: string) =>
+    setItems((m) =>
+      m[id]
+        ? editItemLine(m, id, "increment", (prev) =>
+            stepLineQty(prev, -1, upbNum(id) > 1, upbNum(id)),
+          )
+        : m,
+    );
 
   const setBoxes = (id: string, boxes: number) =>
-    setItems((m) => {
-      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
-      const line = setLineBoxes(m[id] ?? { qty: 0 }, boxes, upb);
-      const next = { ...m };
-      if (!line) delete next[id];
-      else next[id] = line;
-      return next;
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineBoxes(prev, boxes, upbNum(id))));
 
   const setPieces = (id: string, pieces: number) =>
-    setItems((m) => {
-      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
-      const line = setLinePieces(m[id] ?? { qty: 0 }, pieces, upb);
-      const next = { ...m };
-      if (!line) delete next[id];
-      else next[id] = line;
-      return next;
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLinePieces(prev, pieces, upbNum(id))));
 
   /** Total unit count for a case-packed line, re-split into cases + loose. */
   const setUnits = (id: string, units: number) =>
-    setItems((m) => {
-      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
-      const line = setLineUnits(m[id] ?? { qty: 0 }, units, upb);
-      const next = { ...m };
-      if (!line) delete next[id];
-      else next[id] = line;
-      return next;
-    });
+    setItems((m) => editItemLine(m, id, "unit", (prev) => setLineUnits(prev, units, upbNum(id))));
 
   const setQty = (id: string, qty: number) =>
-    setItems((m) => {
-      const line = setLineQty(m[id] ?? { qty: 0 }, qty);
-      const next = { ...m };
-      if (!line) delete next[id];
-      else next[id] = line;
-      return next;
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineQty(prev, qty)));
+
+  /** Apply a `UnitPickerRow` choice (lib/invoice-unit-pick: Box / Piece stay pack lines, a level is a unit line). */
+  const setUnitLabel = (id: string, option: UnitOption) =>
+    setItems((m) =>
+      m[id]
+        ? { ...m, [id]: chooseInvoiceUnit(m[id], option, productById.get(id)?.unitsPerBox) }
+        : m,
+    );
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
+    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+  const anyUnitLoading = anyLineLoading(items, unitStatusFor); // Create waits only while a line is LOADING (#2865)
 
   const removeLine = (id: string) =>
     setItems((m) => {
@@ -574,16 +581,18 @@ function InvoiceComposer({
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it.
   const setLinePrice = (id: string, value: number | null) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      if (value == null || value < 0) {
-        const { unitPrice: _drop, ...rest } = prev;
-        delete rest.overrideReason;
-        return { ...m, [id]: rest };
-      }
-      return { ...m, [id]: { ...prev, unitPrice: value } };
-    });
+    setItems((m) =>
+      m[id]
+        ? editItemLine(m, id, "price", (prev) => {
+            if (value == null || value < 0) {
+              const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
+              delete rest.overrideReason;
+              return rest;
+            }
+            return { ...prev, unitPrice: value };
+          })
+        : m,
+    );
   const setLineReason = (id: string, overrideReason: string) =>
     setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], overrideReason } } : m));
 
@@ -651,8 +660,9 @@ function InvoiceComposer({
    * confirmation, so no banner and no search reset (which would swap the list
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
-  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
-    addOne(product.id, product, level);
+  const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
+      return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
@@ -664,6 +674,20 @@ function InvoiceComposer({
     if (scanOpen) return; // the tray row is the confirmation
     setPendingScroll((s) => requestScroll(s, product.id));
     return { feedback: { kind: "added", text: label } };
+  };
+
+  // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
+  // whole unit, not one loose piece — confirm rather than silently adding a large jump.
+  const acceptScannedProduct: ScanLadderDeps<Product>["accept"] = (product, level, ao) => {
+    const label = items[product.id]?.unitLabel;
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, ao);
+    const onYes = () => {
+      const o = finishAccept(product, level, ao);
+      if (o?.feedback?.kind === "added") showInline(o.feedback.text);
+    };
+    confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
+      confirmText: `Add 1 ${label}`,
+    });
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -743,7 +767,7 @@ function InvoiceComposer({
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
     const level = resolveScanSellLevel(match, levelsForScan(code, match));
     if (!scanGuardRef.current.offer(code, match, level)) return;
-    const outcome = acceptScannedProduct(match, level);
+    const outcome = acceptScannedProduct(match, level, scanAcceptOpts(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -820,15 +844,7 @@ function InvoiceComposer({
       if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
         hasSeparateInvoiceCategoryLine = true;
       }
-      lines.push({
-        unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
-        qty,
-        boxes: line.boxes ?? null,
-        pieces: line.pieces ?? null,
-        unitsPerBox: p.unitsPerBox ?? null,
-        discount: line.discount ?? 0,
-        taxRate: line.taxable ? taxRateFraction : 0,
-      });
+      lines.push(invoiceTotalsLine(line, p.unitsPerBox, tierPriceFor(p), taxRateFraction));
     }
     // Unlisted lines: never boxed, simple unitPrice × qty.
     for (const u of unlisted) {
@@ -963,9 +979,9 @@ function InvoiceComposer({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        priceFor: (p) => {
+        priceFor: (p, line) => {
           const full = productById.get(p.id);
-          return full ? tierPriceFor(full) : 0;
+          return full ? unitPriceBase(line, tierPriceFor(full)) : 0;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -978,7 +994,7 @@ function InvoiceComposer({
    * the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: addOne,
+    add: (id: string) => addOne(id, undefined, "BOX", true, true),
     remove: removeOne,
     setQty,
     setBoxes,
@@ -1081,9 +1097,9 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = tierPriceFor(p);
+      const price = line ? unitPriceBase(line, tierPriceFor(p)) : tierPriceFor(p);
       const band =
-        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
+        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 && !line.unitLabel ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
@@ -1106,6 +1122,7 @@ function InvoiceComposer({
           price={price}
           listPrice={toNumber(p.pricePerUnit)}
           qty={qty}
+          unitLabel={line?.unitLabel}
           onAdd={onRowAdd}
           onChangeQty={onRowChangeQty}
           onIncrement={onRowIncrement}
@@ -1132,14 +1149,16 @@ function InvoiceComposer({
 
   const createMut = useCreateInvoice();
   const createSaleMut = useCreateSale();
-  const saving = createMut.isPending || createSaleMut.isPending;
+  // The pending-unit gate in onSave awaits before either request starts; `settling` covers that gap.
+  const [settling, setSettling] = useState(false);
+  const saving = createMut.isPending || createSaleMut.isPending || settling;
   // A recorded sale already moved stock and issued an invoice. If we ever fail
   // to navigate away from it (see the sale onSuccess below) the builder stays
   // mounted with the whole cart intact — latch the Create button off so a
   // missed toast can't become a second order, a second stock deduction and a
   // second issued invoice.
   const [saleRecorded, setSaleRecorded] = useState(false);
-  const canSave = totalItems > 0 && !saving && !saleRecorded;
+  const canSave = totalItems > 0 && !saving && !anyUnitLoading && !saleRecorded;
 
   // No FormSheet on this screen, so it applies the same choke-point rule as
   // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
@@ -1182,10 +1201,29 @@ function InvoiceComposer({
   };
 
   /**
+   * The server dropped a unit from a product's ladder after it was picked: say so, refresh the
+   * ladders (staleTime 0, so the picker stops offering it) and put those lines back on one Box.
+   */
+  const onUnitNotOffered = (title: string) => {
+    alertInfo(title, UNIT_NOT_OFFERED_MESSAGE);
+    for (const [id, l] of Object.entries(itemsRef.current)) {
+      if (!l.unitLabel) continue;
+      void qc
+        .fetchQuery({
+          queryKey: productUnitsKey(id),
+          queryFn: () => fetchProductUnits(id),
+          staleTime: 0,
+        })
+        .catch(() => undefined);
+    }
+    setItems((cur) => dropStaleUnitLines(cur, (id) => productById.get(id)?.unitsPerBox));
+  };
+
+  /**
    * @param fromReview true only when the review sheet's own Create button fired
    *   this. The van-sale path is gated on it — see the sale branch below.
    */
-  const onSave = (fromReview = false) => {
+  const onSave = async (fromReview = false) => {
     if (!canSave) {
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
@@ -1211,6 +1249,30 @@ function InvoiceComposer({
       return;
     }
 
+    // A sale may only be recorded from the review sheet (see SaleModeField): the catalogue
+    // footer's Create opens the sheet instead; it can never move stock or issue an invoice alone.
+    if (saleMode.eligible && !fromReview) {
+      setReviewOpen(true);
+      return;
+    }
+
+    // Pending default-unit lines are settled BEFORE either request: a ladder that could not load
+    // sends nothing (a blocked line must never ship as the pack by default).
+    setSettling(true);
+    let settled: Awaited<ReturnType<typeof settleBeforeConfirm>>;
+    try {
+      settled = await settleBeforeConfirm(items, resolveDefaultUnits);
+    } finally {
+      setSettling(false);
+    }
+    if (settled.kind === "blocked") {
+      showToast(UNITS_BLOCKED_MESSAGE);
+      return;
+    }
+    const lines = settled.lines;
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    if (settled.kind === "stop") return; // the retry press only settles; a second press submits
+
     // Van-sale mode: collapse into ONE POST /orders/sell call. saleMode.eligible
     // already re-ran the total-equality assertion against `invoiceLines` — the
     // SAME lines `totals` above was computed from — so this can never silently
@@ -1218,42 +1280,22 @@ function InvoiceComposer({
     // sends its EFFECTIVE unitPrice explicitly (never omitted) so the server's
     // price resolution can't diverge from the previewed price.
     if (saleMode.eligible) {
-      // A sale may only be recorded from the review sheet, because that is the
-      // only place the "Delivered today?" control, its disclosure and a button
-      // that NAMES the sale are on screen together (sheet sticky footer — see
-      // SaleModeField). The catalogue footer's Create opens the sheet instead;
-      // it can never move stock or issue an invoice on its own.
-      if (!fromReview) {
-        setReviewOpen(true);
-        return;
-      }
       const saleItems: CreateSaleItemInput[] = [];
-      for (const [productId, line] of Object.entries(items)) {
+      for (const [productId, line] of Object.entries(lines)) {
         const p = productById.get(productId);
         if (!p) continue;
-        const qty = effectiveQty(line, p.unitsPerBox);
-        if (qty <= 0) continue;
-        const upb = Number(p.unitsPerBox ?? 0);
+        if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
         // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
-        const price = saleLinePriceFields({
-          effective: effectiveUnitPrice(line, p, tierPriceFor(p)),
-          base: tierPriceFor(p),
+        const item = saleItemDto(line, p, {
+          catalogPrice: tierPriceFor(p),
           listPrice: toNumber(p.pricePerUnit),
           isSpecial: isSpecialFor(p),
-          reason: line.overrideReason,
         });
-        if ("refused" in price) {
+        if ("refused" in item) {
           alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
           return;
         }
-        saleItems.push({
-          productId,
-          qty,
-          ...price,
-          ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
-          ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
-          ...(line.note?.trim() ? { notes: line.note.trim() } : {}),
-        });
+        saleItems.push(item);
       }
       // Unlisted lines are NOT filtered out — the gate's total-equality
       // assertion already accounts for them, so they must ride along.
@@ -1292,6 +1334,7 @@ function InvoiceComposer({
             showToast("Sale recorded — open the invoice from the Invoices tab.");
           },
           onError: (err: any) => {
+            if (unitNotOfferedCode(err)) return onUnitNotOffered("Couldn't record the sale");
             alertInfo(
               "Couldn't record the sale",
               err?.response?.data?.message ?? err?.message ?? "Try again.",
@@ -1317,25 +1360,16 @@ function InvoiceComposer({
       return;
     }
     const payload: CreateInvoiceItem[] = [];
-    for (const [productId, line] of Object.entries(items)) {
+    for (const [productId, line] of Object.entries(lines)) {
       const p = productById.get(productId);
       if (!p) continue;
-      const qty = effectiveQty(line, p.unitsPerBox);
-      if (qty <= 0) continue;
+      if (effectiveQty(line, p.unitsPerBox) <= 0) continue;
       payload.push(
-        invoiceLineDto(
-          {
-            description: displayName(p),
-            productId,
-            qty,
-            unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
-            boxes: line.boxes ?? null,
-            pieces: line.pieces ?? null,
-            unitsPerBox: p.unitsPerBox ?? null,
-            discount: line.discount,
-            taxable: line.taxable,
-            notes: line.note,
-          },
+        invoiceItemDto(
+          line,
+          { id: productId, description: displayName(p) },
+          tierPriceFor(p),
+          p.unitsPerBox,
           taxRateFraction,
         ),
       );
@@ -1369,6 +1403,7 @@ function InvoiceComposer({
           onSaved(inv.id, inv.invoiceNumber);
         },
         onError: (err: any) => {
+          if (unitNotOfferedCode(err)) return onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
             err?.response?.data?.message ?? err?.message ?? "Try again.",
@@ -1565,11 +1600,11 @@ function InvoiceComposer({
         <Pressable
           style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
           disabled={!canSave}
-          onPress={() => onSave()}
+          onPress={() => void onSave()}
           accessibilityState={{ disabled: !canSave }}
         >
           <Text style={styles.confirmBtnText} numberOfLines={1}>
-            {saving ? "Saving…" : "Create"}
+            {saving || anyUnitLoading ? "Saving…" : "Create"}
           </Text>
           <Ionicons name="arrow-forward" size={14} color="#fff" />
         </Pressable>
@@ -1610,8 +1645,12 @@ function InvoiceComposer({
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
         isSpecialFor={isSpecialFor}
+        tierFor={effectiveTierFor}
+        isStaff={isStaff}
+        onChangeUnit={setUnitLabel}
+        onChangeUnits={setUnits}
         onChangeReason={setLineReason}
-        saving={saving}
+        saving={saving || anyUnitLoading}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
         onDecrement={removeOne}
@@ -1662,7 +1701,7 @@ function InvoiceComposer({
         }}
         onSave={() => {
           setReviewOpen(false);
-          onSave(true);
+          void onSave(true);
         }}
       />
 
@@ -1687,7 +1726,7 @@ function InvoiceComposer({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          acceptScannedProduct(p as unknown as Product);
+          acceptScannedProduct(p as unknown as Product, "BOX", { startOnDefault: true });
         }}
       />
 
@@ -1764,6 +1803,10 @@ function ReviewSheet({
   taxRateFraction,
   tierPriceFor,
   isSpecialFor,
+  tierFor,
+  isStaff,
+  onChangeUnit,
+  onChangeUnits,
   onChangeReason,
   saving,
   onClose,
@@ -1787,7 +1830,7 @@ function ReviewSheet({
   onSave,
 }: {
   open: boolean;
-  items: Record<string, LineState>;
+  items: Record<string, InvoiceLineState>;
   productById: Map<string, Product>;
   unlisted: UnlistedLine[];
   totals: InvoiceTotals;
@@ -1798,6 +1841,12 @@ function ReviewSheet({
   tierPriceFor: (p: Product) => number;
   /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
   isSpecialFor: (p: Product) => boolean;
+  /** units_v1: the EFFECTIVE tier per product, for the picker's ladder prices. */
+  tierFor: (id: string) => number;
+  isStaff: boolean;
+  onChangeUnit: (id: string, option: UnitOption) => void;
+  /** Total-pieces entry for a Piece line (re-split into boxes + loose). */
+  onChangeUnits: (id: string, n: number) => void;
   onChangeReason: (id: string, reason: string) => void;
   saving: boolean;
   onClose: () => void;
@@ -1824,7 +1873,7 @@ function ReviewSheet({
   // is the order the operator added the lines in and the order they land on the
   // invoice — an alphabetical re-sort made scanned lines hard to verify.
   const rows = useMemo(() => {
-    const list: { id: string; product: Product; line: LineState }[] = [];
+    const list: { id: string; product: Product; line: InvoiceLineState }[] = [];
     for (const [id, line] of Object.entries(items)) {
       const product = productById.get(id);
       if (!product) continue;
@@ -1867,6 +1916,10 @@ function ReviewSheet({
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
                     isSpecial={details.saleEligible && isSpecialFor(product)}
+                    tier={tierFor(id)}
+                    isStaff={isStaff}
+                    onChangeUnit={(o) => onChangeUnit(id, o)}
+                    onChangeUnits={(n) => onChangeUnits(id, n)}
                     onChangeReason={(t) => onChangeReason(id, t)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
@@ -1977,6 +2030,10 @@ function ReviewRow({
   taxRateFraction,
   catalogPrice: catalogPriceProp,
   isSpecial = false,
+  tier,
+  isStaff,
+  onChangeUnit,
+  onChangeUnits,
   onChangeReason,
   onIncrement,
   onDecrement,
@@ -1991,12 +2048,17 @@ function ReviewRow({
   onRemove,
 }: {
   product: Product;
-  line: LineState;
+  line: InvoiceLineState;
   taxRateFraction: number;
   /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
   catalogPrice?: number;
   /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
   isSpecial?: boolean;
+  /** units_v1: the effective tier for this product's ladder prices. */
+  tier: number;
+  isStaff: boolean;
+  onChangeUnit: (option: UnitOption) => void;
+  onChangeUnits: (n: number) => void;
   onChangeReason?: (reason: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -2011,18 +2073,20 @@ function ReviewRow({
   onRemove: () => void;
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
-  const isBoxed = upb > 1;
+  // A unit-sold (ladder level) line is a plain count, never boxed UI.
+  const isBoxed = upb > 1 && !line.unitLabel;
+  const soldByPiece = isBoxed && line.sellBy === "unit";
   // #2698 (SA-564): one unit sold — loose units are opt-in, the same rule as CartRow.
   const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
   const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
   const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
-  const effUnit = effectiveUnitPrice(line, product, catalogPrice);
-  const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  const priceBase = unitPriceBase(line, catalogPrice);
+  const isOverridden = line.unitPrice != null && line.unitPrice !== priceBase;
   // #2696(c): off the special price by more than half a cent (pricing's own band).
   const movedOffSpecial =
     decideTrayPrice({
       typed: line.unitPrice ?? null,
-      base: catalogPrice,
+      base: priceBase,
       listPrice: toNumber(product.pricePerUnit),
       isSpecial,
       reason: "x",
@@ -2030,14 +2094,15 @@ function ReviewRow({
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the
   // sheet footer, never on the row).
+  const t = invoiceTotalsLine(line, product.unitsPerBox, catalogPrice, 0);
   const lineTotal = Math.max(
     0,
     computeLineSubtotal({
-      unitPrice: effUnit,
-      qty,
-      boxes: line.boxes ?? null,
-      pieces: line.pieces ?? null,
-      unitsPerBox: product.unitsPerBox ?? null,
+      unitPrice: t.unitPrice,
+      qty: t.qty,
+      boxes: t.boxes,
+      pieces: t.pieces,
+      unitsPerBox: t.unitsPerBox,
     }) - (line.discount ?? 0),
   );
 
@@ -2049,8 +2114,16 @@ function ReviewRow({
             {displayName(product)}
           </Text>
           <Text style={styles.cartRowMeta} numberOfLines={1}>
-            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
-            {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
+            {line.unitLabel
+              ? `${line.unitLabel} of ${line.unitFactor}`
+              : isBoxed
+                ? `case of ${upb}`
+                : product.unit
+                  ? `per ${product.unit}`
+                  : ""}
+            {product.sku
+              ? `${line.unitLabel || isBoxed || product.unit ? " · " : ""}${product.sku}`
+              : ""}
           </Text>
         </View>
         <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
@@ -2061,19 +2134,21 @@ function ReviewRow({
       {/* Editable price — the "discounted price". Defaults to the catalog price;
           typing another value records a one-time override for this line. */}
       <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
+        <Text style={styles.cartPriceLabel}>
+          {line.unitLabel ? `Price / ${line.unitLabel}` : `Price${isBoxed ? " / case" : ""}`}
+        </Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
           <MoneyTextInput
             style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
             value={line.unitPrice ?? null}
             onChangeValue={onChangePrice}
-            placeholder={catalogPrice.toFixed(2)}
+            placeholder={priceBase.toFixed(2)}
             returnKeyType="done"
           />
           {isOverridden ? (
             <Text style={styles.cartPriceWas} numberOfLines={1}>
-              ${catalogPrice.toFixed(2)}
+              ${priceBase.toFixed(2)}
             </Text>
           ) : null}
         </View>
@@ -2090,7 +2165,24 @@ function ReviewRow({
         />
       ) : null}
 
-      {isBoxed ? (
+      {isStaff ? (
+        <UnitPickerRow
+          line={pickerLineOf(product.id, line, catalogPrice)}
+          product={product}
+          tier={tier}
+          onChange={onChangeUnit}
+          style={{ marginBottom: 8 }}
+        />
+      ) : null}
+
+      {soldByPiece ? (
+        <StepperRow
+          label="Total pieces"
+          value={qty}
+          onChange={onChangeUnits}
+          hint={`${upb} pcs per box`}
+        />
+      ) : isBoxed ? (
         <>
           <StepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
           {showLoose ? (
@@ -2133,7 +2225,11 @@ function ReviewRow({
         </>
       ) : (
         <StepperRow
-          label={`Qty${product.unit ? ` (${product.unit})` : ""}`}
+          label={
+            line.unitLabel
+              ? `Qty (${line.unitLabel})`
+              : `Qty${product.unit ? ` (${product.unit})` : ""}`
+          }
           value={line.qty ?? 0}
           onChange={onChangeQty}
           onIncrement={onIncrement}
