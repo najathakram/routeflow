@@ -473,4 +473,30 @@ describe("refund flow", () => {
     expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
   });
+
+  it("SA-727a: a retry answered 200 with the stored result is success (receipt + refund recorded)", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(500)).mockResolvedValueOnce({
+      ...RECORD,
+      refundTender: "CARD",
+      refundPending: false,
+    });
+    const { onRecorded } = await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({ ...RECORD, refundAmount: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Retry refund" }));
+    await screen.findByText(
+      "Refund recorded. Give $12.40 back on the customer's card at the terminal.",
+    );
+    expect(refundReturn).toHaveBeenNthCalledWith(2, "ret-1", {
+      tender: "CARD",
+      expectedAmount: 12.4,
+    });
+    expect(onRecorded).toHaveBeenCalledWith(expect.anything(), {
+      resolution: "REFUND",
+      tender: "CARD",
+      amount: 12.4,
+    });
+    expect(screen.queryByText(/already recorded|already done/i)).toBeNull();
+  });
 });
