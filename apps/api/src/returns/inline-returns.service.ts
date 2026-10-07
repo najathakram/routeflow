@@ -438,6 +438,13 @@ export class InlineReturnsService {
         photoUrls: dto.photoUrls ?? [],
         status: "RECEIVED",
         kind: "INLINE",
+        // SA-727a: a REFUND capture STORES its intent on the row (a pending refund: refundMethod set, refundedAt and
+        // refundAmount null). Every store-credit path - the capture-replay re-issue, issueCredit and its CAS - keys on
+        // refundMethod IS NULL, so a replay can never turn the return into store credit. Net sales and sales-facts
+        // key on refundedAt, so a pending refund counts nowhere. holdReason is NOT used: cancel() reads it.
+        ...(opts.forRefund
+          ? { refundMethod: EXTERNAL_REFUND_METHOD, refundedAt: null, refundAmount: null }
+          : {}),
         returnKey: dto.returnKey,
         capturePayload: inlineReturnItemsFingerprint(dto.items, dto.reason), // #2424: what a replay must match
         capturedById: user.sub,
@@ -1000,6 +1007,7 @@ export class InlineReturnsService {
       resolution === "STORE_CREDIT" &&
       result.ret.status === "RECEIVED" &&
       !result.ret.creditNoteId &&
+      !result.ret.refundMethod &&
       !result.ret.holdReason
     ) {
       await this.issueCredit(result.ret.id);
@@ -1073,7 +1081,13 @@ export class InlineReturnsService {
     // 0 rows if `fresh` was stale — a miss throws and rolls the mint back too, rather than
     // ever leaving an orphaned CN with no return pointing at it.
     const linked = await tx.return.updateMany({
-      where: { id: fresh.id, kind: "INLINE", status: "RECEIVED", creditNoteId: null },
+      where: {
+        id: fresh.id,
+        kind: "INLINE",
+        status: "RECEIVED",
+        creditNoteId: null,
+        refundMethod: null, // SA-727a: a return captured for a refund is never turned into store credit
+      },
       data: {
         creditNoteId: minted.id,
         status: "REFUNDED",
@@ -1141,7 +1155,8 @@ export class InlineReturnsService {
     const pre = await this.prisma.forTenant().return.findFirst({
       where: { id: returnId, kind: "INLINE" },
     });
-    if (!pre || pre.status !== "RECEIVED" || pre.creditNoteId || pre.holdReason) return;
+    if (!pre || pre.status !== "RECEIVED" || pre.creditNoteId || pre.refundMethod || pre.holdReason)
+      return;
 
     const tenantId = this.prisma.getTenantId();
     let minted: any;
@@ -1151,7 +1166,14 @@ export class InlineReturnsService {
       const fresh = await tx.return.findFirst({ where: { id: returnId, kind: "INLINE" } });
       // cancel() (or a racing issue) already moved this return out of RECEIVED/no-CN/no-hold —
       // "cancel between re-read and link ⇒ no CN": mint nothing.
-      if (!fresh || fresh.status !== "RECEIVED" || fresh.creditNoteId || fresh.holdReason) return;
+      if (
+        !fresh ||
+        fresh.status !== "RECEIVED" ||
+        fresh.creditNoteId ||
+        fresh.refundMethod ||
+        fresh.holdReason
+      )
+        return;
       // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
       await lockOrderRow(tx, tenantId, fresh.orderId);
 
@@ -1290,7 +1312,7 @@ export class InlineReturnsService {
    *
    * Lock order (house order, as issueCredit/approve/cancel): Return FOR UPDATE -> the carrying Order and every source
    * Order (one id-ordered statement) -> every source Invoice (id-sorted). Under them: the claim (status RECEIVED, no
-   * refundMethod, no credit note, no hold -> REFUNDED/EXTERNAL_REFUND), the server-computed amount against the client's
+   * credit note, refundMethod EXTERNAL_REFUND stored at capture, refundedAt null -> REFUNDED + amount + refundedAt), the server-computed amount against the client's
    * expectedAmount (M2), the paid-in-full read (M3) and the awaited audit row carrying the tender (M5), all in ONE
    * transaction: an audit failure rolls the claim back. The idempotency key is the return id: the same tender and
    * amount again is a 200 with the stored result, anything else on a resolved return is 409 RETURN_ALREADY_RESOLVED.
@@ -1325,6 +1347,14 @@ export class InlineReturnsService {
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
           message:
             "This return is not in a state that can be refunded (held, rejected or cancelled).",
+        });
+      }
+      // SA-727a: only a return CAPTURED for a refund (its intent stored on the row) can be refunded; one captured for store
+      // credit that has not been issued yet is not turned into a refund here.
+      if (fresh.refundMethod !== EXTERNAL_REFUND_METHOD || fresh.refundedAt) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
+          message: "This return was not captured for a refund.",
         });
       }
 
@@ -1374,13 +1404,12 @@ export class InlineReturnsService {
           id,
           kind: "INLINE",
           status: "RECEIVED",
-          refundMethod: null,
           creditNoteId: null,
-          holdReason: null,
+          refundMethod: EXTERNAL_REFUND_METHOD,
+          refundedAt: null,
         },
         data: {
           status: "REFUNDED",
-          refundMethod: EXTERNAL_REFUND_METHOD,
           refundAmount: amount,
           refundedAt: new Date(),
         },
@@ -1514,9 +1543,10 @@ export class InlineReturnsService {
         include: { items: true },
       });
       if (!fresh) throw new NotFoundException("Return not found");
-      // SA-727 (M6): a return refunded in cash/card/check cannot be undone here - the money already left the till,
-      // and cancelling would restock the goods and void nothing. Refused before the claim, so nothing is written.
-      if (fresh.refundMethod === EXTERNAL_REFUND_METHOD) {
+      // SA-727 (M6): a return refunded in cash/card/check (refundedAt set) cannot be undone here - the money already left the
+      // till. Refused before the claim, so nothing is written. A PENDING refund (refundMethod set, refundedAt null) cancels
+      // normally, with the unrestock.
+      if (fresh.refundMethod === EXTERNAL_REFUND_METHOD && fresh.refundedAt) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUNDED_CASH,
           message: "This return was refunded in cash, card or check and cannot be cancelled.",

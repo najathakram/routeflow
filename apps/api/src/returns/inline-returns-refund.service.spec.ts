@@ -50,8 +50,10 @@ function receivedReturn(over: Record<string, unknown> = {}) {
     holdReason: null,
     heldAmount: null,
     creditNoteId: null,
-    refundMethod: null,
+    // SA-727a: a return captured for a refund stores its intent: refundMethod set, refundedAt/refundAmount null (pending)
+    refundMethod: "EXTERNAL_REFUND",
     refundAmount: null,
+    refundedAt: null,
     customerId: "cust-1",
     orderId: "ord-carrying",
     returnNumber: "RET-2026-0001",
@@ -141,24 +143,22 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     service = mod.get(InlineReturnsService);
   });
 
-  it("records the refund: the CAS claim (RECEIVED, no refundMethod, no credit note, no hold) sets REFUNDED / EXTERNAL_REFUND / the server amount", async () => {
+  it("records the refund: the CAS claim (RECEIVED, no credit note, the stored EXTERNAL_REFUND intent, refundedAt null; never holdReason) sets REFUNDED + the server amount + refundedAt", async () => {
     const out = await service.refund("ret-1", REFUND, OPERATOR);
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
       where: {
         id: "ret-1",
         kind: "INLINE",
         status: "RECEIVED",
-        refundMethod: null,
         creditNoteId: null,
-        holdReason: null,
-      },
-      data: {
-        status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
-        refundAmount: 30,
-        refundedAt: expect.any(Date),
+        refundedAt: null,
       },
+      data: { status: "REFUNDED", refundAmount: 30, refundedAt: expect.any(Date) },
     });
+    expect(JSON.stringify(prisma.return.updateMany.mock.calls[0][0].where)).not.toContain(
+      "holdReason",
+    );
     expect(out).toMatchObject({ id: "ret-1", refundTender: "CASH", refundPending: false });
     // no credit note, no payment write of any kind: the invoice stays as it was
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
@@ -190,9 +190,9 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         }),
       }),
     });
-    // refundMethod stays the literal: no new string, no tender in the row
+    // refundMethod stays the literal stored at capture: no new string, no tender in the row
     const data = prisma.return.updateMany.mock.calls[0][0].data;
-    expect(data.refundMethod).toBe("EXTERNAL_REFUND");
+    expect(data).not.toHaveProperty("refundMethod");
     expect(JSON.stringify(data)).not.toMatch(/CARD|CASH|CHECK/);
   });
 
@@ -296,6 +296,12 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
   });
 
+  it("a return captured for STORE CREDIT (no stored refund intent) and still RECEIVED is not turned into a refund: 409 RETURN_NOT_REFUNDABLE", async () => {
+    row = receivedReturn({ refundMethod: null });
+    expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe("RETURN_NOT_REFUNDABLE");
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+  });
+
   it("M1: a lost CAS (another resolution landed between the read and the claim) is 409 RETURN_ALREADY_RESOLVED, no audit row", async () => {
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
     expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe("RETURN_ALREADY_RESOLVED");
@@ -341,6 +347,15 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         "RETURN_ALREADY_RESOLVED",
       );
     });
+
+    it("an audit row whose meta has NO tender (or no meta) is a mismatch: 409, never a replay", async () => {
+      for (const meta of [{ amount: 30 }, null]) {
+        prisma.auditLog.findFirst.mockResolvedValue({ meta });
+        expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
+          "RETURN_ALREADY_RESOLVED",
+        );
+      }
+    });
   });
 
   it("only office roles refund: a DRIVER is 403 before any read", async () => {
@@ -378,11 +393,12 @@ describe("InlineReturnsService.refund (SA-727)", () => {
   });
 
   describe("M6: cancel", () => {
-    it("a cash/card/check-refunded return is 409 RETURN_REFUNDED_CASH: no claim, no restock reversal, nothing written", async () => {
+    it("a REFUNDED (refundedAt set) cash/card/check return is 409 RETURN_REFUNDED_CASH: no claim, no restock reversal, nothing written", async () => {
       row = receivedReturn({
         status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 30,
+        refundedAt: new Date(),
       });
       expect(await codeOf(service.cancel("ret-1", OPERATOR))).toBe("RETURN_REFUNDED_CASH");
       expect(prisma.return.updateMany).not.toHaveBeenCalled();
@@ -390,11 +406,24 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
-    it("a store-credit REFUNDED return still cancels as before (the guard keys on EXTERNAL_REFUND only)", async () => {
+    it("a PENDING refund (refundMethod set, refundedAt null) cancels normally WITH the unrestock", async () => {
+      row = receivedReturn(); // the default fixture is a pending refund
+      const out = await service.cancel("ret-1", OPERATOR);
+      expect(out).toBeDefined();
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.return.updateMany.mock.calls[0][0].data.status).toBe("CANCELLED");
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
+      );
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("a store-credit REFUNDED return still cancels as before (the guard keys on a recorded EXTERNAL_REFUND only)", async () => {
       row = receivedReturn({
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
         creditNoteId: "cn-1",
+        refundedAt: new Date(),
       });
       (creditNotes as any).cancelStandaloneInTx = jest.fn().mockResolvedValue({});
       await service.cancel("ret-1", OPERATOR);
@@ -446,12 +475,13 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         items: (data.items?.create ?? []).map((i: any, n: number) => ({ id: `ri-${n}`, ...i })),
       }));
       // no replay row for the key; the freshly created RECEIVED row is what issueCredit would re-read
+      // issueCredit's re-reads see the row as a STORE_CREDIT capture left it (no stored refund intent)
       prisma.return.findFirst.mockImplementation(async ({ where }: any) =>
-        where?.id ? { ...receivedReturn() } : null,
+        where?.id ? { ...receivedReturn({ refundMethod: null }) } : null,
       );
       prisma.return.findMany.mockResolvedValue([]);
       prisma.return.findUnique.mockImplementation(async () => ({
-        ...receivedReturn(),
+        ...receivedReturn({ refundMethod: null }),
         status: "REFUNDED",
         creditNoteId: "cn-1",
       }));
@@ -464,6 +494,14 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
       expect(prisma.orderCreditNote.create).not.toHaveBeenCalled();
       expect(prisma.return.updateMany).not.toHaveBeenCalled(); // no issue-link claim
+      // SA-727a: the refund INTENT is stored on the row at capture; nothing counts as refunded yet
+      expect(prisma.return.create.mock.calls[0][0].data).toMatchObject({
+        status: "RECEIVED",
+        refundMethod: "EXTERNAL_REFUND",
+        refundedAt: null,
+        refundAmount: null,
+      });
+      expect(prisma.return.create.mock.calls[0][0].data).not.toHaveProperty("holdReason");
       expect(out).toMatchObject({ status: "RECEIVED", refundPending: true });
       expect(out.creditNoteId ?? null).toBeNull();
     });
@@ -475,6 +513,52 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
         expect(out).not.toHaveProperty("refundPending");
       }
+    });
+
+    it("STORE_CREDIT capture rows are created WITHOUT a stored refund intent", async () => {
+      await service.capture(DTO as any, OPERATOR);
+      expect(prisma.return.create.mock.calls[0][0].data).not.toHaveProperty("refundMethod");
+    });
+
+    describe("a capture REPLAY of a REFUND capture never mints a credit note (SA-727a)", () => {
+      const pending = () => ({
+        ...receivedReturn(),
+        items: [{ productId: "prod-1", qty: 6, restock: true }],
+      });
+      beforeEach(() => {
+        // the unlocked returnKey pre-read finds the pending-refund row; issueCredit's own re-reads would too
+        prisma.return.findFirst.mockImplementation(async () => pending());
+      });
+      it.each([
+        ["REFUND resolution", { ...DTO, resolution: "REFUND" }],
+        ["the default (STORE_CREDIT) resolution", DTO],
+      ])("%s: no mint, no issue claim, no new Return row", async (_n, body) => {
+        const out = await service.capture(body as any, OPERATOR);
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+        expect(prisma.return.updateMany).not.toHaveBeenCalled();
+        expect(prisma.return.create).not.toHaveBeenCalled();
+        expect(out.creditNoteId ?? null).toBeNull();
+      });
+    });
+
+    it("issueCredit pre-read, in-lock re-check and CAS all key on refundMethod IS NULL: a pending refund row mints nothing even if reached directly", async () => {
+      prisma.return.findFirst.mockImplementation(async () => receivedReturn());
+      await (service as any).issueCredit("ret-1");
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      // and the CAS itself (reached by a STORE_CREDIT row) carries refundMethod: null
+      prisma.return.findFirst.mockImplementation(async () =>
+        receivedReturn({ refundMethod: null }),
+      );
+      await (service as any).issueCredit("ret-1");
+      expect(prisma.return.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: "RECEIVED",
+            creditNoteId: null,
+            refundMethod: null,
+          }),
+        }),
+      );
     });
 
     it("REFUND for a driver is 403 before any read", async () => {
@@ -597,7 +681,8 @@ describe("refund gate + pending marker helpers", () => {
   });
   it("isRefundPending: RECEIVED INLINE, no resolution, no hold", () => {
     expect(isRefundPending(receivedReturn())).toBe(true);
-    expect(isRefundPending(receivedReturn({ holdReason: "DRIVER_CAP" }))).toBe(false);
+    expect(isRefundPending(receivedReturn({ refundedAt: new Date() }))).toBe(false);
+    expect(isRefundPending(receivedReturn({ refundMethod: null }))).toBe(false);
     expect(isRefundPending(receivedReturn({ creditNoteId: "cn" }))).toBe(false);
     expect(
       isRefundPending(receivedReturn({ status: "REFUNDED", refundMethod: "EXTERNAL_REFUND" })),

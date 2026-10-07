@@ -46,30 +46,31 @@ export const inlineReturnAmount = (ret: {
       Number(ret.creditCategoryTax ?? 0),
   );
 
-/** A return resolved by store credit or by a refund (either way it can take no second resolution). */
+/**
+ * A return resolved by store credit or by a recorded refund (either way it can take no second resolution). A PENDING
+ * refund (refundMethod EXTERNAL_REFUND stored at capture, refundedAt null, still RECEIVED) is NOT resolved yet.
+ */
 export const isResolvedReturn = (ret: {
   status?: string | null;
-  refundMethod?: string | null;
   creditNoteId?: string | null;
-}): boolean => ret.status === "REFUNDED" || ret.refundMethod != null || ret.creditNoteId != null;
+}): boolean => ret.status === "REFUNDED" || ret.creditNoteId != null;
 
 /**
- * A REFUND-resolution return captured (restocked, RECEIVED, no credit note) whose refund is not recorded yet. The
- * resolution is not a column, so this is derived from the row: an INLINE return a STORE_CREDIT capture would already
- * have credited can only sit in this shape when it was captured for a refund.
+ * A return captured for a REFUND whose refund is not recorded yet: RECEIVED, the EXTERNAL_REFUND intent stored on the row
+ * at capture, `refundedAt` still null, no credit note. Net sales and sales-facts key on `refundedAt`, so it counts nowhere.
  */
 export const isRefundPending = (ret: {
   kind?: string | null;
   status?: string | null;
   refundMethod?: string | null;
+  refundedAt?: unknown;
   creditNoteId?: string | null;
-  holdReason?: string | null;
 }): boolean =>
   ret.kind === "INLINE" &&
   ret.status === "RECEIVED" &&
-  !ret.refundMethod &&
-  !ret.creditNoteId &&
-  !ret.holdReason;
+  ret.refundMethod === EXTERNAL_REFUND_METHOD &&
+  !ret.refundedAt &&
+  !ret.creditNoteId;
 
 export interface SourceInvoicesState {
   /** Distinct source invoice ids of the returned lines (sorted). */

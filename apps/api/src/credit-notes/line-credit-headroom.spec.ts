@@ -344,3 +344,56 @@ describe("SA-727 (M4): a STANDARD return resolved by an EXTERNAL_REFUND counts a
     expect(JSON.stringify(where)).not.toMatch(/refundMethod|creditNoteId/);
   });
 });
+
+describe("SA-727a: headroom CLAMPS at 0 - a legacy line both refunded and credited only blocks NEW credits, reads never throw", () => {
+  // $100 / 1 pc line that was credited $160 / 1.6 pc in total (a note item of $60 plus an inline return of $100)
+  const over = credit({ a: [160, 1.6, 2] });
+  it("lineTakeRefusal: remaining amount and qty are 0, never negative; any take is refused", () => {
+    const r = lineTakeRefusal(A, over, { qty: 0.1, amount: 1 });
+    expect(r).toMatchObject({ remainingAmount: 0, remainingQty: 0 });
+    expect(r!.remainingAmount).toBeGreaterThanOrEqual(0);
+    expect(r!.remainingQty).toBeGreaterThanOrEqual(0);
+  });
+  it("planProductRefund (refund mode): a refusal with remaining 0, no throw; count mode takes nothing and does not throw", () => {
+    const r = planProductRefund([A, B], over, "pa", 1);
+    expect(r.refusal).toMatchObject({ remainingAmount: 0, remainingQty: 0 });
+    const c = planProductRefund([A, B], over, "pa", 1, "count");
+    expect(c.items.every((i) => i.amount >= 0 && i.qty >= 0)).toBe(true);
+    expect(c.amount).toBe(0);
+  });
+  it("pooledTakeRefusal: the pool's remaining is 0, never negative", async () => {
+    const { pooledTakeRefusal } = await import("./line-credit-headroom");
+    const pool = { invoiceCount: 2, lines: [A, B], credited: over };
+    const r = pooledTakeRefusal(pool, "pa", { amount: 1, qty: 0.1 });
+    expect(r).toMatchObject({ remainingAmount: 0, remainingQty: 0 });
+  });
+  it("loadLineCredits: a line already over-credited by items and an inline return reads fine (no throw) and an external refund adds nothing past the line", async () => {
+    const d = {
+      creditNoteItem: {
+        findMany: jest.fn().mockResolvedValue([{ invoiceItemId: "a", amount: 60, qty: 0.6 }]),
+      },
+      creditNote: { findMany: jest.fn().mockResolvedValue([]) },
+      returnItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ sourceInvoiceItemId: "a", qty: 1, subtotal: 100 }]),
+      },
+      invoice: {
+        findFirst: jest.fn().mockResolvedValue({ orderId: "o1" }),
+        count: jest.fn().mockResolvedValue(1),
+      },
+      return: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            orderId: "o1",
+            refundMethod: "EXTERNAL_REFUND",
+            items: [{ productId: "pa", qty: 1 }],
+          },
+        ]),
+      },
+    };
+    const out = await loadLineCredits(d, "inv", [A, B]);
+    expect(out.get("a")).toMatchObject({ amount: 160, qty: 1.6 }); // the external refund found no room on A: adds 0
+    expect(out.get("b")).toBeUndefined();
+  });
+});

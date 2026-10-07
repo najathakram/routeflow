@@ -287,6 +287,13 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(r.creditNoteId).toBeNull();
     expect(await creditNoteCount(s)).toBe(0);
     expect(await stock(s)).toBe(4);
+    // SA-727a: the refund INTENT is stored on the row at capture; a PENDING refund counts nowhere
+    const stored = await row(r.id);
+    expect(stored.refundMethod).toBe("EXTERNAL_REFUND");
+    expect(stored.refundedAt).toBeNull();
+    expect(stored.refundAmount).toBeNull();
+    expect(stored.holdReason).toBeNull();
+    expect((await netSales(s)).net).toBe(100);
 
     const c = await seed("capture-credit");
     const credited = await capture(c, 4); // omitted resolution = STORE_CREDIT
@@ -357,6 +364,12 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(codeOf(await fail(refund(s, r.id, "CASH", 40)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(codeOf(await fail(refund(s, r.id, "CARD", 30)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(await auditRows(s)).toHaveLength(1);
+    // a stored audit row with NO tender in its meta is a mismatch (409), never a replay
+    await prisma.auditLog.updateMany({
+      where: { tenantId: s.tenantId, action: "inline_return.refund" },
+      data: { meta: { amount: 40 } },
+    });
+    expect(codeOf(await fail(refund(s, r.id, "CARD", 40)))).toBe("RETURN_ALREADY_RESOLVED");
   }, 60_000);
 
   it("4. store credit XOR refund, both ways: credited then refund = 409; refunded then a credit replay mints nothing", async () => {
@@ -369,14 +382,15 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(await auditRows(a)).toHaveLength(0);
     expect(await creditNoteCount(a)).toBe(1);
 
-    // a REFUND-captured return resolved by store credit through the capture replay (default resolution), then a refund
+    // SA-727a: a capture REPLAY of a REFUND capture (default resolution) never mints a credit note, and the refund still works
     const b = await seed("xor-b");
     const key = `xor-b-${RUN}`;
     const rb = await capture(b, 4, "REFUND", key);
-    await capture(b, 4, undefined, key); // the same key, STORE_CREDIT: mints the credit
-    expect(await creditNoteCount(b)).toBe(1);
-    expect(codeOf(await fail(refund(b, rb.id, "CASH", 40)))).toBe("RETURN_ALREADY_RESOLVED");
-    expect(await auditRows(b)).toHaveLength(0);
+    const replayed = await capture(b, 4, undefined, key); // the same key, default resolution
+    expect(replayed).toMatchObject({ id: rb.id, status: "RECEIVED" });
+    expect(await creditNoteCount(b)).toBe(0);
+    expect((await row(rb.id)).creditNoteId).toBeNull();
+    await expect(refund(b, rb.id, "CASH", 40)).resolves.toMatchObject({ status: "REFUNDED" });
 
     // refund first, then the STORE_CREDIT replay: no credit is minted on a refunded return
     const c = await seed("xor-c");
@@ -474,7 +488,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(await creditNoteCount(s)).toBe(0);
   }, 60_000);
 
-  it("11. a refund racing a store-credit issue on the same return: exactly one resolution wins", async () => {
+  it("11. a refund racing a capture REPLAY (default resolution) on the same return: the refund wins and no credit note is ever minted", async () => {
     const s = await seed("race-xor");
     const key = `race-xor-${RUN}`;
     const r = await capture(s, 4, "REFUND", key);
@@ -487,11 +501,21 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     }
     const stored = await row(r.id);
     expect(stored.status).toBe("REFUNDED");
-    const credits = await creditNoteCount(s);
-    const audits = (await auditRows(s)).length;
-    // exactly one of the two resolutions took the return
-    expect(credits + audits).toBe(1);
-    expect(stored.refundMethod).toBe(credits === 1 ? "CREDIT_NOTE" : "EXTERNAL_REFUND");
+    expect(stored.refundMethod).toBe("EXTERNAL_REFUND");
+    expect(await creditNoteCount(s)).toBe(0);
+    expect(await auditRows(s)).toHaveLength(1);
+  }, 60_000);
+
+  it("11b. M6: cancelling a PENDING refund (captured, not yet refunded) works and un-restocks the goods; it never counted in net sales", async () => {
+    const s = await seed("cancel-pending");
+    const r = await capture(s, 4, "REFUND");
+    expect(await stock(s)).toBe(4);
+    await inTenant(s, () => inline.cancel(r.id, staff(s)));
+    expect((await row(r.id)).status).toBe("CANCELLED");
+    expect(await stock(s)).toBe(0);
+    expect((await netSales(s)).net).toBe(100);
+    // and a cancelled pending refund can no longer be refunded
+    expect(codeOf(await fail(refund(s, r.id, "CASH", 40)))).toBe("RETURN_NOT_REFUNDABLE");
   }, 60_000);
 
   it("12. M6: cancelling a refunded return is 409 RETURN_REFUNDED_CASH: still REFUNDED, stock not taken back", async () => {
@@ -520,8 +544,9 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       expect(await fail(refund(s, r.id, "CASH", 40))).toBeDefined();
       const stored = await row(r.id);
       expect(stored.status).toBe("RECEIVED");
-      expect(stored.refundMethod).toBeNull();
+      expect(stored.refundMethod).toBe("EXTERNAL_REFUND"); // still the pending refund captured earlier
       expect(stored.refundedAt).toBeNull();
+      expect(stored.refundAmount).toBeNull();
       expect(await auditRows(s)).toHaveLength(0);
       expect((await netSales(s)).net).toBe(100);
     } finally {
