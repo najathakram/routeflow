@@ -10,11 +10,15 @@ import { BarcodeScanner } from "../../../components/BarcodeScanner";
 import { BarcodeFab } from "../../../components/BarcodeFab";
 import { resolveProductByCode } from "../../../lib/barcode-resolve";
 import { showToast } from "../../../lib/toast";
+import { decideScanResult } from "../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../lib/use-scan-match-picker";
 
 export default function AdjustPickerScreen() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
+  const matchPicker = useScanMatchPicker();
 
   // limit: 0 → return everything matching the search term so the operator
   // can find any SKU in their catalogue, not just the first 50.
@@ -32,6 +36,17 @@ export default function AdjustPickerScreen() {
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode(trimmed);
+      // B1220 parity: several fuzzy matches -> choose one; never silently open the first.
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "pick-from-list") {
+        matchPicker.open(
+          decision.matches,
+          "Select",
+          (p: { id: string }) => goToAdjust(p.id),
+          () => {},
+        );
+        return;
+      }
       if (!result.notFound) {
         goToAdjust(result.product.id);
         return;
@@ -84,6 +99,7 @@ export default function AdjustPickerScreen() {
       ) : null}
 
       <BarcodeFab onScanned={onScanned} hidden={scanOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </SafeAreaView>
   );
 }

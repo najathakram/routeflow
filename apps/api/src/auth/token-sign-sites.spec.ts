@@ -10,11 +10,19 @@ import * as path from "path";
 import { JwtService } from "@nestjs/jwt";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { JwtStrategy } from "./strategies/jwt.strategy";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+  type DerivedJwtLabel,
+} from "../common/derived-jwt-key";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
-const SECRET = "token-sign-sites-test-secret";
+const SECRET = "token-sign-sites-test-secret-0123456789";
 
 type Cls = "session-staff" | "session-impersonation" | "buyer" | "non-session";
+/** Which key signs the token: the session key, the refresh key, a per-purpose derived key, or an external provider's. */
+type Key = "access" | "refresh" | "provider" | `derived:${DerivedJwtLabel}`;
 
 const staffAccess = {
   sub: "u1",
@@ -54,33 +62,53 @@ const SHAPES: Record<string, Record<string, unknown>> = {
   },
 };
 
-/** "<file relative to src>#<n-th sign call in that file>" -> classification + payload shape. */
-const SITES: Record<string, { cls: Cls; shape: keyof typeof SHAPES }> = {
-  "auth/apple-oauth.service.ts#1": { cls: "non-session", shape: "provider-client-secret" },
-  "auth/apple-oauth.service.ts#2": { cls: "session-staff", shape: "staff-access" },
-  "auth/apple-oauth.service.ts#3": { cls: "non-session", shape: "staff-refresh" },
-  "auth/apple-oauth.service.ts#4": { cls: "buyer", shape: "buyer-access" },
-  "auth/apple-oauth.service.ts#5": { cls: "non-session", shape: "buyer-refresh" },
-  "auth/auth.service.ts#1": { cls: "session-staff", shape: "staff-access" },
-  "auth/auth.service.ts#2": { cls: "non-session", shape: "staff-refresh" },
-  "auth/auth.service.ts#3": { cls: "session-staff", shape: "staff-access" },
-  "auth/auth.service.ts#4": { cls: "non-session", shape: "staff-refresh" },
-  "auth/auth.service.ts#5": { cls: "session-staff", shape: "staff-access" },
-  "auth/auth.service.ts#6": { cls: "non-session", shape: "staff-refresh" },
-  "auth/google-oauth.service.ts#1": { cls: "session-staff", shape: "staff-access" },
-  "auth/google-oauth.service.ts#2": { cls: "non-session", shape: "staff-refresh" },
-  "auth/google-oauth.service.ts#3": { cls: "buyer", shape: "buyer-access" },
-  "auth/google-oauth.service.ts#4": { cls: "non-session", shape: "buyer-refresh" },
-  "tenants/tenants.service.ts#1": { cls: "non-session", shape: "email-link" },
-  "tenants/tenants.service.ts#2": { cls: "non-session", shape: "email-link" },
+type Site = { cls: Cls; shape: keyof typeof SHAPES; key: Key; aud: string | null };
+
+const ACCESS = { key: "access", aud: null } as const;
+const REFRESH = { key: "refresh", aud: null } as const;
+const EMAIL_LINK = {
+  key: `derived:${DERIVED_JWT_LABELS.emailVerify}`,
+  aud: "email-verify",
+} as const;
+
+/** "<file relative to src>#<n-th sign call in that file>" -> classification + payload shape + key. */
+const SITES: Record<string, Site> = {
+  "auth/apple-oauth.service.ts#1": {
+    cls: "non-session",
+    shape: "provider-client-secret",
+    key: "provider",
+    aud: null,
+  },
+  "auth/apple-oauth.service.ts#2": { cls: "session-staff", shape: "staff-access", ...ACCESS },
+  "auth/apple-oauth.service.ts#3": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
+  "auth/apple-oauth.service.ts#4": { cls: "buyer", shape: "buyer-access", ...ACCESS },
+  "auth/apple-oauth.service.ts#5": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
+  "auth/auth.service.ts#1": { cls: "session-staff", shape: "staff-access", ...ACCESS },
+  "auth/auth.service.ts#2": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
+  "auth/auth.service.ts#3": { cls: "session-staff", shape: "staff-access", ...ACCESS },
+  "auth/auth.service.ts#4": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
+  "auth/auth.service.ts#5": { cls: "session-staff", shape: "staff-access", ...ACCESS },
+  "auth/auth.service.ts#6": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
+  "auth/google-oauth.service.ts#1": { cls: "session-staff", shape: "staff-access", ...ACCESS },
+  "auth/google-oauth.service.ts#2": { cls: "non-session", shape: "staff-refresh", ...REFRESH },
+  "auth/google-oauth.service.ts#3": { cls: "buyer", shape: "buyer-access", ...ACCESS },
+  "auth/google-oauth.service.ts#4": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
+  "tenants/tenants.service.ts#1": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
+  "tenants/tenants.service.ts#2": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
   "platform-admin/platform-admin.service.ts#1": {
     cls: "session-impersonation",
     shape: "staff-impersonation",
+    ...ACCESS,
   },
-  "stripe-connect/stripe-connect.service.ts#1": { cls: "non-session", shape: "connect-state" },
-  "buyer/buyer-auth.service.ts#1": { cls: "buyer", shape: "buyer-access" },
-  "buyer/buyer-auth.service.ts#2": { cls: "non-session", shape: "buyer-refresh" },
-  "buyer/buyer-admin.service.ts#1": { cls: "buyer", shape: "buyer-access" },
+  "stripe-connect/stripe-connect.service.ts#1": {
+    cls: "non-session",
+    shape: "connect-state",
+    key: `derived:${DERIVED_JWT_LABELS.stripeConnectState}`,
+    aud: "stripe-connect-state",
+  },
+  "buyer/buyer-auth.service.ts#1": { cls: "buyer", shape: "buyer-access", ...ACCESS },
+  "buyer/buyer-auth.service.ts#2": { cls: "non-session", shape: "buyer-refresh", ...REFRESH },
+  "buyer/buyer-admin.service.ts#1": { cls: "buyer", shape: "buyer-access", ...ACCESS },
 };
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -113,6 +141,33 @@ function scanSites(): string[] {
 describe("token signing inventory", () => {
   it("classifies every signing site, and only those", () => {
     expect(scanSites()).toEqual(Object.keys(SITES).sort());
+    expect(Object.keys(SITES)).toHaveLength(22);
+  });
+
+  it("gives every derived-key site a known label and an audience, and every other site neither", () => {
+    const labels = new Set<string>(Object.values(DERIVED_JWT_LABELS));
+    for (const [site, { key, aud }] of Object.entries(SITES)) {
+      if (key.startsWith("derived:")) {
+        expect(labels.has(key.slice("derived:".length))).toBe(true);
+        expect(typeof aud).toBe("string");
+      } else {
+        expect([site, aud]).toEqual([site, null]);
+      }
+    }
+  });
+
+  it("derived-key sites sign through the shared helper's label and audience, never the raw secret", () => {
+    for (const [site, { key, aud }] of Object.entries(SITES)) {
+      if (!key.startsWith("derived:")) continue;
+      const file = fs.readFileSync(path.join(SRC_ROOT, site.split("#")[0]!), "utf8");
+      const name = Object.entries(DERIVED_JWT_LABELS).find(
+        ([, v]) => v === key.slice("derived:".length),
+      )![0];
+      expect(file).toContain(`DERIVED_JWT_LABELS.${name}`);
+      const audName = Object.entries(DERIVED_JWT_AUDIENCES).find(([, v]) => v === aud)?.[0];
+      expect(audName).toBeDefined();
+      expect(file).toContain(`DERIVED_JWT_AUDIENCES.${audName}`);
+    }
   });
 
   it("does not import another signing library outside the classified files", () => {
@@ -176,6 +231,37 @@ describe("session token admission by shape", () => {
         expect(client.disconnect).toHaveBeenCalledWith(true);
         expect(client.join).not.toHaveBeenCalled();
       }
+    },
+  );
+
+  it.each(entries.filter(([, s]) => s.key.startsWith("derived:")))(
+    "a token signed with the derived key of %s is admitted by neither strategy nor gateway",
+    async (_site, { shape, key, aud }) => {
+      const label = key.slice("derived:".length) as DerivedJwtLabel;
+      const token = jwt.sign(SHAPES[shape]!, {
+        secret: derivedJwtKey(label, SECRET),
+        audience: aud!,
+        expiresIn: "15m",
+      });
+      const outcome = await new Promise<string>((resolve) => {
+        const s = strategy as any;
+        s.success = () => resolve("success");
+        s.fail = () => resolve("fail");
+        s.error = () => resolve("error");
+        s.authenticate({ headers: { authorization: `Bearer ${token}` } });
+      });
+      expect(outcome).not.toBe("success");
+
+      const gateway = new RouteFlowGateway(jwt, { user: { findMany: jest.fn() } } as any);
+      const client: any = {
+        handshake: { auth: { token }, headers: {} },
+        data: {},
+        join: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      await gateway.handleConnection(client);
+      expect(client.disconnect).toHaveBeenCalledWith(true);
+      expect(client.join).not.toHaveBeenCalled();
     },
   );
 

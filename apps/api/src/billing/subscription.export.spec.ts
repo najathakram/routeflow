@@ -1,3 +1,4 @@
+import { BILLING_EXPORT_INVOICE_FIELDS } from "./billing-export-fields";
 import { SubscriptionService } from "./subscription.service";
 
 const TENANT = "t-1";
@@ -43,9 +44,7 @@ describe("SubscriptionService.getExport (B1187)", () => {
   it("projects invoices through the allowlist", async () => {
     const { svc } = build([], []);
     const out = await svc.getExport(TENANT);
-    expect(Object.keys(out.invoices[0]).sort()).toEqual(
-      ["amount", "cycle", "issuedAt", "number", "status"].sort(),
-    );
+    expect(Object.keys(out.invoices[0]).sort()).toEqual([...BILLING_EXPORT_INVOICE_FIELDS].sort());
   });
 
   it("actor: a tenant user is 'you'", async () => {
@@ -92,6 +91,14 @@ describe("SubscriptionService.getExport (B1187)", () => {
       "stripeSynced",
       "platformAdmin",
       "futureColumn",
+      // Admin-only RfInvoice columns (manual invoices due).
+      "paidById",
+      "paidNote",
+      "voidReason",
+      "issuedById",
+      "sendCount",
+      "lastSentAt",
+      "needsReview",
     ]) {
       expect(json).not.toContain(`"${k}"`);
     }
