@@ -11,6 +11,11 @@ import {
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
 import { FeatureOverrideService } from "./feature-override.service";
+import {
+  deriveExportActor,
+  projectBillingEventForExport,
+  projectInvoiceForExport,
+} from "./billing-export-fields";
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -139,7 +144,31 @@ export class SubscriptionService {
         take: 500,
       }),
     ]);
-    return { exportedAt: new Date().toISOString(), subscription, usage, billingEvents, invoices };
+    // B1187 / SA-718: both arrays are PROJECTED through the allowlists in billing-export-fields.ts;
+    // `actorId` becomes a derived label and is never exported.
+    const actorIds = [
+      ...new Set(billingEvents.map((e) => e.actorId).filter((id): id is string => !!id)),
+    ];
+    // Plain (non-forTenant) read: platform staff rows carry no tenantId and must resolve too.
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, role: true, tenantId: true },
+        })
+      : [];
+    const actorById = new Map(actors.map((u) => [u.id, u]));
+    return {
+      exportedAt: new Date().toISOString(),
+      subscription,
+      usage,
+      billingEvents: billingEvents.map((e) =>
+        projectBillingEventForExport(
+          e,
+          deriveExportActor(e.actorId, e.actorId ? actorById.get(e.actorId) : undefined, tenantId),
+        ),
+      ),
+      invoices: invoices.map((i) => projectInvoiceForExport(i)),
+    };
   }
 
   /**
