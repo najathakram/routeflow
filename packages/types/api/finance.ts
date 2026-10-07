@@ -29,6 +29,9 @@ export interface CreateInvoiceItem {
   /** Optional box/piece split for boxed products. Server prorates the line. */
   boxes?: number;
   pieces?: number;
+  /** Unit-ladder level label (e.g. "Case"). A unit line is a whole count at a per-unit
+   *  price and carries no boxes/pieces. Omit for a pack (Box/Piece) line. */
+  unitLabel?: string;
   /** BUY_N_GET_M: whole free SELLING units on this line (boxes for a boxed line).
    *  Server subtracts them before pricing — MUST round-trip on an items PATCH. */
   promoFreeUnits?: number;
