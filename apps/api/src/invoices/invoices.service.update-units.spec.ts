@@ -324,6 +324,44 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     expect(row).toEqual(prisma.invoice.create.mock.calls[0][0].data.items.create[0]);
   });
 
+  describe("factor snapshot: the ladder Case factor changes 12 -> 10 after the draft was saved", () => {
+    beforeEach(() => {
+      scopedUnits.findMany.mockResolvedValue([{ ...ladder[0], factorToBase: 10 }]);
+    });
+
+    it("(a) an edited count on the existing Case row keeps ITS factor 12 (the order path's rule 2)", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([caseLine({ id: "row-1", qty: 5 })]);
+      expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+        unitLabel: "Case",
+        unitsPerBox: 12,
+        boxes: 5,
+        qty: 60,
+        subtotal: 120,
+      });
+    });
+
+    it("(b) a newly added Case line uses the live ladder factor 10", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await update([caseLine({ id: "row-1" }), caseLine({ qty: 2 })]);
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled(); // row-1 untouched
+      expect(written()[0]).toMatchObject({ unitsPerBox: 10, boxes: 2, qty: 20, subtotal: 48 });
+    });
+
+    it("(c) a pack row re-sent as Case uses the live factor 10", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        storedCase({ unitLabel: null, unitsPerBox: 24, boxes: 2, pieces: 3, qty: 51 }),
+      ]);
+      await update([caseLine({ id: "row-1" })]);
+      expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+        unitLabel: "Case",
+        unitsPerBox: 10,
+        boxes: 3,
+        qty: 30,
+      });
+    });
+  });
+
   it("a pack-only PATCH reads no ladder and never asks for flag.units_v1", async () => {
     await update([{ productId: "p1", description: "W", qty: 2, unitPrice: 5 }]);
     expect(scopedUnits.findMany).not.toHaveBeenCalled();
