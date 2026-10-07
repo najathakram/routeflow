@@ -69,9 +69,10 @@ jest.mock("@/lib/api/portal-approvals", () => ({
   usePendingPortalApprovals: () => ({ data: [] }),
 }));
 jest.mock("@/lib/hooks/useRealtimeUpdates", () => ({ useRealtimeUpdates: () => undefined }));
+let mockNotifications: unknown[] = [];
 jest.mock("@/lib/hooks/useNotifications", () => ({
   useNotifications: () => ({
-    notifications: [],
+    notifications: mockNotifications,
     unreadCount: 0,
     markAllRead: jest.fn(),
     clear: jest.fn(),
@@ -138,6 +139,7 @@ beforeEach(() => {
   mockLogout.mockClear();
   mockSetPalette.mockClear();
   mockSetDriveMode.mockClear();
+  mockNotifications = [];
   mockDriveMode = false;
   client = createTestQueryClient();
   setItemKeys = [];
@@ -408,6 +410,54 @@ describe("every other way to leave is blocked while a sale is being recorded", (
       .getByTestId("sidebar-drawer-aside")
       .querySelector('a[href="/customers"]') as HTMLAnchorElement;
     expect(fireEvent.click(link)).toBe(false);
+  });
+
+  it("a bell notification link is cancelled", async () => {
+    mockNotifications = [
+      {
+        id: "n1",
+        type: "order",
+        title: "New order",
+        description: "d",
+        timestamp: Date.now(),
+        read: true,
+        href: "/orders/1",
+      },
+    ];
+    busyCounter();
+    const bell = within(registerHeader()).getByRole("button", { name: /notifications/i });
+    fireEvent.pointerDown(bell, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(bell, { key: "Enter" });
+    const link = (await screen.findByText("New order")).closest("a") as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(false);
+    expect(screen.getByText(BLOCKED)).toBeInTheDocument();
+  });
+
+  it("the buyer-portal switch link is cancelled", async () => {
+    busyCounter();
+    openMenu();
+    const link = await screen.findByRole("menuitem", { name: /buyer portal/i });
+    expect(fireEvent.click(link)).toBe(false);
+  });
+
+  it("NOT busy: the bell link and the portal switch navigate as before", async () => {
+    mockNotifications = [
+      {
+        id: "n1",
+        type: "order",
+        title: "New order",
+        description: "d",
+        timestamp: Date.now(),
+        read: true,
+        href: "/orders/1",
+      },
+    ];
+    mount(COUNTER);
+    const bell = within(registerHeader()).getByRole("button", { name: /notifications/i });
+    fireEvent.pointerDown(bell, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(bell, { key: "Enter" });
+    const link = (await screen.findByText("New order")).closest("a") as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(true);
   });
 
   it("the banner goes away once the sale settles", () => {
