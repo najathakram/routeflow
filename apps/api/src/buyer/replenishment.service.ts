@@ -2,7 +2,11 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { firstSignableImageKey } from "../products/product-image-keys";
-import { isBuyerVisibleProduct, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import {
+  isBuyerVisibleProduct,
+  NO_BUYER_RESTRICTIONS,
+  PORTAL_PARENT_SELECT,
+} from "./buyer-product-visibility";
 
 /** Where a product sits against its inferred reorder cadence. */
 export type ReplenishmentState = "low" | "due-soon" | "ok";
@@ -42,7 +46,7 @@ interface EstProduct {
   isActive: boolean;
   kind: string;
   portalVisible: boolean;
-  parent: { portalVisible: boolean } | null;
+  parent: { portalVisible: boolean; isActive: boolean } | null;
 }
 
 /**
@@ -86,7 +90,7 @@ export class ReplenishmentService {
                 isActive: true,
                 kind: true,
                 portalVisible: true,
-                parent: { select: { portalVisible: true } },
+                parent: { select: PORTAL_PARENT_SELECT },
               },
             },
           },

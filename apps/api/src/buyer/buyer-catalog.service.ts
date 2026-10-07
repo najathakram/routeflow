@@ -18,6 +18,7 @@ import type { BuyerProduct } from "@routeflow/types";
 import {
   buyerVisibleProductWhere,
   isBuyerVisibleProduct,
+  PORTAL_PARENT_SELECT,
   NO_BUYER_RESTRICTIONS,
 } from "./buyer-product-visibility";
 
@@ -384,7 +385,10 @@ export class BuyerCatalogService {
     // The visibility twin (never an inline copy of the rule, L-167): a variant shows only when sellable, visible
     // and its parent (this product, already visible) is visible.
     const activeVariants: any[] = ((product as any).variants ?? []).filter((v: any) =>
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...v, parent: { portalVisible: true } }),
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        ...v,
+        parent: { portalVisible: true, isActive: product.isActive },
+      }),
     );
     // Tier overrides for the parent AND every variant row in one query: a variant
     // carrying its own CustomerPrice must price identically here and on its own
@@ -468,7 +472,7 @@ export class BuyerCatalogService {
       // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
       where: { buyerAccountId, customerId },
       include: {
-        product: { include: { parent: { select: { portalVisible: true } } } },
+        product: { include: { parent: { select: PORTAL_PARENT_SELECT } } },
       },
       orderBy: { createdAt: "desc" },
     });

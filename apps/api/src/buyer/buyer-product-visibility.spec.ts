@@ -9,7 +9,13 @@ import {
 import { sellableProductWhere } from "../products/sellable-product-where";
 
 const BASE = [
-  { AND: [{ isActive: true }, { kind: { not: "FAMILY" } }] },
+  {
+    AND: [
+      { isActive: true },
+      { kind: { not: "FAMILY" } },
+      { OR: [{ parentProductId: null }, { parent: { isActive: true } }] },
+    ],
+  },
   { portalVisible: true },
   { OR: [{ parentProductId: null }, { parent: { portalVisible: true } }] },
 ];
@@ -62,7 +68,7 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
     isActive: true,
     kind: "STANDARD",
     portalVisible: true,
-    parent: null as { portalVisible: boolean } | null,
+    parent: null as { portalVisible: boolean; isActive: boolean } | null,
   };
 
   it("visible only when sellable, not hidden, parent not hidden, not blocked", () => {
@@ -72,11 +78,27 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
       false,
     );
     expect(
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, parent: { portalVisible: false } }),
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        ...row,
+        parent: { portalVisible: false, isActive: true },
+      }),
     ).toBe(false);
     expect(
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, parent: { portalVisible: true } }),
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        ...row,
+        parent: { portalVisible: true, isActive: true },
+      }),
     ).toBe(true);
+  });
+
+  it("a variant under an INACTIVE parent family is not visible to a buyer (B1213)", () => {
+    expect(
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, {
+        ...row,
+        kind: "VARIANT",
+        parent: { portalVisible: true, isActive: false },
+      }),
+    ).toBe(false);
   });
 
   it("a FAMILY container is never visible", () => {
@@ -114,7 +136,12 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
     parent: null,
   };
   const hidden = { ...ok, id: "h", name: "Hidden One", portalVisible: false };
-  const underHidden = { ...ok, id: "v", name: "Variant Two", parent: { portalVisible: false } };
+  const underHidden = {
+    ...ok,
+    id: "v",
+    name: "Variant Two",
+    parent: { portalVisible: false, isActive: true },
+  };
   const family = { ...ok, id: "f", name: "Family", kind: "FAMILY" };
   const bodyOf = (fn: () => void) => {
     try {
@@ -165,6 +192,20 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
       "productId",
       "productName",
       "reason",
+    ]);
+  });
+
+  it("a variant whose parent family is inactive is refused like a hidden one (B1213)", () => {
+    const orphan = {
+      ...ok,
+      id: "o2",
+      name: "Orphan Variant",
+      kind: "VARIANT",
+      parent: { portalVisible: true, isActive: false },
+    };
+    const body = bodyOf(() => assertBuyerMayOrder([orphan], new Set()));
+    expect(body!.blockedLines).toEqual([
+      { productId: "o2", productName: "Orphan Variant", reason: "HIDDEN_FROM_PORTAL" },
     ]);
   });
 

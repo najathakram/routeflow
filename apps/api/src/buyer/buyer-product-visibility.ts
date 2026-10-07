@@ -1,6 +1,10 @@
 import { hiddenFromPortalRestriction } from "../selling-restrictions/selling-restrictions.service";
 import type { Prisma } from "@prisma/client";
-import { isSellableProduct, sellableProductWhere } from "../products/sellable-product-where";
+import {
+  isSellableProduct,
+  SELLABLE_PARENT_FIELDS,
+  sellableProductWhere,
+} from "../products/sellable-product-where";
 
 /**
  * What a buyer's request knows about selling restrictions. `restrictedIds` is the set of product ids the governing
@@ -60,7 +64,7 @@ export function isBuyerVisibleProduct(
     isActive: boolean;
     kind: string;
     portalVisible: boolean;
-    parent: { portalVisible: boolean } | null;
+    parent: { portalVisible: boolean; isActive: boolean } | null;
   },
 ): boolean {
   return (
@@ -74,7 +78,7 @@ export function isBuyerVisibleProduct(
 /**
  * The twin WITHOUT the blocked-id clause, for the order-write gates (create / edit-add): there the selling-restrictions
  * engine (`checkLinesSellable`) is the authority, so the gate only refuses what the catalog would never show
- * (inactive, FAMILY, hidden, hidden parent). Same required fields as the twin.
+ * (inactive, FAMILY, hidden, hidden or inactive parent). Same required fields as the twin.
  */
 export function isBuyerVisibleBase(p: Parameters<typeof isBuyerVisibleProduct>[1]): boolean {
   return isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, p);
@@ -91,7 +95,7 @@ interface OrderableProduct {
   kind: string;
   portalVisible: boolean;
   /** The loaded parent (null = standalone). */
-  parent: { portalVisible: boolean } | null;
+  parent: { portalVisible: boolean; isActive: boolean } | null;
 }
 
 /**
@@ -120,8 +124,12 @@ export function assertBuyerMayOrder(
   );
 }
 
-/** The parent's `portalVisible`, which the visibility gate needs on every product it judges (a hidden parent hides its variants). */
-export const PORTAL_PARENT_INCLUDE = { parent: { select: { portalVisible: true } } } as const;
+/**
+ * The parent's `portalVisible` and `isActive`, which the visibility gate needs on every product it judges (a hidden or
+ * inactive parent hides its variants).
+ */
+export const PORTAL_PARENT_SELECT = { portalVisible: true, ...SELLABLE_PARENT_FIELDS } as const;
+export const PORTAL_PARENT_INCLUDE = { parent: { select: PORTAL_PARENT_SELECT } } as const;
 
 /** `findMany` args for the products an order names: by id, WITH the parent's `portalVisible` the gate needs. */
 export const portalGateArgs = (ids: string[]) =>

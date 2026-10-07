@@ -30,7 +30,8 @@ describe("buyer product visibility call sites", () => {
 
   it("the clause is owned by the ONE sellable builder (WS6): the buyer builder composes it, never repeats it", () => {
     const sellable = join(dir, "..", "products", "sellable-product-where.ts");
-    expect(strip(readFileSync(sellable, "utf8")).match(RAW_ACTIVE)).toHaveLength(1);
+    // Two: the product's own flag and its parent family's (B1213: a variant is only as live as its family).
+    expect(strip(readFileSync(sellable, "utf8")).match(RAW_ACTIVE)).toHaveLength(2);
     const builder = strip(readFileSync(join(dir, BUILDER), "utf8"));
     expect(builder.match(RAW_ACTIVE)).toBeNull();
     expect(builder).toContain("sellableProductWhere()");

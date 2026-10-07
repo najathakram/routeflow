@@ -81,6 +81,13 @@ import {
 } from "./family-price";
 import { assertValidParent } from "./product-parent";
 import {
+  activeVariantIds,
+  assertParentActiveForReactivation,
+  cascadeDeactivate,
+  familyHasActiveVariants,
+  variantCodes,
+} from "./product-family-cascade";
+import {
   barcodeRowsToView,
   liveBarcodeRows,
   mirrorableImageKeys,
@@ -1069,6 +1076,8 @@ export class ProductsService {
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
     // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
     delete data.deactivateHolderIds;
+    // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
+    delete data.confirmCascade;
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1163,6 +1172,7 @@ export class ProductsService {
         : "off";
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
+    let cascaded: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
@@ -1171,6 +1181,12 @@ export class ProductsService {
       const deactivating = existing.isActive !== false && data.isActive === false;
       const effectiveParent =
         dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      // B1213: deactivating a family that still has ACTIVE variants is a coded 409 unless confirmed; a confirmed one
+      // deactivates them in this tx, so their codes join the ONE sorted lock call below.
+      const cascadeIds = deactivating ? await activeVariantIds(tx, tenantId, id) : [];
+      if (cascadeIds.length > 0 && !dto.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
       // ONE sorted lockBarcodeCodes call for EVERY code this write can touch, taken before the first write or row lock
       // (SA-572c / Opus #2860 B2): the new and old barcode, this product's own live and retired codes (level rows
       // too), the claims and, for the one-tx door, the blocking holders' live codes (their codes are released below).
@@ -1180,6 +1196,7 @@ export class ProductsService {
         existing.barcode,
         ...claims.map((c) => c.value),
         ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
         ...(reactivating
           ? await reactivationLockCodes(tx, {
               tenantId,
@@ -1192,6 +1209,19 @@ export class ProductsService {
           : []),
       ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, lockList);
+      // B1213: a variant is only as live as its family. The family row is locked before anything of this variant is
+      // written (house order F -> V); a CHANGED parent is judged by assertValidParent below, which refuses an
+      // inactive one.
+      if (
+        reactivating &&
+        existing.parentProductId &&
+        (dto.parentProductId === undefined || dto.parentProductId === existing.parentProductId)
+      ) {
+        await assertParentActiveForReactivation(tx, {
+          tenantId,
+          parentId: existing.parentProductId,
+        });
+      }
       if (reactivating) {
         // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
         // `deactivateHolderIds` exactly that set is deactivated in this tx (codes -> name -> rows sorted).
@@ -1271,6 +1301,13 @@ export class ProductsService {
       // its row lock; the UPDATE below must never be the first thing to lock the row.
       if (deactivating) {
         await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+        // The family row is held now: its variants follow in id order (re-read under the lock).
+        cascaded = await cascadeDeactivate(tx, {
+          tenantId,
+          familyId: id,
+          lockedCodes: new Set(lockList),
+          confirmed: !!dto.confirmCascade,
+        });
       }
       let row;
       try {
@@ -1307,7 +1344,7 @@ export class ProductsService {
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
     // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
-    if (doorDeactivated.length > 0) this.emitProductChanged(null, "bulk");
+    if (doorDeactivated.length > 0 || cascaded.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     return updated;
@@ -1511,7 +1548,7 @@ export class ProductsService {
     return { succeeded, failed };
   }
 
-  async remove(id: string) {
+  async remove(id: string, options?: { confirmCascade?: boolean }) {
     await this.findOne(id);
     const activeItems = await this.prisma.forTenant().orderItem.count({
       where: { productId: id, status: { notIn: ["DELIVERED", "CANCELLED"] } },
@@ -1521,16 +1558,33 @@ export class ProductsService {
     }
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
+    let cascaded: string[] = [];
     const archived = await this.prisma.tenantTransaction(async (tx: any) => {
+      // B1213: archiving a family with ACTIVE variants is a coded 409 unless confirmed; a confirmed one archives them
+      // in this tx, so their codes join the ONE sorted lock call.
+      const cascadeIds = await activeVariantIds(tx, tenantId, id);
+      if (cascadeIds.length > 0 && !options?.confirmCascade) {
+        throw familyHasActiveVariants(cascadeIds.length);
+      }
       // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
       // write after (house order, Opus #2860 B1).
       // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
-      const codes = (await peekProductCodes(tx, tenantId, id)).filter((c) => c.trim().length > 0);
+      const codes = [
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(await variantCodes(tx, tenantId, cascadeIds)),
+      ].filter((c) => c.trim().length > 0);
       await lockBarcodeCodes(tx, tenantId, codes);
       await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
+      cascaded = await cascadeDeactivate(tx, {
+        tenantId,
+        familyId: id,
+        lockedCodes: new Set(codes),
+        confirmed: !!options?.confirmCascade,
+      });
       return tx.product.update({ where: { id }, data: { isActive: false } });
     });
     this.emitProductChanged(id, "archived");
+    if (cascaded.length > 0) this.emitProductChanged(null, "bulk");
     return archived;
   }
 

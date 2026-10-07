@@ -19,6 +19,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { sellableProductWhere } from "./sellable-product-where";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -168,6 +169,66 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       const result = await inTenant(tenantId, () => service.bulkDelete([fam.id, v1.id, v2.id]));
       expect(result).toMatchObject({ deleted: 3, softDeleted: 0, skipped: [] });
       expect(await prisma.product.count({ where: { tenantId } })).toBe(0);
+    });
+  });
+
+  describe("B1213: a variant is only as live as its family", () => {
+    it("sellableProductWhere hides a variant whose parent family is inactive, and shows it under an active one", async () => {
+      const tenantId = await seedTenant("sellable");
+      const live = await row(tenantId, "Acme Live", { kind: "FAMILY" });
+      const gone = await row(tenantId, "Acme Gone", { kind: "FAMILY", isActive: false });
+      const under = await row(tenantId, "Cherry", { kind: "VARIANT", parentProductId: live.id });
+      const orphan = await row(tenantId, "Lime", { kind: "VARIANT", parentProductId: gone.id });
+      const solo = await row(tenantId, "Solo");
+      const ids = await inTenant(tenantId, () =>
+        prisma
+          .forTenant()
+          .product.findMany({ where: sellableProductWhere(), select: { id: true } }),
+      );
+      const got = ids.map((r) => r.id).sort();
+      expect(got).toEqual([under.id, solo.id].sort());
+      expect(got).not.toContain(orphan.id);
+    });
+
+    it("deactivating a family with active variants is a 409 until confirmed; confirmed, the variants follow", async () => {
+      const tenantId = await seedTenant("cascade");
+      const fam = await row(tenantId, "Acme Soda", { kind: "FAMILY" });
+      const v1 = await row(tenantId, "Cherry", {
+        kind: "VARIANT",
+        parentProductId: fam.id,
+        sku: `CH-${RUN_SUFFIX}`,
+      });
+      const err = await inTenant(tenantId, () =>
+        service.update(fam.id, { isActive: false } as never),
+      ).catch((e: unknown) => e);
+      expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: "FAMILY_HAS_ACTIVE_VARIANTS",
+        variantCount: 1,
+      });
+      await inTenant(tenantId, () =>
+        service.update(fam.id, { isActive: false, confirmCascade: true } as never),
+      );
+      const after = await prisma.product.findUniqueOrThrow({
+        where: { id: v1.id },
+        select: { isActive: true, sku: true, retiredSku: true },
+      });
+      expect(after).toEqual({ isActive: false, sku: null, retiredSku: `CH-${RUN_SUFFIX}` });
+    });
+
+    it("a variant cannot be reactivated under an inactive family", async () => {
+      const tenantId = await seedTenant("react");
+      const fam = await row(tenantId, "Acme Soda", { kind: "FAMILY", isActive: false });
+      const v1 = await row(tenantId, "Cherry", {
+        kind: "VARIANT",
+        parentProductId: fam.id,
+        isActive: false,
+      });
+      const err = await inTenant(tenantId, () =>
+        service.update(v1.id, { isActive: true } as never),
+      ).catch((e: unknown) => e);
+      expect((err as { getResponse(): unknown }).getResponse()).toMatchObject({
+        code: "VARIANT_PARENT_INACTIVE",
+      });
     });
   });
 });
