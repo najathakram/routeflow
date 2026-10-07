@@ -463,6 +463,39 @@ describe("CreateOrderModal - saved, credits not applied (B1201)", () => {
     expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/press create again/i);
   });
 
+  it("the coded 503 is a KNOWN outcome: closing raises no 'may have gone through' warning and the next open mints a fresh key", async () => {
+    post
+      .mockRejectedValueOnce({
+        response: { status: 503, data: { code: "ORDER_SAVED_CREDITS_PENDING", orderId: "ord-90" } },
+      })
+      .mockResolvedValue({ data: { id: "o2" } });
+    const onViewOrder = jest.fn();
+    mockCustomers = [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }];
+    mockResolveProductByCode.mockResolvedValue(product("p1"));
+    const fill = async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+      capturedOnScan!("111");
+      await screen.findByText("Widget p1");
+      fireEvent.click(createBtn());
+      await flush();
+    };
+    const { rerender } = renderWithProviders(
+      <CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={onViewOrder} />,
+    );
+    await fill();
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("ord-90"));
+    mockToast.mockClear();
+    rerender(<CreateOrderModal isOpen={false} onClose={jest.fn()} onViewOrder={onViewOrder} />);
+    expect(JSON.stringify(mockToast.mock.calls)).not.toMatch(/may have gone through/i);
+    rerender(<CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={onViewOrder} />);
+    await fill();
+    expect(orderPosts()).toHaveLength(2);
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
   it("a replay response carrying creditsPending (lost response) shows the same copy and opens the order", async () => {
     post.mockResolvedValue({ data: { id: "ord-89", creditsPending: true } });
     const onViewOrder = jest.fn();
