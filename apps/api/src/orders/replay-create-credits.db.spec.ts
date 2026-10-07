@@ -316,7 +316,7 @@ describeDb(
       expect(await intents(orderId)).toBe(0);
     }, 60_000);
 
-    it("after a REAL cancel through changeStatus the replay writes no intents onto the cancelled order", async () => {
+    it("after a REAL cancel through changeStatus the replay is a 409 CART_MISMATCH and writes no intents", async () => {
       const c = await customer();
       const note = await noteFor(c.id);
       const key = `b1201-${run}-cancel`;
@@ -328,7 +328,16 @@ describeDb(
       expect((await raw.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe(
         "CANCELLED",
       );
-      await create(c.id, key, note.id);
+      // A non-draft cancel marks every line CANCELLED (changeStatus: "Mark what this cancel released"),
+      // and assertReplaySameCart compares the request against the stored NON-cancelled lines, so the
+      // cart no longer matches: the replay is the coded 409 CART_MISMATCH carrying the order id. A 409
+      // writes nothing - the safe invariant. (Same as the edit case: it never reaches any credit write.)
+      const refused: any = await errorOf(create(c.id, key, note.id));
+      expect(refused?.getStatus?.()).toBe(409);
+      expect(refused.getResponse()).toMatchObject({
+        code: "IDEMPOTENCY_KEY_CART_MISMATCH",
+        orderId,
+      });
       expect(await intents(orderId)).toBe(0);
     }, 60_000);
 
