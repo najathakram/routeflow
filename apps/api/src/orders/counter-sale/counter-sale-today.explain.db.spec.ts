@@ -10,7 +10,9 @@
  * Hard assertions are correctness only (the page returns `limit` rows, the summary counts every order): a plan is
  * evidence for a human, not a CI assertion (a small table legitimately gets a seq scan). The reading rule from the
  * brief: if the page query or any summary query exceeds ~150 ms at 5,000 orders, or shows a Seq Scan on "Order",
- * file the follow-up migration `(tenantId, counterSale, createdAt)` as its own PR; this PR adds NO index.
+ * file the follow-up migration `(tenantId, counterSale, createdAt)` as its own PR; this PR adds NO index. The money-in
+ * query now filters `InvoicePayment.paidAt` (only the `tenantId` and `invoiceId` indexes help it): read its plan too,
+ * and if it is slow file `(tenantId, paidAt)` the same way.
  *
  * NOT RUN by the authoring lane (no Postgres): the DB lane runs it (`npm run local:test:db`, test tenant only,
  * collected only by jest.db.config.js).
@@ -24,6 +26,7 @@ import {
   counterSalesWhere,
   liveCounterSalesWhere,
   pageQuery,
+  paidOnDaysSalesWhere,
   salePaymentsWhere,
   windowReturnsWhere,
 } from "./counter-sale-today";
@@ -103,9 +106,10 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
       })),
     });
     await raw.invoicePayment.createMany({
-      data: invoiceIds.map((invoiceId) => ({
+      data: invoiceIds.map((invoiceId, i) => ({
         invoiceId,
         tenantId,
+        paidAt: at(i),
         amount: 10,
         method: "CASH" as const,
         status: "PAID" as const,
@@ -172,12 +176,22 @@ describeDb(`POS-7b-1 — today's sales query plans (${N} orders)`, () => {
       });
       cash = Number(g.find((x) => x.method === "CASH")?._sum.amount ?? 0);
     });
+    await explain("summary.paidOnSales", async () => {
+      await raw.invoicePayment.aggregate({
+        where: paidOnDaysSalesWhere(tenantId, WINDOW),
+        _sum: { amount: true },
+      });
+    });
     await explain("summary.returns", async () => {
-      await raw.return.groupBy({
-        by: ["refundMethod"],
+      await raw.return.findMany({
         where: windowReturnsWhere(tenantId, WINDOW),
-        _count: { _all: true },
-        _sum: { refundAmount: true },
+        select: {
+          refundMethod: true,
+          refundAmount: true,
+          creditSubtotal: true,
+          creditTax: true,
+          creditCategoryTax: true,
+        },
       });
     });
     await explain("count", async () => {

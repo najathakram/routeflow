@@ -141,11 +141,15 @@ export interface TodaysSaleRow {
 export interface TodaysSalesSummary {
   /** live sales only: not cancelled, with at least one non-void invoice */
   sales: { count: number; total: number };
-  /** PAID payments on those sales; `other` is ACH / Zelle / other recorded later against a counter invoice */
+  /**
+   * Money that CAME IN on this day: PAID payments dated (paidAt) inside the day, on counter sales of ANY day. A
+   * day-1 sale left on account and paid in cash on day 2 counts in day 2's `cash` and `cashExpectedInDrawer`, not
+   * day 1's. (`sales` stays "rung this day".) `other` is ACH / Zelle / other recorded against a counter invoice.
+   */
   moneyIn: { cash: number; card: number; check: number; other: number; total: number };
-  /** credit-note and advance applications: NOT money in */
+  /** credit-note and advance applications dated inside the day: NOT money in */
   storeCreditUsed: number;
-  /** sales total minus everything paid (money in + store credit), never below 0 */
+  /** this day's sales total minus everything paid on those sales (any payment date, store credit included), never below 0 */
   onAccount: number;
   /**
    * Money given back, counted on the day it was given (an earlier day's sale included).

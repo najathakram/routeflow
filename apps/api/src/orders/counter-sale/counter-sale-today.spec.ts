@@ -245,8 +245,11 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
       prisma.invoicePayment.groupBy.mock.calls[0][0].where,
       prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice,
       prisma.invoicePayment.groupBy.mock.calls[0][0].where.invoice.order,
-      prisma.return.groupBy.mock.calls[0][0].where,
-      prisma.return.groupBy.mock.calls[0][0].where.order,
+      prisma.invoicePayment.aggregate.mock.calls[0][0].where,
+      prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice,
+      prisma.invoicePayment.aggregate.mock.calls[0][0].where.invoice.order,
+      prisma.return.findMany.mock.calls[0][0].where,
+      prisma.return.findMany.mock.calls[0][0].where.order,
     ];
     for (const w of wheres) expect(w.tenantId).toBe(T);
   });
@@ -263,10 +266,40 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     expect(prisma.invoicePayment.groupBy.mock.calls[0][0].where.status).toBe("PAID");
   });
 
+  it("MED-1: money in is keyed to the PAID date on counter sales of ANY day; on-account is measured on the day's own sales", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const start = iso("2026-10-07T04:00:00.000Z");
+    const end = iso("2026-10-08T04:00:00.000Z");
+    const money = prisma.invoicePayment.groupBy.mock.calls[0][0].where;
+    expect(money.paidAt).toEqual({ gte: start, lt: end });
+    expect(money.status).toBe("PAID");
+    expect(money.invoice.status).toEqual({ notIn: ["VOID", "WRITTEN_OFF"] });
+    // the SALE's own day is not a filter: a day-1 sale paid today counts today
+    expect(money.invoice.order).toEqual({
+      tenantId: T,
+      counterSale: true,
+      status: { not: "CANCELLED" },
+    });
+    const owed = prisma.invoicePayment.aggregate.mock.calls[0][0].where;
+    expect(owed.paidAt).toBeUndefined(); // any payment date
+    expect(owed.invoice.order.createdAt).toEqual({ gte: start, lt: end }); // the day's own sales
+  });
+
+  it("NIT: a sale with NO invoice is listed on the page but not counted: the summary's sale filter needs a live invoice", async () => {
+    const { prisma, call } = setup([row("2026-10-07T16:00:00.000Z")]);
+    const res = await call({}, NOW);
+    expect(res.data).toHaveLength(1); // the page's where has no invoice condition
+    expect(prisma.order.findMany.mock.calls[0][0].where.invoices).toBeUndefined();
+    expect(prisma.order.aggregate.mock.calls[0][0].where.invoices).toEqual({
+      some: { status: { notIn: ["VOID", "WRITTEN_OFF"] } },
+    });
+  });
+
   it("refunds are keyed to the refund date, on counter sales of ANY day (no sale-day filter on the order)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
-    const where = prisma.return.groupBy.mock.calls[0][0].where;
+    const where = prisma.return.findMany.mock.calls[0][0].where;
     expect(where.order).toEqual({ tenantId: T, counterSale: true });
     expect(where.order.createdAt).toBeUndefined();
     const start = iso("2026-10-07T04:00:00.000Z");
@@ -279,7 +312,7 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
 });
 
 describe("CounterSaleTodayService: query budget (test 12)", () => {
-  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly three summary queries", async () => {
+  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly four summary queries", async () => {
     const rows = Array.from({ length: 60 }, (_, i) =>
       row(
         `2026-10-07T${String(10 + Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}:00.000Z`,
@@ -293,10 +326,11 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(prisma.order.count).toHaveBeenCalledTimes(1);
     expect(prisma.order.aggregate).toHaveBeenCalledTimes(1);
     expect(prisma.invoicePayment.groupBy).toHaveBeenCalledTimes(1);
-    expect(prisma.return.groupBy).toHaveBeenCalledTimes(1);
+    expect(prisma.invoicePayment.aggregate).toHaveBeenCalledTimes(1);
+    expect(prisma.return.findMany).toHaveBeenCalledTimes(1);
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
-    expect(prisma.return.findMany).not.toHaveBeenCalled();
+    expect(prisma.return.groupBy).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
   });
@@ -306,7 +340,8 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     await call({ page: 2, limit: 1 }, NOW);
     expect(prisma.order.aggregate).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
-    expect(prisma.return.groupBy).not.toHaveBeenCalled();
+    expect(prisma.invoicePayment.aggregate).not.toHaveBeenCalled();
+    expect(prisma.return.findMany).not.toHaveBeenCalled();
     expect(prisma.order.findMany).toHaveBeenCalledTimes(1);
   });
 
