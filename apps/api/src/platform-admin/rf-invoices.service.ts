@@ -26,6 +26,7 @@ import {
 } from "../billing/rf-invoice/rf-invoice-issuer.service";
 import {
   RF_INVOICE_LEAD_DAYS,
+  rfInvoiceTestTenantSlugs,
   rfInvoicingMode,
   type RfInvoiceStatus,
 } from "../billing/rf-invoice/rf-invoice.constants";
@@ -48,7 +49,15 @@ const REFERENCE_REQUIRED_METHODS: readonly ExternalPaymentMethod[] = [
 const CARD_LIKE = /\d{13,19}/;
 const CARD_LIKE_MESSAGE = "Don't enter card or full account numbers.";
 
-const TENANT_SCOPE = { class: "PRODUCTION", deletedAt: null } as const;
+/**
+ * Tenants the queue shows: PRODUCTION and undeleted, plus any RF_INVOICE_TEST_TENANT_SLUGS (approved test
+ * tenants, e.g. for an e2e run). With no allowlist this is exactly the PRODUCTION scope.
+ */
+function tenantScope(slugs: string[]): Record<string, unknown> {
+  return slugs.length
+    ? { deletedAt: null, OR: [{ class: "PRODUCTION" }, { slug: { in: slugs } }] }
+    : { class: "PRODUCTION", deletedAt: null };
+}
 
 /** The queue row's columns: deliberately no paidNote, voidReason or actor ids. */
 const ROW_SELECT = {
@@ -103,7 +112,9 @@ export class RfInvoicesAdminService {
     private readonly prisma: PrismaService,
     private readonly builder: RfInvoiceBuilder,
     private readonly issuer: RfInvoiceIssuerService,
-  ) {}
+  ) {
+    rfInvoiceTestTenantSlugs(); // a non-test slug in RF_INVOICE_TEST_TENANT_SLUGS fails the boot
+  }
 
   // ─── Reads ────────────────────────────────────────────────────────────────
 
@@ -114,7 +125,7 @@ export class RfInvoicesAdminService {
     const today = dayStart(now);
 
     const where: Record<string, unknown> = {
-      tenant: { ...TENANT_SCOPE },
+      tenant: tenantScope(rfInvoiceTestTenantSlugs()),
       ...(q.tenantId ? { tenantId: q.tenantId } : {}),
       ...viewWhere(view, today),
     };
@@ -151,7 +162,8 @@ export class RfInvoicesAdminService {
 
   async summary(now: Date = new Date()): Promise<RfInvoiceSummary> {
     const today = dayStart(now);
-    const scope = { tenant: { ...TENANT_SCOPE } };
+    const slugs = rfInvoiceTestTenantSlugs();
+    const scope = { tenant: tenantScope(slugs) };
     const [openRows, byStatus, paid, subs] = await Promise.all([
       this.prisma.rfInvoice.findMany({
         where: { ...scope, status: "OPEN" },
@@ -164,7 +176,12 @@ export class RfInvoicesAdminService {
         _sum: { amount: true },
       }),
       this.prisma.tenantSubscription.findMany({
-        where: RF_INVOICE_CANDIDATE_WHERE,
+        where: slugs.length
+          ? ({
+              ...RF_INVOICE_CANDIDATE_WHERE,
+              tenant: { deletedAt: null, status: "ACTIVE", ...tenantScope(slugs) },
+            } as any)
+          : RF_INVOICE_CANDIDATE_WHERE,
         select: {
           tenantId: true,
           cycle: true,
@@ -244,7 +261,8 @@ export class RfInvoicesAdminService {
     }
     const method = dto.method as ExternalPaymentMethod;
     const reference = dto.reference?.trim() || null;
-    if (reference && CARD_LIKE.test(reference)) {
+    // spaces and dashes are stripped first: "4111 1111 1111 1111" is a card number too
+    if (reference && CARD_LIKE.test(reference.replace(/[\s-]/g, ""))) {
       throw new BadRequestException({
         code: API_ERROR_CODES.RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD,
         message: CARD_LIKE_MESSAGE,
@@ -317,7 +335,10 @@ export class RfInvoicesAdminService {
     }));
   }
 
-  /** POST tenants/:id/rf-invoices/issue - the cron's rules, run now for one tenant. */
+  /**
+   * POST tenants/:id/rf-invoices/issue - issues the next uninvoiced period NOW (no 7-day lead; the cron keeps
+   * its lead). Still refuses stale, suspended, cancel-at-period-end, not-manual, no-price and invoicing-off.
+   */
   async issueForTenant(
     tenantId: string,
     actorId: string,
@@ -346,20 +367,32 @@ export class RfInvoicesAdminService {
         externalPayment: true,
         stripeSubId: true,
         cancelAtPeriodEnd: true,
-        tenant: { select: { status: true, class: true, deletedAt: true } },
+        tenant: { select: { status: true, class: true, deletedAt: true, slug: true } },
       },
-    })) as IssuerSubscription | null;
-    if (!sub || !sub.externalPayment || sub.stripeSubId || sub.tenant?.class !== "PRODUCTION") {
+    })) as (IssuerSubscription & { tenant?: { slug?: string } }) | null;
+    // PRODUCTION, or an allowlisted approved test tenant (RF_INVOICE_TEST_TENANT_SLUGS); never the cron's rule
+    const allowlisted = rfInvoiceTestTenantSlugs().includes(sub?.tenant?.slug ?? "");
+    if (
+      !sub ||
+      !sub.externalPayment ||
+      sub.stripeSubId ||
+      (sub.tenant?.class !== "PRODUCTION" && !allowlisted)
+    ) {
       throw this.refuse(
         API_ERROR_CODES.RF_INVOICE_NOT_MANUAL,
         "This tenant is not on manual invoicing.",
       );
     }
-    if (!isCandidate(sub) || isStale(sub, now)) throw this.nothingToIssue();
+    const eligible = allowlisted
+      ? { ...sub, tenant: { ...sub.tenant!, class: "PRODUCTION" } }
+      : sub;
+    if (!isCandidate(eligible as IssuerSubscription) || isStale(sub, now)) {
+      throw this.nothingToIssue();
+    }
 
     let issuedId: string | null = null;
     let noPrice = false;
-    for (const window of await this.issuer.windowsFor(sub, now)) {
+    for (const window of await this.issuer.windowsFor(sub, now, Infinity)) {
       const r = await this.issuer.issuePeriod(sub, window, now, actorId);
       if (r.status === "issued") issuedId ??= r.invoice.id;
       else if (r.status === "no_price") noPrice = true;
@@ -503,13 +536,14 @@ export class RfInvoicesAdminService {
   }
 }
 
-/** The one definition of overdue / due-soon (UTC days); only an OPEN invoice is ever due. */
+/** The one definition of overdue / due-soon (UTC days); only an OPEN invoice is ever due (else dueState null). */
 function dueInfo(
   status: string,
   dueDate: Date | null,
   today: Date,
 ): { dueState: RfInvoiceRow["dueState"]; daysOverdue: number } {
-  if (status !== "OPEN" || !dueDate) return { dueState: "upcoming", daysOverdue: 0 };
+  if (status !== "OPEN") return { dueState: null, daysOverdue: 0 }; // a settled invoice is not due
+  if (!dueDate) return { dueState: "upcoming", daysOverdue: 0 };
   const delta = Math.round((dayStart(dueDate).getTime() - today.getTime()) / DAY);
   if (delta < 0) return { dueState: "overdue", daysOverdue: -delta };
   return { dueState: delta <= RF_INVOICE_LEAD_DAYS ? "due_soon" : "upcoming", daysOverdue: 0 };

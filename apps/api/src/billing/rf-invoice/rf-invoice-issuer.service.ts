@@ -157,8 +157,15 @@ export class RfInvoiceIssuerService {
     return summary;
   }
 
-  /** The periods due now for one subscription, earliest first. */
-  async windowsFor(sub: IssuerSubscription, now: Date): Promise<IssueWindow[]> {
+  /**
+   * The periods due now for one subscription, earliest first. The cron uses the 7-day lead; the
+   * platform-admin issue-now passes `Infinity` to issue the next uninvoiced period immediately.
+   */
+  async windowsFor(
+    sub: IssuerSubscription,
+    now: Date,
+    leadDays: number = RF_INVOICE_LEAD_DAYS,
+  ): Promise<IssueWindow[]> {
     const start = sub.periodStart as Date;
     const end = sub.periodEnd as Date;
     const length = end.getTime() - start.getTime();
@@ -173,7 +180,7 @@ export class RfInvoiceIssuerService {
     if (prior) windows.push({ periodStart: start, periodEnd: end });
 
     // (a) the next period, once it starts within the lead time.
-    if (end.getTime() - now.getTime() <= RF_INVOICE_LEAD_DAYS * DAY_MS) {
+    if (end.getTime() - now.getTime() <= leadDays * DAY_MS) {
       windows.push({ periodStart: end, periodEnd: new Date(end.getTime() + length) });
     }
     return windows;

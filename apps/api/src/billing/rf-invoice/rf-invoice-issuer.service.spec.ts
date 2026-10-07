@@ -11,7 +11,7 @@ jest.mock("../../common/db-locks", () => ({
 }));
 
 import { RfInvoiceBuilder } from "./rf-invoice-builder";
-import { RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
+import { RF_INVOICE_CANDIDATE_WHERE, RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
 import { RF_INVOICE_NUMBER_INDEX, RF_INVOICE_PERIOD_INDEX } from "./rf-invoice.constants";
 
 const NOW = new Date("2026-10-07T00:20:00.000Z");
@@ -197,6 +197,34 @@ describe("RfInvoiceIssuerService", () => {
     const { svc, invoices } = make({ subs: rows });
     await svc.runIssueDue(NOW);
     expect(invoices).toHaveLength(0);
+  });
+
+  it("CRON-3: an allowlisted test tenant (RF_INVOICE_TEST_TENANT_SLUGS) is NEVER cron-issued; the query stays PRODUCTION-only", async () => {
+    const OLD = process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv";
+    try {
+      const { svc, invoices, prisma } = make({
+        subs: [sub({ tenantId: "t-e2e" }, { class: "TEST", slug: "e2e-rfinv" })],
+      });
+      await svc.runIssueDue(NOW);
+      expect(invoices).toHaveLength(0);
+      expect(prisma.tenantSubscription.findMany.mock.calls[0][0].where).toBe(
+        RF_INVOICE_CANDIDATE_WHERE,
+      );
+      expect(RF_INVOICE_CANDIDATE_WHERE.tenant).toMatchObject({ class: "PRODUCTION" });
+    } finally {
+      if (OLD === undefined) delete process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+      else process.env.RF_INVOICE_TEST_TENANT_SLUGS = OLD;
+    }
+  });
+
+  it("windowsFor: the cron lead is 7 days; an infinite lead (issue-now) reaches the next period at once", async () => {
+    const far = sub({ periodEnd: new Date(NOW.getTime() + 20 * DAY) });
+    const { svc } = make({ subs: [far] });
+    expect(await svc.windowsFor(far as any, NOW)).toEqual([]);
+    const now = await svc.windowsFor(far as any, NOW, Infinity);
+    expect(now).toHaveLength(1);
+    expect(now[0].periodStart).toEqual(far.periodEnd);
   });
 
   it("CRON-4: RF_INVOICING_MODE unset (or junk) makes ZERO reads and writes", async () => {

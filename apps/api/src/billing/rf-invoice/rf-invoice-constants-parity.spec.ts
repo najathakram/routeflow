@@ -11,6 +11,7 @@ import {
   RF_INVOICE_LINE_KINDS,
   RF_INVOICE_STATUS_VALUES,
   RF_INVOICE_VIEW_VALUES,
+  rfInvoiceTestTenantSlugs,
 } from "./rf-invoice.constants";
 
 describe("rf-invoice constants parity", () => {
@@ -59,5 +60,17 @@ describe("rf-invoice constants parity", () => {
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_MARKED_PAID).toBe("RouteFlow invoice marked paid");
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_REOPENED).toBe("RouteFlow invoice reopened");
     expect(ADMIN_AUDIT_ACTION_LABELS.RF_INVOICE_VOIDED).toBe("RouteFlow invoice voided");
+  });
+
+  it("RF_INVOICE_TEST_TENANT_SLUGS: default empty; parses a trimmed list; a non-test slug throws", () => {
+    expect(rfInvoiceTestTenantSlugs(undefined)).toEqual([]);
+    expect(rfInvoiceTestTenantSlugs("")).toEqual([]);
+    expect(rfInvoiceTestTenantSlugs(" e2e-a , qa-b,,e2e-a ,test")).toEqual([
+      "e2e-a",
+      "qa-b",
+      "test",
+    ]);
+    expect(() => rfInvoiceTestTenantSlugs("e2e-a,acme")).toThrow(/not an approved test tenant/);
+    expect(() => rfInvoiceTestTenantSlugs("QA-upper")).toThrow();
   });
 });

@@ -245,8 +245,8 @@ describe("API-1 list: scope, row shape, derived due state", () => {
     });
     const { rows } = await t.svc.list({ view: "all" }, NOW);
     expect(rows.map((r) => [r.dueState, r.daysOverdue])).toEqual([
-      ["upcoming", 0],
-      ["upcoming", 0],
+      [null, 0],
+      [null, 0],
     ]);
   });
 });
@@ -529,10 +529,27 @@ describe("OWNER RULINGS on mark-paid", () => {
     expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD);
   });
 
-  it("12 digits and separated groups are fine", async () => {
+  it.each([
+    ["spaced groups", "4111 1111 1111 1111"],
+    ["dashed groups", "4111-1111-1111-1111"],
+    ["dashed groups in text", "ZEL 1234-5678-9012-3456 ok"],
+    ["mixed separators", "4111 - 1111-1111 1111"],
+  ])(
+    "a card number written with %s is refused (separators are stripped first)",
+    async (_n, ref) => {
+      const { t, p } = attempt({ method: "WIRE", reference: ref });
+      const e = await thrown(p);
+      expect(body(e).code).toBe(API_ERROR_CODES.RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD);
+      expect(body(e).message).toBe("Don't enter card or full account numbers.");
+      expect(t.prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("12 digits, a date-style reference and short groups are fine", async () => {
     await expect(attempt({ method: "ZELLE", reference: "411111111111" }).p).resolves.toBeTruthy();
+    await expect(attempt({ method: "WIRE", reference: "2026-10-07" }).p).resolves.toBeTruthy();
     await expect(
-      attempt({ method: "WIRE", reference: "1234-5678-9012-3456" }).p,
+      attempt({ method: "WIRE", reference: "ZEL 2026-10-07 #42" }).p,
     ).resolves.toBeTruthy();
   });
 
@@ -707,7 +724,7 @@ describe("API-9 issue now", () => {
     externalPayment: true,
     stripeSubId: null,
     cancelAtPeriodEnd: false,
-    tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: null, ...tenantOver },
+    tenant: { status: "ACTIVE", class: "PRODUCTION", deletedAt: null, slug: "acme", ...tenantOver },
     ...over,
   });
   const WINDOW = { periodStart: new Date(iso(5)), periodEnd: new Date(iso(35)) };
@@ -786,6 +803,19 @@ describe("API-9 issue now", () => {
     );
   });
 
+  it.each([
+    ["suspended", {}, { status: "SUSPENDED_X" }],
+    ["cancelling at period end", { cancelAtPeriodEnd: true }, {}],
+    ["no plan", { planKey: null }, {}],
+  ])("a %s tenant is still refused with NOTHING_TO_ISSUE", async (_n, subOver, tenantOver) => {
+    const t = setup(goodSub(subOver as any, tenantOver as any));
+    t.issuer.windowsFor.mockResolvedValue([WINDOW]);
+    expect(body(await thrown(t.svc.issueForTenant("tenant-acme", ADMIN, NOW))).code).toBe(
+      API_ERROR_CODES.RF_INVOICE_NOTHING_TO_ISSUE,
+    );
+    expect(t.issuer.issuePeriod).not.toHaveBeenCalled();
+  });
+
   it("issues the due period as the acting admin and returns the row", async () => {
     const t = setup(goodSub(), "silent");
     t.issuer.windowsFor.mockResolvedValue([WINDOW]);
@@ -794,6 +824,8 @@ describe("API-9 issue now", () => {
       invoice: { id: "new-1", number: "RF-2026-0002" },
     });
     const row = await t.svc.issueForTenant("tenant-acme", ADMIN, NOW);
+    // no 7-day lead: the next uninvoiced period is issued immediately
+    expect(t.issuer.windowsFor).toHaveBeenCalledWith(expect.anything(), NOW, Infinity);
     expect(t.issuer.issuePeriod).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: "tenant-acme" }),
       WINDOW,
@@ -801,6 +833,115 @@ describe("API-9 issue now", () => {
       ADMIN,
     );
     expect(row).toMatchObject({ id: "new-1", status: "OPEN" });
+  });
+});
+
+describe("RF_INVOICE_TEST_TENANT_SLUGS", () => {
+  const ENV = process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+  const MODE = process.env.RF_INVOICING_MODE;
+  afterEach(() => {
+    if (ENV === undefined) delete process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+    else process.env.RF_INVOICE_TEST_TENANT_SLUGS = ENV;
+    if (MODE === undefined) delete process.env.RF_INVOICING_MODE;
+    else process.env.RF_INVOICING_MODE = MODE;
+  });
+
+  it("a slug that is not an approved test tenant stops the service at construction", () => {
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv, some-wholesaler";
+    expect(() => make()).toThrow(/not an approved test tenant/);
+  });
+
+  it("approved slugs (named, qa-*, e2e-*, ux-audit-*) and blanks are accepted", () => {
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = " test, qa-1 ,e2e-x,ux-audit-9,, ";
+    expect(() => make()).not.toThrow();
+  });
+
+  it("list and summary also admit the allowlisted tenants; with no allowlist the scope is PRODUCTION only", async () => {
+    delete process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+    const plain = make({ invoices: [inv()] });
+    await plain.svc.list({}, NOW);
+    expect(plain.rfInvoice.findMany.mock.calls[0][0].where.tenant).toEqual({
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv";
+    const t = make({ invoices: [inv()] });
+    await t.svc.list({}, NOW);
+    expect(t.rfInvoice.findMany.mock.calls[0][0].where.tenant).toEqual({
+      deletedAt: null,
+      OR: [{ class: "PRODUCTION" }, { slug: { in: ["e2e-rfinv"] } }],
+    });
+    await t.svc.summary(NOW);
+    expect(t.rfInvoice.aggregate.mock.calls[0][0].where.tenant.OR).toEqual([
+      { class: "PRODUCTION" },
+      { slug: { in: ["e2e-rfinv"] } },
+    ]);
+    const subWhere = t.prisma.tenantSubscription.findMany.mock.calls[0][0].where;
+    expect(subWhere.tenant).toMatchObject({ status: "ACTIVE", deletedAt: null });
+    expect(subWhere.tenant.OR).toEqual([{ class: "PRODUCTION" }, { slug: { in: ["e2e-rfinv"] } }]);
+  });
+
+  const testSub = (slug: string) => ({
+    tenantId: "tenant-acme",
+    cycle: "MONTHLY",
+    planKey: "STARTER",
+    periodStart: new Date(iso(-25)),
+    periodEnd: new Date(iso(5)),
+    externalPayment: true,
+    stripeSubId: null,
+    cancelAtPeriodEnd: false,
+    tenant: { status: "ACTIVE", class: "TEST", deletedAt: null, slug },
+  });
+  const setup = (slug: string) => {
+    process.env.RF_INVOICING_MODE = "live";
+    const t = make({
+      tenant: { id: "tenant-acme" },
+      sub: testSub(slug),
+      invoices: [inv({ id: "new-1" })],
+    });
+    t.issuer.windowsFor.mockResolvedValue([
+      { periodStart: new Date(iso(5)), periodEnd: new Date(iso(35)) },
+    ]);
+    t.issuer.issuePeriod.mockResolvedValue({
+      status: "issued",
+      invoice: { id: "new-1", number: "n" },
+    });
+    return t;
+  };
+
+  it("issue-now works for an allowlisted TEST tenant", async () => {
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv";
+    const t = setup("e2e-rfinv");
+    await expect(t.svc.issueForTenant("tenant-acme", ADMIN, NOW)).resolves.toMatchObject({
+      id: "new-1",
+    });
+    expect(t.issuer.issuePeriod).toHaveBeenCalled();
+  });
+
+  it("issue-now still refuses a TEST tenant that is not on the list (NOT_MANUAL)", async () => {
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv";
+    const t = setup("e2e-other");
+    expect(body(await thrown(t.svc.issueForTenant("tenant-acme", ADMIN, NOW))).code).toBe(
+      API_ERROR_CODES.RF_INVOICE_NOT_MANUAL,
+    );
+    delete process.env.RF_INVOICE_TEST_TENANT_SLUGS;
+    const u = setup("e2e-rfinv");
+    expect(body(await thrown(u.svc.issueForTenant("tenant-acme", ADMIN, NOW))).code).toBe(
+      API_ERROR_CODES.RF_INVOICE_NOT_MANUAL,
+    );
+  });
+
+  it("an allowlisted tenant is still refused when stale", async () => {
+    process.env.RF_INVOICE_TEST_TENANT_SLUGS = "e2e-rfinv";
+    const t = setup("e2e-rfinv");
+    t.prisma.tenantSubscription.findUnique.mockResolvedValue({
+      ...testSub("e2e-rfinv"),
+      periodEnd: new Date(iso(-4)),
+    });
+    expect(body(await thrown(t.svc.issueForTenant("tenant-acme", ADMIN, NOW))).code).toBe(
+      API_ERROR_CODES.RF_INVOICE_NOTHING_TO_ISSUE,
+    );
   });
 });
 

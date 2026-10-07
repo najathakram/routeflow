@@ -55,7 +55,8 @@ export interface RfInvoiceRow {
   issuedAt: string;
   dueDate: string | null;
   status: RfInvoiceStatus;
-  dueState: RfInvoiceDueState;
+  /** Null for a PAID or VOID invoice: only an OPEN one is ever due. */
+  dueState: RfInvoiceDueState | null;
   daysOverdue: number;
   lastSentAt: string | null;
   sendCount: number;
