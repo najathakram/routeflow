@@ -23,16 +23,13 @@ import {
   invoicesNeedReview,
   orderInvoicesNeedReviewError,
 } from "../invoices/invoice-partition";
+import { SHIPPING_FULFILMENT_MODES } from "./shipping-fulfilment-modes";
 import { SHIP_STATE_REOPENED } from "./ship-state-markers"; // a leaf: order-ship-state.ts imports THIS file
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
 /** Effective `fulfilment_model` modes under which the business ships (and so bills at shipment). */
-export const SHIPPING_FULFILMENT_MODES: ReadonlySet<string> = new Set([
-  "ship",
-  "both",
-  "pickup_ship",
-]);
+export { SHIPPING_FULFILMENT_MODES };
 
 /** True when this order is billed at SHIPMENT: a carrier (SHIP) order of a business whose effective
  *  `fulfilment_model` ships (ship / both / pickup_ship). The ONE billing-moment predicate: the
