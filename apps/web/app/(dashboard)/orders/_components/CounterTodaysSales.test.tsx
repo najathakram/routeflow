@@ -408,4 +408,62 @@ describe("CounterTodaysSales", () => {
     ])
       expect(el.className).toMatch(/min-h-11/);
   });
+
+  it("W21b: a fully returned sale offers no Return items; a partly returned one still does", async () => {
+    serve({
+      1: page1([
+        row({ orderId: "o1", returned: { amount: 22.5, state: "FULL", returns: [] } }),
+        row({
+          orderId: "o2",
+          orderNumber: "ORD-2",
+          returned: { amount: 5, state: "PARTLY", returns: [] },
+        }),
+      ]),
+    });
+    await open();
+    const full = await screen.findByTestId("today-row-o1");
+    const partly = screen.getByTestId("today-row-o2");
+    expect(within(full).queryByRole("button", { name: "Return items" })).toBeNull();
+    expect(within(partly).getByRole("button", { name: "Return items" })).toBeInTheDocument();
+  });
+
+  it("W21b: one Escape on the reprint view goes back to the list; a second closes the sheet", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    await screen.findByTestId("receipt-print-root");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("W21b: Escape back from the reprint refocuses that row's Reprint button", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    await screen.findByTestId("receipt-print-root");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    const again = within(await screen.findByTestId("today-row-o1")).getByRole("button", {
+      name: "Reprint",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(again));
+  });
+
+  it("W21b: the sheet's Close X is a 44 px target", async () => {
+    await open();
+    await screen.findByTestId("today-row-o1");
+    const x = within(screen.getByRole("dialog")).getByRole("button", { name: "Close" });
+    expect(x.className).toMatch(/min-h-11/);
+    expect(x.className).toMatch(/min-w-11/);
+  });
+
+  it("W21b: closing the sheet with Escape returns focus to the Today's sales button", async () => {
+    await open();
+    await screen.findByTestId("today-row-o1");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Today's sales" })),
+    );
+  });
 });

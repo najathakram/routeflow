@@ -39,6 +39,7 @@ export function CounterReturnAction({
   onDone?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
@@ -49,6 +50,7 @@ export function CounterReturnAction({
   return (
     <>
       <Button
+        ref={buttonRef}
         variant="secondary"
         className="min-h-11 w-full sm:w-auto"
         leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
@@ -66,6 +68,12 @@ export function CounterReturnAction({
         customerName={order.customer?.businessName}
         orderId={order.id}
         allowRefund
+        onCloseAutoFocus={(e) => {
+          // no Radix trigger opened the dialog: put focus back on the button that did
+          if (!buttonRef.current) return;
+          e.preventDefault();
+          buttonRef.current.focus();
+        }}
         onRecorded={(_ret, info) => {
           setRecorded(info ?? { resolution: "STORE_CREDIT" });
           onDone?.();

@@ -74,6 +74,8 @@ export interface RecordInlineReturnDialogProps {
   /** Optional: called once when a return is fully recorded — after the refund, if one was chosen
    *  (the counter receipt shows its own hand-back note from `info`). */
   onRecorded?: (result: InlineReturnRecord, info?: RecordedInfo) => void;
+  /** W21b: Radix close-focus hook, so the opener can take focus back (no Radix trigger here). */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /** Refund refusals after a saved capture where the goods are in and nothing was paid out. */
@@ -110,6 +112,7 @@ export function RecordInlineReturnDialog({
   orderId,
   allowRefund = false,
   onRecorded,
+  onCloseAutoFocus,
 }: RecordInlineReturnDialogProps) {
   const role = useOptionalAuth()?.user?.role;
   const { toast } = useToast();
@@ -370,6 +373,7 @@ export function RecordInlineReturnDialog({
     <Modal
       open={open}
       onClose={handleClose}
+      onCloseAutoFocus={onCloseAutoFocus}
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
@@ -403,6 +407,9 @@ export function RecordInlineReturnDialog({
         onStateChange={setSectionState}
         quoteOverride={requoteOverride}
         hideBack={!!saved}
+        quoteNote={
+          showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined
+        }
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice

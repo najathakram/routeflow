@@ -124,4 +124,17 @@ describe("CounterReturnAction", () => {
     expect(screen.getByRole("status").textContent).not.toMatch(/\$/);
     expect(screen.getByRole("status").textContent).not.toMatch(/^Return recorded/);
   });
+  it("W21b: Done returns focus to the Return items button, not body", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    const btn = screen.getByRole("button", { name: "Return items" });
+    fireEvent.click(btn);
+    const evt = new Event("focus", { cancelable: true });
+    const onCloseAutoFocus = dialogProps.mock.calls.at(-1)?.[0].onCloseAutoFocus as (
+      e: Event,
+    ) => void;
+    document.body.focus();
+    React.act(() => onCloseAutoFocus(evt));
+    expect(evt.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(btn);
+  });
 });

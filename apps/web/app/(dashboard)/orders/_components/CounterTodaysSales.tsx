@@ -229,7 +229,9 @@ function SaleRow({
                 Reprint
               </button>
             ) : null}
-            <CounterReturnAction orderId={row.orderId} onDone={onDone} />
+            {row.returned.state === "FULL" ? null : (
+              <CounterReturnAction orderId={row.orderId} onDone={onDone} />
+            )}
           </>
         )}
         <Link href={`/orders/${row.orderId}`} className={cn(TAP, "text-brand-700")}>
@@ -246,6 +248,7 @@ export function CounterTodaysSales() {
   // the row whose Reprint button gets focus back after "Back to sales"
   const [refocusId, setRefocusId] = React.useState<string | null>(null);
   const clearRefocus = React.useCallback(() => setRefocusId(null), []);
+  const openerRef = React.useRef<HTMLButtonElement>(null);
   const qc = useQueryClient();
   const q = useCounterSaleToday(open);
   const refetchList = React.useCallback(
@@ -258,7 +261,12 @@ export function CounterTodaysSales() {
 
   return (
     <>
-      <Button className="min-h-[44px]" variant="secondary" onClick={() => setOpen(true)}>
+      <Button
+        ref={openerRef}
+        className="min-h-[44px]"
+        variant="secondary"
+        onClick={() => setOpen(true)}
+      >
         Today&apos;s sales
       </Button>
       <Modal
@@ -267,6 +275,19 @@ export function CounterTodaysSales() {
           setOpen(false);
           setReprint(null);
         }}
+        onEscapeKeyDown={(e) => {
+          // Escape closes only the top layer: the reprint view goes back to the list first
+          if (!reprint) return;
+          e.preventDefault();
+          setRefocusId(reprint.orderId);
+          setReprint(null);
+        }}
+        onCloseAutoFocus={(e) => {
+          if (!openerRef.current) return;
+          e.preventDefault();
+          openerRef.current.focus();
+        }}
+        closeClassName="min-h-11 min-w-11 flex items-center justify-center"
         title={reprint ? "Reprint receipt" : "Today's sales"}
         scroll
         className="max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none"
