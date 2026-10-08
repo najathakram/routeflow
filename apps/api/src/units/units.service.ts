@@ -268,6 +268,9 @@ export class UnitsService {
       const colliding = products.filter((p) => {
         const mine = levelRows.filter((l) => l.productId === p.id);
         const renamed = mine.filter((l) => l.tenantUnitId === id);
+        // Several levels of one product linked to this unit ("Case" + "case") would all take the new
+        // name and break the (productId,label) unique: refuse, the operator fixes the product.
+        if (renamed.length > 1) return true;
         if (newKey === oldKey) return false;
         const others: string[] = mine
           .filter((l) => l.tenantUnitId !== id)
