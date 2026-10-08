@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { getCounterCartBusy, setCounterCartBusy } from "@/lib/counter-cart-signal";
 
 /**
  * B1210: "Ship this order instead" saves the counter cart + customer as a parked ORDER draft (POST /drafts, fulfillPath SHIP) and
@@ -162,6 +163,32 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
     await waitFor(() => expect(lines()).toHaveLength(0));
   });
 
+  it("a ship hand-off never navigates after the counter has been left (unmounted)", async () => {
+    const draft = deferred<{ id: string }>();
+    createDraft.mockReturnValue(draft.promise);
+    const view = renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await scan("COLA");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(shipBtn());
+    await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
+    view.unmount(); // the clerk left the counter while the draft was saving
+    draft.resolve({ id: "d-1" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("publishes busy while the ship draft is saving", async () => {
+    const view = renderWithProviders(<CounterSaleScreen />);
+    draftPending = true;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(true));
+    draftPending = false;
+    view.rerender(<CounterSaleScreen />);
+    await waitFor(() => expect(getCounterCartBusy()).toBe(false));
+    setCounterCartBusy(false);
+  });
+
   it("a double click is ONE draft", async () => {
     const reply = deferred<{ id: string }>();
     createDraft.mockReturnValue(reply.promise);
@@ -288,6 +315,26 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("a pending ship continues once a sale POST that held it back ends (a clean 4xx writes nothing)", async () => {
+    const scanDone = deferred<unknown>();
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    resolveHook = () => scanDone.promise;
+    const field = screen.getByLabelText("Scan or search items");
+    fireEvent.change(field, { target: { value: "COLA" } });
+    fireEvent.submit(field.closest("form")!);
+    fireEvent.click(shipBtn()); // armed while the scan is still resolving: the hand-off waits
+    salePending = true; // a sale POST is in flight when the scan lands
+    scanDone.resolve({ product: COLA, source: "sku" });
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(createDraft).not.toHaveBeenCalled(); // never both rung up AND parked
+    salePending = false; // the POST failed cleanly (4xx): nothing was written
+    fireEvent.click(screen.getByRole("button", { name: "Card" })); // any re-render reads the flag
+    await waitFor(() => expect(createDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?resumeDraft=d-1"));
   });
 
   it("the Ship button is disabled while the sale POST is pending", async () => {

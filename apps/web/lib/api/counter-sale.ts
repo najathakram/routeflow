@@ -22,7 +22,11 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
     ?.capabilities?.fulfilment;
   // `loading`: the answer is not in yet. The screen shows an empty placeholder (never "not turned on", which would be false).
-  return { ...counterSaleGate(cap), capability: cap, loading: enabled && isLoading === true };
+  // A disabled gate (non-staff) stays DARK even when a cached answer is in the query cache.
+  const gate = enabled
+    ? counterSaleGate(cap)
+    : { showButton: false, opensAsCounter: false, offerShipInstead: false };
+  return { ...gate, capability: enabled ? cap : null, loading: enabled && isLoading === true };
 }
 
 export function useCreateCounterSale() {
@@ -46,6 +50,7 @@ export function useCreateCounterSale() {
  * (`replayed: true`), 404 COUNTER_SALE_NOT_FOUND = never written. A mutation (an imperative, on-demand check), not a cache.
  */
 export function useCounterSaleByKey() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
       idempotencyKey,
@@ -61,6 +66,8 @@ export function useCounterSaleByKey() {
           { params: { method } },
         )
         .then((r) => r.data),
+    // a recovered sale is a sale: today's list (under ["orders"]) refreshes like a normal one
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["orders"] }),
   });
 }
 

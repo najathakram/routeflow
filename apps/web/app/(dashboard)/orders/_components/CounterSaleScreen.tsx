@@ -16,6 +16,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { canEditPrices } from "@/lib/can-edit-prices";
+import { setCounterCartBusy, setCounterCartHasLines } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -80,6 +81,8 @@ import {
   type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterReturnAction } from "./CounterReturnAction";
+import { CounterTodaysSales } from "./CounterTodaysSales";
 
 interface PickedCustomer {
   id: string;
@@ -131,6 +134,13 @@ export function CounterSaleScreen() {
   const [shipIntent, setShipIntent] = React.useState(false);
   const [shipFailed, setShipFailed] = React.useState(false);
   const shipRunningRef = React.useRef(false);
+  const mountedRef = React.useRef(true);
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const awaitingCustomerRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
@@ -184,6 +194,27 @@ export function CounterSaleScreen() {
     [],
   );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
+  React.useEffect(() => {
+    setCounterCartHasLines(hasLines);
+    return () => setCounterCartHasLines(false);
+  }, [hasLines]);
+  // A sale POST, a ship draft save or an unknown sale outcome: the register's Exit must not leave (it would drop the receipt).
+  const busy = createSale.isPending || createDraft.isPending || outcomeUnknown;
+  React.useEffect(() => {
+    setCounterCartBusy(busy);
+    return () => setCounterCartBusy(false);
+  }, [busy]);
+  // Closing or reloading the tab mid-sale loses the attempt too: ask the browser to confirm while busy.
+  React.useEffect(() => {
+    if (!busy) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [busy]);
   // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
   // `sending` covers the sale request (set in `send`, validation refusals never reach it), so the freeze never depends on the mutation's own flag
   // re-rendering in time; `saleInFlight()` is the same truth for HANDLERS, which must no-op rather than lean on `disabled`.
@@ -273,6 +304,7 @@ export function CounterSaleScreen() {
     try {
       const draft = await createDraft.mutateAsync(counterShipDraftInput(cart, to));
       if (!draft?.id) throw new Error("draft has no id");
+      if (!mountedRef.current) return; // the clerk left the counter meanwhile: the draft stays parked, no navigation
       setShipIntent(false);
       resetSale();
       router.push(`/orders?resumeDraft=${encodeURIComponent(draft.id)}`);
@@ -295,7 +327,7 @@ export function CounterSaleScreen() {
     if (customer === null) return; // waiting for the pick
     void runShip(customer, lines);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines]);
+  }, [shipIntent, locked, scanBusy, reprice.blocked, customer, lines, createSale.isPending]);
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -317,10 +349,14 @@ export function CounterSaleScreen() {
   const undoRef = React.useRef<RemovedLine | null>(null);
   undoRef.current = undo;
   const undoTimerRef = React.useRef<number | null>(null);
+  // The countdown resumes only when BOTH the pointer and the keyboard focus have left the bar.
+  const undoHoverRef = React.useRef(false);
+  const undoFocusRef = React.useRef(false);
   const dropUndo = React.useCallback(() => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoTimerRef.current = null;
     undoLeftRef.current = UNDO_MS;
+    undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
     setUndo(null);
   }, []);
   // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
@@ -329,6 +365,7 @@ export function CounterSaleScreen() {
   const armUndo = (ms: number) => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoLeftRef.current = ms;
+    if (undoHoverRef.current || undoFocusRef.current) return; // held: the leave/blur handler starts the countdown
     undoStartedRef.current = Date.now();
     undoTimerRef.current = window.setTimeout(dropUndo, ms);
   };
@@ -660,6 +697,7 @@ export function CounterSaleScreen() {
           <Button className={RECEIPT_BTN} onClick={() => window.print()}>
             Print
           </Button>
+          <CounterReturnAction orderId={receipt.orderId} />
           <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
             New sale
           </Button>
@@ -677,6 +715,7 @@ export function CounterSaleScreen() {
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
+        <CounterTodaysSales />
         {gate.offerShipInstead ? (
           <Button
             className="min-h-[44px]"
@@ -888,10 +927,23 @@ export function CounterSaleScreen() {
               undo &&
                 "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
             )}
-            onMouseEnter={pauseUndo}
-            onMouseLeave={resumeUndo}
-            onFocus={pauseUndo}
-            onBlur={resumeUndo}
+            onMouseEnter={() => {
+              undoHoverRef.current = true;
+              pauseUndo();
+            }}
+            onMouseLeave={() => {
+              undoHoverRef.current = false;
+              if (!undoFocusRef.current) resumeUndo();
+            }}
+            onFocus={() => {
+              undoFocusRef.current = true;
+              pauseUndo();
+            }}
+            onBlur={(e) => {
+              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return; // focus moved within the bar
+              undoFocusRef.current = false;
+              if (!undoHoverRef.current) resumeUndo();
+            }}
           >
             {undo ? (
               <>

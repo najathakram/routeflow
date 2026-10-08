@@ -1,5 +1,10 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
+import type {
+  CounterSalePaymentMethod,
+  CounterSaleResponse,
+  TodaysSaleMethod,
+} from "@routeflow/types";
+import { displayProductName } from "@/lib/product-display";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
@@ -207,5 +212,136 @@ export function buildCounterReceipt(input: {
     tenderedAsEntered,
     change,
     changeAsEntered,
+  };
+}
+
+/** What a reprint reads from the order (`GET /orders/:id`); only the fields a receipt line needs. */
+export interface ReprintOrderLike {
+  orderNumber: string;
+  total: number;
+  lineItems: ReadonlyArray<{
+    id: string;
+    name?: string | null;
+    product?: {
+      name: string;
+      variantName?: string | null;
+      parentProductId?: string | null;
+      parent?: { name: string } | null;
+    } | null;
+    qty: number;
+    unitPrice: number;
+    unitsPerBox?: number | null;
+    boxes?: number | null;
+    pieces?: number | null;
+    status?: string;
+  }>;
+}
+
+/** What a reprint reads from the Today's-sales row: the invoice and tender facts the order does not carry. */
+export interface ReprintSaleFacts {
+  invoiceId: string;
+  invoiceNumber: string;
+  /** the server's figures, used as given */
+  paid: number;
+  balanceDue: number;
+  methods: ReadonlyArray<{ method: ReprintTender; amount: number }>;
+  createdAt: string | Date;
+  /** IANA zone the sale time is read in (the server's `meta.timezone`) */
+  timezone?: string;
+}
+
+/** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
+export type ReprintTender = TodaysSaleMethod;
+
+const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
+  CASH: "Cash",
+  CARD: "Card",
+  CHECK: "Check",
+  OTHER: "Other",
+  STORE_CREDIT: "Store credit",
+};
+
+/** "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). */
+export function formatSaleTime(at: string | Date, timeZone?: string): string {
+  const d = at instanceof Date ? at : new Date(at);
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone,
+  }).format(d);
+}
+
+/**
+ * The reprint's receipt model, built from the stored order. Same shape (and same line math) as `buildCounterReceipt`; the
+ * differences are the facts that are never stored: no Tendered, no Change. The date is the sale's own time, not "now".
+ */
+export function receiptModelFromOrder(input: {
+  order: ReprintOrderLike;
+  sale: ReprintSaleFacts;
+  /** Omit on a reprint: the Order stores no creator, so the original cashier is unknown. */
+  cashier?: string | null;
+  profile: ReceiptBusinessProfile | null | undefined;
+}): CounterReceiptModel {
+  const { order, sale, profile } = input;
+  const rows = order.lineItems
+    .filter((l) => l.status !== "CANCELLED")
+    .map((l) => {
+      const base = clean(l.product ? displayProductName(l.product) : l.name) || clean(l.name);
+      const line: ReceiptLineInput = {
+        tempId: l.id,
+        name: base || "Item",
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        unitsPerBox: l.unitsPerBox ?? undefined,
+        boxes: l.boxes ?? undefined,
+        pieces: l.pieces ?? undefined,
+      };
+      return {
+        key: line.tempId,
+        name: line.name,
+        detail: lineDetail(line),
+        note: null,
+        // A reprint is built from the stored order, which keeps only the net price: no struck original.
+        original: null,
+        discount: 0,
+        priceChanged: false,
+        total: computeLineSubtotal({
+          unitPrice: line.unitPrice,
+          qty: line.qty,
+          boxes: line.boxes,
+          pieces: line.pieces,
+          unitsPerBox: line.unitsPerBox,
+        }),
+      };
+    });
+  const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const hasTender = sale.methods.length > 0;
+  const { paid, balanceDue } = sale;
+  const onAccount = !hasTender && balanceDue > 0;
+  return {
+    header: receiptHeader(profile),
+    orderNumber: order.orderNumber,
+    invoiceNumber: sale.invoiceNumber,
+    invoiceId: sale.invoiceId,
+    dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
+    lines: rows,
+    cashier: clean(input.cashier) || null,
+    subtotal,
+    adjustment: roundMoney(order.total - subtotal),
+    discounts: 0,
+    total: order.total,
+    paid,
+    balanceDue,
+    onAccount,
+    paymentNotRecorded: false,
+    showPaid: hasTender,
+    showBalance: onAccount || balanceDue > 0,
+    methodLabel: hasTender
+      ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+      : null,
+    tendered: null,
+    tenderedAsEntered: false,
+    change: null,
+    changeAsEntered: false,
   };
 }

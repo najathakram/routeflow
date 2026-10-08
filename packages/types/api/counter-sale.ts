@@ -97,3 +97,107 @@ export interface PickupCompleteResponse {
   /** true when the order was already picked up: no status write; only a planned shortfall of this hand-over's tender is recorded. */
   alreadyPickedUp?: boolean;
 }
+
+// ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────
+//
+// Every counter sale of the tenant's calendar day (all registers and clerks: Order has no createdById), one lean
+// row each (no line items), plus a whole-day summary on page 1. Read-only; the server owns the day window, the
+// web formats times in `meta.timezone` and does no money math.
+
+/** How a sale's money reached the till: "STORE_CREDIT" is a credit-note / advance application, never money in. */
+export type TodaysSaleMethod = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+export type TodaysSalePaymentState = "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
+export type TodaysSaleReturnState = "NONE" | "PARTLY" | "FULL" | "PENDING";
+/** null = settled with no stored resolution (a legacy return with neither a refund method nor a credit note). */
+export type TodaysSaleReturnResolution = "STORE_CREDIT" | "REFUND" | "PENDING" | null;
+
+export interface TodaysSaleReturn {
+  id: string;
+  returnNumber: string | null;
+  status: string;
+  resolution: TodaysSaleReturnResolution;
+  /** the return's priced credit (subtotal + tax + category tax), never recomputed from lines */
+  amount: number;
+}
+
+export interface TodaysSaleRow {
+  orderId: string;
+  /** the number printed on the receipt */
+  orderNumber: string;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  /** ISO instant the sale was rung */
+  createdAt: string;
+  customerId: string;
+  customerName: string;
+  isWalkIn: boolean;
+  status: string;
+  total: number;
+  /** every PAID payment on the sale's live invoices, store credit included */
+  paid: number;
+  balanceDue: number;
+  methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  paymentState: TodaysSalePaymentState;
+  returned: {
+    amount: number;
+    state: TodaysSaleReturnState;
+    returns: TodaysSaleReturn[];
+  };
+  /** the order is CANCELLED, or it has invoices and every one is VOID / WRITTEN_OFF */
+  voided: boolean;
+}
+
+export interface TodaysSalesSummary {
+  /** live sales only: not cancelled, with at least one non-void invoice */
+  sales: { count: number; total: number };
+  /**
+   * Money that CAME IN on this day: PAID payments dated (paidAt) inside the day, on counter sales of ANY day. A
+   * day-1 sale left on account and paid in cash on day 2 counts in day 2's `cash` and `cashExpectedInDrawer`, not
+   * day 1's. (`sales` stays "rung this day".) `other` is ACH / Zelle / other recorded against a counter invoice.
+   */
+  moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+  /** credit-note and advance applications dated inside the day: NOT money in */
+  storeCreditUsed: number;
+  /** this day's sales total minus everything paid on those sales (any payment date, store credit included), never below 0 */
+  onAccount: number;
+  /**
+   * Money given back, counted on the day it was given (an earlier day's sale included).
+   * `tenderKnown` is false while the refund tender is not stored: the whole amount then sits in `other`,
+   * cash / card / check are 0 and `cashExpectedInDrawer` does NOT subtract it.
+   */
+  refunds: {
+    count: number;
+    cash: number;
+    card: number;
+    check: number;
+    other: number;
+    total: number;
+    tenderKnown: boolean;
+  };
+  /** returns captured in the window that resolved as store credit */
+  storeCreditIssued: { count: number; amount: number };
+  /** EXPECTED, never counted: moneyIn.cash - refunds.cash */
+  cashExpectedInDrawer: number;
+  /** moneyIn.total - refunds.total */
+  netCollected: number;
+}
+
+export interface TodaysSalesMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  /** the tenant's calendar day, "YYYY-MM-DD" */
+  day: string;
+  /** the IANA zone the window was cut in ("UTC" when the tenant has none) */
+  timezone: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
+export interface TodaysSalesResponse {
+  data: TodaysSaleRow[];
+  meta: TodaysSalesMeta;
+  /** the whole day, on page 1 only (null on later pages) */
+  summary: TodaysSalesSummary | null;
+}

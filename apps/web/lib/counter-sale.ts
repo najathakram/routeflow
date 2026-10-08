@@ -431,7 +431,12 @@ export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | 
     }
     if (ok) return v as HeldAttemptSnapshot;
     // Keep a payload-free marker (never delete): a reload must stay LOCKED until the cashier discards.
-    window.sessionStorage.setItem(storeKey, JSON.stringify({ state: "unknown" }));
+    try {
+      window.sessionStorage.setItem(storeKey, JSON.stringify({ state: "unknown" }));
+    } catch {
+      // The marker could not be written: the invalid payload is still stored, so a reload reads it
+      // as corrupt again. Never fall through to null (that would unlock the till).
+    }
     return "corrupt";
   } catch {
     return null;

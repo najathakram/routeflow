@@ -58,6 +58,11 @@ import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
 import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { RegisterHeader } from "@/components/RegisterHeader";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { isRegisterPath, recordPreviousPath } from "@/lib/register-mode";
+import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-pref";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -229,7 +234,14 @@ function NavLink({
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
-      onClick={onNavigate}
+      onClick={(e) => {
+        // POS-7: a rail/drawer link cannot leave the counter while a sale is being recorded.
+        if (guardCounterLeave()) {
+          e.preventDefault();
+          return;
+        }
+        onNavigate?.();
+      }}
       data-testid="sidebar-nav-link"
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -483,18 +495,40 @@ function expiryLabel(a: ExpiringAuthorization): string {
   return "Expiring soon";
 }
 
-function Header({
+/** Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4); shared by the full and the register header. */
+function DriveModePill() {
+  const { driveMode, setDriveMode } = useDriveMode();
+  const { enabled: routesAccess } = useRoutesAccess();
+  if (!(routesAccess && driveMode)) return null;
+  return (
+    <button
+      onClick={() => setDriveMode(false)}
+      className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
+      title="Exit drive mode"
+    >
+      <Truck className="h-3.5 w-3.5" />
+      Drive mode
+      <X className="h-3 w-3" />
+    </button>
+  );
+}
+
+/** POS-7: the bell, palette trigger and avatar/user menu: ONE component, used by the full header and the register header. */
+function HeaderTools({
   onOpenPalette,
-  onOpenMobileNav,
+  showCounterPref,
+  clerkTestId,
 }: {
   onOpenPalette: () => void;
-  onOpenMobileNav: () => void;
+  /** POS-7: staff with the counter on get the "Open the counter on this device" menu item. */
+  showCounterPref: boolean;
+  /** Test id for the username beside the avatar (the register header's clerk). */
+  clerkTestId?: string;
 }) {
-  const { title } = usePageTitle();
   const { user, logout } = useAuth();
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
-  const router = useRouter();
+  const router = useGuardedRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
@@ -509,6 +543,7 @@ function Header({
   const { data: pendingApprovals = [] } = usePendingPortalApprovals({ enabled: isStaffRole });
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
+  const counterPref = useOpenCounterPref();
   // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
   // on routesAccess (not delivery access).
   const { enabled: routesAccess } = useRoutesAccess();
@@ -525,6 +560,334 @@ function Header({
   React.useEffect(() => {
     setImp(getImpersonation());
   }, [pathname]);
+  return (
+    <div className="flex items-center gap-2">
+      {/* Command palette trigger — Ledger search pill */}
+      <button
+        onClick={onOpenPalette}
+        className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
+        aria-label="Open command palette"
+      >
+        <Search className="h-[15px] w-[15px]" />
+        <span>{t("topbar.searchPlaceholder")}</span>
+        <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong bg-paper px-1.5 font-mono text-[11px] text-ink-500">
+          ⌘K
+        </kbd>
+      </button>
+      <button
+        onClick={onOpenPalette}
+        className="flex items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
+        aria-label="Open command palette"
+      >
+        <Search className="h-5 w-5" />
+      </button>
+
+      {/* Notification bell */}
+      <DropdownMenu.Root
+        onOpenChange={(open) => {
+          if (open) markAllRead();
+        }}
+      >
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+            aria-label={bellCount > 0 ? `${bellCount} notifications` : "Notifications"}
+          >
+            <Bell className="h-5 w-5" />
+            {bellCount > 0 && (
+              <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-danger text-[10px] font-bold leading-none text-white">
+                {bellCount > 9 ? "9+" : bellCount}
+              </span>
+            )}
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            sideOffset={8}
+            className="z-50 w-80 rounded-lg border border-surface-border bg-white shadow-dropdown animate-in fade-in-0 zoom-in-95"
+          >
+            {/* Panel header */}
+            <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
+              <p className="text-sm font-semibold text-navy">Notifications</p>
+              {notifications.length > 0 && (
+                <button
+                  onClick={clear}
+                  className="flex items-center gap-1 text-xs text-navy/70 hover:text-danger transition-colors"
+                  title="Clear all"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Clear all
+                </button>
+              )}
+            </div>
+
+            {/* List */}
+            <div className="max-h-[60vh] overflow-y-auto">
+              {/* Buyer-connect approval requests — pinned above everything else,
+                server-derived so it stays until the seller acts (not cleared
+                by "mark all read"/"clear", not lost on localStorage clear).
+                Clicking a row goes to the customer page where Approve/Decline
+                live (lib/api/portal-approvals.ts). */}
+              {pendingApprovals.length > 0 && (
+                <div className="border-b border-surface-border">
+                  <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
+                    Action needed
+                  </p>
+                  <ul className="divide-y divide-surface-border">
+                    {pendingApprovals.map((a) => (
+                      <DropdownMenu.Item
+                        key={a.customerId}
+                        asChild
+                        onSelect={() => router.push(`/customers/${a.customerId}`)}
+                      >
+                        <li className="flex cursor-pointer items-start gap-3 bg-brand-50/40 px-4 py-3 outline-none transition-colors hover:bg-brand-50">
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-600">
+                            <Users className="h-4 w-4" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">
+                              {a.buyerName} wants to connect
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-navy/70 leading-snug">
+                              {a.buyerEmail} → {a.customerName}
+                            </p>
+                          </div>
+                        </li>
+                      </DropdownMenu.Item>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* W7b: license expiry section (30/7/1 + expired) */}
+              {expiring.length > 0 && (
+                <div className="border-b border-surface-border">
+                  <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
+                    Licenses
+                  </p>
+                  <ul className="divide-y divide-surface-border">
+                    {expiring.map((a) => (
+                      <li
+                        key={a.id}
+                        className={cn(
+                          "flex items-start gap-3 px-4 py-3",
+                          a.expired ? "bg-danger/5" : "bg-amber-50/50",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                            a.expired ? "bg-danger/10 text-danger" : "bg-amber-100 text-amber-700",
+                          )}
+                        >
+                          <ShieldAlert className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-navy">
+                            {a.categoryName} — {expiryLabel(a)}
+                          </p>
+                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                            {a.customerName}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {notifications.length === 0 &&
+              expiring.length === 0 &&
+              pendingApprovals.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-10 text-center">
+                  <Bell className="h-8 w-8 text-navy/20" />
+                  <p className="text-sm text-navy/70">No notifications yet</p>
+                  <p className="text-xs text-navy/30">
+                    Order, delivery, and account alerts will appear here.
+                  </p>
+                </div>
+              ) : notifications.length > 0 ? (
+                <ul className="divide-y divide-surface-border">
+                  {notifications.map((n) => (
+                    <li
+                      key={n.id}
+                      className={cn(
+                        "flex items-start gap-3 px-4 py-3 transition-colors",
+                        !n.read && "bg-brand-50/40",
+                      )}
+                    >
+                      <NotificationIcon type={n.type} />
+                      {n.href ? (
+                        <Link
+                          href={n.href}
+                          className="min-w-0 flex-1"
+                          onClick={(e) => {
+                            if (guardCounterLeave()) e.preventDefault(); // POS-7: not mid-sale
+                          }}
+                        >
+                          <p className="text-sm font-medium text-navy">{n.title}</p>
+                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                            {n.description}
+                          </p>
+                          <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                        </Link>
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-navy">{n.title}</p>
+                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                            {n.description}
+                          </p>
+                          <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+
+      {/* Avatar dropdown */}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-raised"
+            aria-label="Open user menu"
+          >
+            <Avatar name={user?.username ?? ""} size="sm" />
+            <span
+              data-testid={clerkTestId}
+              className={cn(
+                "hidden text-sm font-medium text-navy sm:block",
+                clerkTestId && "max-w-[8rem] truncate", // the register header is tight at 390 px
+              )}
+            >
+              {user?.username}
+            </span>
+            <ChevronDown className="hidden h-4 w-4 text-navy/70 sm:block" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            sideOffset={8}
+            className="z-50 min-w-[160px] rounded-lg border border-surface-border bg-white py-1 shadow-dropdown animate-in fade-in-0 zoom-in-95"
+          >
+            <DropdownMenu.Item
+              className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+              onSelect={() => router.push("/settings")}
+            >
+              <UserIcon className="h-4 w-4 text-navy/70" />
+              {t("menu.profile")}
+            </DropdownMenu.Item>
+            {/* POS-7: per-device preference; hidden when storage is blocked (the toggle could not persist). */}
+            {showCounterPref && counterPref.available && (
+              <DropdownMenu.CheckboxItem
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                checked={counterPref.on}
+                onCheckedChange={counterPref.set}
+              >
+                <Store className="h-4 w-4 text-navy/70" />
+                <span className="flex-1">Open the counter on this device</span>
+                {counterPref.on && <Check className="h-4 w-4 text-accent-deep" />}
+              </DropdownMenu.CheckboxItem>
+            )}
+            {/* Drive mode — one tap toggle to the field run layout for admins/operators
+              who can act as a driver (canActAsDriver; capability enforced server-side
+              by RolesGuard). Turning it on swaps layout only — no logout, permission
+              change, or draft loss — and jumps to My Routes; turning it off (here or
+              via the topbar Exit affordance) just restores the normal layout in place.
+              pos-cost-roles-spec §4. */}
+            {(user as { canActAsDriver?: boolean })?.canActAsDriver && routesAccess && (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => {
+                  if (guardCounterLeave()) return;
+                  const next = !driveMode;
+                  setDriveMode(next);
+                  if (next) router.push("/routes/my-runs");
+                }}
+              >
+                <Truck className="h-4 w-4 text-navy/70" />
+                <span className="flex-1">Drive mode</span>
+                {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
+              </DropdownMenu.Item>
+            )}
+            {/* Buyer ⇄ seller portal switch — the two portals are separate
+              sessions in one browser; this is the door between them
+              (components/PortalSwitchLink.tsx). */}
+            <DropdownMenu.Item asChild>
+              <PortalSwitchLink
+                to="buyer"
+                onClick={(e) => {
+                  if (guardCounterLeave()) e.preventDefault();
+                }}
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                iconClassName="h-4 w-4 text-navy/70"
+                labels={{
+                  switch: t("menu.switchToBuyerPortal"),
+                  signIn: t("menu.buyerPortalSignIn"),
+                }}
+              />
+            </DropdownMenu.Item>
+            {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
+            <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
+            <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
+              <Languages className="h-3.5 w-3.5" />
+              {t("menu.language")}
+            </div>
+            {LOCALES.map((l) => (
+              <DropdownMenu.Item
+                key={l}
+                className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                onSelect={() => setLocale(l)}
+              >
+                {LOCALE_LABELS[l]}
+                {locale === l && <Check className="h-4 w-4 text-accent-deep" />}
+              </DropdownMenu.Item>
+            ))}
+            <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
+            {imp ? (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                onSelect={() => exitImpersonation()}
+              >
+                <LogOut className="h-4 w-4" />
+                {t(imp.expired ? "menu.returnToAdmin" : "menu.exitImpersonation")}
+              </DropdownMenu.Item>
+            ) : (
+              <DropdownMenu.Item
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                onSelect={() => {
+                  if (guardCounterLeave()) return;
+                  void logout();
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+                {t("menu.signOut")}
+              </DropdownMenu.Item>
+            )}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </div>
+  );
+}
+
+function Header({
+  onOpenPalette,
+  onOpenMobileNav,
+  showCounterPref,
+}: {
+  onOpenPalette: () => void;
+  onOpenMobileNav: () => void;
+  /** POS-7: staff with the counter on get the "Open the counter on this device" menu item. */
+  showCounterPref: boolean;
+}) {
+  const { title } = usePageTitle();
+  const pathname = usePathname();
+  const router = useRouter();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
   const isSubPage = pathname.split("/").filter(Boolean).length > 1;
@@ -554,303 +917,10 @@ function Header({
 
       <div className="flex flex-1 items-center gap-2 min-w-0">
         {title && <h1 className="text-base font-semibold text-navy truncate">{title}</h1>}
-        {/* Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4) — lets the
-            operator leave the field layout without hunting through the avatar menu. */}
-        {routesAccess && driveMode && (
-          <button
-            onClick={() => setDriveMode(false)}
-            className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
-            title="Exit drive mode"
-          >
-            <Truck className="h-3.5 w-3.5" />
-            Drive mode
-            <X className="h-3 w-3" />
-          </button>
-        )}
+        <DriveModePill />
       </div>
 
-      <div className="flex items-center gap-2">
-        {/* Command palette trigger — Ledger search pill */}
-        <button
-          onClick={onOpenPalette}
-          className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
-          aria-label="Open command palette"
-        >
-          <Search className="h-[15px] w-[15px]" />
-          <span>{t("topbar.searchPlaceholder")}</span>
-          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong bg-paper px-1.5 font-mono text-[11px] text-ink-500">
-            ⌘K
-          </kbd>
-        </button>
-        <button
-          onClick={onOpenPalette}
-          className="flex items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
-          aria-label="Open command palette"
-        >
-          <Search className="h-5 w-5" />
-        </button>
-
-        {/* Notification bell */}
-        <DropdownMenu.Root
-          onOpenChange={(open) => {
-            if (open) markAllRead();
-          }}
-        >
-          <DropdownMenu.Trigger asChild>
-            <button
-              className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
-              aria-label={bellCount > 0 ? `${bellCount} notifications` : "Notifications"}
-            >
-              <Bell className="h-5 w-5" />
-              {bellCount > 0 && (
-                <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-danger text-[10px] font-bold leading-none text-white">
-                  {bellCount > 9 ? "9+" : bellCount}
-                </span>
-              )}
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              align="end"
-              sideOffset={8}
-              className="z-50 w-80 rounded-lg border border-surface-border bg-white shadow-dropdown animate-in fade-in-0 zoom-in-95"
-            >
-              {/* Panel header */}
-              <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-                <p className="text-sm font-semibold text-navy">Notifications</p>
-                {notifications.length > 0 && (
-                  <button
-                    onClick={clear}
-                    className="flex items-center gap-1 text-xs text-navy/70 hover:text-danger transition-colors"
-                    title="Clear all"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Clear all
-                  </button>
-                )}
-              </div>
-
-              {/* List */}
-              <div className="max-h-[60vh] overflow-y-auto">
-                {/* Buyer-connect approval requests — pinned above everything else,
-                    server-derived so it stays until the seller acts (not cleared
-                    by "mark all read"/"clear", not lost on localStorage clear).
-                    Clicking a row goes to the customer page where Approve/Decline
-                    live (lib/api/portal-approvals.ts). */}
-                {pendingApprovals.length > 0 && (
-                  <div className="border-b border-surface-border">
-                    <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
-                      Action needed
-                    </p>
-                    <ul className="divide-y divide-surface-border">
-                      {pendingApprovals.map((a) => (
-                        <DropdownMenu.Item
-                          key={a.customerId}
-                          asChild
-                          onSelect={() => router.push(`/customers/${a.customerId}`)}
-                        >
-                          <li className="flex cursor-pointer items-start gap-3 bg-brand-50/40 px-4 py-3 outline-none transition-colors hover:bg-brand-50">
-                            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-600">
-                              <Users className="h-4 w-4" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-navy">
-                                {a.buyerName} wants to connect
-                              </p>
-                              <p className="mt-0.5 truncate text-xs text-navy/70 leading-snug">
-                                {a.buyerEmail} → {a.customerName}
-                              </p>
-                            </div>
-                          </li>
-                        </DropdownMenu.Item>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {/* W7b: license expiry section (30/7/1 + expired) */}
-                {expiring.length > 0 && (
-                  <div className="border-b border-surface-border">
-                    <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
-                      Licenses
-                    </p>
-                    <ul className="divide-y divide-surface-border">
-                      {expiring.map((a) => (
-                        <li
-                          key={a.id}
-                          className={cn(
-                            "flex items-start gap-3 px-4 py-3",
-                            a.expired ? "bg-danger/5" : "bg-amber-50/50",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                              a.expired
-                                ? "bg-danger/10 text-danger"
-                                : "bg-amber-100 text-amber-700",
-                            )}
-                          >
-                            <ShieldAlert className="h-4 w-4" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-navy">
-                              {a.categoryName} — {expiryLabel(a)}
-                            </p>
-                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
-                              {a.customerName}
-                            </p>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {notifications.length === 0 &&
-                expiring.length === 0 &&
-                pendingApprovals.length === 0 ? (
-                  <div className="flex flex-col items-center gap-2 py-10 text-center">
-                    <Bell className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/70">No notifications yet</p>
-                    <p className="text-xs text-navy/30">
-                      Order, delivery, and account alerts will appear here.
-                    </p>
-                  </div>
-                ) : notifications.length > 0 ? (
-                  <ul className="divide-y divide-surface-border">
-                    {notifications.map((n) => (
-                      <li
-                        key={n.id}
-                        className={cn(
-                          "flex items-start gap-3 px-4 py-3 transition-colors",
-                          !n.read && "bg-brand-50/40",
-                        )}
-                      >
-                        <NotificationIcon type={n.type} />
-                        {n.href ? (
-                          <Link href={n.href} className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-navy">{n.title}</p>
-                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
-                              {n.description}
-                            </p>
-                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
-                          </Link>
-                        ) : (
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-navy">{n.title}</p>
-                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
-                              {n.description}
-                            </p>
-                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-
-        {/* Avatar dropdown */}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-raised"
-              aria-label="Open user menu"
-            >
-              <Avatar name={user?.username ?? ""} size="sm" />
-              <span className="hidden text-sm font-medium text-navy sm:block">
-                {user?.username}
-              </span>
-              <ChevronDown className="hidden h-4 w-4 text-navy/70 sm:block" />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              align="end"
-              sideOffset={8}
-              className="z-50 min-w-[160px] rounded-lg border border-surface-border bg-white py-1 shadow-dropdown animate-in fade-in-0 zoom-in-95"
-            >
-              <DropdownMenu.Item
-                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                onSelect={() => router.push("/settings")}
-              >
-                <UserIcon className="h-4 w-4 text-navy/70" />
-                {t("menu.profile")}
-              </DropdownMenu.Item>
-              {/* Drive mode — one tap toggle to the field run layout for admins/operators
-                  who can act as a driver (canActAsDriver; capability enforced server-side
-                  by RolesGuard). Turning it on swaps layout only — no logout, permission
-                  change, or draft loss — and jumps to My Routes; turning it off (here or
-                  via the topbar Exit affordance) just restores the normal layout in place.
-                  pos-cost-roles-spec §4. */}
-              {(user as { canActAsDriver?: boolean })?.canActAsDriver && routesAccess && (
-                <DropdownMenu.Item
-                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                  onSelect={() => {
-                    const next = !driveMode;
-                    setDriveMode(next);
-                    if (next) router.push("/routes/my-runs");
-                  }}
-                >
-                  <Truck className="h-4 w-4 text-navy/70" />
-                  <span className="flex-1">Drive mode</span>
-                  {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
-                </DropdownMenu.Item>
-              )}
-              {/* Buyer ⇄ seller portal switch — the two portals are separate
-                  sessions in one browser; this is the door between them
-                  (components/PortalSwitchLink.tsx). */}
-              <DropdownMenu.Item asChild>
-                <PortalSwitchLink
-                  to="buyer"
-                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                  iconClassName="h-4 w-4 text-navy/70"
-                  labels={{
-                    switch: t("menu.switchToBuyerPortal"),
-                    signIn: t("menu.buyerPortalSignIn"),
-                  }}
-                />
-              </DropdownMenu.Item>
-              {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
-              <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
-              <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
-                <Languages className="h-3.5 w-3.5" />
-                {t("menu.language")}
-              </div>
-              {LOCALES.map((l) => (
-                <DropdownMenu.Item
-                  key={l}
-                  className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                  onSelect={() => setLocale(l)}
-                >
-                  {LOCALE_LABELS[l]}
-                  {locale === l && <Check className="h-4 w-4 text-accent-deep" />}
-                </DropdownMenu.Item>
-              ))}
-              <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
-              {imp ? (
-                <DropdownMenu.Item
-                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                  onSelect={() => exitImpersonation()}
-                >
-                  <LogOut className="h-4 w-4" />
-                  {t(imp.expired ? "menu.returnToAdmin" : "menu.exitImpersonation")}
-                </DropdownMenu.Item>
-              ) : (
-                <DropdownMenu.Item
-                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                  onSelect={() => void logout()}
-                >
-                  <LogOut className="h-4 w-4" />
-                  {t("menu.signOut")}
-                </DropdownMenu.Item>
-              )}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </div>
+      <HeaderTools onOpenPalette={onOpenPalette} showCounterPref={showCounterPref} />
     </header>
   );
 }
@@ -1071,6 +1141,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     return false;
   });
   const pathname = usePathname();
+  // POS-7: register mode is route-derived. The rail is the existing 64 px collapsed mode; "peek" expands it temporarily
+  // and NEVER touches `collapsed` or rf-sidebar-collapsed, so leaving the counter restores the saved state untouched.
+  const register = isRegisterPath(pathname);
+  const [peek, setPeek] = React.useState(false);
+  React.useEffect(() => setPeek(false), [register]);
+  React.useEffect(() => {
+    if (!register) recordPreviousPath(pathname);
+  }, [register, pathname]);
+  const railCollapsed = register ? !peek : collapsed;
   const toggle = () =>
     setCollapsed((v) => {
       const next = !v;
@@ -1103,7 +1182,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useRealtimeUpdates();
 
-  const shellRouter = useRouter();
+  const shellRouter = useGuardedRouter();
+  // POS-7: landing at exactly /dashboard with "Open the counter on this device" on opens the counter (once per session).
+  useCounterLanding({
+    pathname,
+    isStaff: isStaff && !!user,
+    counterEnabled,
+    replace: shellRouter.replace,
+  });
 
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
@@ -1149,19 +1235,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         data-testid="sidebar-aside"
         className={cn(
           "hidden shrink-0 flex-col overflow-hidden bg-navy transition-[width] duration-200 ease-in-out motion-reduce:transition-none motion-reduce:duration-0 lg:flex",
-          collapsed ? "lg:w-16" : "lg:w-60",
+          railCollapsed ? "lg:w-16" : "lg:w-60",
         )}
       >
         {/* Logo */}
         <div
           className={cn(
             "flex h-16 shrink-0 items-center border-b border-white/10 px-3",
-            collapsed ? "justify-center" : "gap-3",
+            railCollapsed ? "justify-center" : "gap-3",
           )}
         >
           <TenantLogo
             className="h-8 w-8"
-            showName={!collapsed}
+            showName={!railCollapsed}
             nameClassName="text-lg font-bold text-white truncate"
             tone="light"
           />
@@ -1169,20 +1255,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          <SidebarNav navStructure={navStructure} collapsed={collapsed} pathname={pathname} />
+          <SidebarNav navStructure={navStructure} collapsed={railCollapsed} pathname={pathname} />
         </nav>
 
         {/* Collapse toggle */}
         <div className="shrink-0 border-t border-white/10 p-2">
           <button
-            onClick={toggle}
+            onClick={register ? () => setPeek((v) => !v) : toggle}
             className={cn(
               "flex w-full items-center rounded-lg px-3 py-2.5 text-white/60 transition-colors motion-reduce:transition-none hover:bg-white/10 hover:text-white",
-              collapsed ? "justify-center" : "gap-3",
+              railCollapsed ? "justify-center" : "gap-3",
             )}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={
+              register
+                ? railCollapsed
+                  ? "Peek navigation"
+                  : "Hide navigation"
+                : collapsed
+                  ? "Expand sidebar"
+                  : "Collapse sidebar"
+            }
           >
-            {collapsed ? (
+            {railCollapsed ? (
               <ChevronRight className="h-5 w-5 shrink-0" />
             ) : (
               <>
@@ -1250,10 +1344,25 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             compact
           />
         )}
-        <Header
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-        />
+        {register ? (
+          <RegisterHeader
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+            drivePill={<DriveModePill />}
+            tools={
+              <HeaderTools
+                onOpenPalette={() => setPaletteOpen(true)}
+                showCounterPref={isStaff && counterEnabled}
+                clerkTestId="register-clerk"
+              />
+            }
+          />
+        ) : (
+          <Header
+            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+            showCounterPref={isStaff && counterEnabled}
+          />
+        )}
         {/* pb-24 reserves 96px of clearance below page content so the
             floating PwaInstallPrompt (fixed bottom-4) and similar
             bottom-anchored UI never sit on top of bottom-aligned form
