@@ -126,14 +126,18 @@ function makeVoidHarness(returns: FakeReturn[], orderId: string | null = ORDER_I
   return { service, tx, writes, ledger, commissionEngine, release };
 }
 
-async function expectRefused(promise: Promise<unknown>, message = INVOICE_HAS_CASH_REFUND_MESSAGE) {
+async function expectRefused(
+  promise: Promise<unknown>,
+  code = "INVOICE_HAS_CASH_REFUND",
+  message = INVOICE_HAS_CASH_REFUND_MESSAGE,
+) {
   const err: any = await promise.then(
     () => null,
     (e: unknown) => e,
   );
   expect(err).toBeInstanceOf(ConflictException);
   expect(err.getStatus()).toBe(409);
-  expect(err.getResponse()).toEqual({ code: "INVOICE_HAS_CASH_REFUND", message });
+  expect(err.getResponse()).toEqual({ code, message });
 }
 
 function expectNothingChanged(h: ReturnType<typeof makeVoidHarness>) {
@@ -147,8 +151,9 @@ function expectNothingChanged(h: ReturnType<typeof makeVoidHarness>) {
 }
 
 describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoice was refunded in cash", () => {
-  it("the code and the two messages are the contract (same code, wording per surface)", () => {
+  it("the two codes and the two messages are the contract (own code and wording per surface)", () => {
     expect(API_ERROR_CODES.INVOICE_HAS_CASH_REFUND).toBe("INVOICE_HAS_CASH_REFUND");
+    expect(API_ERROR_CODES.ORDER_HAS_CASH_REFUND).toBe("ORDER_HAS_CASH_REFUND");
     expect(INVOICE_HAS_CASH_REFUND_MESSAGE).toBe(
       "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
     );
@@ -165,6 +170,17 @@ describe("voidInvoice refuses 409 INVOICE_HAS_CASH_REFUND when part of the invoi
     expectNothingChanged(h);
     // only lockInvoiceRow's re-read happened, not the void's own
     expect(h.tx.invoice.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("the void refuses with INVOICE_HAS_CASH_REFUND and never the order code (red if the two are swapped)", async () => {
+    const h = makeVoidHarness([cashRefunded({})]);
+    const err: any = await h.service.voidInvoice(INVOICE_ID).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err.getResponse().code).toBe("INVOICE_HAS_CASH_REFUND");
+    expect(err.getResponse().code).not.toBe("ORDER_HAS_CASH_REFUND");
+    expect(err.getResponse().message).toBe(INVOICE_HAS_CASH_REFUND_MESSAGE);
   });
 
   it("the same refusal holds for a standalone invoice (no order)", async () => {
@@ -309,7 +325,11 @@ describe("assertNoCashRefundOnOrder (order cancel): the same refusal for every l
   it("an INLINE return sourced from a live invoice of the order, cash-refunded: 409 with the ORDER wording", async () => {
     const tx = orderTx([onOrderLine({})]);
 
-    await expectRefused(assertNoCashRefundOnOrder(tx, ORDER_ID), ORDER_HAS_CASH_REFUND_MESSAGE);
+    await expectRefused(
+      assertNoCashRefundOnOrder(tx, ORDER_ID),
+      "ORDER_HAS_CASH_REFUND",
+      ORDER_HAS_CASH_REFUND_MESSAGE,
+    );
 
     // the lines come from the order's non-VOID invoices in ONE query (no invoice.findMany)
     expect(tx.invoiceItem.findMany).toHaveBeenCalledWith({
@@ -330,8 +350,19 @@ describe("assertNoCashRefundOnOrder (order cancel): the same refusal for every l
 
     await expectRefused(
       assertNoCashRefundOnOrder(orderTx([standard], []), ORDER_ID),
+      "ORDER_HAS_CASH_REFUND",
       ORDER_HAS_CASH_REFUND_MESSAGE,
     );
+  });
+
+  it("the cancel refuses with ORDER_HAS_CASH_REFUND and never the invoice code (red if the two are swapped)", async () => {
+    const err: any = await assertNoCashRefundOnOrder(orderTx([onOrderLine({})]), ORDER_ID).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err.getResponse().code).toBe("ORDER_HAS_CASH_REFUND");
+    expect(err.getResponse().code).not.toBe("INVOICE_HAS_CASH_REFUND");
+    expect(err.getResponse().message).toBe(ORDER_HAS_CASH_REFUND_MESSAGE);
   });
 
   it("PENDING, CANCELLED and REJECTED returns do not block the cancel", async () => {

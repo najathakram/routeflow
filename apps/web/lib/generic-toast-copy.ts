@@ -92,6 +92,8 @@ const CODE_COPY: Record<string, string> = {
     "This invoice has unspent credit. Release or use it first, then try again.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
+  [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
+    "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

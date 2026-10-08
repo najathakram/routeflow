@@ -30,14 +30,15 @@ import {
 export const INVOICE_HAS_CASH_REFUND_MESSAGE =
   "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.";
 
-/** The same code on an order cancel, worded for the order. */
+/** The 409 message of `ORDER_HAS_CASH_REFUND` on an order cancel (its own code, worded for the order). */
 export const ORDER_HAS_CASH_REFUND_MESSAGE =
   "Part of this order was refunded in cash. Issue a credit note instead of cancelling.";
 
-/** Throws 409 INVOICE_HAS_CASH_REFUND with `message` when a recorded cash refund matches one of `sources`. Reads only. */
+/** Throws 409 `code` with `message` when a recorded cash refund matches one of `sources`. Reads only. */
 async function refuseOnCashRefund(
   tx: any,
   sources: Array<Record<string, unknown>>,
+  code: string,
   message: string,
 ): Promise<void> {
   if (sources.length === 0) return;
@@ -46,7 +47,7 @@ async function refuseOnCashRefund(
     select: { id: true },
   });
   if (refunded) {
-    throw new ConflictException({ code: API_ERROR_CODES.INVOICE_HAS_CASH_REFUND, message });
+    throw new ConflictException({ code, message });
   }
 }
 
@@ -72,11 +73,16 @@ export async function assertNoCashRefundOnInvoice(
 ): Promise<void> {
   const sources = inlineSourceFrom(await sourceLineIdsOfInvoice(tx, invoiceId));
   if (orderId) sources.push({ kind: "STANDARD", orderId });
-  await refuseOnCashRefund(tx, sources, INVOICE_HAS_CASH_REFUND_MESSAGE);
+  await refuseOnCashRefund(
+    tx,
+    sources,
+    API_ERROR_CODES.INVOICE_HAS_CASH_REFUND,
+    INVOICE_HAS_CASH_REFUND_MESSAGE,
+  );
 }
 
 /**
- * Order cancel: the same refusal for every live (non-VOID) invoice of `orderId`, with the order wording. INLINE returns
+ * Order cancel: the same refusal (409 ORDER_HAS_CASH_REFUND) for every live (non-VOID) invoice of `orderId`, with the order wording. INLINE returns
  * resolve through the lines of those invoices (one query, no per-invoice loop and no `invoice.findMany`); STANDARD returns
  * through `orderId`. Reads only; call it right after `lockOrderForCancel`, BEFORE the cancel's first write.
  */
@@ -88,5 +94,10 @@ export async function assertNoCashRefundOnOrder(tx: any, orderId: string): Promi
     })) ?? [];
   const sources = inlineSourceFrom(lines.map((l) => l.id));
   sources.push({ kind: "STANDARD", orderId });
-  await refuseOnCashRefund(tx, sources, ORDER_HAS_CASH_REFUND_MESSAGE);
+  await refuseOnCashRefund(
+    tx,
+    sources,
+    API_ERROR_CODES.ORDER_HAS_CASH_REFUND,
+    ORDER_HAS_CASH_REFUND_MESSAGE,
+  );
 }

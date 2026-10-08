@@ -308,7 +308,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
 
   // Money safety: a cash refund (EXTERNAL_REFUND, refundedAt set) left the till, so voiding the order's invoices would pay
   // it out twice. The guard (invoice-cash-refund-guard.ts) runs right after the Order -> Invoice locks, before ANY write.
-  it("a cash-refunded return on the order's invoices ⇒ 409 INVOICE_HAS_CASH_REFUND with the ORDER wording and NOTHING is written", async () => {
+  it("a cash-refunded return on the order's invoices ⇒ 409 ORDER_HAS_CASH_REFUND with the ORDER wording and NOTHING is written", async () => {
     arrange(1);
     prisma.return.findFirst.mockResolvedValue({ id: "ret-1" });
     const settle = jest.spyOn(service as any, "settleStockForEdit").mockResolvedValue(undefined);
@@ -318,7 +318,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getStatus()).toBe(409);
     expect((err as ConflictException).getResponse()).toEqual({
-      code: "INVOICE_HAS_CASH_REFUND",
+      code: "ORDER_HAS_CASH_REFUND",
       message:
         "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
     });
