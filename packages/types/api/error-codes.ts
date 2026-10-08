@@ -43,6 +43,10 @@
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
+//   UNIT_NAME_TAKEN — `body.code` of the 409 when renaming a unit to a name another unit of the tenant already has
+//                    (archived or not).
+//   UNIT_RENAME_COLLISION — `body.code` of the 409 when a unit rename would give one product two levels the same name;
+//                    `products` lists up to 10 `{id, name}` and `total` counts them all. Nothing was changed.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -198,6 +202,8 @@ export const API_ERROR_CODES = {
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
   NAME_TAKEN: "NAME_TAKEN",
+  UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
+  UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",

@@ -83,7 +83,6 @@ describe("UnitsService", () => {
     it("a cross-tenant id is a 404 on rename and on archive (lookup is scoped to the JWT tenant)", async () => {
       const { service, db } = make();
       db.tenantUnit.findFirst.mockResolvedValue(null);
-      db.tenantUnit.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.update("other-tenant-id", { name: "Box" }, user)).rejects.toBeInstanceOf(
         NotFoundException,
       );
@@ -93,9 +92,8 @@ describe("UnitsService", () => {
       for (const call of db.tenantUnit.findFirst.mock.calls) {
         expect(call[0].where.tenantId).toBe(T);
       }
-      expect(db.tenantUnit.updateMany.mock.calls[0][0].where).toEqual(
-        expect.objectContaining({ id: "other-tenant-id", tenantId: T }),
-      );
+      expect(db.tenantUnit.findFirst.mock.calls).toHaveLength(2);
+      expect(db.tenantUnit.updateMany).not.toHaveBeenCalled();
     });
 
     it("ignores a body tenantId: writes carry the JWT tenant", async () => {
@@ -256,7 +254,7 @@ describe("UnitsService", () => {
         async ({ where }: { where: Record<string, unknown> }) => (where.id === "u1" ? row() : null),
       );
       h.db.tenantUnit.update.mockImplementation(async ({ data }: { data: object }) =>
-        row(data as object),
+        row(data as Record<string, unknown>),
       );
       h.db.productUnit.findMany.mockImplementation(
         async ({ where }: { where: Record<string, unknown> }) =>
