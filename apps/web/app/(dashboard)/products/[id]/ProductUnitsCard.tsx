@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ProductUnitLevel } from "@routeflow/types";
-import { resolveUnitPrice, type LadderProduct } from "@routeflow/pricing";
+import { resolveUnitPrice, unitWords, type LadderProduct } from "@routeflow/pricing";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -84,6 +84,7 @@ function UnitRow({
     draft.label !== base.label ||
     draft.factor !== base.factor ||
     draft.prices.some((p, i) => p !== base.prices[i]);
+  const w = unitWords();
   const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
   // What tier `t` would price at if THIS field were left blank: the row as currently drafted,
   // with only that tier cleared (so "derived" never previews the explicit price being replaced).
@@ -128,11 +129,11 @@ function UnitRow({
         </div>
         <div>
           <label className={LABEL} htmlFor={`${idp}-factor`}>
-            Pieces per unit
+            {w.base.other} per unit
           </label>
           <DecimalInput
             id={`${idp}-factor`}
-            aria-label={`Pieces per ${unit.label}`}
+            aria-label={`${w.base.other} per ${unit.label}`}
             className={FIELD}
             decimals={0}
             min={1}
@@ -158,7 +159,7 @@ function UnitRow({
         </div>
       </div>
       <p className="mt-1.5 text-[11px] text-navy/50">
-        A grey figure is derived from the pack price; type a price to override it.
+        A grey figure is derived from the {w.pack.lower} price; type a price to override it.
       </p>
       <details className="mt-2">
         <summary className="cursor-pointer text-xs font-medium text-brand-600">Tier prices</summary>
@@ -288,6 +289,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
     );
   };
 
+  const w = unitWords();
   const packPieces = product.unitsPerBox && product.unitsPerBox > 1 ? product.unitsPerBox : 1;
   const noneDefault = !units.some((u) => u.isDefaultSelling);
 
@@ -301,10 +303,9 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
       <div className="space-y-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm">
           <span className="text-navy">
-            <span className="font-medium">{product.unit || "Box"}</span>{" "}
+            <span className="font-medium">{product.unit || w.pack.one}</span>{" "}
             <span className="text-navy/60">
-              · {packPieces} {packPieces === 1 ? "piece" : "pieces"} · the pack (edit its price
-              above)
+              · {packPieces} {w.baseFor(packPieces)} · the {w.pack.lower} (edit its price above)
             </span>
           </span>
           <span className="flex items-center gap-4">
@@ -387,7 +388,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
           </div>
           <div>
             <label className={LABEL} htmlFor="new-unit-factor">
-              Pieces per new unit
+              {w.base.other} per new unit
             </label>
             <DecimalInput
               id="new-unit-factor"

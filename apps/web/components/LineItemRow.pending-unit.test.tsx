@@ -78,8 +78,8 @@ describe("LineItemRow, pending selling unit", () => {
     );
     expect(screen.getByTestId("line-qty-controls")).toBeDisabled();
     expect(screen.getByTestId("line-qty-controls")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Case" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "+ units" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Box" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "+ pieces" })).toBeDisabled();
   });
 
   it("FAILED: a readable error and a REAL Retry button (reachable by keyboard); the controls stay locked, nothing is added", () => {

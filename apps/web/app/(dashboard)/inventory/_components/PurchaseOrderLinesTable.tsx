@@ -6,6 +6,10 @@ import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import { linePack, resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: a PO line carries no per-product label yet, so this prints the default words.
+const UW = unitWords();
 
 export type CatalogProduct = {
   id: string;
@@ -96,7 +100,7 @@ export function PurchaseOrderLinesTable({
             Qty
           </span>
           <span role="columnheader" className="font-medium">
-            Unit Cost ($)
+            Cost ($)
           </span>
           <span role="columnheader" className="text-right font-medium">
             Subtotal
@@ -143,7 +147,7 @@ export function PurchaseOrderLinesTable({
                 </div>
                 <div role="cell" className="min-w-0">
                   <span aria-hidden="true" className={CELL_LABEL}>
-                    {isBoxed ? "Boxes + pieces" : "Qty"}
+                    {isBoxed ? `${UW.pack.other} + ${UW.base.lowerOther}` : "Qty"}
                   </span>
                   {isBoxed ? (
                     <div className="flex items-center gap-1">
@@ -151,8 +155,8 @@ export function PurchaseOrderLinesTable({
                         type="number"
                         min={0}
                         step={1}
-                        title="Boxes"
-                        aria-label="Boxes"
+                        title={UW.pack.other}
+                        aria-label={UW.pack.other}
                         value={line.boxes}
                         onChange={(e) => updateLine(i, { boxes: e.target.value })}
                         className={`${inputCls} ${NUM_MIN}`}
@@ -163,8 +167,8 @@ export function PurchaseOrderLinesTable({
                         min={0}
                         max={upb - 1}
                         step={1}
-                        title="Extra pieces"
-                        aria-label="Extra pieces"
+                        title={`Extra ${UW.base.lowerOther}`}
+                        aria-label={`Extra ${UW.base.lowerOther}`}
                         value={line.pieces}
                         onChange={(e) => updateLine(i, { pieces: e.target.value })}
                         className={`${inputCls} ${NUM_MIN}`}
@@ -182,7 +186,10 @@ export function PurchaseOrderLinesTable({
                     />
                   )}
                   {isBoxed && (
-                    <p className="mt-0.5 text-[10px] text-navy/50">boxes + pcs · {qty} pcs total</p>
+                    <p className="mt-0.5 text-[10px] text-navy/50">
+                      {UW.pack.lowerOther} + {UW.base.short.other} · {qty} {UW.baseShortFor(qty)}{" "}
+                      total
+                    </p>
                   )}
                 </div>
                 <div role="cell" className="min-w-0">
@@ -193,14 +200,14 @@ export function PurchaseOrderLinesTable({
                     type="number"
                     min={0}
                     step={0.0001}
-                    title={isBoxed ? "Cost per box" : "Cost per unit"}
+                    title={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
                     aria-label="Unit cost"
                     value={line.unitCost}
                     onChange={(e) => updateLine(i, { unitCost: e.target.value })}
                     className={`${inputCls} ${NUM_MIN}`}
                   />
                   <p className="mt-0.5 text-[10px] text-navy/50">
-                    {isBoxed ? "per box" : "per unit"}
+                    per {isBoxed ? UW.pack.lower : UW.base.lower}
                   </p>
                 </div>
                 <div className="flex items-center justify-between gap-2 md:contents">

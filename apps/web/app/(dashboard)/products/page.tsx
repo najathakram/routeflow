@@ -27,7 +27,7 @@ import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, type TierField } from "@routeflow/pricing";
+import { cascadeTierPrices, unitWords, type TierField } from "@routeflow/pricing";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -58,6 +58,9 @@ import {
   stockFilterParams,
   type ProductStockFilter,
 } from "./_components/product-status";
+
+// U-3a: this list carries no per-product label yet, so it prints the default words.
+const UW = unitWords();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -376,7 +379,7 @@ function makeTableColumns(
           {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
             <>
               ${parseFloat(String(p.msrp)).toFixed(2)}
-              <span className="ml-0.5 text-[10px] text-navy/40">/pc</span>
+              <span className="ml-0.5 text-[10px] text-navy/40">/{UW.base.short.one}</span>
             </>
           ) : (
             <span className="text-navy/30">—</span>
@@ -462,7 +465,9 @@ function makeTableColumns(
               </p>
               <p className="text-[11px] text-navy/40">
                 {p.sku ? `${p.sku} · ` : ""}
-                {p.unitsPerBox && p.unitsPerBox > 1 ? "box + piece" : p.unit}
+                {p.unitsPerBox && p.unitsPerBox > 1
+                  ? `${UW.pack.lower} + ${UW.base.lower}`
+                  : p.unit}
               </p>
             </div>
           </div>
@@ -619,7 +624,7 @@ function makeTableColumns(
     },
     {
       accessorKey: "unitsPerBox",
-      header: "Units / case",
+      header: `${UW.base.other} per ${UW.pack.lower}`,
       enableSorting: false,
       cell: ({ row }) => {
         const p = row.original;

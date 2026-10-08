@@ -3,6 +3,7 @@
 import * as React from "react";
 import { ImagePlus, X as XIcon } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
+import { unitWords } from "@routeflow/pricing";
 import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
@@ -109,6 +110,7 @@ export function ProductCreateModal({
   initialUnitsPerBox,
 }: ProductCreateModalProps) {
   const { toast } = useToast();
+  const w = unitWords();
   const createProduct = useCreateProduct({ localErrorToast: localToastForSafeTextRefusal });
 
   // Every standalone product, for the "Variant of" picker — fetched here so
@@ -466,7 +468,7 @@ export function ProductCreateModal({
               )}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">
-                  Case code (SKU / barcode)
+                  {w.pack.one} code (SKU / barcode)
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -651,7 +653,7 @@ export function ProductCreateModal({
                     </div>
                     <div>
                       <label className="mb-1 block text-sm font-medium text-navy">
-                        Unit of measure (per piece)
+                        Unit of measure (per {w.base.lower})
                       </label>
                       <select
                         value={form.regUomUnit}
@@ -691,7 +693,7 @@ export function ProductCreateModal({
                         </select>
                         <p className="mt-0.5 text-xs text-navy/70">
                           Used when this product is sold by the case. Leave blank to report every
-                          quantity in pieces.
+                          quantity in {w.base.lowerOther}.
                         </p>
                       </div>
                     )}
@@ -744,7 +746,9 @@ export function ProductCreateModal({
               )}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Units per box</label>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  {w.base.other} per {w.pack.lower}
+                </label>
                 <input
                   type="number"
                   min="1"
@@ -755,7 +759,7 @@ export function ProductCreateModal({
                   className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
                 <p className="mt-0.5 text-xs text-navy/70">
-                  How many individual units are in one box (optional)
+                  How many individual units are in one {w.pack.lower} (optional)
                 </p>
                 {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
                   form.unitsPerBox === String(initialUnitsPerBox) && (

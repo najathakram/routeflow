@@ -50,7 +50,13 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import {
+  getTierPrice,
+  cascadeTierPrices,
+  perUnitPrice,
+  unitWords,
+  type TierField,
+} from "@routeflow/pricing";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
@@ -80,6 +86,9 @@ import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 import { COMMON_UNITS } from "@/lib/common-units";
+
+// U-3a: no per-product label is read yet, so this page prints the default words.
+const UW = unitWords();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1741,7 +1750,7 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label="Units per case"
+                    label={`${UW.base.other} per ${UW.pack.lower}`}
                     value={
                       isEditing ? (
                         <DecimalInput
@@ -2048,7 +2057,7 @@ export default function ProductDetailPage() {
                           className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                         <p className="mt-1 text-xs text-navy/50">
-                          per piece — even for boxed products
+                          per {UW.base.lower} — even for boxed products
                         </p>
                         {!(editDraft.msrp as string)?.trim() && (
                           <p className="mt-1 text-xs text-navy/50">
@@ -2058,7 +2067,8 @@ export default function ProductDetailPage() {
                         )}
                         {msrpBelowWholesale && (
                           <p className="mt-1 text-xs text-warning">
-                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/
+                            {UW.base.short.one})
                           </p>
                         )}
                       </>
@@ -2069,11 +2079,12 @@ export default function ProductDetailPage() {
                     <>
                       <p className="font-mono text-sm font-medium tabular-nums text-navy">
                         ${msrpNumber.toFixed(2)}
-                        <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                        <span className="ml-1 text-[10px] text-navy/50">/{UW.base.short.one}</span>
                       </p>
                       {msrpBelowWholesale && (
                         <p className="mt-1 text-xs text-warning">
-                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/{UW.base.short.one}
+                          )
                         </p>
                       )}
                     </>
@@ -2222,7 +2233,7 @@ export default function ProductDetailPage() {
                     )}
                     {activeProductConfig && (
                       <InfoRow
-                        label="Unit of measure (per piece)"
+                        label={`Unit of measure (per ${UW.base.lower})`}
                         value={
                           isEditing ? (
                             <select
@@ -2283,7 +2294,7 @@ export default function ProductDetailPage() {
                               </select>
                               <p className="mt-0.5 text-xs text-navy/70">
                                 Used when this product is sold by the case. Leave blank to report
-                                every quantity in pieces.
+                                every quantity in {UW.base.lowerOther}.
                               </p>
                             </>
                           ) : (
