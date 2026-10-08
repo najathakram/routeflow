@@ -20,7 +20,7 @@ import {
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { recomputeInvoiceStatus } from "./invoice-status";
-import { tenantTimeZone } from "../common/tenant-time-zone";
+import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -322,12 +322,12 @@ export class InvoicesService {
     if (!tenantId) return { notes: null, terms: null, timezone: null };
     const cfg = await this.prisma.tenantConfig.findUnique({
       where: { tenantId },
-      select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
+      select: { invoiceNotes: true, invoiceTerms: true, ...TENANT_ZONE_SELECT },
     });
     return {
       notes: cfg?.invoiceNotes ?? null,
       terms: cfg?.invoiceTerms ?? null,
-      timezone: cfg?.timezone ?? null,
+      timezone: configuredZone(cfg, tenantId),
     };
   }
 
@@ -2496,11 +2496,11 @@ export class InvoicesService {
     if (tenantId) {
       const cfg = await this.prisma.tenantConfig.findUnique({
         where: { tenantId },
-        select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
+        select: { invoiceNotes: true, invoiceTerms: true, ...TENANT_ZONE_SELECT },
       });
       tenantNotes = cfg?.invoiceNotes ?? null;
       tenantTerms = cfg?.invoiceTerms ?? null;
-      tenantTimezone = cfg?.timezone ?? null;
+      tenantTimezone = configuredZone(cfg, tenantId);
     }
 
     // A backdated order bills on its business date, and the payment term runs from

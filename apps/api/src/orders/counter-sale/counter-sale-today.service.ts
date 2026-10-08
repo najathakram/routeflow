@@ -9,7 +9,7 @@ import {
   startOfCalendarDay,
   startOfLocalDay,
 } from "../../common/calendar-date";
-import { tenantTimeZone } from "../../common/tenant-time-zone";
+import { resolveZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
@@ -24,17 +24,6 @@ import {
   windowReturnsWhere,
   type TodayOrderRecord,
 } from "./counter-sale-today";
-
-/** The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one (the helpers' own fallback). */
-function effectiveZone(tz: string | null): string {
-  if (!tz) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return tz;
-  } catch {
-    return "UTC";
-  }
-}
 
 const badDay = (message: string) =>
   new BadRequestException({ code: API_ERROR_CODES.COUNTER_SALES_DAY_INVALID, message });
@@ -59,7 +48,8 @@ export class CounterSaleTodayService {
     // forTenant() is UNSCOPED without a tenant: refuse, like the by-key read.
     if (!tenantId) throw new ForbiddenException("Today's sales needs a tenant-scoped session");
 
-    const zone = effectiveZone(await tenantTimeZone(this.prisma));
+    // SA-738r: the one resolver; the zone is resolved once per request and passed down.
+    const { zone } = await resolveZone(this.prisma, { tenantId });
     const today = calendarDateFromIso(startOfCalendarDay(now, zone));
     const day = query.day ?? today;
     if (!parseCalendarDay(day)) throw badDay("day must be a real calendar day (YYYY-MM-DD)");

@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { LeaderCron } from "../common/cron-lock";
 import { overdueCutoff } from "../common/calendar-date";
+import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 
@@ -127,14 +128,11 @@ export async function markOverdueForTenant(
   opts: { dryRun?: boolean } = {},
 ): Promise<number> {
   if (!tenantId) throw new Error("markOverdue needs a tenant id (never an unscoped sweep)");
-  const cfg = await prisma.tenantConfig.findUnique({
-    where: { tenantId },
-    select: { timezone: true },
-  });
+  const { zone } = await resolveZone(prisma, { tenantId });
   const where = {
     tenantId,
     status: { in: [...SWEPT_INVOICE_STATUSES] },
-    dueDate: { lt: overdueCutoff(now, cfg?.timezone ?? null) },
+    dueDate: { lt: overdueCutoff(now, zone) },
   };
   if (opts.dryRun) return prisma.invoice.count({ where });
   const res = await prisma.invoice.updateMany({ where, data: { status: InvoiceStatus.OVERDUE } });
