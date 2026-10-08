@@ -16,7 +16,7 @@ describe("counterSaleErrorCopy: PRICE_EDIT_NOT_PERMITTED", () => {
   it("403 PRICE_EDIT_NOT_PERMITTED has its own exact copy, not the generic permission copy", () => {
     const copy = counterSaleErrorCopy(refusal(403, "PRICE_EDIT_NOT_PERMITTED"));
     expect(copy).toBe(
-      "You can't change prices. Reset the edited prices, or ask your account admin.",
+      "You can't change prices. Remove the line and add it again, or ask your account admin.",
     );
     expect(copy).toBe(COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY);
   });

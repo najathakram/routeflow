@@ -418,7 +418,7 @@ describe("POS-5 price edit: the request", () => {
     fireEvent.click(completeBtn());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "You can't change prices. Reset the edited prices, or ask your account admin.",
+      "You can't change prices. Remove the line and add it again, or ask your account admin.",
     );
     expect(alert.textContent).not.toMatch(/permission to complete/);
     expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
