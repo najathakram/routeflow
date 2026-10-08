@@ -27,6 +27,11 @@ function build(opts: {
   // One object serves as both `forTenant()` and the transaction client.
   const db = {
     $executeRaw: jest.fn().mockResolvedValue(1),
+    // The tenant's unit NAMES: a level is linked to its unit by name so a rename reaches it.
+    tenantUnit: {
+      findFirst: jest.fn().mockResolvedValue({ id: "tu-1" }),
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     product: { findFirst: jest.fn().mockResolvedValue(product) },
     productUnit: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
@@ -194,6 +199,62 @@ describe("ProductUnitsService.create", () => {
       },
       select: { id: true },
     });
+  });
+});
+
+describe("ProductUnitsService: levels are linked to the tenant's unit by name (tenantUnitId)", () => {
+  it("create links the level to the existing TenantUnit of that name (by nameKey, tenant-scoped)", async () => {
+    const { service, db, tx } = build({});
+    await service.create("p1", { label: "  Case ", factorToBase: 288 });
+    expect(db.tenantUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t1", nameKey: "case" } }),
+    );
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ label: "Case", tenantUnitId: "tu-1" }),
+      }),
+    );
+  });
+
+  it("create adds the unit name when the tenant has none (skipDuplicates: a racing add cannot abort the tx)", async () => {
+    const { service, db, tx } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(db.tenantUnit.createMany).toHaveBeenCalledWith({
+      data: [{ tenantId: "t1", name: "Case", nameKey: "case" }],
+      skipDuplicates: true,
+    });
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBe("tu-new");
+  });
+
+  it.each([
+    ["Piece (factor 1) is never a unit name", "Piece", 1],
+    ["a name past 30 characters cannot be a unit name", "x".repeat(31), 288],
+    ["a piece synonym cannot be a unit name", "Pcs", 288],
+  ])("%s: the level is left unlinked and no unit is created", async (_t, label, factorToBase) => {
+    const { service, db, tx } = build({});
+    await service.create("p1", { label, factorToBase });
+    expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
+    expect(db.tenantUnit.createMany).not.toHaveBeenCalled();
+    expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBeNull();
+  });
+
+  it("a label edit re-links the level to the NEW name's unit (else a later rename of the old unit would relabel it)", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-crate" });
+    await service.update("p1", "u-case", { label: "Crate" });
+    expect(db.tenantUnit.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "t1", nameKey: "crate" } }),
+    );
+    expect(tx.productUnit.update.mock.calls[0][0].data.tenantUnitId).toBe("tu-crate");
+  });
+
+  it("an edit that sends no label never touches the link", async () => {
+    const { service, db, tx } = build({ rows: [caseRow] });
+    await service.update("p1", "u-case", { price: 5 });
+    expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
+    expect(tx.productUnit.update.mock.calls[0][0].data).not.toHaveProperty("tenantUnitId");
   });
 });
 

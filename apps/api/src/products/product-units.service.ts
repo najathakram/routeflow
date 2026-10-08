@@ -6,7 +6,9 @@ import {
 } from "@nestjs/common";
 import { PIECE_LABEL } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
+import { isPieceSynonym } from "../units/piece-words";
 import { lockTenantUnits } from "../units/tenant-units-lock";
+import { MAX_UNIT_NAME_LENGTH, unitNameKey } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
 interface PackInfo {
@@ -84,6 +86,7 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
+          tenantUnitId: await this.tenantUnitIdFor(tx, label),
         },
         select: UNIT_SELECT,
       });
@@ -109,6 +112,10 @@ export class ProductUnitsService {
           label,
           factorToBase,
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
+          // The link follows the NAME: a retyped label must leave the old unit's rename behind.
+          ...(dto.label !== undefined
+            ? { tenantUnitId: await this.tenantUnitIdFor(tx, label) }
+            : {}),
         },
         select: UNIT_SELECT,
       });
@@ -156,6 +163,27 @@ export class ProductUnitsService {
       }
       throw e;
     }
+  }
+
+  /**
+   * The tenant unit a level's label names, so a unit rename relabels the level. The unit is added
+   * when the tenant has none (ON CONFLICT DO NOTHING: a racing add must not abort this transaction).
+   * Piece and its synonyms, and any name past the unit-name limit, are never units: unlinked (null).
+   * An ARCHIVED unit still links (it hides from pickers; the level keeps its meaning).
+   */
+  private async tenantUnitIdFor(tx: any, label: string): Promise<string | null> {
+    const name = label.trim();
+    if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) return null;
+    const tenantId = this.prisma.getTenantId();
+    const nameKey = unitNameKey(name);
+    const find = () =>
+      tx.tenantUnit.findFirst({ where: { tenantId, nameKey }, select: { id: true } });
+    let unit = await find();
+    if (!unit) {
+      await tx.tenantUnit.createMany({ data: [{ tenantId, name, nameKey }], skipDuplicates: true });
+      unit = await find();
+    }
+    return unit?.id ?? null;
   }
 
   /** `findFirst` (not `findUnique`) so the tenant filter is ANDed into the WHERE — a foreign

@@ -33,7 +33,7 @@ interface RawUnitRow {
   productCount: number;
 }
 
-const MAX_NAME = 30;
+export const MAX_UNIT_NAME_LENGTH = 30;
 const MAX_COLLISION_PRODUCTS = 10;
 const CHUNK = 5000;
 
@@ -43,7 +43,7 @@ export const unitNameKey = (name: string): string => name.trim().toLowerCase();
 function cleanName(raw: unknown): string {
   const name = typeof raw === "string" ? raw.trim() : "";
   if (!name) throw new BadRequestException(UNIT_NAME_EMPTY);
-  if (name.length > MAX_NAME) throw new BadRequestException(UNIT_NAME_TOO_LONG);
+  if (name.length > MAX_UNIT_NAME_LENGTH) throw new BadRequestException(UNIT_NAME_TOO_LONG);
   // Piece (and its synonyms) is every product's factor-1 level: resolveLadderLevel answers it before
   // any level row, so a unit of that name could never be sold at its own size.
   if (isPieceSynonym(name)) throw new BadRequestException(UNIT_NAME_IS_PIECE);
