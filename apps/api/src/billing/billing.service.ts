@@ -1659,13 +1659,9 @@ export class BillingService {
     }
     // B1155: this checkout is going to REPLACE a stored subscription that is neither live nor cancelled
     // (paused / incomplete): cancel that one first, so it is not left alive and unreferenced.
-    if (
-      storedSubId &&
-      storedSubId !== subscriptionId &&
-      !stored.live &&
-      stored.status &&
-      !isTerminalStripeSubscriptionStatus(stored.status)
-    ) {
+    if (storedSubId && storedSubId !== subscriptionId && !stored.live && stored.status) {
+      // Also for an already-terminal early status: the guard re-reads the payment state, and a bank payment
+      // still processing on it parks the checkout instead of applying it (it may yet settle).
       await this.cancelSupersededUnlessProcessing(
         session,
         tenantId,

@@ -4222,6 +4222,15 @@ describe("B1158: a superseded subscription whose payment is still PROCESSING is 
     nothingApplied(h, "sub_old");
   });
 
+  it("early-terminal + processing -> park: the handler's first read is already terminal, the payment is still in flight", async () => {
+    const h = make(base({ storedSubStatus: "incomplete_expired", storedPaymentProcessing: true }));
+    await expect(h.completed(paidSession(h))).rejects.toThrow(ConflictException);
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(parked(h)).toHaveLength(1);
+    expect(notices(h, "superseded_payment_processing")).toHaveLength(1);
+    nothingApplied(h, "sub_old");
+  });
+
   it("a LIVE status still wins over a processing payment (live check stays first)", async () => {
     const h = make(base());
     h.stripe.getSubscriptionPaymentState.mockResolvedValue({

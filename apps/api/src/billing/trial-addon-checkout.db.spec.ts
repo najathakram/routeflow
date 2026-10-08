@@ -1238,6 +1238,49 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
     });
 
+    it("B1158 sweep selection (real SQL): an OPEN park is re-run, a RESOLVED one never is, an ESCALATED one only at the UTC-midnight run", async () => {
+      const r = await twoSessions();
+      const tag = randomUUID().slice(0, 8);
+      const ids = { open: `cs_open_${tag}`, resolved: `cs_res_${tag}`, escalated: `cs_esc_${tag}` };
+      const audit = (entityId: string, action: string) =>
+        prisma.auditLog.create({
+          data: {
+            tenantId: r.tenantId,
+            action,
+            entityType: "stripe_checkout_session",
+            entityId,
+            meta: {},
+          },
+        });
+      await audit(ids.open, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.resolved, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.resolved, "STRIPE_CHECKOUT_PARK_RESOLVED");
+      await audit(ids.escalated, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.escalated, "STRIPE_CHECKOUT_PARK_ESCALATED");
+
+      const rerun = jest
+        .spyOn(r.billing as any, "reconcileParkedCheckout")
+        .mockResolvedValue(undefined);
+      const mine = () =>
+        rerun.mock.calls.map((c) => c[0] as string).filter((id) => Object.values(ids).includes(id));
+      const at = (iso: string) => jest.spyOn(Date, "now").mockReturnValue(new Date(iso).getTime());
+      try {
+        const noon = at("2030-01-01T12:00:00Z");
+        await (r.billing as any).reconcileParkedCheckouts();
+        noon.mockRestore();
+        expect(mine()).toEqual([ids.open]);
+
+        rerun.mockClear();
+        const midnight = at("2030-01-01T00:30:00Z");
+        await (r.billing as any).reconcileParkedCheckouts();
+        midnight.mockRestore();
+        expect(mine().sort()).toEqual([ids.escalated, ids.open].sort());
+      } finally {
+        rerun.mockRestore();
+        jest.restoreAllMocks();
+      }
+    });
+
     it("4: a stored subscription Stripe no longer knows is not live either", async () => {
       const r = await twoSessions();
       await prisma.tenantSubscription.update({
