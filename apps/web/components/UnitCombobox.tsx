@@ -9,6 +9,11 @@ interface UnitComboboxProps {
   onChange: (value: string) => void;
   /** Additional units from the existing catalog to suggest */
   extraUnits?: string[];
+  /**
+   * The tenant's own active unit names (Settings > Units). When given they are suggested FIRST, then the common
+   * list, de-duplicated case-insensitively. Omitted = today's list, unchanged.
+   */
+  tenantUnits?: string[];
   required?: boolean;
   placeholder?: string;
   className?: string;
@@ -19,6 +24,7 @@ export function UnitCombobox({
   value,
   onChange,
   extraUnits = [],
+  tenantUnits,
   required,
   placeholder = "e.g. case, kg, unit",
   className,
@@ -28,10 +34,19 @@ export function UnitCombobox({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  const allUnits = React.useMemo(
-    () => Array.from(new Set([...COMMON_UNITS, ...extraUnits])).sort(),
-    [extraUnits],
-  );
+  const allUnits = React.useMemo(() => {
+    if (!tenantUnits) return Array.from(new Set([...COMMON_UNITS, ...extraUnits])).sort();
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const rest = Array.from(new Set([...extraUnits, ...COMMON_UNITS])).sort();
+    for (const u of [...tenantUnits, ...rest]) {
+      const k = u.trim().toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(u);
+    }
+    return out;
+  }, [extraUnits, tenantUnits]);
 
   const filtered = value.trim()
     ? allUnits.filter((u) => u.toLowerCase().includes(value.toLowerCase()))

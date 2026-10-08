@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ProductUnitLevel } from "@routeflow/types";
-import { resolveUnitPrice, type LadderProduct } from "@routeflow/pricing";
+import type { LadderProduct } from "@routeflow/pricing";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -18,6 +18,21 @@ import {
   useUpdateProductUnit,
 } from "@/lib/api/product-units";
 import { cascadePatch, proposeCascade, type CascadeProposal } from "@/lib/unit-cascade";
+import { useReplaceProductUnits, useTenantUnitNames } from "@/lib/api/product-units-ladder";
+import {
+  collapsedText,
+  derivedLevelPrice,
+  draftFromServer,
+  mapLadderError,
+  resolveDraft,
+  toPutBody,
+  type LadderDraft,
+  type LadderUnitRecord,
+  type MappedLadderError,
+} from "@/lib/unit-ladder";
+import { LadderEditor, type LadderEditorHandle } from "@/components/product-units/LadderEditor";
+import { LEVEL_CODES_UI_ENABLED } from "@/components/product-units/flags";
+import { UnitsSetupSection } from "@/components/product-units/UnitsSetupSection";
 
 /**
  * "Units & prices" (units_v1, ask 1-3): define Case / Pallet / Piece levels on a product, give
@@ -31,6 +46,9 @@ export interface UnitsCardProduct extends LadderProduct {
   unit: string;
   unitsPerBox?: number | null;
   pricePerUnit: number | string;
+  /** Units rebuild: the smallest unit's own word (null = Piece) and the pack's word. */
+  baseUnitLabel?: string | null;
+  packLabel?: string | null;
 }
 
 const num = (v: string | number | null | undefined): number | null =>
@@ -87,25 +105,8 @@ function UnitRow({
   const valid = draft.label.trim() !== "" && draft.factor != null && draft.factor >= 1;
   // What tier `t` would price at if THIS field were left blank: the row as currently drafted,
   // with only that tier cleared (so "derived" never previews the explicit price being replaced).
-  const derived = (tier: number) => {
-    try {
-      const preview = units.map((u) =>
-        u.id !== unit.id
-          ? u
-          : {
-              ...u,
-              price: draft.prices[0] == null || tier === 1 ? null : String(draft.prices[0]),
-              priceTier2: tier === 2 || draft.prices[1] == null ? null : String(draft.prices[1]),
-              priceTier3: tier === 3 || draft.prices[2] == null ? null : String(draft.prices[2]),
-              priceTier4: tier === 4 || draft.prices[3] == null ? null : String(draft.prices[3]),
-              priceTier5: tier === 5 || draft.prices[4] == null ? null : String(draft.prices[4]),
-            },
-      );
-      return resolveUnitPrice(product, preview, unit.label, tier);
-    } catch {
-      return null;
-    }
-  };
+  const derived = (tier: number) =>
+    derivedLevelPrice(product, units, unit.label, draft.prices, tier, (u) => u.id === unit.id);
   const isPiece = unit.factorToBase === 1;
   const idp = `unit-${unit.id}`;
 
@@ -229,6 +230,13 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
   const [price, setPrice] = React.useState<number | null>(null);
   const [proposals, setProposals] = React.useState<CascadeProposal[]>([]);
   const [removing, setRemoving] = React.useState<ProductUnitLevel | null>(null);
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState<LadderDraft | null>(null);
+  const [showAllErrors, setShowAllErrors] = React.useState(false);
+  const [serverError, setServerError] = React.useState<MappedLadderError | null>(null);
+  const editorRef = React.useRef<LadderEditorHandle>(null);
+  const tenantUnits = useTenantUnitNames(product.id, enabled && editing);
+  const replace = useReplaceProductUnits(product.id);
 
   if (!enabled) return null;
   const units = list.data ?? [];
@@ -288,6 +296,43 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
     );
   };
 
+  // "Set up" = the product already has a ladder (a level, or its own smallest-unit word).
+  const setUp = units.length > 0 || !!(product.baseUnitLabel ?? "").trim();
+  const serverDraft = () => draftFromServer(product, units as LadderUnitRecord[]);
+  const openEditor = () => {
+    setDraft(serverDraft());
+    setShowAllErrors(false);
+    setServerError(null);
+    setEditing(true);
+  };
+  const closeEditor = () => {
+    setEditing(false);
+    setDraft(null);
+    setServerError(null);
+  };
+  const saveLadder = () => {
+    if (!draft) return;
+    const resolved = resolveDraft(draft);
+    if (resolved.errors.size > 0) {
+      setShowAllErrors(true);
+      requestAnimationFrame(() => editorRef.current?.focusFirstError());
+      return;
+    }
+    const was = serverDraft();
+    const sendBase =
+      draft.basePrice !== was.basePrice ||
+      draft.baseIsDefault !== was.baseIsDefault ||
+      draft.baseTiers.some((t, i) => t !== was.baseTiers[i]);
+    setServerError(null);
+    replace.mutate(toPutBody(draft, { sendBase, sendCodes: LEVEL_CODES_UI_ENABLED }), {
+      onSuccess: () => {
+        toast({ title: "Units saved", variant: "success" });
+        closeEditor();
+      },
+      onError: (e) => setServerError(mapLadderError(e)),
+    });
+  };
+
   const packPieces = product.unitsPerBox && product.unitsPerBox > 1 ? product.unitsPerBox : 1;
   const noneDefault = !units.some((u) => u.isDefaultSelling);
 
@@ -299,115 +344,166 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
         </h3>
       </div>
       <div className="space-y-3 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm">
-          <span className="text-navy">
-            <span className="font-medium">{product.unit || "Box"}</span>{" "}
-            <span className="text-navy/60">
-              · {packPieces} {packPieces === 1 ? "piece" : "pieces"} · the pack (edit its price
-              above)
-            </span>
-          </span>
-          <span className="flex items-center gap-4">
-            <span className="font-mono tabular-nums text-navy">
-              {fmt(Number(product.pricePerUnit) || 0)}
-            </span>
-            <label className="flex items-center gap-2 text-navy">
-              <input
-                type="radio"
-                name="default-selling-unit"
-                checked={noneDefault}
-                disabled={busy || noneDefault}
-                onChange={() => {
-                  const current = units.find((u) => u.isDefaultSelling);
-                  if (current) {
-                    update.mutate({ id: current.id, isDefaultSelling: false });
-                  }
-                }}
-              />
-              Pre-selected on staff orders
-            </label>
-          </span>
-        </div>
-
-        {list.isLoading ? (
-          <Skeleton shape="block" height={96} />
-        ) : list.isError ? (
-          <p className="text-sm text-navy/70">
-            Couldn&apos;t load units.{" "}
-            <button
-              type="button"
-              className="font-medium text-brand-600"
-              onClick={() => list.refetch()}
-            >
-              Try again
-            </button>
-          </p>
-        ) : units.length === 0 ? (
-          <p className="text-sm text-navy/70">
-            No other units yet. Add a Case or Pallet below to sell this product in bigger (or
-            smaller) steps.
-          </p>
-        ) : (
-          <ul className="space-y-3">
-            {units.map((u) => (
-              <UnitRow
-                key={u.id}
-                unit={u}
-                product={product}
-                units={units}
-                tierNames={tierNames}
-                busy={busy}
-                onSave={save}
-                onDelete={setRemoving}
-                onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
-              />
-            ))}
-          </ul>
-        )}
-
-        <form
-          className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            add();
-          }}
+        <UnitsSetupSection
+          text={collapsedText(serverDraft(), product.unitsPerBox, setUp)}
+          isSetUp={setUp}
+          open={editing}
+          onToggle={() => (editing ? closeEditor() : openEditor())}
+          regionId="product-units-editor"
         >
-          <div>
-            <label className={LABEL} htmlFor="new-unit-name">
-              New unit
-            </label>
-            <input
-              id="new-unit-name"
-              className={FIELD}
-              placeholder="e.g. Case"
-              maxLength={40}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-factor">
-              Pieces per new unit
-            </label>
-            <DecimalInput
-              id="new-unit-factor"
-              className={FIELD}
-              decimals={0}
-              min={1}
-              value={factor}
-              onChange={setFactor}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="new-unit-price">
-              Price (optional)
-            </label>
-            <DecimalInput id="new-unit-price" className={FIELD} value={price} onChange={setPrice} />
-          </div>
-          <Button type="submit" disabled={busy || !name.trim() || !factor}>
-            Add unit
-          </Button>
-        </form>
+          {draft && (
+            <div className="space-y-3">
+              <LadderEditor
+                ref={editorRef}
+                value={draft}
+                onChange={setDraft}
+                tenantUnits={tenantUnits.data ?? []}
+                packPrice={Number(product.pricePerUnit) || null}
+                tierNames={tierNames}
+                showAllErrors={showAllErrors}
+                serverError={serverError}
+                onDismissServerError={() => setServerError(null)}
+                idPrefix="product-ladder"
+              />
+              {serverError && !serverError.rowLabel && (
+                <p role="alert" className="text-sm text-red-600">
+                  {serverError.message}
+                </p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={closeEditor}
+                  disabled={replace.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" onClick={saveLadder} loading={replace.isPending}>
+                  Save units
+                </Button>
+              </div>
+            </div>
+          )}
+        </UnitsSetupSection>
+        {!editing && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-sm">
+              <span className="text-navy">
+                <span className="font-medium">{product.unit || "Box"}</span>{" "}
+                <span className="text-navy/60">
+                  · {packPieces} {packPieces === 1 ? "piece" : "pieces"} · the pack (edit its price
+                  above)
+                </span>
+              </span>
+              <span className="flex items-center gap-4">
+                <span className="font-mono tabular-nums text-navy">
+                  {fmt(Number(product.pricePerUnit) || 0)}
+                </span>
+                <label className="flex items-center gap-2 text-navy">
+                  <input
+                    type="radio"
+                    name="default-selling-unit"
+                    checked={noneDefault}
+                    disabled={busy || noneDefault}
+                    onChange={() => {
+                      const current = units.find((u) => u.isDefaultSelling);
+                      if (current) {
+                        update.mutate({ id: current.id, isDefaultSelling: false });
+                      }
+                    }}
+                  />
+                  Pre-selected on staff orders
+                </label>
+              </span>
+            </div>
+
+            {list.isLoading ? (
+              <Skeleton shape="block" height={96} />
+            ) : list.isError ? (
+              <p className="text-sm text-navy/70">
+                Couldn&apos;t load units.{" "}
+                <button
+                  type="button"
+                  className="font-medium text-brand-600"
+                  onClick={() => list.refetch()}
+                >
+                  Try again
+                </button>
+              </p>
+            ) : units.length === 0 ? (
+              <p className="text-sm text-navy/70">
+                No other units yet. Add a Case or Pallet below to sell this product in bigger (or
+                smaller) steps.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {units.map((u) => (
+                  <UnitRow
+                    key={u.id}
+                    unit={u}
+                    product={product}
+                    units={units}
+                    tierNames={tierNames}
+                    busy={busy}
+                    onSave={save}
+                    onDelete={setRemoving}
+                    onMakeDefault={(x) => update.mutate({ id: x.id, isDefaultSelling: true })}
+                  />
+                ))}
+              </ul>
+            )}
+
+            <form
+              className="grid grid-cols-2 items-end gap-3 border-t border-surface-border pt-3 sm:grid-cols-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                add();
+              }}
+            >
+              <div>
+                <label className={LABEL} htmlFor="new-unit-name">
+                  New unit
+                </label>
+                <input
+                  id="new-unit-name"
+                  className={FIELD}
+                  placeholder="e.g. Case"
+                  maxLength={40}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="new-unit-factor">
+                  Pieces per new unit
+                </label>
+                <DecimalInput
+                  id="new-unit-factor"
+                  className={FIELD}
+                  decimals={0}
+                  min={1}
+                  value={factor}
+                  onChange={setFactor}
+                />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="new-unit-price">
+                  Price (optional)
+                </label>
+                <DecimalInput
+                  id="new-unit-price"
+                  className={FIELD}
+                  value={price}
+                  onChange={setPrice}
+                />
+              </div>
+              <Button type="submit" disabled={busy || !name.trim() || !factor}>
+                Add unit
+              </Button>
+            </form>
+          </>
+        )}
       </div>
 
       <ConfirmDialog

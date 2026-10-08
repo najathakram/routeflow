@@ -9,6 +9,22 @@ import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
+import { useAuth } from "@/lib/auth-context";
+import { useUnitsEnabled } from "@/lib/api/product-units";
+import { putProductUnits, useTenantUnitNames } from "@/lib/api/product-units-ladder";
+import { LadderEditor, type LadderEditorHandle } from "./product-units/LadderEditor";
+import { LEVEL_CODES_UI_ENABLED } from "./product-units/flags";
+import { UnitsSetupSection } from "./product-units/UnitsSetupSection";
+import {
+  baseWord,
+  collapsedText,
+  emptyDraft,
+  packRow,
+  resolveDraft,
+  toPutBody,
+  unitsPerBoxText,
+  type LadderDraft,
+} from "@/lib/unit-ladder";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
@@ -114,6 +130,17 @@ export function ProductCreateModal({
   // Every standalone product, for the "Variant of" picker — fetched here so
   // callers don't need to load/pass the full catalog themselves.
   const { data: allProductsData } = useProducts({ limit: 0 });
+
+  // Units rebuild U-2: the ladder is staged here and PUT right after the product exists. Behind flag.units_v1 like
+  // every other units surface; with no levels staged nothing below changes the create payload.
+  const { user } = useAuth();
+  const canManageUnits = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const unitsEnabled = useUnitsEnabled({ enabled: canManageUnits });
+  const tenantUnits = useTenantUnitNames("new", unitsEnabled && isOpen);
+  const [unitsDraft, setUnitsDraft] = React.useState<LadderDraft>(emptyDraft);
+  const [unitsOpen, setUnitsOpen] = React.useState(false);
+  const [unitsShowAll, setUnitsShowAll] = React.useState(false);
+  const ladderRef = React.useRef<LadderEditorHandle>(null);
   const allProducts: any[] = allProductsData?.data ?? [];
 
   const [form, setForm] = React.useState({
@@ -265,6 +292,9 @@ export function ProductCreateModal({
     });
     setPendingImages([]);
     setPreviews([]);
+    setUnitsDraft(emptyDraft());
+    setUnitsOpen(false);
+    setUnitsShowAll(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -274,6 +304,17 @@ export function ProductCreateModal({
       return;
     }
     setPriceError("");
+    const stagedUnits = unitsEnabled && unitsDraft.rows.length > 0;
+    const staged = stagedUnits ? resolveDraft(unitsDraft, { packWord: stagedPackWord }) : null;
+    if (staged && staged.errors.size > 0) {
+      setUnitsOpen(true);
+      setUnitsShowAll(true);
+      requestAnimationFrame(() => ladderRef.current?.focusFirstError());
+      return;
+    }
+    // The pack's size comes from the ladder when one is staged (the field is read-only then).
+    const stagedPack = stagedUnits && staged ? packRow(unitsDraft) : null;
+    const stagedUnitsPerBox = stagedPack ? staged?.factors.get(stagedPack.key) : undefined;
     // For variants, store ONLY the variant name in the `name` field.
     // The parent product's name stays unchanged; UI composes the full
     // display name (e.g. "Geek Next 50K - Strawberry") from the parent
@@ -299,7 +340,11 @@ export function ProductCreateModal({
         costingMethod: form.costingMethod || "AVCO",
         standardCost:
           form.costingMethod === "STANDARD" && form.standardCost ? form.standardCost : undefined,
-        unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
+        unitsPerBox: stagedUnitsPerBox
+          ? stagedUnitsPerBox
+          : form.unitsPerBox
+            ? parseInt(form.unitsPerBox, 10)
+            : undefined,
         parentProductId: form.parentProductId || undefined,
         variantName: form.variantName || undefined,
         trackedCategoryId: form.trackedCategoryId || undefined,
@@ -314,6 +359,20 @@ export function ProductCreateModal({
       const copy = safeTextErrorCopy(err);
       if (copy) toast({ title: "Failed to create product", description: copy, variant: "error" });
       return;
+    }
+
+    if (stagedUnits && product?.id) {
+      try {
+        await putProductUnits(
+          product.id,
+          toPutBody(unitsDraft, { sendBase: true, sendCodes: LEVEL_CODES_UI_ENABLED }),
+        );
+      } catch {
+        toast({
+          title: "Saved the product. The units weren't saved. Open the product to set them up.",
+          variant: "warning",
+        });
+      }
     }
 
     // Upload images if any were queued
@@ -332,6 +391,15 @@ export function ProductCreateModal({
   };
 
   if (!isOpen) return null;
+
+  const stagedResolved = resolveDraft(unitsDraft);
+  const hasStagedLevels = unitsEnabled && unitsDraft.rows.length > 0;
+  const stagedPackRow = hasStagedLevels ? packRow(unitsDraft) : null;
+  const stagedBase = baseWord(unitsDraft);
+  // "Price per Case" once a ladder exists; the plain "Unit *" label otherwise.
+  const stagedPackWord = stagedPackRow ? form.unit : undefined;
+  const stagedPackLabel = stagedPackRow?.label.trim() || (hasStagedLevels ? stagedBase : null);
+  const unitsPerBoxReadOnly = hasStagedLevels ? unitsPerBoxText(unitsDraft, stagedResolved) : null;
 
   const busy = createProduct.isPending || isUploading;
 
@@ -508,12 +576,19 @@ export function ProductCreateModal({
 
               {/* Unit — combobox (pick from list OR type a custom value) */}
               <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  {stagedPackLabel ? `Price per ${stagedPackLabel} *` : "Unit *"}
+                </label>
                 <UnitCombobox
                   required
                   value={form.unit}
                   onChange={(v) => set("unit", v)}
                   extraUnits={units}
+                  tenantUnits={
+                    unitsEnabled
+                      ? (tenantUnits.data ?? []).filter((u) => !u.archived).map((u) => u.name)
+                      : undefined
+                  }
                 />
               </div>
 
@@ -745,26 +820,57 @@ export function ProductCreateModal({
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-navy">Units per box</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="e.g. 12"
-                  value={form.unitsPerBox}
-                  onChange={(e) => set("unitsPerBox", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="mt-0.5 text-xs text-navy/70">
-                  How many individual units are in one box (optional)
-                </p>
-                {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
-                  form.unitsPerBox === String(initialUnitsPerBox) && (
-                    <p className="mt-0.5 text-[11px] text-navy/70">
-                      Suggested from the invoice line ({initialUnitsPerBox} per box) — verify before
-                      saving.
+                {unitsPerBoxReadOnly ? (
+                  <p className="rounded border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy">
+                    {unitsPerBoxReadOnly}
+                  </p>
+                ) : (
+                  <>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="e.g. 12"
+                      value={form.unitsPerBox}
+                      onChange={(e) => set("unitsPerBox", e.target.value)}
+                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <p className="mt-0.5 text-xs text-navy/70">
+                      How many individual units are in one box (optional)
                     </p>
-                  )}
+                    {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
+                      form.unitsPerBox === String(initialUnitsPerBox) && (
+                        <p className="mt-0.5 text-[11px] text-navy/70">
+                          Suggested from the invoice line ({initialUnitsPerBox} per box) — verify
+                          before saving.
+                        </p>
+                      )}
+                  </>
+                )}
               </div>
+
+              {unitsEnabled && (
+                <div className="col-span-2">
+                  <UnitsSetupSection
+                    text={collapsedText(unitsDraft, Number(form.unitsPerBox) || null)}
+                    isSetUp={unitsDraft.rows.length > 0}
+                    open={unitsOpen}
+                    onToggle={() => setUnitsOpen((o) => !o)}
+                    regionId="product-create-units-editor"
+                  >
+                    <LadderEditor
+                      ref={ladderRef}
+                      value={unitsDraft}
+                      onChange={setUnitsDraft}
+                      tenantUnits={tenantUnits.data ?? []}
+                      packPrice={form.pricePerUnit ? Number(form.pricePerUnit) || null : null}
+                      showAllErrors={unitsShowAll}
+                      packWord={stagedPackWord}
+                      idPrefix="create-ladder"
+                    />
+                  </UnitsSetupSection>
+                </div>
+              )}
 
               {/* Pack-size prompt — suggested from the name/unit while the field
                   above is still unset. Never guesses: HIGH/MEDIUM pre-fills the
