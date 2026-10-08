@@ -13,7 +13,12 @@ import { Logger, OnModuleDestroy } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { isStaffSessionPayload } from "../auth/session-token";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  hasForeignAudience,
+  isStaffSessionPayload,
+  STAFF_ACCESS_AUDIENCE,
+} from "../auth/session-token";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -293,6 +298,9 @@ export class RouteFlowGateway
         if (typeof payload.sub !== "string" || !payload.sub) {
           throw new WsException("Invalid buyer token");
         }
+        if (hasForeignAudience(payload, BUYER_ACCESS_AUDIENCE)) {
+          throw new WsException("Invalid buyer token");
+        }
         // #2142 R1: every buyer access token the server mints carries an `exp` (buyer login,
         // Google sign-in, admin impersonation), and the resync ends the socket at that moment.
         // A token without one would keep its socket for ever, so it is refused here.
@@ -308,6 +316,9 @@ export class RouteFlowGateway
       }
 
       if (!isStaffSessionPayload(payload)) throw new WsException("Invalid token");
+      if (hasForeignAudience(payload, STAFF_ACCESS_AUDIENCE)) {
+        throw new WsException("Invalid token");
+      }
 
       client.data.user = payload;
 

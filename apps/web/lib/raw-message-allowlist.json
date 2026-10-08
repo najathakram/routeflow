@@ -112,12 +112,16 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/orders/[id]/page.tsx": {
-    "count": 2,
-    "why": "B991 / B987-E (codes + structured fields first): the cancel and fulfillment refusals are UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the cancel refusal is UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
   },
   "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
     "count": 2,
     "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
+  },
+  "app/(dashboard)/orders/_components/OrderFulfilmentRow.tsx": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the fulfillment refusal is UNCODED and today's server sentence says what to fix, so it keeps it (coded refusals are mapped first); moved here from orders/[id]/page.tsx; pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
     "count": 2,

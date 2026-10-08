@@ -475,6 +475,120 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // Back-office P2: an ACTIVE (paying) tenant is never moved to TRIAL, on EITHER server path that
+  // can write TRIAL (extend-trial and the status PATCH): a coded 409 and NO write.
+  describe("ACTIVE -> TRIAL is refused (TENANT_TRIAL_EXTEND_NOT_ALLOWED)", () => {
+    const refusedWith = async (run: () => Promise<unknown>) => {
+      const err = await run().then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+      });
+    };
+
+    describe("extendTrial", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          trialEndsAt: new Date("2026-11-01T00:00:00.000Z"),
+        } as any);
+      });
+
+      it("an ACTIVE tenant: the predicate write matches nothing, so 409 with the code and no audit row", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+
+        await refusedWith(() => service.extendTrial(TENANT_ID, 30, ADMIN_ID));
+
+        // the refusal is part of the write itself (no read-then-write gap)
+        expect(prisma.tenant.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: TENANT_ID, status: { not: "ACTIVE" } } }),
+        );
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it.each(["TRIAL", "SUSPENDED", "READ_ONLY"])(
+        "a %s tenant is extended: status TRIAL, a new end date, audited",
+        async () => {
+          prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+
+          const out = await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+
+          const data = prisma.tenant.updateMany.mock.calls[0][0].data as any;
+          expect(data.status).toBe("TRIAL");
+          expect(data.trialEndsAt).toBeInstanceOf(Date);
+          expect(out).toMatchObject({ trialEndsAt: expect.any(Date) });
+          expect(auditLog).toHaveBeenCalledWith(
+            expect.objectContaining({ action: "TENANT_TRIAL_EXTENDED", tenantId: TENANT_ID }),
+          );
+        },
+      );
+    });
+
+    describe("updateStatus (the status PATCH accepts any TenantStatus)", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      });
+
+      const prior = (status: string) =>
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          status,
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: null,
+        } as any);
+
+      it("ACTIVE -> TRIAL: 409 with the code, and nothing is written or audited", async () => {
+        prior("ACTIVE");
+
+        await refusedWith(() =>
+          service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID),
+        );
+
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it.each(["SUSPENDED", "READ_ONLY", "TRIAL"])("%s -> TRIAL is still allowed", async (from) => {
+        prior(from);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: "TRIAL" } }),
+        );
+      });
+
+      it("ACTIVE -> SUSPENDED is untouched by the refusal", async () => {
+        prior("ACTIVE");
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalled();
+      });
+    });
+  });
+
   // B557: computeOverview()'s two queries filter differently — live mrr requires (planKey
   // non-null, status ACTIVE, deletedAt null, class PRODUCTION) but the ledger sum
   // (BillingEvent.amountDelta) requires only tenant.class = PRODUCTION. A tenant billed once

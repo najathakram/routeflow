@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { LineComponentView } from "@routeflow/types";
+import { BACKORDER_TAG_LABEL, type LineComponentView } from "@routeflow/types";
 import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
@@ -64,6 +64,8 @@ export interface LineItemRowReadOnlyProps {
   custom?: boolean;
   /** #2717 M3: frozen components of a composed (mixed-pack) line, shown as "(included)" sub-lines. */
   components?: ReadonlyArray<LineComponentView> | null;
+  /** SA-714: pieces sold past stock (staff-only); > 0 shows the "Backorder" tag. Display only. */
+  backorderPieces?: number;
   className?: string;
 }
 
@@ -96,6 +98,7 @@ export function LineItemRowReadOnly({
   note,
   custom,
   components,
+  backorderPieces,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -189,6 +192,15 @@ export function LineItemRowReadOnly({
           {anchor}
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
+        {backorderPieces != null && backorderPieces > 0 && (
+          <span
+            data-testid="line-backorder-tag"
+            title={`${backorderPieces} pcs sold past stock`}
+            className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+          >
+            {BACKORDER_TAG_LABEL}
+          </span>
+        )}
         {custom && (
           <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
             Custom

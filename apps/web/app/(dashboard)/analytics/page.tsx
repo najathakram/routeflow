@@ -26,6 +26,7 @@ import { PageHeader, StatCard, Card, Button, Select, cn } from "@routeflow/ui/we
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { apiClient } from "@/lib/api-client";
+import { useFleetAccess } from "@/lib/api/addons";
 import { formatMoney } from "@/lib/format";
 import { AnalyticsCsvButton as Csv } from "./_components/AnalyticsCsvButton";
 
@@ -1213,7 +1214,11 @@ export default function AnalyticsPage() {
 
   const defaults = React.useMemo(() => getDefaultDates(), []);
 
-  const [activeTab, setActiveTab] = React.useState<TabId>("revenue");
+  // Fleet-off (no routes / delivery addon): no Operations tab (route + driver performance).
+  const { fleet } = useFleetAccess();
+  const tabs = TABS.filter((t) => fleet || t.id !== "operations");
+  const [activeTabState, setActiveTab] = React.useState<TabId>("revenue");
+  const activeTab: TabId = tabs.some((t) => t.id === activeTabState) ? activeTabState : "revenue";
   const [fromInput, setFromInput] = React.useState(defaults.from);
   const [toInput, setToInput] = React.useState(defaults.to);
   const [appliedFrom, setAppliedFrom] = React.useState(defaults.from);
@@ -1289,7 +1294,7 @@ export default function AnalyticsPage() {
       {/* Tabs */}
       <div className="border-b border-surface-border">
         <nav className="-mb-px flex gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <TabButton
               key={tab.id}
               active={activeTab === tab.id}

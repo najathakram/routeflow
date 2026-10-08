@@ -392,9 +392,9 @@ writes any more).
 A safety check reading a Prisma model that **nothing in `apps/api` writes** — the guard always
 passes (or always fails) the same way. The scanner counts reads vs writes per model, crediting
 writes through `forTenant()` chains, aliased clients (`db.model.create`), and schema-level nested
-creates (`relationField: { create ... }`). Current live hit: `rfInvoice` is read in
-`subscription.service.ts` but never written — platform-billing invoices are never generated, so
-whatever that read gates is inert.
+creates (`relationField: { create ... }`). Historical hit (resolved by the manual invoices due
+issuer, which now writes `rfInvoice`): `rfInvoice` was read in `subscription.service.ts` but never
+written, so whatever that read gated was inert.
 
 Caveat: rows written only by SQL migrations, seeds, or `$executeRaw` look write-less — confirm
 before filing.
@@ -504,7 +504,7 @@ it had succeeded. Suppress with `// scan-ok: log-only-catch — <why losing it i
 | validation-asymmetry | medium         | 1    | businessName min 1 vs 2                                         |
 | mutation-before-test | medium         | 1    | live dead-condition in recurring invoices                       |
 | denomination-merge   | noisy-excluded | 4    | unit tracing is human work                                      |
-| dead-model-guard     | medium         | 1    | rfInvoice read-but-never-written                                |
+| dead-model-guard     | medium         | 1    | (historical) rfInvoice read-but-never-written, now written     |
 
 ## Signatures added 2026-08-31 (F02b)
 

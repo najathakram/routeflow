@@ -196,6 +196,7 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
     );
     expect(await inTenant(t.tenantId, () => controller.get(t.admin))).toEqual({
       buyerOversell: "off",
+      buyerBackorderVisibility: "show",
       customerOverrides: 1,
     });
   });
