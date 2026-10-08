@@ -68,15 +68,14 @@ const reprint = (
       timezone: "America/New_York",
     },
     profile: PROFILE,
-    cashier: "pat",
   });
 
+// A reprint never names a cashier (the order doesn't record who sold it): the UI prints "Reprinted by".
 const SHARED = [
   "header",
   "orderNumber",
   "invoiceNumber",
   "invoiceId",
-  "cashier",
   "subtotal",
   "adjustment",
   "total",
@@ -109,6 +108,9 @@ describe("receipt golden: live vs reprint", () => {
     const b = reprint([{ method: "CASH", amount: 24.5 }]);
     expect(b.tendered).toBeNull();
     expect(b.change).toBeNull();
+    // and never a cashier: the live receipt names one, the reprint prints "Reprinted by" instead
+    expect(live("CASH").cashier).toBe("pat");
+    expect(b.cashier).toBeNull();
   });
   it("a split tender reads 'Cash + Card'", () => {
     expect(
