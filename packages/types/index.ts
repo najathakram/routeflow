@@ -141,6 +141,7 @@ export * from "./order-applied-credits";
 // `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
 
 export * from "./order-line-backorder";
+export * from "./invoice-line-code";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";

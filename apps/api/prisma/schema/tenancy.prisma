@@ -202,6 +202,7 @@ model Tenant {
   supplierStatementScans   SupplierStatementScan[]
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
   productUnits             ProductUnit[]
+  tenantUnits              TenantUnit[]
   supplierProducts         SupplierProduct[]
   productCategories        ProductCategory[]
   productCategoryLabels    ProductCategoryLabel[]
