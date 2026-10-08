@@ -568,11 +568,13 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // B1211: a product's parent that belongs to another tenant is never shown (name or otherwise).
     // The buyer order reads reach this same method, so they get the check too.
-    const parentTenantId = order.tenantId ?? this.prisma.getTenantId();
     for (const line of order.lineItems ?? []) {
       const product = line.product as { parent?: { tenantId?: string | null } | null } | null;
       if (product && "parent" in product) {
-        product.parent = tenantSafeParentView(product.parent, parentTenantId);
+        product.parent = tenantSafeParentView(
+          product.parent,
+          order.tenantId ?? this.prisma.getTenantId(),
+        );
       }
     }
 
