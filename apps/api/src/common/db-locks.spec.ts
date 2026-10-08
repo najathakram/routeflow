@@ -85,6 +85,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // supersede-then-insert window, keyed `${tenantId}:${key}`.
       // "counter-tender" (2026-10-04, SA-672 M1) backs CounterSaleService's re-read -> 'no tender yet'
       // -> recordPayment window, keyed on the order id.
+      // "catalog-code" (2026-10-08, units U-2) backs the per-tenant code-uniqueness window of
+      // ProductUnitsService#replace (a code belongs to one product across five columns), keyed on the tenant id.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -94,6 +96,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "mailbox",
         "policy-write",
         "counter-tender",
+        "catalog-code",
       ]);
     });
   });
@@ -399,6 +402,19 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         connectionTimeoutMillis: 5_000,
         keepAlive: true,
         keepAliveInitialDelayMillis: 30_000,
+      });
+    });
+
+    it("(p3) catalog-code gets its own 4-slot pool", async () => {
+      await mod._resetLockPoolForTests?.();
+      mockPoolCtor.mockClear();
+
+      await acquireOnce("catalog-code");
+
+      expect(mockPoolCtor).toHaveBeenCalledTimes(1);
+      expect(callArgs(mockPoolCtor, 0)[0]).toMatchObject({
+        max: 4,
+        connectionTimeoutMillis: 5_000,
       });
     });
 

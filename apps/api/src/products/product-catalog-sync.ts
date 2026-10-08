@@ -242,7 +242,9 @@ export async function syncProductBarcodesFromLegacy(
   const existingRows: Array<{ id: string } & BarcodeRowTuple> = await tx.productBarcode.findMany({
     // SA-603a: a RELEASED row (code NULL, retiredCode holds the old code) is not a live code — the sync must not
     // delete it, or reactivate could not restore it.
-    where: { tenantId, productId, code: { not: null } },
+    // Units rebuild U-2: rows that belong to a ladder level (productUnitId set) are NOT legacy mirrors - an ordinary
+    // product save must never delete a level's own barcode.
+    where: { tenantId, productId, code: { not: null }, productUnitId: null },
     select: {
       id: true,
       code: true,
@@ -266,7 +268,9 @@ export async function syncProductBarcodesFromLegacy(
   }
   if (toCreate.length > 0) {
     // SA-603a: stale RELEASED rows (code NULL) would still hold this product's (productId, primaryFor) unique.
-    await tx.productBarcode.deleteMany({ where: { tenantId, productId, code: null } });
+    await tx.productBarcode.deleteMany({
+      where: { tenantId, productId, code: null, productUnitId: null },
+    });
     await tx.productBarcode.createMany({
       data: toCreate.map((r) => ({
         tenantId,

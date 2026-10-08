@@ -112,6 +112,7 @@ export const LOCK_FAMILIES = [
   "mailbox",
   "policy-write",
   "counter-tender",
+  "catalog-code",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -184,6 +185,10 @@ const POOL_MAX: Record<string, number | undefined> = {
   // recordPayment calls), one checkout per counter-sale call; same size as `billing` for the same
   // reason.
   "counter-tender": 4,
+  // `catalog-code` (units U-2): `ProductUnitsService#replace`, keyed on the tenant id - the code-uniqueness window
+  // (a sku / barcode belongs to ONE product across Product.sku/unitSku/barcode, ProductUnit.sku and live
+  // ProductBarcode.code). Request-path, short (one tx), an operator catalog action: same size as `billing`.
+  "catalog-code": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

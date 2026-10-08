@@ -33,6 +33,8 @@
 //                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
 //                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
+//   UNIT_ARCHIVED — `body.code` of the 400 from PUT /products/:id/units when a level or base names a tenant unit that is
+//                    ARCHIVED (it is never silently restored; pick another unit or restore it in Settings).
 //   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
 //                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
 //                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
@@ -198,6 +200,7 @@ export const API_ERROR_CODES = {
   BARCODE_TAKEN: "BARCODE_TAKEN",
   CODE_TAKEN: "CODE_TAKEN",
   NAME_TAKEN: "NAME_TAKEN",
+  UNIT_ARCHIVED: "UNIT_ARCHIVED",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",

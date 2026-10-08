@@ -3,10 +3,24 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { PIECE_LABEL } from "@routeflow/pricing";
+import { inferBarcodeSymbology } from "../common/barcode-symbology";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
+import { ReplaceProductUnitsDto } from "./dto/replace-product-units.dto";
+import { syncProductBarcodesFromLegacy } from "./product-catalog-sync";
+import {
+  assertCodeFree,
+  CodeValidationError,
+  lockClaims,
+  normalizeCode,
+  type CodeClaim,
+} from "./unit-codes";
+import { baseWord, flattenLadder, LadderError, type FlatLevel } from "./unit-ladder";
 
 interface PackInfo {
   label: string;
@@ -33,7 +47,17 @@ const UNIT_SELECT = {
   priceTier5: true,
   isDefaultSelling: true,
   sortOrder: true,
+  // Units rebuild: the chain count, the level's own SKU and its tenant unit name.
+  perParent: true,
+  sku: true,
+  tenantUnitId: true,
 } as const;
+
+const COULDNT_CHECK = "Couldn't check that code right now. Your entry is still here. Try again.";
+const NAME_MAX = 30;
+/** Ladder levels carry their own barcode rows under these (BOX and UNIT stay the pack's and the base's). */
+const LEVEL_BARCODE_SLOTS = ["INNER", "CASE", "DISPLAY", "PALLET"] as const;
+const TIER_COLUMNS = ["priceTier2", "priceTier3", "priceTier4", "priceTier5"] as const;
 
 const isUniqueViolation = (e: unknown) => (e as { code?: string } | null)?.code === "P2002";
 
@@ -58,6 +82,16 @@ export class ProductUnitsService {
       select: UNIT_SELECT,
       orderBy: [{ sortOrder: "asc" }, { factorToBase: "asc" }],
     });
+  }
+
+  /** Tenant unit names A-Z (archived ones flagged); the editor offers only active ones for new picks. */
+  async tenantUnitNames() {
+    const rows: Array<{ id: string; name: string; archivedAt: Date | null }> = await this.prisma
+      .forTenant()
+      .tenantUnit.findMany({ select: { id: true, name: true, archivedAt: true } });
+    return rows
+      .map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt != null }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
   create(productId: string, dto: CreateProductUnitDto) {
@@ -130,6 +164,474 @@ export class ProductUnitsService {
       await tx.productUnit.delete({ where: { id: unitId } });
       return { deleted: true };
     });
+  }
+
+  /**
+   * PUT /products/:id/units: replace the whole ladder (and the product's base / pack words) in ONE transaction.
+   * The chain the editor sends is flattened here (`factorToBase` is the only math source), the per-tenant
+   * `catalog-code` lock is taken FIRST, and any failure rolls back everything, TenantUnit upserts included.
+   * A used level's size still cannot change, and no order or invoice line is ever touched.
+   */
+  async replace(productId: string, dto: ReplaceProductUnitsDto) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
+      throw new BadRequestException("Select a tenant before editing a product's units.");
+    }
+    const baseClean = this.cleanBase(dto.baseUnitLabel);
+    let flat: FlatLevel[];
+    try {
+      flat = flattenLadder(baseClean, dto.levels);
+    } catch (e) {
+      throw this.mapLadderError(e);
+    }
+    try {
+      const res = await withAdvisoryLock(
+        { family: "catalog-code", key: tenantId, mode: "wait", waitMs: 10_000 },
+        () =>
+          this.prisma.tenantTransaction((tx) =>
+            this.applyReplace(tx, tenantId, productId, dto, baseClean, flat),
+          ),
+      );
+      return (res as { acquired: true; value: unknown }).value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException(COULDNT_CHECK);
+      }
+      if (isUniqueViolation(e)) {
+        throw new ConflictException("This product already has a unit with that name or size.");
+      }
+      throw e;
+    }
+  }
+
+  private cleanBase(raw: string | null | undefined): string | null {
+    const t = (raw ?? "").trim();
+    return !t || norm(t) === norm(PIECE_LABEL) ? null : t;
+  }
+
+  private mapLadderError(e: unknown): unknown {
+    if (e instanceof LadderError) {
+      const body = { message: e.message, field: e.field, level: e.level };
+      return e.status === 409 ? new ConflictException(body) : new BadRequestException(body);
+    }
+    return e;
+  }
+
+  private code(
+    raw: string | null | undefined,
+    kind: "sku" | "barcode",
+    level: string | undefined,
+    existing?: string | null,
+  ): string | null {
+    try {
+      return normalizeCode(raw, { existing });
+    } catch (e) {
+      if (e instanceof CodeValidationError) {
+        throw new BadRequestException({ message: e.message, field: kind, level });
+      }
+      throw e;
+    }
+  }
+
+  private async applyReplace(
+    tx: any,
+    tenantId: string,
+    productId: string,
+    dto: ReplaceProductUnitsDto,
+    baseClean: string | null,
+    flat: FlatLevel[],
+  ) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+    const product = await tx.product.findFirst({
+      where: { id: productId, tenantId },
+      select: {
+        id: true,
+        unit: true,
+        unitsPerBox: true,
+        trackedCategoryId: true,
+        sku: true,
+        unitSku: true,
+        barcode: true,
+        baseUnitLabel: true,
+        packLabel: true,
+      },
+    });
+    if (!product) throw new NotFoundException("Product not found");
+    const existing: any[] = await tx.productUnit.findMany({ where: { productId } });
+    const existingByLabel = new Map(existing.map((u) => [norm(u.label), u]));
+    const dtoByLabel = new Map(dto.levels.map((l) => [norm(l.label), l]));
+    const base = baseWord(baseClean);
+
+    // ── pack: one of the levels (or the base); never a ladder row of its own ──
+    const packRaw = (dto.packLevel ?? "").trim();
+    let packFactor: number;
+    let packFlat: FlatLevel | null = null;
+    let packIsBase = false;
+    if (packRaw) {
+      if (norm(packRaw) === norm(base)) {
+        packIsBase = true;
+        packFactor = 1;
+      } else {
+        packFlat = flat.find((l) => norm(l.label) === norm(packRaw)) ?? null;
+        if (!packFlat) {
+          throw new BadRequestException({
+            message: "Pick the pack from the units in this ladder.",
+            field: "pack",
+          });
+        }
+        packFactor = packFlat.factorToBase;
+      }
+    } else {
+      const upb = Math.trunc(Number(product.unitsPerBox ?? 0));
+      packFactor = upb > 1 ? upb : 1;
+    }
+    if (product.trackedCategoryId != null) {
+      const above = flat.some((l) => l !== packFlat && l.factorToBase > packFactor);
+      if (above) {
+        throw new BadRequestException(
+          "A regulated product cannot be sold above its pack size (a filing could not count it).",
+        );
+      }
+    }
+    const persisted = flat.filter((l) => l !== packFlat);
+
+    // ── tenant unit names ──
+    const tenantUnitIds = await this.upsertTenantUnits(tx, tenantId, {
+      names: [
+        ...(baseClean ? [baseClean] : []),
+        ...flat.map((l) => l.label),
+        ...(dto.newUnits ?? []),
+      ],
+      newUnits: dto.newUnits ?? [],
+      alreadyOnProduct: new Set(
+        [...existing.map((u) => u.label), product.baseUnitLabel, product.packLabel]
+          .filter((v): v is string => typeof v === "string")
+          .map(norm),
+      ),
+    });
+
+    // ── a used level's size never changes ──
+    for (const l of persisted) {
+      const was = existingByLabel.get(norm(l.label));
+      if (!was || was.factorToBase !== l.factorToBase) {
+        await this.assertNoLineDisagrees(tx, productId, l.label, l.factorToBase);
+      }
+    }
+
+    // ── codes: validate, then lock, then check ──
+    const baseSkuNew =
+      dto.base && dto.base.sku !== undefined
+        ? this.code(dto.base.sku, "sku", undefined, product.unitSku)
+        : null;
+    const baseSku = baseSkuNew ?? product.unitSku ?? product.sku ?? null;
+    const packDto = packFlat ? dtoByLabel.get(norm(packFlat.label)) : undefined;
+    const packSkuNew = packDto ? this.code(packDto.sku, "sku", packFlat?.label, product.sku) : null;
+    const packBarcodeNew = packDto
+      ? this.code(packDto.barcode, "barcode", packFlat?.label, product.barcode)
+      : null;
+    const levelCodes = persisted.map((l) => {
+      const d = dtoByLabel.get(norm(l.label)) as NonNullable<ReturnType<typeof dtoByLabel.get>>;
+      const was = existingByLabel.get(norm(l.label));
+      let sku = this.code(d.sku, "sku", l.label, was?.sku);
+      let barcode = this.code(d.barcode, "barcode", l.label);
+      if (sku != null && sku === baseSku) sku = null;
+      if (barcode != null && (barcode === baseSku || barcode === product.barcode)) barcode = null;
+      return { l, sku, barcode };
+    });
+    const held = new Set<string>(
+      [
+        product.sku,
+        product.unitSku,
+        product.barcode,
+        ...existing.map((u) => u.sku),
+        ...(
+          await tx.productBarcode.findMany({
+            where: { tenantId, productId, code: { not: null } },
+          })
+        ).map((b: any) => b.code),
+      ].filter((v): v is string => typeof v === "string"),
+    );
+    const claims: CodeClaim[] = [];
+    const claim = (kind: "sku" | "barcode", value: string | null, level?: string) => {
+      if (value && !held.has(value) && !claims.some((c) => c.value === value && c.kind === kind)) {
+        claims.push({ kind, value, level });
+      }
+    };
+    claim("sku", baseSkuNew);
+    claim("sku", packSkuNew, packFlat?.label);
+    claim("barcode", packBarcodeNew, packFlat?.label);
+    for (const c of levelCodes) {
+      claim("sku", c.sku, c.l.label);
+      claim("barcode", c.barcode, c.l.label);
+    }
+    if (claims.length > 0) {
+      await lockClaims(tx, tenantId, claims);
+      for (const c of claims.sort((a, b) => a.value.localeCompare(b.value))) {
+        await assertCodeFree(tx, { tenantId, productId, claim: c });
+      }
+    }
+    if (levelCodes.filter((c) => c.barcode).length > LEVEL_BARCODE_SLOTS.length) {
+      throw new BadRequestException(
+        `Barcodes can be set on up to ${LEVEL_BARCODE_SLOTS.length} units of one product.`,
+      );
+    }
+
+    // ── writes ──
+    const keepLabels = new Set(persisted.map((l) => norm(l.label)));
+    const pieceRow = existing.find((u) => u.factorToBase === 1);
+    const dropIds = existing
+      .filter((u) => !keepLabels.has(norm(u.label)) && !(u === pieceRow && dto.base === undefined))
+      .map((u) => u.id);
+    if (dropIds.length > 0) {
+      await tx.productBarcode.deleteMany({ where: { productUnitId: { in: dropIds } } });
+      await tx.productUnit.deleteMany({ where: { id: { in: dropIds } } });
+    }
+    // Park resized rows on a negative size first so a swap cannot trip (productId, factorToBase).
+    const resized = persisted.filter((l) => {
+      const was = existingByLabel.get(norm(l.label));
+      return was && was.factorToBase !== l.factorToBase;
+    });
+    let parked = 0;
+    for (const l of resized) {
+      const was = existingByLabel.get(norm(l.label));
+      await tx.productUnit.update({
+        where: { id: was.id },
+        data: { factorToBase: -++parked },
+      });
+    }
+
+    const defaultLabel =
+      persisted.find((l) => dtoByLabel.get(norm(l.label))?.isDefaultSelling)?.label ?? null;
+    const ids = new Map<string, string>();
+    for (const [i, l] of persisted.entries()) {
+      const d = dtoByLabel.get(norm(l.label)) as NonNullable<ReturnType<typeof dtoByLabel.get>>;
+      const was = existingByLabel.get(norm(l.label));
+      const code = levelCodes[i];
+      const data = {
+        label: l.label,
+        factorToBase: l.factorToBase,
+        perParent: l.perParent,
+        tenantUnitId: tenantUnitIds.get(norm(l.label)) ?? null,
+        price: d.price ?? null,
+        ...this.tierData(d.tiers),
+        isDefaultSelling: defaultLabel != null && norm(defaultLabel) === norm(l.label),
+        sortOrder: d.sortOrder,
+        sku: code.sku,
+      };
+      if (was) {
+        await tx.productUnit.update({ where: { id: was.id }, data });
+        ids.set(norm(l.label), was.id);
+      } else {
+        const made = await tx.productUnit.create({ data: { productId, tenantId, ...data } });
+        ids.set(norm(l.label), made.id);
+      }
+    }
+    for (const l of persisted) {
+      if (!l.parentLabel) continue;
+      const parentId = ids.get(norm(l.parentLabel));
+      const id = ids.get(norm(l.label)) as string;
+      const was = existingByLabel.get(norm(l.label));
+      if (parentId && (was?.parentUnitId ?? null) !== parentId) {
+        await tx.productUnit.update({ where: { id }, data: { parentUnitId: parentId } });
+      }
+    }
+    for (const l of persisted) {
+      if (l.parentLabel) continue;
+      const was = existingByLabel.get(norm(l.label));
+      if (was?.parentUnitId) {
+        await tx.productUnit.update({ where: { id: was.id }, data: { parentUnitId: null } });
+      }
+    }
+    if (dto.base !== undefined)
+      await this.writePieceRow(tx, productId, pieceRow, dto.base, defaultLabel);
+
+    await this.writeLevelBarcodes(tx, tenantId, productId, levelCodes, ids);
+
+    // ── the product's own words and codes ──
+    const packLabelNew = packFlat
+      ? packFlat.label
+      : packIsBase
+        ? null
+        : this.cleanWord(dto.packLabel);
+    // `undefined` = leave the column alone (Prisma ignores it): the pack and the codes only move when this save says so.
+    const unitsPerBoxNew: number | null | undefined = packRaw
+      ? packIsBase
+        ? null
+        : packFactor
+      : undefined;
+    const unitSkuNew = baseSkuNew && baseSkuNew !== product.unitSku ? baseSkuNew : undefined;
+    const skuNew = packSkuNew && packSkuNew !== product.sku ? packSkuNew : undefined;
+    const barcodeNew =
+      packBarcodeNew && packBarcodeNew !== product.barcode ? packBarcodeNew : undefined;
+    await tx.product.update({
+      where: { id: productId },
+      data: {
+        baseUnitLabel: baseClean,
+        packLabel: packLabelNew,
+        unitsPerBox: unitsPerBoxNew,
+        unitSku: unitSkuNew,
+        sku: skuNew,
+        barcode: barcodeNew,
+      },
+    });
+    const upbAfter = unitsPerBoxNew === undefined ? product.unitsPerBox : unitsPerBoxNew;
+    const barcodeAfter = barcodeNew ?? product.barcode;
+    if (
+      barcodeNew !== undefined ||
+      (barcodeAfter && unitsPerBoxNew !== undefined && upbAfter !== product.unitsPerBox)
+    ) {
+      await syncProductBarcodesFromLegacy(tx, {
+        tenantId,
+        productId,
+        barcode: barcodeAfter,
+        unitsPerBox: upbAfter,
+        previousBarcode: product.barcode,
+      });
+    }
+
+    const levels = await tx.productUnit.findMany({
+      where: { productId },
+      select: UNIT_SELECT,
+      orderBy: [{ sortOrder: "asc" }, { factorToBase: "asc" }],
+    });
+    return {
+      baseUnitLabel: baseClean,
+      packLabel: packLabelNew,
+      unitsPerBox: upbAfter ?? null,
+      levels,
+    };
+  }
+
+  private cleanWord(raw: string | null | undefined): string | null {
+    const t = (raw ?? "").trim();
+    return t || null;
+  }
+
+  private tierData(tiers: Array<number | null> | undefined) {
+    const out: Record<string, number | null> = {};
+    TIER_COLUMNS.forEach((col, i) => {
+      out[col] = tiers?.[i] ?? null;
+    });
+    return out;
+  }
+
+  /** The legacy factor-1 "Piece" row carries the base unit's own price / tiers / default flag. */
+  private async writePieceRow(
+    tx: any,
+    productId: string,
+    row: any,
+    base: NonNullable<ReplaceProductUnitsDto["base"]> | null,
+    levelDefault: string | null,
+  ) {
+    const isDefault = levelDefault == null && base?.isDefaultSelling === true;
+    const empty =
+      !base || (base.price == null && !(base.tiers ?? []).some((t) => t != null) && !isDefault);
+    if (empty) {
+      if (row) {
+        await tx.productBarcode.deleteMany({ where: { productUnitId: row.id } });
+        await tx.productUnit.delete({ where: { id: row.id } });
+      }
+      return;
+    }
+    const data = {
+      label: PIECE_LABEL,
+      factorToBase: 1,
+      price: base.price ?? null,
+      ...this.tierData(base.tiers),
+      isDefaultSelling: isDefault,
+      sortOrder: 0,
+    };
+    if (row) await tx.productUnit.update({ where: { id: row.id }, data });
+    else await tx.productUnit.create({ data: { productId, ...data } });
+  }
+
+  private async writeLevelBarcodes(
+    tx: any,
+    tenantId: string,
+    productId: string,
+    levelCodes: Array<{ l: FlatLevel; barcode: string | null }>,
+    ids: Map<string, string>,
+  ) {
+    const wanted = levelCodes
+      .filter((c) => c.barcode)
+      .sort((a, b) => a.l.factorToBase - b.l.factorToBase)
+      .map((c, i) => ({
+        productUnitId: ids.get(norm(c.l.label)) as string,
+        code: c.barcode as string,
+        level: LEVEL_BARCODE_SLOTS[i],
+      }));
+    const key = (r: { productUnitId: string; code: string; level: string }) =>
+      `${r.productUnitId}|${r.code}|${r.level}`;
+    const unitIds = [...ids.values()];
+    const current: any[] = await tx.productBarcode.findMany({
+      where: { tenantId, productId, productUnitId: { in: unitIds }, code: { not: null } },
+    });
+    const wantedKeys = new Set(wanted.map(key));
+    const stale = current.filter((r) => !wantedKeys.has(key(r)));
+    if (stale.length > 0) {
+      await tx.productBarcode.deleteMany({ where: { id: { in: stale.map((r) => r.id) } } });
+    }
+    const have = new Set(current.filter((r) => wantedKeys.has(key(r))).map(key));
+    for (const w of wanted.filter((x) => !have.has(key(x)))) {
+      await tx.productBarcode.create({
+        data: {
+          tenantId,
+          productId,
+          productUnitId: w.productUnitId,
+          code: w.code,
+          level: w.level,
+          symbology: inferBarcodeSymbology(w.code),
+          origin: "ENTERED",
+          copiedFromLevel: null,
+          primaryFor: null,
+        },
+      });
+    }
+  }
+
+  /** Idempotent by nameKey. An ARCHIVED name is never silently restored, unless this product already uses it. */
+  private async upsertTenantUnits(
+    tx: any,
+    tenantId: string,
+    input: { names: string[]; newUnits: string[]; alreadyOnProduct: Set<string> },
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const rows: any[] = await tx.tenantUnit.findMany({ where: { tenantId } });
+    const byKey = new Map(rows.map((r) => [r.nameKey as string, r]));
+    const seen = new Set<string>();
+    const newKeys = new Set(input.newUnits.map(norm));
+    for (const raw of input.names) {
+      const name = (raw ?? "").trim();
+      if (!name) {
+        if (newKeys.has(norm(raw ?? ""))) throw new BadRequestException("Enter a name.");
+        continue;
+      }
+      const key = norm(name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const hit = byKey.get(key);
+      if (hit) {
+        if (hit.archivedAt && !input.alreadyOnProduct.has(key)) {
+          throw new BadRequestException({
+            code: API_ERROR_CODES.UNIT_ARCHIVED,
+            message: `${hit.name} is archived. Restore it in Settings, or pick another unit.`,
+            field: "label",
+          });
+        }
+        out.set(key, hit.id);
+        continue;
+      }
+      if (name.length > NAME_MAX) {
+        throw new BadRequestException("Keep it to 30 characters or fewer.");
+      }
+      const made = await tx.tenantUnit.create({ data: { tenantId, name, nameKey: key } });
+      out.set(key, made.id);
+    }
+    // A blank entry in newUnits (the loop above skips blanks it could not name) is a 400.
+    if (input.newUnits.some((n) => !(n ?? "").trim())) {
+      throw new BadRequestException("Enter a name.");
+    }
+    return out;
   }
 
   // ─── helpers ────────────────────────────────────────────────────────────────
