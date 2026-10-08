@@ -29,6 +29,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
 import { useShipSlotReserve } from "@/lib/ship-caps-hint";
+import { getTenantCookie } from "@/lib/tenant-cookie";
 import { useTenantFeatures } from "@/lib/tenant-features";
 import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
@@ -565,9 +566,12 @@ function ModeSwitcher({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMo
 
 export default function DashboardPage() {
   const router = useRouter();
-  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  // The SAME staff-only predicate as the shell (layout.tsx) and the command palette.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -598,7 +602,7 @@ export default function DashboardPage() {
   const shippingAccount =
     !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
   const reserveShipSlots = useShipSlotReserve(
-    user?.tenantSlug,
+    getTenantCookie(),
     capsLoading,
     caps.data === undefined ? null : shippingAccount,
   );

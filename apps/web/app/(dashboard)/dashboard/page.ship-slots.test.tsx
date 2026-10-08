@@ -17,6 +17,8 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { role: authRole, canActAsDriver: true, tenantSlug: "acme" } }),
 }));
+// The hint key's slug is the tenant-slug COOKIE (the same source as the tenant-features query key), not user.tenantSlug.
+jest.mock("@/lib/tenant-cookie", () => ({ getTenantCookie: () => "acme-cookie" }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 let fleet = true;
 let ship = false;
@@ -105,7 +107,7 @@ jest.mock("@/lib/api/products", () => ({ useProducts: () => page(0) }));
 
 const SHIP_LABELS = ["Ready to ship", "Shipped, no tracking", "Shipped this week"];
 const minH = (n: Element | null | undefined) => n?.className.match(/min-h-\[[^\]]+\]/)?.[0];
-const KEY = "rf-ship-caps:acme";
+const KEY = "rf-ship-caps:acme-cookie";
 
 beforeEach(() => {
   capsLoading = false;

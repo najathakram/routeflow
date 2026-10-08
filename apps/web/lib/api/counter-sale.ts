@@ -26,7 +26,7 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const gate = enabled
     ? counterSaleGate(cap)
     : { showButton: false, opensAsCounter: false, offerShipInstead: false };
-  return { ...gate, capability: cap, loading: enabled && isLoading === true };
+  return { ...gate, capability: enabled ? cap : null, loading: enabled && isLoading === true };
 }
 
 export function useCreateCounterSale() {
