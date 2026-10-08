@@ -36,8 +36,8 @@ export function CounterReturnAction({
   canReturn = true,
 }: {
   orderId: string;
-  /** false hides the Return items button (a fully returned sale) WITHOUT unmounting, so a success line
-   *  shown after a whole-sale return survives the refetch that marks the row fully returned */
+  /** false hides the Return items button (a fully returned sale) once the dialog is closed, WITHOUT
+   *  unmounting, so a success line shown after a whole-sale return survives the refetch */
   canReturn?: boolean;
   /** called when the return dialog closes or records (Today's sales refetches its list) */
   onDone?: () => void;
@@ -51,7 +51,7 @@ export function CounterReturnAction({
   const { data: order } = useOrder(orderId);
   if (!hasInlineReturns || !staff || !order) return null;
 
-  const showButton = canReturn || open || recorded !== null;
+  const showButton = canReturn || open;
   return (
     <>
       {showButton ? (
