@@ -202,6 +202,26 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
     expect(msg).not.toContain("was not sent");
   });
 
+  it("cron: the unlocked 'already generated today' check ignores a CANCELLED order, like the locked re-read", async () => {
+    fakeCronClock();
+    const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    prisma.order.findFirst.mockImplementation((args: any) =>
+      Promise.resolve(
+        args.where.status?.not === "CANCELLED" ? null : { id: "cancelled", status: "CANCELLED" },
+      ),
+    );
+
+    await service.generateDailyOrders();
+
+    expect(prisma.order.findFirst.mock.calls[0][0].where).toEqual({
+      templateId: "t1",
+      status: { not: "CANCELLED" },
+      createdAt: { gte: DAY_START },
+    });
+    expect(prisma.order.create).toHaveBeenCalledTimes(1); // the operator cancelled: today's run goes
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("1 created, 0 skipped"));
+  });
+
   it("accepted limit: an order that lost a merge is not a replay target, so a retry in the window places a new one", async () => {
     // The first press's order was folded into a newer winner and its row deleted, so the
     // template-keyed lookup finds nothing (the winner carries ANOTHER template's id, or none).
