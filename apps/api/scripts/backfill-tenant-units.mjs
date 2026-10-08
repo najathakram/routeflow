@@ -6,7 +6,8 @@
 //       casing; > 30 chars are reported and skipped; Piece synonyms (piece/pieces/each/unit/pcs)
 //       get no TenantUnit;
 //   (c) ProductUnit.tenantUnitId linked by nameKey where NULL;
-//   (d) Product.packLabel filled from the legacy `unit` text where NULL/blank;
+//   (d) Product.packLabel filled where NULL/blank with the tenant's canonical unit name for the
+//       legacy `unit` word (never a Piece synonym; Product.unit itself is NEVER written);
 //   (e) Product.baseUnitLabel is left NULL (null = "Piece").
 // Never touches line snapshots or any order / invoice table.
 //
@@ -102,7 +103,10 @@ async function main() {
         where: { tenantId },
         select: { id: true, unit: true, packLabel: true },
       }),
-      prisma.tenantUnit.findMany({ where: { tenantId }, select: { id: true, nameKey: true } }),
+      prisma.tenantUnit.findMany({
+        where: { tenantId },
+        select: { id: true, nameKey: true, name: true },
+      }),
     ]);
     const plan = planTenantUnits({ productUnits: productUnitRows, products, existingUnits });
 

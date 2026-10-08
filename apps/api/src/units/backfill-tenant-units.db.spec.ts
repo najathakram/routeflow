@@ -112,7 +112,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     // Distinct usable keys: case, pack, tray, crate (crate is a legacy pack word only)
     // => case, pack, tray, crate = 4 created. Too long: 1 level key. Synonyms: piece = 1.
     // Levels linked: Case, Pack, Case, (piece skipped), (too-long skipped) = 3.
-    // packLabel filled: p1 Case, p2 case, p3 Tray = 3 (p4 already has Carton).
+    // packLabel filled: p1 Case, p2 case (written as the canonical "Case"), p3 Tray = 3 (p4 already has Carton).
     expect(r.stdout).toContain("tenantUnits created=4 existing=0");
     expect(r.stdout).toContain("productUnits linked=3");
     expect(r.stdout).toContain("products packLabel filled=3");
@@ -141,7 +141,7 @@ describeDb("tenant unit backfill (U-6)", () => {
       orderBy: { name: "asc" },
       select: { packLabel: true, baseUnitLabel: true },
     });
-    expect(packs.map((p) => p.packLabel)).toEqual(["Case", "case", "Tray", "Carton"]);
+    expect(packs.map((p) => p.packLabel)).toEqual(["Case", "Case", "Tray", "Carton"]);
     expect(packs.every((p) => p.baseUnitLabel === null)).toBe(true);
 
     expect(await snapshotB()).toBe(bBefore);

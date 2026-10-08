@@ -29,6 +29,7 @@ type State = {
 function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
   let seq = 0;
   let productUpdates = 0;
+  const productWriteKeys = new Set<string>();
   const stats = { transactions: 0, productsPerTx: [] as number[] };
   let touched: Set<string> | null = null;
   const db = {
@@ -60,6 +61,7 @@ function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
     product: {
       updateMany: async ({ where, data }: any) => {
         productUpdates += 1;
+        for (const k of Object.keys(data)) productWriteKeys.add(k);
         if (opts.failProductUpdateAt === productUpdates) throw new Error("boom");
         const row = state.products.find(
           (p) => p.id === where.id && p.tenantId === where.tenantId && !p.packLabel,
@@ -89,7 +91,7 @@ function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
       }
     },
   };
-  return { db, stats };
+  return { db, stats, productWriteKeys };
 }
 
 const seed = (n: number): State => ({
@@ -185,6 +187,8 @@ describe("batched backfill apply (U-6)", () => {
     expect(Math.max(...f.stats.productsPerTx)).toBeLessThanOrEqual(3);
     expect(state.productUnits.every((u) => u.tenantUnitId)).toBe(true);
     expect(state.products.every((p) => p.packLabel === "Tray")).toBe(true);
+    // Product.unit is legacy text that documents still read: only packLabel is ever written.
+    expect([...f.productWriteKeys]).toEqual(["packLabel"]);
   });
 
   it("is idempotent: a second run opens no transaction and writes nothing", async () => {

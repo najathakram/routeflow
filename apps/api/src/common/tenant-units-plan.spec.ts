@@ -81,6 +81,60 @@ describe("planTenantUnits (U-6)", () => {
     ]);
   });
 
+  it("fills packLabel with the tenant's canonical casing, never the product's own (a)", () => {
+    const r = plan(
+      [pu("a", "Case"), pu("b", "Case")],
+      [prod("p1", "CASE"), prod("p2", "case"), prod("p3", "Case")],
+    );
+    expect(r.packFills).toEqual([
+      { productId: "p1", packLabel: "Case" },
+      { productId: "p2", packLabel: "Case" },
+      { productId: "p3", packLabel: "Case" },
+    ]);
+  });
+
+  it("uses a pre-existing TenantUnit's own name as the canonical casing (a)", () => {
+    const r = planTenantUnits({
+      productUnits: [],
+      products: [prod("p1", "CASE"), prod("p2", "case")],
+      existingUnits: [{ nameKey: "case", name: "Case" }],
+    });
+    expect(r.packFills.map((f: { packLabel: string }) => f.packLabel)).toEqual(["Case", "Case"]);
+  });
+
+  it("never fills a pack label for a Piece synonym, whatever its casing (b)", () => {
+    const r = plan(
+      [],
+      [
+        prod("p1", "each"),
+        prod("p2", "Pcs"),
+        prod("p3", "PIECE"),
+        prod("p4", " Unit "),
+        prod("p5", "Pieces"),
+      ],
+    );
+    expect(r.packFills).toEqual([]);
+    expect(r.counts.productsPackLabelFilled).toBe(0);
+  });
+
+  it("a fill carries only productId and packLabel: Product.unit is never written (c)", () => {
+    const r = plan([], [prod("p1", "CASE")]);
+    expect(r.packFills.map((f: object) => Object.keys(f).sort())).toEqual([
+      ["packLabel", "productId"],
+    ]);
+  });
+
+  it("a second plan after the fill writes nothing (d)", () => {
+    const first = plan([pu("a", "Case")], [prod("p1", "CASE"), prod("p2", "each")]);
+    const filled = first.packFills.map((f: { productId: string; packLabel: string }) =>
+      prod(f.productId, f.productId === "p1" ? "CASE" : "each", f.packLabel),
+    );
+    const second = plan([pu("a", "Case", "u1")], [...filled, prod("p2", "each", null)], ["case"]);
+    expect(second.packFills).toEqual([]);
+    expect(second.links).toEqual([]);
+    expect(second.toCreate).toEqual([]);
+  });
+
   it("is idempotent: an already-backfilled tenant plans zero changes", () => {
     const r = plan(
       [pu("a", "Case", "u1")],

@@ -10,6 +10,8 @@
 "use strict";
 
 const MAX_NAME_LENGTH = 30;
+// Single typed source will be PIECE_SYNONYMS in packages/types (added by the U-1 branch); a parity
+// spec pinning this copy follows the merge.
 /** Piece synonyms: base words, never a TenantUnit (null baseUnitLabel already means "Piece"). */
 const PIECE_SYNONYMS = new Set(["piece", "pieces", "each", "unit", "pcs"]);
 
@@ -23,11 +25,14 @@ function nameKeyOf(name) {
  * @param {{
  *   productUnits: Array<{ id: string, label: string|null, tenantUnitId: string|null }>,
  *   products: Array<{ id: string, unit: string|null, packLabel: string|null }>,
- *   existingUnits: Array<{ nameKey: string }>,
+ *   existingUnits: Array<{ nameKey: string, name?: string }>,
  * }} input
  */
 function planTenantUnits({ productUnits, products, existingUnits }) {
   const existingKeys = new Set(existingUnits.map((u) => u.nameKey));
+  const existingNameByKey = new Map(
+    existingUnits.filter((u) => u.name).map((u) => [u.nameKey, u.name]),
+  );
 
   // nameKey -> Map(trimmed original casing -> occurrences)
   const casings = new Map();
@@ -58,16 +63,19 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   }
 
   const toCreate = [];
+  // nameKey -> the tenant's canonical display name: an existing TenantUnit's own name, else the most
+  // common original casing (ties break lexicographically so the plan is deterministic).
+  const canonicalByKey = new Map();
   let existing = 0;
   for (const key of [...usable].sort()) {
+    const best = [...casings.get(key).entries()].sort(
+      (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1),
+    )[0][0];
+    canonicalByKey.set(key, existingNameByKey.get(key) ?? best);
     if (existingKeys.has(key)) {
       existing += 1;
       continue;
     }
-    // Most common original casing; ties break lexicographically so the plan is deterministic.
-    const best = [...casings.get(key).entries()].sort(
-      (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1),
-    )[0][0];
     toCreate.push({ name: best, nameKey: key });
   }
 
@@ -84,11 +92,15 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     if (p.packLabel && p.packLabel.trim() !== "") continue;
     const word = String(p.unit ?? "").trim();
     if (!word) continue;
+    // A Piece synonym is the base word, never a pack: leave packLabel NULL (legacy unit text applies).
+    if (PIECE_SYNONYMS.has(nameKeyOf(word))) continue;
     if (word.length > MAX_NAME_LENGTH) {
       packTooLong += 1;
       continue;
     }
-    packFills.push({ productId: p.id, packLabel: word });
+    // The canonical casing, never the product's own. Only packLabel is planned: Product.unit is
+    // legacy text that older documents and the live pack word still read, so it is never rewritten.
+    packFills.push({ productId: p.id, packLabel: canonicalByKey.get(nameKeyOf(word)) ?? word });
   }
 
   return {
