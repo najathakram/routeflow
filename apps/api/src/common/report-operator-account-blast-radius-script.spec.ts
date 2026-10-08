@@ -298,4 +298,14 @@ describe("report-operator-account-blast-radius.mjs contract", () => {
     expect(code).not.toMatch(/SELECT[^;]*\b(username|email)\b/is);
     expect(code).toContain('(a."entityId" IS DISTINCT FROM a."userId") AS "nonSelf"');
   });
+
+  it("prints the legacy isAdmin count first and labels the GET handlers 'untraceable (reads are not audited)'", () => {
+    const code = codeLines().join("\n");
+    const flagged = code.indexOf("carrying the legacy isAdmin flag");
+    const perArea = code.indexOf("Per tenant, by area:");
+    expect(flagged).toBeGreaterThan(0);
+    expect(flagged).toBeLessThan(code.indexOf("closed handlers:"));
+    expect(flagged).toBeLessThan(perArea);
+    expect(code).toContain("untraceable (reads are not audited)");
+  });
 });

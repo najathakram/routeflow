@@ -18,10 +18,10 @@
  *     guards pass and before the handler runs. So a count is "an OPERATOR reached this handler",
  *     which includes calls that later failed validation; calls the guards refused are not logged.
  *   - GET handlers leave no row at all, so they cannot be counted. They are listed under
- *     "UNTRACEABLE" so the reader knows what the numbers do not cover.
+ *     "untraceable (reads are not audited)" so the reader knows what the numbers do not cover.
  *   - "OPERATOR" is the user's role NOW (not at the time of the call); rows written while a
  *     platform admin was impersonating (`impersonatedBy` set) are excluded.
- *   - A second section counts, per tenant, ACTIVE operators carrying the legacy `isAdmin` flag.
+ *   - The FIRST section counts, per tenant, ACTIVE operators carrying the legacy `isAdmin` flag.
  *   - `users.update` counts only PATCH /users/:id where the target is not the caller.
  *   - Rows with a NULL tenant or user are not attributable and are skipped. The app never purges
  *     AuditLog, so the window is bounded by --days, not by retention.
@@ -153,6 +153,12 @@ async function main() {
   console.log(`\n=== OPERATOR ACCOUNT-ADMIN BLAST RADIUS — last ${days} days — ${host} ===`);
   console.log("    session is READ ONLY; counts only, no names / emails / ids\n");
   console.log(
+    `${flagged.length} tenant(s) have active OPERATOR users carrying the legacy isAdmin flag ` +
+      "(a role-only admin gate does not honour it):",
+  );
+  if (flagged.length > 0) console.table(flagged);
+
+  console.log(
     `${closed.length} closed handlers: ${traceable.length} traceable (mutations), ` +
       `${untraceable.length} untraceable (GET, no audit row)\n`,
   );
@@ -180,12 +186,8 @@ async function main() {
   }
 
   console.log(
-    `${flagged.length} tenant(s) have active OPERATOR users carrying the legacy isAdmin flag ` +
-      "(a role-only admin gate does not honour it):",
+    "untraceable (reads are not audited): GET handlers leave no AuditLog row, so NOT counted above",
   );
-  if (flagged.length > 0) console.table(flagged);
-
-  console.log("UNTRACEABLE (GET handlers: no AuditLog row, so NOT counted above):");
   console.table(untraceable.map((x) => ({ handler: x.id, route: `${x.httpMethod} ${x.route}` })));
 
   console.log("=== END — session was read-only; nothing was modified ===\n");
