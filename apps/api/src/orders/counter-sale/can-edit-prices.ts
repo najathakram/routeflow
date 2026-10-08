@@ -13,9 +13,7 @@ import { UserRole } from "@prisma/client";
  * Mirrored by `apps/web/lib/can-edit-prices.ts` (web never imports API source, the API never value-imports
  * `@routeflow/types`); both specs pin the SAME role table.
  */
-export function canEditPrices(
-  user: { role?: UserRole | string | null } | null | undefined,
-): boolean {
+export function canEditPrices(user: { role?: string | null } | null | undefined): boolean {
   const role = user?.role;
   return role === UserRole.TENANT_ADMIN || role === UserRole.SUPER_ADMIN;
 }
