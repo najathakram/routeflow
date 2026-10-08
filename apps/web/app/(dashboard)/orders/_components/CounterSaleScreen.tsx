@@ -15,6 +15,7 @@ import type {
 import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { canEditPrices } from "@/lib/can-edit-prices";
 import { useCustomers } from "@/lib/api/customers";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -60,6 +61,13 @@ import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLineRow } from "./CounterLineRow";
+import type { CounterPriceEdit } from "./CounterLinePriceEdit";
+import {
+  applyPriceEdit,
+  discountsTotal,
+  lineNeedingReason,
+  resetPriceEdit,
+} from "./counter-sale-price-edit";
 import {
   isBoxedLine,
   lineQtyLabel,
@@ -97,6 +105,8 @@ export function CounterSaleScreen() {
   const lookupSale = useCounterSaleByKey();
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
+  // POS-5: the ONE price-edit gate (admin-only today). False = no price control exists on the screen.
+  const mayEditPrices = canEditPrices(authUser);
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
   const scanRef = React.useRef<HTMLInputElement>(null);
@@ -193,6 +203,7 @@ export function CounterSaleScreen() {
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
   const totals = cartTotals(lines, taxRate);
+  const discounts = discountsTotal(lines); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
   const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
@@ -359,6 +370,15 @@ export function CounterSaleScreen() {
   const noteLine = (tempId: string, note: string) =>
     setLines((prev) => setLineNote(prev, tempId, note));
 
+  // POS-5: an edited price only replaces `override` / `unitPrice` on that line; it never touches the sale, payment, lock
+  // or idempotency state and never sends a request. Closing the dialog hands focus back to the scan field (onPriceClosed).
+  const editPrice = (tempId: string, edit: CounterPriceEdit) =>
+    setLines((prev) => applyPriceEdit(prev, tempId, edit));
+  const resetPrice = (tempId: string) => {
+    setLines((prev) => resetPriceEdit(prev, tempId));
+    refocus();
+  };
+
   function resetSale() {
     dropUndo();
     setCustomer(null);
@@ -437,6 +457,14 @@ export function CounterSaleScreen() {
     if (attemptRef.current) return send(attemptRef.current); // an unknown outcome: the SAME body, the SAME key
     if (lines.length === 0) {
       setError("Add at least one item.");
+      return null;
+    }
+    // POS-5: the shared rule (decideStaffOverride) says a special-price customer's edited line needs a reason: no POST.
+    const unreasoned = lineNeedingReason(lines, reprice.tierFor);
+    if (unreasoned) {
+      setError(
+        `Add a reason for ${unreasoned.name}. ${customer?.businessName ?? "This customer"} has a special price on it.`,
+      );
       return null;
     }
     const problem = validatePayment({
@@ -809,6 +837,12 @@ export function CounterSaleScreen() {
                 onRemove={removeLine}
                 onNote={noteLine}
                 onQty={typeQty}
+                canEditPrices={mayEditPrices}
+                priceTier={reprice.tierFor(l.productId)}
+                customerName={customer?.businessName}
+                onPriceEdit={editPrice}
+                onPriceReset={resetPrice}
+                onPriceClosed={refocus}
               />
             ))}
           </ul>
@@ -1018,6 +1052,12 @@ export function CounterSaleScreen() {
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
+            {discounts > 0 ? (
+              <div className="flex justify-between text-sm" data-testid="running-discounts">
+                <span>Discounts</span>
+                <span>-{money(discounts)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
               <span>Estimated total</span>
               <span>{money(totals.total)}</span>

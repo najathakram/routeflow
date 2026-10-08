@@ -116,3 +116,35 @@ export function resolveCounterPriceEdit(
     discount: lineDiscount(line, unitPrice),
   };
 }
+
+/** What the clerk chose, kept on the cart line (the NET price itself lives in the line's `unitPrice`). */
+export interface PriceOverride {
+  mode: PriceEditMode;
+  /** the number typed: the price, the percent, or the dollars off per selling unit */
+  value: number;
+  /** trimmed; absent when blank */
+  reason?: string;
+}
+
+const dollars = (n: number) => `$${roundMoney(n).toFixed(2)}`;
+
+/**
+ * The neutral chip on an edited line: `{p}% off`, `{$a} off each`, or `Price changed` (a set price, or a net at or
+ * above the tier price). A percent or amount is re-derived from the real tier and net prices when they no longer
+ * agree with what was typed (a customer pick moved the tier price under a kept edit).
+ */
+export function priceEditChip(
+  override: Pick<PriceOverride, "mode" | "value">,
+  tierPrice: number,
+  netPrice: number,
+): string {
+  const tier = roundMoney(tierPrice);
+  const net = roundMoney(netPrice);
+  if (override.mode === "set" || net >= tier) return "Price changed";
+  if (override.mode === "percent") {
+    const typedStillTrue = roundMoney(tier * (1 - override.value / 100)) === net;
+    const pct = typedStillTrue ? override.value : roundMoney((1 - net / tier) * 100);
+    return `${pct}% off`;
+  }
+  return `${dollars(tier - net)} off each`;
+}

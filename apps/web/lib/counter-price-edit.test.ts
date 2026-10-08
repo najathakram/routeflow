@@ -3,6 +3,7 @@ import {
   isBoxedLine,
   lineDiscount,
   lineTotalAt,
+  priceEditChip,
   resolveCounterPriceEdit,
   type PriceEditLine,
 } from "./counter-price-edit";
@@ -136,5 +137,31 @@ describe("resolveCounterPriceEdit (POS-5 money, golden)", () => {
       expect(isBoxedLine({ unitsPerBox: 1 })).toBe(false);
       expect(isBoxedLine({ unitsPerBox: null })).toBe(false);
     });
+  });
+});
+
+describe("priceEditChip (the neutral chip on an edited line)", () => {
+  it.each([
+    ["percent", 10, 10, 9, "10% off"],
+    ["percent", 33.33, 19.99, 13.33, "33.33% off"],
+    ["amount", 2, 10, 8, "$2.00 off each"],
+    ["amount", 2.5, 24, 21.5, "$2.50 off each"],
+    ["set", 7, 10, 7, "Price changed"],
+    ["set", 0, 10, 0, "Price changed"],
+  ] as const)("%s %s on %s -> net %s reads %j", (mode, value, tier, net, chip) => {
+    expect(priceEditChip({ mode, value }, tier, net)).toBe(chip);
+  });
+
+  it("a net at or above the tier price always reads Price changed, whatever mode set it", () => {
+    expect(priceEditChip({ mode: "percent", value: 10 }, 8, 9)).toBe("Price changed");
+    expect(priceEditChip({ mode: "amount", value: 2 }, 8, 8)).toBe("Price changed");
+    expect(priceEditChip({ mode: "set", value: 12 }, 10, 12)).toBe("Price changed");
+  });
+
+  it("a kept percent whose tier price moved is re-derived from the real figures, not the typed one", () => {
+    // typed 10% off a 10.00 tier price (net 9.00); the customer's tier price is now 12.00
+    expect(priceEditChip({ mode: "percent", value: 10 }, 12, 9)).toBe("25% off");
+    // and the amount follows the real gap
+    expect(priceEditChip({ mode: "amount", value: 1 }, 12, 9)).toBe("$3.00 off each");
   });
 });

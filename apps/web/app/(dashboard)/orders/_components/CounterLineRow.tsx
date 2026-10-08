@@ -3,6 +3,8 @@ import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
+import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -146,6 +148,12 @@ export function CounterLineRow({
   onRemove,
   onNote,
   onQty,
+  canEditPrices = false,
+  priceTier = 1,
+  customerName,
+  onPriceEdit,
+  onPriceReset,
+  onPriceClosed,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -153,9 +161,18 @@ export function CounterLineRow({
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
   onQty: (tempId: string, typed: TypedQty) => boolean;
+  /** POS-5: the ONE gate (`canEditPrices(user)`). False = the price control does not exist (hidden, never disabled). */
+  canEditPrices?: boolean;
+  /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
+  priceTier?: number;
+  customerName?: string;
+  onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
+  onPriceReset?: (tempId: string) => void;
+  onPriceClosed?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
   const hasNote = !!l.note?.trim();
+  const edited = editedLineFigures(l);
   return (
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
@@ -163,7 +180,14 @@ export function CounterLineRow({
           {l.name} · {lineQtyLabel(l)}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <span>{money(cartTotals([l], 0).subtotal)}</span>
+          {edited ? (
+            <s className="text-xs text-navy/60" data-testid="line-original-total">
+              {money(edited.original)}
+            </s>
+          ) : null}
+          <span data-testid={edited ? "line-net-total" : undefined}>
+            {money(cartTotals([l], 0).subtotal)}
+          </span>
           <button
             type="button"
             className={LINE_BTN}
@@ -178,6 +202,25 @@ export function CounterLineRow({
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
         <LineQtyEditor line={l} locked={locked} onQty={onQty} />
+        <CounterLinePriceEdit
+          canEditPrices={canEditPrices}
+          name={l.name}
+          line={priceEditLineOf(l, priceTier)}
+          edited={!!l.override}
+          customerName={customerName}
+          locked={locked}
+          onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          onReset={() => onPriceReset?.(l.tempId)}
+          onClosed={onPriceClosed}
+        />
+        {edited ? (
+          <span
+            className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
+            data-testid="line-price-chip"
+          >
+            {edited.chip}
+          </span>
+        ) : null}
         <button
           type="button"
           className={LINE_BTN}
