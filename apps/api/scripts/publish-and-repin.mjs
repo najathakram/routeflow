@@ -149,6 +149,14 @@ const {
   addonSkuCode,
 } = require("./lib/feature-registry-mirror.cjs");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedArm } = require("./lib/paying-tenant.cjs");
+const {
+  assertWritableTenant,
+  confirmProtectedAdditive,
+  refuseRetiredFlags,
+  ProtectedTenantError,
+} = require("./lib/live-target-guard.cjs");
 
 const HELP = `publish-and-repin.mjs — PR-0b zero-loss report / grandfather-grant apply
 
@@ -956,6 +964,40 @@ async function runApply() {
   if (answer.trim() !== phrase) {
     console.error("publish-and-repin: refused — confirmation text did not match");
     emitJsonDiff(diff, { applyRefused: "phrase-mismatch", applied: null });
+    return 3;
+  }
+
+  // Row 195 (lead ruling): this run is ADDITIVE (grants only) across every PRODUCTION tenant, paying
+  // ones included, so it takes ONE typed confirmation for the whole run instead of one per tenant:
+  // counts per protection arm (never a slug), "ALLOW PROTECTED ADDITIVE <count>", the backup
+  // attestation, a real terminal. Approved test tenants are exempt; each tenant is then asserted.
+  try {
+    refuseRetiredFlags(process.argv.slice(2));
+    const protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+    const tenantIds = [...new Set(applicableLosses.map((r) => r.tenantId))];
+    const { rows: tenantRows } = await client.query(
+      `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+         FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+        WHERE t.id = ANY($1::text[])`,
+      [tenantIds],
+    );
+    const live = tenantRows.filter((t) => !isTestTenant(t.slug));
+    const counts = { paying: 0, "stripe-linked": 0, "env-listed": 0 };
+    for (const t of live) {
+      const arm = protectedArm(t, t, protectedSlugs);
+      if (arm) counts[arm] += 1;
+    }
+    const allowProtected = await confirmProtectedAdditive({
+      counts,
+      argv: process.argv.slice(2),
+      backupFlag: "--backup-attested",
+      log: say,
+    });
+    for (const t of live) assertWritableTenant(t, t, protectedSlugs, { allowProtected });
+  } catch (e) {
+    if (!(e instanceof ProtectedTenantError) && !/PROTECTED_TENANT_SLUGS/.test(e.message)) throw e;
+    console.error(`publish-and-repin: ${e.message}`);
+    emitJsonDiff(diff, { applyRefused: "protected-tenants", applied: null });
     return 3;
   }
 
