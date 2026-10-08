@@ -185,7 +185,12 @@ export function CounterSaleScreen() {
   );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // POS-3: every LINE control (stepper, remove, note, Undo) is also off while the sale POST is in flight.
-  const lineLocked = locked || createSale.isPending;
+  // `sending` covers the sale request (set in `send`, validation refusals never reach it), so the freeze never depends on the mutation's own flag
+  // re-rendering in time; `saleInFlight()` is the same truth for HANDLERS, which must no-op rather than lean on `disabled`.
+  const [sending, setSending] = React.useState(false);
+  const salePosting = createSale.isPending || sending;
+  const saleInFlight = () => submittingRef.current || createSale.isPending;
+  const lineLocked = locked || salePosting;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
@@ -234,9 +239,9 @@ export function CounterSaleScreen() {
   // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
   const wasPendingRef = React.useRef(false);
   React.useEffect(() => {
-    if (wasPendingRef.current && !createSale.isPending && !receipt && !locked) refocus();
-    wasPendingRef.current = createSale.isPending;
-  }, [createSale.isPending, receipt, locked, refocus]);
+    if (wasPendingRef.current && !salePosting && !receipt && !locked) refocus();
+    wasPendingRef.current = salePosting;
+  }, [salePosting, receipt, locked, refocus]);
 
   const scanBusy = scan.waiting > 0;
   const scanBusyRef = React.useRef(false);
@@ -247,7 +252,7 @@ export function CounterSaleScreen() {
     router.push(`/orders?action=new&ship=1${shipPreselected ? "&preselect=SHIP" : ""}`);
 
   const onShipClick = () => {
-    if (locked || createSale.isPending || submittingRef.current) return; // never both rung up AND parked
+    if (locked || saleInFlight()) return; // never both rung up AND parked
     setShipFailed(false);
     if (lines.length === 0 && !scanBusy) {
       openBuilderToShip(); // nothing to carry over: the old hand-off to a blank builder
@@ -263,7 +268,7 @@ export function CounterSaleScreen() {
   // Parks the cart + customer as an ORDER draft (fulfillPath SHIP) and resumes it in the builder. The cart is cleared only
   // once the draft exists; a failed save leaves the sale exactly as it was.
   const runShip = async (to: PickedCustomer, cart: SaleLine[]) => {
-    if (shipRunningRef.current || createSale.isPending || submittingRef.current) return;
+    if (shipRunningRef.current || saleInFlight()) return;
     shipRunningRef.current = true;
     try {
       const draft = await createDraft.mutateAsync(counterShipDraftInput(cart, to));
@@ -294,13 +299,14 @@ export function CounterSaleScreen() {
 
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (lineLocked) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
+    if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
     const text = scanText;
     setScanText("");
     scan.submit(text);
   }
 
   const stepItem = (tempId: string, unit: StepUnit, dir: 1 | -1) => {
+    if (lineLocked || saleInFlight()) return;
     setLines((prev) => prev.map((l) => (l.tempId === tempId ? stepLine(l, unit, dir) : l)));
     refocus();
   };
@@ -344,6 +350,7 @@ export function CounterSaleScreen() {
   );
 
   const removeLine = (tempId: string) => {
+    if (lineLocked || saleInFlight()) return;
     const taken = takeLine(lines, tempId);
     if (!taken) return;
     setLines(taken.lines);
@@ -353,7 +360,7 @@ export function CounterSaleScreen() {
   };
 
   const undoRemove = () => {
-    if (!undo || lineLocked) return;
+    if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
     setLines((prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor).lines);
     dropUndo();
@@ -362,20 +369,26 @@ export function CounterSaleScreen() {
 
   // A TYPED quantity (steppers stay): the same normalized split a stepper makes; a refused value changes nothing.
   const typeQty = (tempId: string, typed: TypedQty): boolean => {
+    if (lineLocked || saleInFlight()) return false;
     const cur = lines.find((l) => l.tempId === tempId);
     if (!cur || !setLineQty(cur, typed)) return false;
     setLines((prev) => prev.map((l) => (l.tempId === tempId ? (setLineQty(l, typed) ?? l) : l)));
     return true;
   };
 
-  const noteLine = (tempId: string, note: string) =>
+  const noteLine = (tempId: string, note: string) => {
+    if (lineLocked || saleInFlight()) return;
     setLines((prev) => setLineNote(prev, tempId, note));
+  };
 
   // POS-5: an edited price only replaces `override` / `unitPrice` on that line; it never touches the sale, payment, lock
   // or idempotency state and never sends a request. Closing the dialog hands focus back to the scan field (onPriceClosed).
-  const editPrice = (tempId: string, edit: CounterPriceEdit) =>
+  const editPrice = (tempId: string, edit: CounterPriceEdit) => {
+    if (lineLocked || saleInFlight()) return;
     setLines((prev) => applyPriceEdit(prev, tempId, edit));
+  };
   const resetPrice = (tempId: string) => {
+    if (lineLocked || saleInFlight()) return;
     setLines((prev) => resetPriceEdit(prev, tempId));
     refocus();
   };
@@ -414,6 +427,7 @@ export function CounterSaleScreen() {
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
+    setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
@@ -450,6 +464,8 @@ export function CounterSaleScreen() {
         setOutcomeUnknown(true);
       }
       return null;
+    } finally {
+      setSending(false);
     }
   };
 
@@ -665,7 +681,7 @@ export function CounterSaleScreen() {
           <Button
             className="min-h-[44px]"
             variant="secondary"
-            disabled={locked || createSale.isPending || createDraft.isPending}
+            disabled={locked || salePosting || createDraft.isPending}
             onClick={onShipClick}
           >
             Ship this order instead
@@ -689,7 +705,10 @@ export function CounterSaleScreen() {
                   type="button"
                   className="min-h-[44px] text-brand-700 underline"
                   disabled={lineLocked}
-                  onClick={() => setCustomer(null)}
+                  onClick={() => {
+                    if (lineLocked || saleInFlight()) return;
+                    setCustomer(null);
+                  }}
                 >
                   Use Walk-in customer
                 </button>
@@ -702,7 +721,10 @@ export function CounterSaleScreen() {
               placeholder="Find a customer (optional)"
               disabled={lineLocked}
               value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
+              onChange={(e) => {
+                if (lineLocked || saleInFlight()) return;
+                setCustomerSearch(e.target.value);
+              }}
             />
             {reprice.noteText ? (
               <p
@@ -746,6 +768,7 @@ export function CounterSaleScreen() {
                       className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
                       disabled={lineLocked}
                       onClick={() => {
+                        if (lineLocked || saleInFlight()) return;
                         setCustomer(c);
                         setCustomerSearch("");
                         refocus();
@@ -772,7 +795,10 @@ export function CounterSaleScreen() {
               placeholder="Scan or type an item (type a quantity first to multiply)"
               value={scanText}
               disabled={lineLocked}
-              onChange={(e) => setScanText(e.target.value)}
+              onChange={(e) => {
+                if (lineLocked || saleInFlight()) return;
+                setScanText(e.target.value);
+              }}
               onKeyDown={(e) => {
                 // POS-3: Ctrl/Cmd+Z with an empty scan field takes the last removal back (the same as the Undo button).
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !scanText && undo) {
@@ -1074,11 +1100,7 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
                 disabled={
-                  createSale.isPending ||
-                  createDraft.isPending ||
-                  locked ||
-                  scanBusy ||
-                  reprice.blocked
+                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
                 }
               >
                 Complete &amp; show receipt
@@ -1088,11 +1110,7 @@ export function CounterSaleScreen() {
                 variant="secondary"
                 onClick={() => void completeSale(true)}
                 disabled={
-                  createSale.isPending ||
-                  createDraft.isPending ||
-                  locked ||
-                  scanBusy ||
-                  reprice.blocked
+                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
                 }
               >
                 Complete &amp; next sale
