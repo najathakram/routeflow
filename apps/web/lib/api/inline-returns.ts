@@ -27,7 +27,7 @@ export type {
   QuoteInlineReturnItem,
   QuoteInlineReturnRequest,
   RefundInlineReturnRequest,
-  InlineReturnRefundTender,
+  InlineRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
 

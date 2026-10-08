@@ -68,6 +68,7 @@ function quote(extra: Partial<RefundQuote> = {}): RefundQuote {
     paidInFull: true,
     paidMethods: ["CASH"],
     customerIsWalkIn: false,
+    paidWithStoreCredit: false,
     ...extra,
   };
 }
@@ -556,5 +557,139 @@ describe("refund flow", () => {
       amount: 12.4,
       pending: true,
     });
+  });
+
+  it.each([
+    ["403", apiErr(403, "REFUND_NOT_ALLOWED")],
+    ["REFUND_NEEDS_PAID_INVOICE", apiErr(409, "REFUND_NEEDS_PAID_INVOICE")],
+    ["RETURN_NOT_REFUNDABLE", apiErr(409, "RETURN_NOT_REFUNDABLE")],
+  ])(
+    "saved return + refund refused (%s): closing reports the refund as pending",
+    async (_k, err) => {
+      refundReturn.mockRejectedValue(err);
+      const onClose = jest.fn();
+      const { onRecorded } = await toQuote(quote({ paidMethods: ["CARD"] }), { onClose });
+      fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+      fireEvent.click(confirmBtn(/^return & refund/i));
+      await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+      captureOk();
+      await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+      const footerClose = await screen.findAllByRole("button", { name: "Close" });
+      fireEvent.click(footerClose.find((b) => b.textContent === "Close") as HTMLElement);
+      expect(onRecorded).toHaveBeenCalledWith(expect.objectContaining({ id: "ret-1" }), {
+        resolution: "REFUND",
+        tender: "CARD",
+        amount: 12.4,
+        pending: true,
+      });
+    },
+  );
+
+  it.each([
+    ["REFUND_NEEDS_PAID_INVOICE", true],
+    ["RETURN_NOT_REFUNDABLE", true],
+    ["403", false],
+  ])("after %s the saved return offers store credit instead: %s", async (code, offered) => {
+    refundReturn.mockRejectedValue(code === "403" ? apiErr(403) : apiErr(409, code));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+    await screen.findAllByRole("button", { name: "Close" });
+    expect(!!screen.queryByRole("button", { name: "Give store credit instead" })).toBe(offered);
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+  });
+
+  it("a failed re-quote after REFUND_AMOUNT_CHANGED shows the failed copy and never re-enables confirm on the old amount", async () => {
+    refundReturn.mockRejectedValue(apiErr(409, "REFUND_AMOUNT_CHANGED"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    // while the re-quote is in flight the confirm stays disabled
+    expect(confirmBtn(/^return & refund/i)).toBeDisabled();
+    act(() => lastCall(quoteMutate)[1].onError?.(new Error("network")));
+    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    const confirm = screen.queryByRole("button", { name: /^return & refund/i });
+    expect(confirm === null || (confirm as HTMLButtonElement).disabled).toBe(true);
+    expect(refundReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [["CREDIT_CARD"], "CARD"],
+    [["CHECK", "CREDIT_CARD"], "CHECK"],
+    [["CASH"], "CASH"],
+    [["ACH"], "CASH"],
+    [[], "CASH"],
+  ])("SA-727: paidMethods %j (PaymentMethod values) preselects %s", async (methods, expected) => {
+    refundReturn.mockResolvedValue({});
+    await refundFlow(quote({ paidMethods: methods as string[] }));
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+    expect(refundReturn.mock.calls[0][1].tender).toBe(expected);
+  });
+
+  it("F4: paidWithStoreCredit shows the refund as unavailable with fixed copy, store credit preselected", async () => {
+    await toQuote(quote({ canRefund: false, paidWithStoreCredit: true }));
+    expect(
+      screen.getByText("Paid with store credit, so it goes back as store credit"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Store credit" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^refund/i })).toBeDisabled();
+    fireEvent.click(confirmBtn(/^return & issue store credit$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0].resolution).toBe("STORE_CREDIT");
+  });
+
+  it("F4: a refund answered 409 REFUND_PAID_WITH_STORE_CREDIT shows the fixed copy and offers store credit", async () => {
+    refundReturn.mockRejectedValue(apiErr(409, "REFUND_PAID_WITH_STORE_CREDIT"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("Paid with store credit, so it goes back as store credit");
+    expect(screen.getByRole("button", { name: "Give store credit instead" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+  });
+
+  it("SA-727 (b): a store-credit retry answered 200 with the row is success", async () => {
+    refundReturn.mockRejectedValue(apiErr(500));
+    storeCreditInstead
+      .mockRejectedValueOnce(apiErr(500))
+      .mockResolvedValueOnce({ ...RECORD, creditNoteId: "cn-1", refundAmount: "12.4000" });
+    const { onRecorded } = await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: "Give store credit instead" }));
+    await waitFor(() => expect(storeCreditInstead).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: "Give store credit instead" }));
+    await waitFor(() =>
+      expect(onRecorded).toHaveBeenCalledWith(expect.anything(), {
+        resolution: "STORE_CREDIT",
+        amount: 12.4,
+      }),
+    );
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("SA-727 (c): a capture retry after a failure resends the byte-identical body (same key, same resolution)", async () => {
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    act(() => lastCall(captureMutate)[1].onError(apiErr(500)));
+    fireEvent.click(await screen.findByRole("button", { name: /^back$/i }));
+    // the choice is locked once a capture was sent with this key
+    expect(screen.getByRole("radio", { name: "Store credit" })).toBeDisabled();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
+    expect(JSON.stringify(captureMutate.mock.calls[1][0])).toBe(
+      JSON.stringify(captureMutate.mock.calls[0][0]),
+    );
   });
 });

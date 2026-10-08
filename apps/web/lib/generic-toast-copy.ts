@@ -53,7 +53,7 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
-    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
+    "The order was saved, but the credit notes weren't applied. Apply them on the order.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",

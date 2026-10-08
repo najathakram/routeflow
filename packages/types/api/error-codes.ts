@@ -41,6 +41,8 @@
 //   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
 //                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
+//   PRODUCT_PARENT_INVALID — `body.code` of the 400 when the parent named for a product cannot be used; `body.reason` is
+//                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -327,6 +329,13 @@ export const API_ERROR_CODES = {
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  // Settings -> Fulfillment (tenant admin toggle): 400 body {field} / 403 flag off / 409 stale (body = a fresh
+  // GET /settings/fulfilment) / 409 carrier orders in transit (body {count}).
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
+  FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
+  FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
+  FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",
+  FULFILMENT_CARRIER_IN_TRANSIT: "FULFILMENT_CARRIER_IN_TRANSIT",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
@@ -457,6 +466,26 @@ export const API_ERROR_CODES = {
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
   /**
+   * SA-727 (counter refund). POST /returns/inline/:id/refund: the return was already resolved (store credit, or a refund
+   * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
+   */
+  RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
+  REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
+  /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
+  REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /**
+   * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
+   * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
+   */
+  REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
+  /** SA-727: a return that was refunded in cash/card/check cannot be cancelled (the money already left). 409. */
+  RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
+  /** SA-727: the return is not in a state a refund can resolve (not captured, on hold, rejected, cancelled, or worth $0). 409. */
+  RETURN_NOT_REFUNDABLE: "RETURN_NOT_REFUNDABLE",
+  /** SA-727: the service-level refund gate (office roles only); also guards the REFUND capture and the store-credit conversion. 403. */
+  REFUND_NOT_ALLOWED: "REFUND_NOT_ALLOWED",
+  /**
    * Manual invoices due (platform-admin /rf-invoices). 409s: ALREADY_PAID / IS_VOID / NOT_PAID carry the
    * current `row`; NOTHING_TO_ISSUE, INVOICING_OFF (RF_INVOICING_MODE=off), NOT_MANUAL and NO_PRICE come from
    * POST tenants/:id/rf-invoices/issue. 400s: a missing or card-like payment reference, and a `paidAt` that
@@ -475,6 +504,8 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

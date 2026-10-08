@@ -30,7 +30,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   InlineReturnRefundEligibility,
-  InlineReturnRefundTender,
+  InlineRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
 import {
@@ -49,6 +49,7 @@ import {
   TENDER_OPTIONS,
   handBackLine,
   refundErrorKind,
+  tenderFromPaidMethods,
   TERMINAL_REFUND_ERRORS,
   type RefundErrorKind,
 } from "./refund-copy";
@@ -75,9 +76,25 @@ export interface RecordInlineReturnDialogProps {
   onRecorded?: (result: InlineReturnRecord, info?: RecordedInfo) => void;
 }
 
+/** Refund refusals after a saved capture where the goods are in and nothing was paid out. */
+const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
+  "failed",
+  "changed",
+  "forbidden",
+  "needsPaid",
+  "notRefundable",
+  "paidWithCredit",
+]);
+/** Refusals where the saved return can still be given as store credit (not a 403). */
+const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
+  "needsPaid",
+  "notRefundable",
+  "paidWithCredit",
+]);
+
 export interface RecordedInfo {
   resolution: InlineReturnResolution;
-  tender?: InlineReturnRefundTender;
+  tender?: InlineRefundTender;
   amount?: number;
   /** SA-727b: the return is saved but its refund is still pending (nothing paid out). */
   pending?: boolean;
@@ -129,12 +146,12 @@ export function RecordInlineReturnDialog({
   // POS-4b: refund-vs-credit state. `saved` = the return the capture recorded (a refund retry
   // never re-captures); `busyRef` absorbs a double click before React re-renders the disabled button.
   const [resolution, setResolution] = React.useState<InlineReturnResolution>("STORE_CREDIT");
-  const [tender, setTender] = React.useState<InlineReturnRefundTender | null>(null);
+  const [tender, setTender] = React.useState<InlineRefundTender | null>(null);
   const [saved, setSaved] = React.useState<InlineReturnRecord | null>(null);
   const [refunding, setRefunding] = React.useState(false);
   const [refundError, setRefundError] = React.useState<RefundErrorKind | null>(null);
   const [refundDone, setRefundDone] = React.useState<{
-    tender: InlineReturnRefundTender;
+    tender: InlineRefundTender;
     amount: number;
   } | null>(null);
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
@@ -144,7 +161,9 @@ export function RecordInlineReturnDialog({
   // a refund POST already failed once: a later RETURN_ALREADY_RESOLVED means "check before handing over"
   const retriedRef = React.useRef(false);
   const pendingReportedRef = React.useRef(false);
+  const captureSentRef = React.useRef(false);
   const [crediting, setCrediting] = React.useState(false);
+  const [requoting, setRequoting] = React.useState(false);
 
   // Fresh attempt every time the dialog opens — bumps `openSeq`, which InlineReturnSection
   // takes as its own reset signal (clearing lines/quote/reason and re-seeding from the entry
@@ -166,21 +185,23 @@ export function RecordInlineReturnDialog({
     setRefundDone(null);
     setRequoteOverride(null);
     setCrediting(false);
+    setRequoting(false);
     retriedRef.current = false;
     pendingReportedRef.current = false;
+    captureSentRef.current = false;
     busyRef.current = false;
   }, [open, orderId]);
 
   const quoted = sectionState.quote as
     (InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>) | null;
-  const showChoice = allowRefund && !!quoted?.canRefund;
-  const walkIn = showChoice && !!quoted?.customerIsWalkIn;
-  const effResolution: InlineReturnResolution = !showChoice
-    ? "STORE_CREDIT"
-    : walkIn
-      ? "REFUND"
-      : resolution;
-  const effTender: InlineReturnRefundTender = tender ?? quoted?.paidMethods?.[0] ?? "CASH";
+  // F4: a sale paid with store credit goes back as store credit: show the refund as unavailable, not hidden.
+  const paidWithCredit =
+    allowRefund && !quoted?.canRefund && !!quoted?.paidWithStoreCredit && !quoted?.customerIsWalkIn;
+  const showChoice = allowRefund && (!!quoted?.canRefund || paidWithCredit);
+  const walkIn = showChoice && !!quoted?.canRefund && !!quoted?.customerIsWalkIn;
+  const effResolution: InlineReturnResolution =
+    !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
+  const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
 
   /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
@@ -230,7 +251,8 @@ export function RecordInlineReturnDialog({
 
   /** Closing with a saved return whose refund never went through reports it as pending, once. */
   function handleClose() {
-    const unresolved = !refundError || refundError === "failed" || refundError === "changed";
+    // Goods received, nothing paid out: everything except "already resolved another way".
+    const unresolved = !refundError || PENDING_ON_CLOSE.has(refundError);
     if (saved && !refundDone && phase === "capture" && unresolved && !pendingReportedRef.current) {
       pendingReportedRef.current = true;
       onRecorded?.(saved, {
@@ -265,8 +287,14 @@ export function RecordInlineReturnDialog({
         setRefundError(kind);
         if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          setRequoting(true);
           requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
-            onSuccess: (fresh) => setRequoteOverride(fresh),
+            onSuccess: (fresh) => {
+              setRequoting(false);
+              setRequoteOverride(fresh);
+            },
+            // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
+            onError: () => setRefundError("failed"),
           });
         }
       },
@@ -285,6 +313,9 @@ export function RecordInlineReturnDialog({
       if (saved) return doRefund(saved);
     }
     if (!returnKeyRef.current) returnKeyRef.current = mintReturnKey();
+    // SA-727: the replay fingerprint includes `resolution`, so once a capture is sent with this key the choice locks
+    // and a retry resends the identical body.
+    captureSentRef.current = true;
     captureMutation.mutate(
       {
         ...buildCaptureRequest({
@@ -326,6 +357,7 @@ export function RecordInlineReturnDialog({
           setRecordedReturn(recorded);
           if (recorded) {
             returnKeyRef.current = "";
+            captureSentRef.current = false;
             setOpenSeq((n) => n + 1);
           }
           setPhase("refused");
@@ -376,11 +408,18 @@ export function RecordInlineReturnDialog({
             <RefundChoice
               amount={money(quotedAmount)}
               walkIn={walkIn}
+              refundUnavailable={paidWithCredit}
               resolution={effResolution}
               onResolution={setResolution}
               tender={effTender}
               onTender={setTender}
-              locked={!!saved || refunding || crediting || captureMutation.isPending}
+              locked={
+                !!saved ||
+                refunding ||
+                crediting ||
+                captureMutation.isPending ||
+                captureSentRef.current
+              }
               error={refundError}
             />
           ) : null
@@ -393,7 +432,7 @@ export function RecordInlineReturnDialog({
         renderQuoteActions={() =>
           showChoice &&
           (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
-            refundError === "failed" && saved ? (
+            saved && (refundError === "failed" || CREDIT_INSTEAD.has(refundError)) ? (
               <>
                 <Button
                   variant="secondary"
@@ -403,13 +442,17 @@ export function RecordInlineReturnDialog({
                 >
                   Give store credit instead
                 </Button>
-                <Button
-                  loading={refunding}
-                  disabled={crediting}
-                  onClick={() => saved && doRetry(saved)}
-                >
-                  Retry refund
-                </Button>
+                {refundError === "failed" ? (
+                  <Button
+                    loading={refunding}
+                    disabled={crediting}
+                    onClick={() => saved && doRetry(saved)}
+                  >
+                    Retry refund
+                  </Button>
+                ) : (
+                  <Button onClick={handleClose}>Close</Button>
+                )}
               </>
             ) : (
               <Button onClick={handleClose}>Close</Button>
@@ -418,6 +461,7 @@ export function RecordInlineReturnDialog({
             <Button
               disabled={
                 refunding ||
+                requoting ||
                 requoteMutation.isPending ||
                 !sectionState.captureReason ||
                 // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
@@ -542,6 +586,7 @@ export function RecordInlineReturnDialog({
 function RefundChoice({
   amount,
   walkIn,
+  refundUnavailable = false,
   resolution,
   onResolution,
   tender,
@@ -551,10 +596,11 @@ function RefundChoice({
 }: {
   amount: string;
   walkIn: boolean;
+  refundUnavailable?: boolean;
   resolution: InlineReturnResolution;
   onResolution: (r: InlineReturnResolution) => void;
-  tender: InlineReturnRefundTender;
-  onTender: (t: InlineReturnRefundTender) => void;
+  tender: InlineRefundTender;
+  onTender: (t: InlineRefundTender) => void;
   locked: boolean;
   error: RefundErrorKind | null;
 }) {
@@ -579,19 +625,20 @@ function RefundChoice({
           type="radio"
           name="return-resolution"
           checked={refund}
-          disabled={locked}
+          disabled={locked || refundUnavailable}
           onChange={() => onResolution("REFUND")}
         />
         Refund {amount}
       </label>
       {walkIn && <p className="text-xs text-navy/70">{REFUND_COPY.walkIn}</p>}
+      {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
       {refund && (
         <>
           <Select
             label="Refund by"
             value={tender}
             disabled={locked}
-            onChange={(e) => onTender(e.target.value as InlineReturnRefundTender)}
+            onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />
           <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>

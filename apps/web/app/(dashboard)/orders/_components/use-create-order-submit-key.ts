@@ -114,9 +114,8 @@ export function idempotencyConflictOrderId(err: unknown): string | null {
   return hit && r.data?.orderId ? r.data.orderId : null;
 }
 
-/** B1201: the create saved the order but its credit notes were not applied. Shown verbatim. */
-export const CREDITS_PENDING_COPY =
-  "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";
+/** B1201: the copy lives in @routeflow/types (shared with mobile); re-exported for existing imports. */
+export { CREDITS_PENDING_COPY } from "@routeflow/types";
 
 /**
  * B1201: 503 ORDER_SAVED_CREDITS_PENDING carries the saved order's id. The order EXISTS, so the modal
