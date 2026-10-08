@@ -1364,7 +1364,7 @@ export class InlineReturnsService {
     if (!canRefundRole(user.role)) {
       throw this.refundNotAllowed("Only office staff can refund a return");
     }
-    const tenantId = this.prisma.getTenantId();
+    const tenantId = this.requireRefundTenant();
     await this.assertGranted(tenantId);
     const expected = roundMoney(dto.expectedAmount);
 
@@ -1553,7 +1553,7 @@ export class InlineReturnsService {
     if (!canRefundRole(user.role)) {
       throw this.refundNotAllowed("Only office staff can give store credit instead of a refund");
     }
-    const tenantId = this.prisma.getTenantId();
+    const tenantId = this.requireRefundTenant();
     await this.assertGranted(tenantId);
 
     const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
@@ -1680,6 +1680,17 @@ export class InlineReturnsService {
   }
 
   /** SA-727: the refund gate's 403 carries a code (`{code}` body) like every 409 here; the controller's RolesGuard 403 does not. */
+  /**
+   * Row 59: a refund / store-credit conversion is a money write on ONE tenant's return. A SUPER_ADMIN session with no tenant
+   * context passes the role gate, skips the add-on check and would lock rows with no tenant predicate, so it is refused
+   * (403 REFUND_NOT_ALLOWED) before any read. The platform acts through a tenant context (impersonation) or not at all.
+   */
+  private requireRefundTenant(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw this.refundNotAllowed("A refund needs a tenant: open the tenant first");
+    return tenantId;
+  }
+
   private refundNotAllowed(message: string): ForbiddenException {
     return new ForbiddenException({ code: API_ERROR_CODES.REFUND_NOT_ALLOWED, message });
   }
