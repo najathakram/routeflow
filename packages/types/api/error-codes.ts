@@ -173,7 +173,8 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number),
-//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale).
+//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale);
+//                    403 PRICE_EDIT_NOT_PERMITTED (a line carries a real price change from a caller who may not edit prices).
 //                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
 //                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
@@ -401,6 +402,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**

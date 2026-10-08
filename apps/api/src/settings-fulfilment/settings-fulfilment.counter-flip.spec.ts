@@ -86,6 +86,7 @@ describe("flipping the counter in Settings drives the counter-sale gate", () => 
       {} as never,
       prisma as never,
       reader,
+      { log: jest.fn(async () => undefined) } as never,
     );
     return { world, settings, counter, createSale, orders };
   }
