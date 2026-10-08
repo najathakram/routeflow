@@ -132,6 +132,9 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/ux-audit-seed.js": "test-slug-only",
   "scripts/data-integrity-report.mjs": "read-only",
   "scripts/f07-conservation-report.mjs": "read-only",
+  // The DB-spec lane runner: creates and drops only its own rf_dbspec_* databases on the local compose
+  // Postgres (SPEC_DB_PATTERN enforced), never a tenant table.
+  "scripts/local-db-specs.mjs": "local-only",
   "scripts/local-super-admin.mjs": "local-only",
   "scripts/repair-integrity.mjs": "retired-stub",
   "scripts/report-f25-licence-dates.mjs": "read-only",
@@ -150,14 +153,43 @@ export function analyze(fileName: string, text: string): Analysis {
   let usesComputedLoad = false;
   let hasGuardCall = false;
 
+  // Names that load modules: `require`, plus any const bound to `createRequire(...)` (`const req =
+  // createRequire(import.meta.url); req("pg")`). Collected first so a use before its declaration in
+  // the walk order still resolves.
+  const loaders = new Set<string>(["require"]);
+  const isCreateRequire = (n: ts.Node): boolean =>
+    ts.isCallExpression(n) &&
+    ((ts.isIdentifier(n.expression) && n.expression.text === "createRequire") ||
+      (ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "createRequire"));
+  const collect = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      isCreateRequire(node.initializer)
+    )
+      loaders.add(node.name.text);
+    ts.forEachChild(node, collect);
+  };
+  collect(sf);
+
   const visit = (node: ts.Node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier))
+      specifiers.push(node.moduleSpecifier.text);
+    // `export { x } from "m"` / `export * from "m"` load the module too.
+    if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    )
       specifiers.push(node.moduleSpecifier.text);
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const isLoad =
         callee.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(callee) && callee.text === "require");
+        (ts.isIdentifier(callee) && loaders.has(callee.text)) ||
+        // createRequire(import.meta.url)("pg"): the callee is itself a createRequire(...) call.
+        isCreateRequire(callee);
       if (isLoad && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]))
         specifiers.push(node.arguments[0].text);
       else if (isLoad) usesComputedLoad = true;
@@ -282,6 +314,35 @@ describe("analyze() — the pin's own fixtures", () => {
       analyze("f.js", `const pg = require(path.join(root, "node_modules", "pg"));`),
     ).toMatchObject({ inScope: true, hasGuardCall: false });
     expect(analyze("g.js", `const x = require("path");`).inScope).toBe(false);
+  });
+
+  it('createRequire(...)("pg"), an aliased req("pg") and export-from are loads', () => {
+    const direct = analyze(
+      "i.mjs",
+      `import { createRequire } from "module";\nconst { Client } = createRequire(import.meta.url)("pg");`,
+    );
+    expect(direct).toMatchObject({ inScope: true, hasGuardCall: false });
+    const aliased = analyze(
+      "j.mjs",
+      `import { createRequire } from "node:module";\nconst req = createRequire(import.meta.url);\nconst { Client } = req("pg");`,
+    );
+    expect(aliased).toMatchObject({ inScope: true, hasGuardCall: false });
+    expect(analyze("k.mjs", `export { Client } from "pg";`).inScope).toBe(true);
+    expect(analyze("l.mjs", `export * from "@prisma/client";`).inScope).toBe(true);
+    // a relative load through the alias joins the transitive scope
+    expect(
+      analyze("m.mjs", `const r = createRequire(import.meta.url);\nr("./lib/x.cjs");`)
+        .relativeImports,
+    ).toEqual(["./lib/x.cjs"]);
+    // an alias that loads a non-DB module stays out of scope; an unrelated callee is not a load
+    expect(
+      analyze("n.mjs", `const req = createRequire(import.meta.url);\nreq("node:path");`).inScope,
+    ).toBe(false);
+    expect(analyze("o.mjs", `foo("pg");`).inScope).toBe(false);
+    // a computed path through the alias cannot hide a client
+    expect(
+      analyze("p.mjs", `const req = createRequire(import.meta.url);\nreq(name);`).inScope,
+    ).toBe(true);
   });
 
   it("the tunnel-proof destructive-script refusal counts as a real guard call", () => {
