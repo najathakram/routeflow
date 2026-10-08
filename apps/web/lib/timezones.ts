@@ -37,13 +37,20 @@ export function listTimeZones(): string[] {
   return FALLBACK_TIME_ZONES;
 }
 
-/** True when the runtime accepts `value` as an IANA zone (so a saved legacy value such as UTC still passes). */
-export function isValidTimeZone(value: string): boolean {
-  if (!value || value !== value.trim()) return false;
+/**
+ * The canonical spelling of an IANA zone (`america/chicago` becomes `America/Chicago`), or null when the value
+ * is not UTC or an Area/Location name the runtime knows. Offsets such as `+05:00` are refused.
+ */
+export function canonicalTimeZone(value: string): string | null {
+  if (!value || value !== value.trim()) return null;
+  if (value.toUpperCase() !== "UTC" && !value.includes("/")) return null;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value });
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isValidTimeZone(value: string): boolean {
+  return canonicalTimeZone(value) !== null;
 }

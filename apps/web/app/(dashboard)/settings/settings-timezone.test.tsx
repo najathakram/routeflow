@@ -68,4 +68,63 @@ describe("Settings: time zone", () => {
     expect(screen.queryByLabelText("Time zone")).toBeNull();
     expect(screen.getByText(HELP)).toBeInTheDocument();
   });
+
+  const patchBody = () =>
+    (apiClient.patch as jest.Mock).mock.calls[0]![1] as Record<string, unknown>;
+
+  it("an operator's save never carries a timezone key", async () => {
+    mockRole = "OPERATOR";
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await screen.findByText("America/Chicago");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+    expect(patchBody()).not.toHaveProperty("timezone");
+  });
+
+  it("a stored zone the browser rejects never blocks an operator's save", async () => {
+    mockRole = "OPERATOR";
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { ...SAVED, timezone: "Not/AZone" } });
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await screen.findByText("Not/AZone");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+    expect(patchBody()).not.toHaveProperty("timezone");
+  });
+
+  it("an admin who edits only the address does not send timezone", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await waitFor(() => expect(screen.getByLabelText("Time zone")).toHaveValue("America/Chicago"));
+    await user.clear(screen.getByLabelText("City"));
+    await user.type(screen.getByLabelText("City"), "Dallas");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+    expect(patchBody()).toMatchObject({ city: "Dallas" });
+    expect(patchBody()).not.toHaveProperty("timezone");
+  });
+
+  it("an admin who clears the zone gets a required error and nothing is sent", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(field).toHaveValue("America/Chicago"));
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText("Choose a time zone")).toBeInTheDocument();
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it("links the help copy to the control, and the read-only view is a label/value pair", async () => {
+    const { unmount } = renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    expect(field).toHaveAccessibleDescription(HELP);
+    unmount();
+    mockRole = "OPERATOR";
+    renderWithProviders(<SettingsPage />);
+    const value = await screen.findByText("America/Chicago");
+    expect(value.tagName).toBe("DD");
+    expect(value.previousElementSibling).toHaveTextContent("Time zone");
+  });
 });

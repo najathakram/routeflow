@@ -95,11 +95,11 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
-import { isValidTimeZone } from "@/lib/timezones";
+import { canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const profileSchema = z.object({
+const profileShape = {
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
@@ -110,12 +110,16 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-  timezone: z
-    .string()
-    .optional()
-    .refine((v) => !v || isValidTimeZone(v), "Choose a time zone from the list"),
-});
-type ProfileFormValues = z.infer<typeof profileSchema>;
+};
+/** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
+const profileSchemaFor = (canEditTimeZone: boolean) =>
+  z.object({
+    ...profileShape,
+    timezone: canEditTimeZone
+      ? z.string().refine((v) => isValidTimeZone(v), "Choose a time zone")
+      : z.string().optional(),
+  });
+type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
 
 function BusinessProfileTab() {
   const { toast } = useToast();
@@ -132,10 +136,9 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: ({ timezone, ...rest }: ProfileFormValues) =>
-      apiClient
-        .patch("/settings", canEditTimeZone && timezone ? { ...rest, timezone } : rest)
-        .then((r) => r.data),
+    // `timezone` rides along only when an admin actually changed it.
+    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
+      apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -183,9 +186,9 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
     defaultValues: {
       businessName: "",
       email: "",
@@ -214,7 +217,7 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
-        timezone: savedSettings.timezone ?? "",
+        ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
       });
     }
   }, [savedSettings, reset]);
@@ -231,8 +234,10 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async (data: ProfileFormValues) => {
-    await saveSettings.mutateAsync(data);
+  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+    const zone =
+      canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
+    await saveSettings.mutateAsync(zone ? { ...rest, timezone: zone } : rest);
   };
 
   return (
@@ -281,18 +286,20 @@ function BusinessProfileTab() {
                 label="Time zone"
                 list="settings-timezone-zones"
                 autoComplete="off"
+                id="settings-timezone"
+                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
                 register={register("timezone")}
                 error={errors.timezone?.message}
               />
               <TimeZoneDatalist id="settings-timezone-zones" />
             </>
           ) : (
-            <>
-              <p className="text-sm font-medium text-navy">Time zone</p>
-              <p className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</p>
-            </>
+            <dl>
+              <dt className="text-sm font-medium text-navy">Time zone</dt>
+              <dd className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</dd>
+            </dl>
           )}
-          <p className="mt-1 text-xs text-navy/70">
+          <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
             Applies to receipts and today&apos;s sales from now on
           </p>
         </div>
