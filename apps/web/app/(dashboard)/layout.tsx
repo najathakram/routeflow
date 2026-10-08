@@ -1190,6 +1190,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   useRealtimeUpdates();
 
   const shellRouter = useGuardedRouter();
+  const rawRouter = useRouter(); // the g shortcuts ask the leave guard themselves (a guarded push would ask twice)
   // POS-7: landing at exactly /dashboard with "Open the counter on this device" on opens the counter (once per session).
   useCounterLanding({
     pathname,
@@ -1201,16 +1202,16 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   React.useEffect(() => {
-    // "g" + letter navigation and "?" help; the rules (typing, modifiers, a screen holding a cart) live in lib/nav-shortcuts.
+    // "g" + letter navigation and "?" help; the rules (typing, modifiers, the cart's leave guard) live in lib/nav-shortcuts.
     const handler = createNavShortcutHandler({
-      push: (href) => shellRouter.push(href),
+      push: (href) => rawRouter.push(href),
       routesAccess,
       counterEnabled,
       toggleHelp: () => setShortcutHelpOpen((v) => !v),
     });
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter, routesAccess, counterEnabled]);
+  }, [rawRouter, routesAccess, counterEnabled]);
 
   const SHORTCUTS = React.useMemo(
     () =>

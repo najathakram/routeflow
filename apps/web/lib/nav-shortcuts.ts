@@ -1,18 +1,12 @@
 /**
  * The dashboard shell's keyboard navigation: "g" then a letter jumps to a page ("g i" = Invoices), "?" toggles the help.
  *
- * A screen that holds work a navigation would throw away (the counter sale's cart) opts out by rendering an element with
- * `data-nav-shortcuts-suspended="true"` while it holds that work: the "g" sequences are then ignored everywhere on the page,
- * whatever has focus (a button after "Add note" is not a text field, so the editable-target check alone cannot save the cart).
+ * Typing is never hijacked (an editable target or focus in a text field resets the sequence). Every jump goes through the
+ * counter's shared leave guard: with a cart holding lines it opens the same "Discard this sale?" dialog as every other way
+ * out (a button after "Add note" is not a text field, so the editable-target check alone cannot save the cart), mid-sale it
+ * is refused with the notice, and off the counter it just navigates.
  */
-
-/** Put this attribute (value "true") on any rendered element to switch the g-sequences off while it is mounted. */
-export const NAV_SHORTCUTS_SUSPENDED_ATTR = "data-nav-shortcuts-suspended";
-
-/** True while a mounted screen has asked for the g-sequences to be off. */
-export function navShortcutsSuspended(doc: Document = document): boolean {
-  return doc.querySelector(`[${NAV_SHORTCUTS_SUSPENDED_ATTR}="true"]`) !== null;
-}
+import { guardCounterLeave } from "./counter-cart-signal";
 
 /** An element the user types text into (input, textarea, select, contenteditable). */
 export function isEditableElement(el: EventTarget | Element | null | undefined): boolean {
@@ -28,6 +22,7 @@ export function isEditableElement(el: EventTarget | Element | null | undefined):
 const SEQUENCE_MS = 800;
 
 export interface NavShortcutDeps {
+  /** The RAW router push: the handler asks `guardCounterLeave` itself, so a guarded push here would ask twice. */
   push: (href: string) => void;
   /** "g r" / "g d" only exist for a tenant with routes */
   routesAccess: boolean;
@@ -43,26 +38,31 @@ export function createNavShortcutHandler(deps: NavShortcutDeps): (e: KeyboardEve
   let sequence = "";
   let lastAt = 0;
 
+  // Ask the leave guard first; Discard runs the raw push once (the parked leave is never re-asked).
+  const nav = (path: string) => {
+    if (!guardCounterLeave(() => deps.push(path))) deps.push(path);
+  };
+
   const go = (seq: string) => {
     switch (seq) {
       case "go":
-        return deps.push("/orders");
+        return nav("/orders");
       case "gr":
-        return deps.routesAccess ? deps.push("/routes") : undefined;
+        return deps.routesAccess ? nav("/routes") : undefined;
       case "gd":
-        return deps.routesAccess ? deps.push("/drivers") : undefined;
+        return deps.routesAccess ? nav("/drivers") : undefined;
       case "gc":
-        return deps.push("/customers");
+        return nav("/customers");
       case "gi":
-        return deps.push("/invoices");
+        return nav("/invoices");
       case "gf":
-        return deps.push("/finance/dashboard");
+        return nav("/finance/dashboard");
       case "gs":
-        return deps.push("/settings");
+        return nav("/settings");
       case "gt":
-        return deps.counterEnabled ? deps.push("/orders/counter-sale") : undefined;
+        return deps.counterEnabled ? nav("/orders/counter-sale") : undefined;
       case "gh":
-        return deps.push("/dashboard");
+        return nav("/dashboard");
       default:
         return undefined;
     }
@@ -79,12 +79,6 @@ export function createNavShortcutHandler(deps: NavShortcutDeps): (e: KeyboardEve
 
     if (e.key === "?") {
       deps.toggleHelp();
-      return;
-    }
-
-    // A screen holding work that a jump would lose (the counter cart) switches the g-sequences off.
-    if (navShortcutsSuspended()) {
-      sequence = "";
       return;
     }
 

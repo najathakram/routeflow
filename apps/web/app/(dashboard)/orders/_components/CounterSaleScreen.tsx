@@ -711,8 +711,6 @@ export function CounterSaleScreen() {
       className="mx-auto w-full max-w-5xl space-y-4 p-4"
       data-testid="counter-sale-screen"
       data-counter-screen
-      // A cart with lines is work a "g i" jump would throw away: the shell's g-shortcuts stay off while it has any.
-      data-nav-shortcuts-suspended={lines.length > 0 ? "true" : undefined}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
