@@ -23,6 +23,11 @@ function fakeTx(products: P[]) {
   const byId = (id: string) => products.find((p) => p.id === id)!;
   const tx: any = {
     $executeRaw: jest.fn().mockResolvedValue(0), // the FOR UPDATE lock
+    // SA-714: the backorder marker reads its lines' rows and writes only that tag (none held here).
+    orderItem: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    },
     product: {
       findMany: jest.fn(async ({ where }: any) =>
         products.filter((p) => where.id.in.includes(p.id)),

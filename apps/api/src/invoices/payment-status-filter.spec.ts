@@ -67,7 +67,7 @@ const VOID_LIT = `(?:"VOID"|PaymentStatus\\.VOID)`;
 // preceding model-receiver line, when the filter itself spans lines) is out
 // of scope for this spec.
 const OTHER_MODEL_RECEIVER =
-  /\.(creditNote|creditNoteItem|vendorBill|commissionStatement|supplier|order)\.\s*(findMany|findFirst|findUnique|aggregate|update|updateMany|count|create|groupBy)\s*\(/;
+  /\.(creditNote|creditNoteItem|vendorBill|commissionStatement|supplier|order|rfInvoice)\.\s*(findMany|findFirst|findUnique|aggregate|update|updateMany|count|create|groupBy)\s*\(/;
 // `tx.invoice.` / `db.invoice.` / `this.prisma.forTenant().invoice.` etc — the
 // Invoice model's OWN status (DRAFT/SENT/VOID/PAID/...), not a payment's.
 const INVOICE_MODEL_RECEIVER =

@@ -146,10 +146,10 @@ describe("scanLevelForHit — scanMatch only speaks for the code that produced i
   });
 });
 
-describe("useScanCodeHandler: the substring first-row auto-add is a picker-style pick (SA-626a)", () => {
+describe("useScanCodeHandler: a multi-match is never auto-added (B1219; was the SA-626a first-row pick)", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("an ambiguous multi-match (first row wins) starts the new line on the default unit, like a tap", async () => {
+  it("an ambiguous multi-match goes to the picker and adds NOTHING", async () => {
     const p = boxed();
     mockResolve.mockResolvedValue({
       notFound: false,
@@ -161,8 +161,10 @@ describe("useScanCodeHandler: the substring first-row auto-add is a picker-style
     });
     const d = deps();
     const { result } = renderHook(() => useScanCodeHandler(d));
-    result.current.current("CHIPS");
-    await waitFor(() => expect(d.addLineItem).toHaveBeenCalled());
-    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX", { startOnDefaultUnit: true });
+    const onSuggestion = jest.fn();
+    d.onSuggestion = onSuggestion;
+    await result.current.current("CHIPS");
+    expect(onSuggestion).toHaveBeenCalledWith(expect.arrayContaining([p]), "CHIPS");
+    expect(d.addLineItem).not.toHaveBeenCalled();
   });
 });

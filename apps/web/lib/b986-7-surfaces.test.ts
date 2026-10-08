@@ -51,8 +51,11 @@ describe("no raw server message on the orders + customers surfaces", () => {
   it("the surfaces that render their own error opt out of the global toast (a failure shows once)", () => {
     const opt = "{ localErrorToast: true }";
     const page = read(`${D}/orders/[id]/page.tsx`);
-    for (const h of ["useSendInvoice", "useSendInvoiceEmail", "usePatchOrderFulfillPath"])
+    for (const h of ["useSendInvoice", "useSendInvoiceEmail"])
       expect(page).toContain(`${h}(${opt})`);
+    expect(read(`${D}/orders/_components/OrderFulfilmentRow.tsx`)).toContain(
+      `usePatchOrderFulfillPath(${opt})`,
+    );
     expect(read(`${D}/orders/_components/CreateOrderModal.tsx`)).toContain(
       `useCreateOrder(${opt})`,
     );
@@ -119,7 +122,10 @@ describe("B986-7 Opus: uncoded refusals keep TODAY's server sentence (never a va
     expect(page).toMatch(
       /codedToastCopy\(err\)\s*\?\?\s*err\?\.response\?\.data\?\.message\s*\?\?\s*"Please try again, or refresh and check its invoices\."/,
     );
-    expect(page).toMatch(/codedToastCopy\(err\) \?\? err\?\.response\?\.data\?\.message/);
+    // the fulfillment refusal lives in OrderFulfilmentRow (extracted from the page)
+    const row = read(`${D2}/orders/_components/OrderFulfilmentRow.tsx`);
+    expect(row).toMatch(/codedToastCopy\(err\) \?\? err\?\.response\?\.data\?\.message/);
+    expect(row).not.toContain("fulfillment path couldn't be changed");
     for (const vague of [
       "can't be cancelled right now",
       "can't be deleted in its current state",
