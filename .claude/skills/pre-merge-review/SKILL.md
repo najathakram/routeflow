@@ -53,6 +53,10 @@ These are the cheap, mechanical things that were about to reach a public master 
   `test`, `e2e-routeflow`, `routeflow-demo`, `qa-*`, `e2e-*`, `ux-audit-*`).
 - **Migration present?** If `apps/api/prisma/migrations/` changed: this PR needs the owner's
   prod-migrate window and the drift gate; flag it on the queue row.
+- **Design Gate (owner R19)**: the PR body links its spec or carries a Lite/Hotfix gate block, and
+  `node .claude/skills/future-proof/scripts/check-gate.mjs <spec>` (or `gh pr view <n> --json body -q .body | … -`)
+  exits 0. No gate, or a failing one, is a BLOCK; the brief then adds the gate's PR-stage checks
+  (`.claude/skills/future-proof/references/REVIEWER-CHECKLIST.md`).
 
 ### 2. Build the reviewer's brief — this is where the value is
 

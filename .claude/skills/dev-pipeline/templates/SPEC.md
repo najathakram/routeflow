@@ -211,6 +211,7 @@ Rules:
 - [ ] No requirement restates the implementation ("calls function X") instead of the behavior
 - [ ] At least one negative requirement
 - [ ] Assumptions block filled — every unverified premise, what would confirm it, the R#s that fall with it (§10)
+- [ ] `## Design Gate` block filled (`.claude/skills/future-proof/`, owner R19) and `check-gate.mjs` passing on this file
 
 ## Stage log — did the gate fire?
 

@@ -108,6 +108,8 @@ have burned whole batches; a fix built on an unverified cause is the most expens
 
 ### S3 — Fix ruling (Fable @ high — a decision over the brief + refutation, no repo access)
 
+> **Design Gate (owner R19, mandatory):** before this ruling is approved, apply the `future-proof` skill's "Fixing: the area, not the symptom" section (big-picture fix, area sweep and chunked fixes, owner questions batched now) and put its Lite gate in `cause-ruling.md`; a P0 hotfix carries the Hotfix gate and files its area sweep as the follow-up. No build without it (`.claude/skills/future-proof/SKILL.md`).
+
 Fable receives S1 + S2 verbatim and rules once, into `cause-ruling.md` (template):
 
 1. **Cause verdict** — accept, or send S2 back with the specific question (one round; still undetermined →

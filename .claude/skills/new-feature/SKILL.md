@@ -14,6 +14,8 @@ one-line description, ≥3 testable acceptance criteria, DB/API/UI impact). Then
 **Red → Green → Refactor → gate → PR**. The `/new-feature` command has the full step list; this
 skill is the file-scaffold map.
 
+> **Design Gate first (owner R19):** before scaffolding anything, the feature's spec carries a filled `future-proof` Design Gate (`.claude/skills/future-proof/SKILL.md`) that `check-gate.mjs` passes — variation map, replace-later, class fix, seams. No build without it.
+
 ## Golden rule
 
 **Web is the reference.** New capabilities land against the same API endpoints/DTOs the web
