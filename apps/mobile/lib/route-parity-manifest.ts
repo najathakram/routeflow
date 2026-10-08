@@ -131,6 +131,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/settings/product-categories": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions/rules": { missing: "W>M, owner triage" },
+  "(dashboard)/settings/units": { missing: "W>M, owner triage" },
   "(dashboard)/settings/batch-import": { webOnly: "desktop file flows" },
   "(dashboard)/settings/import": { webOnly: "desktop file flows" },
   "(dashboard)/settings/migration": { webOnly: "desktop file flows" },
