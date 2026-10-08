@@ -1,10 +1,9 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import type { LineState } from "../lib/cart-line-state";
 import { applyUnitOption } from "../lib/default-unit-line";
 import { applyUnitPick, type DraftItem } from "../lib/edit-items-draft";
 import { buildUnitOptions, unitPickerValue } from "../lib/unit-options";
-import { effectiveQty } from "../lib/cart-order-total";
 
 /**
  * SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line — boxes/pieces, no unitLabel — so the preview total

@@ -48,6 +48,15 @@ export function buildUnitOptions(
 }
 
 /**
+ * What a unit picker shows as selected (mobile mirror of web's `unitPickerValueOf`): the held unit, else a derived
+ * base (units P0b / SA-728), else the pack (`""`).
+ */
+export const unitPickerValue = (line: {
+  unitLabel?: string | null;
+  derivedBase?: string;
+}): string => line.unitLabel ?? line.derivedBase ?? "";
+
+/**
  * The correct base a line's `unitPrice` must be compared against to decide "is this a genuine
  * operator override" — the pack's `catalogPrice` while no unit is selected, else the ACTIVE
  * unit's own resolved price (`unitBasePrice`, set alongside `unitPrice` whenever a `UnitPickerRow`
