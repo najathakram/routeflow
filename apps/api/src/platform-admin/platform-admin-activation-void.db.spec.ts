@@ -258,6 +258,9 @@ describeDb("manual activation auto-void (DB)", () => {
   });
 
   it("a partially overlapping OPEN invoice stays OPEN, is flagged needsReview, with exactly one notice", async () => {
+    // The window starts at the earliest OPEN invoice (here 5 days ago) and runs 14 days: a monthly invoice
+    // [-5d, +25d) is only partly inside it.
+    const shortActivation = { ...ACTOR_DTO, billingPeriodDays: 14 };
     const startsBefore = new Date(Date.now() - 5 * DAY);
     const partial = await prisma.rfInvoice.create({
       data: {
@@ -266,7 +269,7 @@ describeDb("manual activation auto-void (DB)", () => {
         amount: 499,
         status: "OPEN",
         periodStart: startsBefore,
-        periodEnd: new Date(Date.now() + 10 * DAY),
+        periodEnd: new Date(Date.now() + 25 * DAY),
         periodKey: startsBefore.toISOString(),
         dueDate: startsBefore,
       },
@@ -277,13 +280,17 @@ describeDb("manual activation auto-void (DB)", () => {
       });
     const before = await partlyAudits();
 
-    await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
-    await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a"); // a rerun
+    await svc.activateManualSubscription(tenantId, shortActivation as any, "sa-4a");
+    await svc.activateManualSubscription(tenantId, shortActivation as any, "sa-4a"); // a rerun
 
     const row = await prisma.rfInvoice.findUniqueOrThrow({ where: { id: partial.id } });
     expect(row.status).toBe("OPEN");
     expect(row.needsReview).toBe(true);
     expect(row.periodKey).toBe(startsBefore.toISOString());
     expect((await partlyAudits()) - before).toBe(1);
+    // the subscription period was written from the earliest OPEN invoice, for the activation length
+    const sub = await subRow();
+    expect(sub?.periodStart?.getTime()).toBe(startsBefore.getTime());
+    expect(sub?.periodEnd?.getTime()).toBe(startsBefore.getTime() + 14 * DAY);
   });
 });

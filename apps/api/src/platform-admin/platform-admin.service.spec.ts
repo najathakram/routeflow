@@ -92,6 +92,8 @@ describe("PlatformAdminService — audit provenance", () => {
     };
     // PR4a: the activation auto-voids covered OPEN RouteFlow invoices inside its transaction; none by default.
     (prisma as any).rfInvoice = {
+      // the window anchor: the earliest OPEN invoice with a period (none by default -> the window starts now)
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
@@ -2910,6 +2912,57 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       const actions = (prisma as any).auditLog.create.mock.calls.map((c: any) => c[0].data.action);
       expect(actions).toEqual(expect.arrayContaining(["RF_INVOICE_VOIDED"]));
+    });
+
+    it("PIN 1 (service): with an OPEN invoice [P, P+30d) ahead, the period is written from P (not from now) and ends P+30d", async () => {
+      const DAY = 86_400_000;
+      const P = new Date(Date.now() + 3 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValue({ periodStart: P });
+      (prisma as any).rfInvoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          number: "RF-2026-0001",
+          amount: 499,
+          periodKey: P.toISOString(),
+          periodStart: P,
+          periodEnd: new Date(P.getTime() + 30 * DAY),
+        },
+      ]);
+
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      const anchor = (prisma as any).rfInvoice.findFirst.mock.calls[0][0];
+      expect(anchor.where).toMatchObject({ tenantId: TENANT_ID, status: "OPEN" });
+      expect(anchor.orderBy).toEqual({ periodStart: "asc" });
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      for (const branch of [upsert.create, upsert.update]) {
+        expect(branch.periodStart).toEqual(P);
+        expect(branch.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      }
+      // the void sees the SAME window, so the invoice is covered and voided
+      const where = (prisma as any).rfInvoice.findMany.mock.calls[0][0].where;
+      expect(where.periodStart.lt).toEqual(new Date(P.getTime() + 30 * DAY));
+      expect(where.periodEnd.gt).toEqual(P);
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data.status).toBe("VOID");
+      expect(out.periodStart).toEqual(P);
+      expect(out.periodEnd).toEqual(new Date(P.getTime() + 30 * DAY));
+      const marker = (prisma as any).auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === "TENANT_MANUAL_ACTIVATION_MARKER");
+      expect(marker.meta.periodEnd).toBe(new Date(P.getTime() + 30 * DAY).toISOString());
+    });
+
+    it("PIN 3 (service): with no OPEN invoice the period starts now and runs the activation length", async () => {
+      const before = Date.now();
+      const out = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const after = Date.now();
+
+      expect(out.periodStart.getTime()).toBeGreaterThanOrEqual(before);
+      expect(out.periodStart.getTime()).toBeLessThanOrEqual(after);
+      expect(out.periodEnd.getTime() - out.periodStart.getTime()).toBe(30 * 86_400_000);
+      const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsert.update.periodStart).toEqual(out.periodStart);
+      expect(upsert.update.periodEnd).toEqual(out.periodEnd);
     });
 
     it("a void failure fails the activation (the transaction rolls back as one)", async () => {

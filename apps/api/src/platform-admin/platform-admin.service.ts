@@ -14,7 +14,10 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
-import { voidCoveredRfInvoices } from "../billing/rf-invoice/rf-invoice-activation-void";
+import {
+  resolveActivationWindow,
+  voidCoveredRfInvoices,
+} from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { ProrationService } from "../billing/proration.service";
@@ -996,7 +999,11 @@ export class PlatformAdminService {
     const { version, definition } = await this.resolvePublishedPlan(planKey);
 
     const now = new Date();
-    const periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
+    // PR4a (owner ruling, option A): the prepaid window starts at the earliest OPEN RouteFlow invoice's period
+    // (else now) and runs billingPeriodDays from there. Resolved inside the transaction, under the tenant row
+    // lock, and written to the subscription; these defaults (no open invoice) are today's [now, now + N).
+    let periodStart = now;
+    let periodEnd = new Date(now.getTime() + dto.billingPeriodDays * 24 * 60 * 60 * 1000);
     // B863 / SA-277: 365-day prepaid = ANNUAL, shorter = MONTHLY; external rows roll length-preserving (rollCycles).
     const cycle: "MONTHLY" | "ANNUAL" = dto.billingPeriodDays >= 365 ? "ANNUAL" : "MONTHLY";
 
@@ -1033,6 +1040,13 @@ export class PlatformAdminService {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
         // updateTenantPriceOverride.
         await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+        const activationWindow = await resolveActivationWindow(tx, {
+          tenantId: id,
+          now,
+          days: dto.billingPeriodDays,
+        });
+        periodStart = activationWindow.windowStart;
+        periodEnd = activationWindow.windowEnd;
         if (transition && preparedTransition) {
           await this.planTransition.onPlanChange(tx, transition, preparedTransition);
         }
@@ -1102,7 +1116,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               externalPayment: true,
@@ -1115,7 +1129,7 @@ export class PlatformAdminService {
               currentPlan: dto.plan,
               planKey: definition.planKey,
               planVersionId: version.id,
-              periodStart: now,
+              periodStart,
               periodEnd,
               cycle,
               // Rolling the period forward disarms every pending transition. A downgrade left
@@ -1138,7 +1152,7 @@ export class PlatformAdminService {
         // void them in THIS transaction, so the activation and the void land or roll back together.
         await voidCoveredRfInvoices(tx, {
           tenantId: id,
-          windowStart: now,
+          windowStart: periodStart,
           windowEnd: periodEnd,
           actorId: adminId,
           now,
@@ -1295,7 +1309,7 @@ export class PlatformAdminService {
       slug: tenant.slug,
       status: tenant.status,
       plan: tenant.plan,
-      periodStart: now,
+      periodStart,
       periodEnd,
       paymentMethod: dto.paymentMethod,
       paymentRef: dto.paymentRef ?? null,

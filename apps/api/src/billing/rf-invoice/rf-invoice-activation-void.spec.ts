@@ -1,5 +1,17 @@
+// The issuer's number mint takes a billing-family advisory lock; there is no database here, so it is a
+// pass-through (the issuer is only used for its pure windowsFor).
+jest.mock("../../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 import { AdminAuditAction } from "../../platform-admin/audit-actions.constant";
-import { voidCoveredRfInvoices } from "./rf-invoice-activation-void";
+import { resolveActivationWindow, voidCoveredRfInvoices } from "./rf-invoice-activation-void";
+import { RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
 
 const TENANT = "tenant-1";
 const ACTOR = "sa-1";
@@ -51,6 +63,12 @@ function fakeTx(rows: Row[]) {
   const tx = {
     rfInvoice: {
       findMany: jest.fn(async ({ where }: any) => rows.filter((r) => matches(r, where))),
+      findFirst: jest.fn(async ({ where }: any) => {
+        const hit = rows
+          .filter((r) => matches(r, where))
+          .sort((a, b) => (a.periodStart as Date).getTime() - (b.periodStart as Date).getTime());
+        return hit[0] ?? null;
+      }),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const hit = rows.filter((r) => matches(r, where));
         hit.forEach((r) => Object.assign(r, data));
@@ -191,5 +209,115 @@ describe("voidCoveredRfInvoices (manual activation auto-void)", () => {
     const out = await run(tx);
     expect(out.voided).toEqual([]);
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("activation window anchored on the earliest OPEN invoice (PR4a, owner ruling A)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const P = D("2026-11-01");
+  const plus = (d: Date, days: number) => new Date(d.getTime() + days * DAY_MS);
+  const THREE_DAYS_BEFORE = plus(P, -3);
+  const monthly = (over: Partial<Row> = {}) =>
+    row({ periodStart: P, periodEnd: plus(P, 30), periodKey: P.toISOString(), ...over });
+
+  /** What activateManualSubscription does inside its transaction: resolve the window, then void what it covers. */
+  async function activate(rows: Row[], days: number, now: Date = THREE_DAYS_BEFORE) {
+    const tx = fakeTx(rows);
+    const w = await resolveActivationWindow(tx, { tenantId: TENANT, now, days });
+    const out = await voidCoveredRfInvoices(tx, {
+      tenantId: TENANT,
+      windowStart: w.windowStart,
+      windowEnd: w.windowEnd,
+      actorId: ACTOR,
+      now,
+    });
+    return { w, out, tx };
+  }
+
+  it("PIN 1: a monthly invoice [P, P+30d) and a 30-day activation at P-3d -> the invoice is VOID, the period ends P+30d, the next issue starts P+30d", async () => {
+    const rows = [monthly()];
+    const { w, out } = await activate(rows, 30);
+
+    expect(w.windowStart).toEqual(P);
+    expect(w.windowEnd).toEqual(plus(P, 30)); // the subscription period is written from this window
+    expect(out).toEqual({ voided: ["inv-1"], flagged: [] });
+    expect(rows[0].status).toBe("VOID");
+
+    // the issuer reads the subscription period the activation wrote: its next invoice starts where it ends
+    const issuer = new (RfInvoiceIssuerService as any)(
+      { rfInvoice: { findFirst: jest.fn(async () => null) } },
+      {},
+      {},
+    ) as RfInvoiceIssuerService;
+    const next = await issuer.windowsFor(
+      { tenantId: TENANT, periodStart: w.windowStart, periodEnd: w.windowEnd } as any,
+      THREE_DAYS_BEFORE,
+      Infinity,
+    );
+    expect(next).toHaveLength(1);
+    expect(next[0].periodStart).toEqual(plus(P, 30));
+  });
+
+  it("PIN 2: a 14-day activation at P-3d only PARTLY covers the monthly invoice -> flagged needsReview, not voided", async () => {
+    const rows = [monthly()];
+    const { w, out } = await activate(rows, 14);
+
+    expect(w.windowStart).toEqual(P);
+    expect(w.windowEnd).toEqual(plus(P, 14));
+    expect(out).toEqual({ voided: [], flagged: ["inv-1"] });
+    expect(rows[0]).toMatchObject({ status: "OPEN", needsReview: true });
+  });
+
+  it("PIN 3: no OPEN invoice with a period (none at all, PAID, VOID, or period-less) -> windowStart is now", async () => {
+    const none = await resolveActivationWindow(fakeTx([]), {
+      tenantId: TENANT,
+      now: NOW,
+      days: 30,
+    });
+    expect(none.windowStart).toEqual(NOW);
+    expect(none.windowEnd).toEqual(plus(NOW, 30));
+
+    const rows = [
+      monthly({ id: "paid", status: "PAID" }),
+      monthly({ id: "void", status: "VOID" }),
+      row({ id: "legacy", periodStart: null, periodEnd: null, periodKey: null }),
+      monthly({ id: "other", tenantId: "tenant-2" }),
+    ];
+    const w = await resolveActivationWindow(fakeTx(rows), { tenantId: TENANT, now: NOW, days: 14 });
+    expect(w.windowStart).toEqual(NOW);
+    expect(w.windowEnd).toEqual(plus(NOW, 14));
+  });
+
+  it("anchors on the EARLIEST open invoice, whichever order the rows come in", async () => {
+    const rows = [
+      monthly({ id: "later", periodStart: plus(P, 30), periodEnd: plus(P, 60), periodKey: "k2" }),
+      monthly({ id: "earliest" }),
+    ];
+    const { w, out } = await activate(rows, 60);
+    expect(w.windowStart).toEqual(P);
+    expect(w.windowEnd).toEqual(plus(P, 60));
+    expect(out.voided.sort()).toEqual(["earliest", "later"]);
+  });
+
+  it("lock order: every admin-alert advisory lock is taken BEFORE the first RfInvoice write", async () => {
+    // 'a' is fully covered (a void write); 'b' and 'c' are partly covered (flag writes + a notice each).
+    const rows = [
+      row({ id: "a", periodStart: NOW, periodEnd: plus(NOW, 5), periodKey: "ka" }),
+      row({ id: "c", periodStart: plus(NOW, 20), periodEnd: plus(NOW, 50), periodKey: "kc" }),
+      row({ id: "b", periodStart: plus(NOW, 25), periodEnd: plus(NOW, 55), periodKey: "kb" }),
+    ];
+    const tx = fakeTx(rows);
+    await voidCoveredRfInvoices(tx, {
+      tenantId: TENANT,
+      windowStart: NOW,
+      windowEnd: plus(NOW, 30),
+      actorId: ACTOR,
+      now: NOW,
+    });
+    const locks = tx.$executeRaw.mock.invocationCallOrder;
+    const writes = tx.rfInvoice.updateMany.mock.invocationCallOrder;
+    expect(locks).toHaveLength(2); // one per partly covered invoice
+    expect(Math.max(...locks)).toBeLessThan(Math.min(...writes));
+    expect(rows.map((r) => r.status)).toEqual(["VOID", "OPEN", "OPEN"]);
   });
 });
