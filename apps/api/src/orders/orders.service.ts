@@ -235,6 +235,7 @@ import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -503,7 +504,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 unitSku: true,
                 variantName: true,
                 parentProductId: true,
-                parent: { select: { name: true } },
+                // tenantId only for the tenant check below (B1211); it is stripped before the response.
+                parent: { select: { name: true, tenantId: true } },
               },
             },
           },
@@ -563,6 +565,18 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+
+    // B1211: a product's parent that belongs to another tenant is never shown (name or otherwise).
+    // The buyer order reads reach this same method, so they get the check too.
+    for (const line of order.lineItems ?? []) {
+      const product = line.product as { parent?: { tenantId?: string | null } | null } | null;
+      if (product && "parent" in product) {
+        product.parent = tenantSafeParentView(
+          product.parent,
+          order.tenantId ?? this.prisma.getTenantId(),
+        );
+      }
+    }
 
     if (user.role === UserRole.CUSTOMER) {
       // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token

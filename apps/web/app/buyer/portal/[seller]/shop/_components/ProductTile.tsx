@@ -152,14 +152,19 @@ export function ProductTile({
             e.stopPropagation();
             onToggleFavorite();
           }}
-          className={`absolute top-2 right-2 flex items-center justify-center rounded-full shadow-sm transition-colors ${isCompact ? "h-7 w-7" : "h-8 w-8"} ${
-            isFavorite
-              ? "bg-danger/10 text-danger hover:bg-danger hover:text-white"
-              : "bg-white/90 text-navy/30 hover:text-danger"
-          }`}
+          // 44px hit area; the visible circle (inner span) keeps its old size.
+          className="group/fav absolute top-0.5 right-0.5 flex min-h-11 min-w-11 items-center justify-center"
           title={isFavorite ? "Remove from favorites" : "Add to favorites"}
         >
-          <Heart className={`h-4 w-4 ${isFavorite ? "fill-current" : ""}`} />
+          <span
+            className={`flex items-center justify-center rounded-full shadow-sm transition-colors ${isCompact ? "h-7 w-7" : "h-8 w-8"} ${
+              isFavorite
+                ? "bg-danger/10 text-danger group-hover/fav:bg-danger group-hover/fav:text-white"
+                : "bg-white/90 text-navy/30 group-hover/fav:text-danger"
+            }`}
+          >
+            <Heart className={`h-4 w-4 ${isFavorite ? "fill-current" : ""}`} />
+          </span>
         </button>
 
         {images.length > 1 && (
@@ -199,7 +204,7 @@ export function ProductTile({
         </div>
 
         <div className="flex items-end justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>
                 {fmt(priced.unitPrice)}
@@ -219,7 +224,7 @@ export function ProductTile({
           ) : outOfStock && onToggleStockAlert ? (
             <button
               onClick={onToggleStockAlert}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                 isAlertSubscribed
                   ? "border border-buyer-500 text-buyer-600 hover:bg-buyer-50"
                   : "bg-buyer-500 text-white hover:bg-buyer-600"
@@ -232,7 +237,7 @@ export function ProductTile({
             <button
               onClick={onAdd}
               disabled={outOfStock}
-              className={`flex items-center gap-1.5 rounded-lg bg-buyer-500 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors ${isCompact ? "px-2 py-1.5" : "px-3 py-2"} ${
+              className={`flex min-h-11 items-center gap-1.5 rounded-lg bg-buyer-500 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors ${isCompact ? "px-2 py-1.5" : "px-3 py-2"} ${
                 outOfStock ? "opacity-60 cursor-not-allowed" : ""
               }`}
             >

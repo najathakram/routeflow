@@ -75,9 +75,17 @@ import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
   hasPriceColumns,
+  lockFamilyRow,
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
+import {
+  assertValidParent,
+  parentInvalid,
+  PRODUCT_PARENT_REASONS,
+  tenantSafeParent,
+  tenantSafeParentView,
+} from "./product-parent";
 import {
   barcodeRowsToView,
   liveBarcodeRows,
@@ -342,14 +350,17 @@ export class ProductsService {
     // display names for line items. The parent row is small (no nested
     // relations) so this is cheap. variants{} is still gated behind
     // includeVariants since it materially expands the payload.
+    // B1211 (read side): `tenantId` is selected only to drop a parent / variant from another tenant, and
+    // is removed again below, so the response keeps its shape.
+    const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
-      parent: { select: { id: true, name: true, portalVisible: true } },
+      parent: { select: { id: true, name: true, portalVisible: true, tenantId: true } },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
         ? {
             variants: {
-              where: { isActive: true },
+              where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
               orderBy: { variantName: "asc" as const },
             },
           }
@@ -379,7 +390,12 @@ export class ProductsService {
           pBarcodeRows.length > 0
             ? barcodeRowsToView(pBarcodeRows as Parameters<typeof barcodeRowsToView>[0])
             : synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: p.unitsPerBox });
-        return { ...p, thumbnailUrl, barcodes };
+        return {
+          ...p,
+          parent: tenantSafeParentView(p.parent, readTenantId),
+          thumbnailUrl,
+          barcodes,
+        };
       }),
     );
 
@@ -420,10 +436,16 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
+    // B1211 (read side): a variant / parent link is only followed inside THIS tenant, so a link that
+    // predates the write-time parent check can never hand back another tenant's row.
+    const readTenantId = this.prisma.getTenantId();
     const product = await this.prisma.forTenant().product.findUnique({
       where: { id },
       include: {
-        variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
+        variants: {
+          ...(readTenantId ? { where: { tenantId: readTenantId } } : {}),
+          orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }],
+        },
         parent: true,
         // Phase 4: the assigned regulated ("separately handled") section +
         // subcategory, shown on the product detail. Null for standard products.
@@ -487,7 +509,15 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
-    return { ...product, imageKeys, imageUrls, stockAlertCount, barcodes, images };
+    return {
+      ...product,
+      parent: tenantSafeParent(product.parent, readTenantId),
+      imageKeys,
+      imageUrls,
+      stockAlertCount,
+      barcodes,
+      images,
+    };
   }
 
   async uploadImage(
@@ -577,14 +607,25 @@ export class ProductsService {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
+    // B1211 (read side): only this tenant's variants and parent are followed (see findOne).
+    const readTenantId = this.prisma.getTenantId();
     const hit = await findScanMatches(
       this.prisma.forTenant(),
       candidates,
       {},
-      { variants: { where: { isActive: true } }, parent: true },
+      {
+        variants: {
+          where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
+        },
+        parent: true,
+      },
     );
     if (!hit) throw new NotFoundException("Product not found");
-    return { ...hit.product, scanMatch: hit.scanMatch };
+    return {
+      ...hit.product,
+      parent: tenantSafeParent(hit.product.parent, readTenantId),
+      scanMatch: hit.scanMatch,
+    };
   }
 
   /**
@@ -721,7 +762,7 @@ export class ProductsService {
         })
       : null;
     if (dto.parentProductId && !parent) {
-      throw new BadRequestException("Parent product not found");
+      throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
     }
     // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
     // omits the section entirely, a variant inherits the parent family's pair
@@ -830,6 +871,17 @@ export class ProductsService {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
       }
+      // The parent is judged under its row lock, the same check update() and bulkAssignParent() use: it must
+      // exist in THIS tenant, be active and standalone. A FAMILY parent makes the new row a VARIANT.
+      let parentKind: string | null = null;
+      if (dto.parentProductId) {
+        await lockFamilyRow(tx, tenantId, dto.parentProductId);
+        ({ parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id: null,
+          parentId: dto.parentProductId,
+        }));
+      }
       // The family's five columns, read under its row lock (family-price.ts), or today's inheritance.
       const priceColumns =
         dto.parentProductId && familyMode === "on"
@@ -876,6 +928,7 @@ export class ProductsService {
             reorderPoint: dto.reorderPoint,
             reorderQty: dto.reorderQty,
             parentProductId: dto.parentProductId ?? null,
+            ...(parentKind === "FAMILY" ? { kind: "VARIANT" as const } : {}),
             variantName: dto.variantName ?? null,
             trackedCategoryId: regulated.trackedCategoryId,
             trackedSubcategoryId: regulated.trackedSubcategoryId,
@@ -1233,6 +1286,20 @@ export class ProductsService {
           trackedSubcategoryId: effectiveSubcategoryId ?? null,
         },
       });
+      // A CHANGED parent is judged here, after the recipe guards took the family rows and this row (house lock
+      // order): it must exist in this tenant, be active and standalone, not be this product, and this product
+      // must have no variants of its own. A FAMILY parent makes this row a VARIANT. An echo of the current
+      // parent is not re-judged (an archived family must not block editing its existing variants).
+      if (dto.parentProductId && dto.parentProductId !== existing.parentProductId) {
+        const { parentKind } = await assertValidParent(tx, {
+          tenantId,
+          id,
+          parentId: dto.parentProductId,
+        });
+        if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
+      }
+      // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
+      if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
       // propagation to this row's children after the write. Off = nothing runs.
       const family =
@@ -1421,14 +1488,13 @@ export class ProductsService {
   async bulkAssignParent(
     dto: BulkAssignParentDto,
   ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
-    const parent = await this.prisma.forTenant().product.findFirst({
-      where: { id: dto.parentProductId },
-      select: { id: true, parentProductId: true },
+    const bulkTenantId = this.prisma.getTenantId();
+    if (!bulkTenantId) throw new BadRequestException("No tenant context");
+    await assertValidParent(this.prisma.forTenant(), {
+      tenantId: bulkTenantId,
+      id: null,
+      parentId: dto.parentProductId,
     });
-    if (!parent) throw new BadRequestException("Parent product not found");
-    if (parent.parentProductId) {
-      throw new BadRequestException("Parent must be a standalone product, not a variant");
-    }
     // B964-2: validate EVERY assignment before the first write: one formula-led variant name rejects the WHOLE request with a coded 400
     // that names the row (index + product id), never a half-applied batch.
     dto.assignments.forEach((assignment, index) => {

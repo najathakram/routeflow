@@ -52,9 +52,22 @@ const suggestion = {
   matches: [FUZZY],
 };
 
-beforeEach(() => jest.clearAllMocks());
-// An applied scan queues its count line behind the component's 900 ms flush debounce, and that timer outlives the
-// unmount. Let it fire inside the test that queued it, or it lands in a LATER test's "nothing was written" check.
+// The saved line the screen merges back after a successful write. A mock that resolves nothing makes the flush
+// read `saved.id` of undefined, count the write as failed and re-queue it behind a 4 s retry timer that outlives the
+// unmount and fires the upsert again inside a LATER test's "nothing was written" check.
+const SAVED_LINE = {
+  id: "line-1",
+  expectedQty: 0,
+  countedById: "u1",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  product: { averageCost: null },
+};
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockUpsert.mockResolvedValue(SAVED_LINE);
+});
+// An applied scan queues its count line behind the component's 900 ms flush debounce, which also outlives the unmount.
+// Let it fire (and finish) inside the test that queued it.
 afterEach(async () => {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 1000));

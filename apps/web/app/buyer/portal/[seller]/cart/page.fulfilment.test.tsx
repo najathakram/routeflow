@@ -12,6 +12,7 @@ const clearCart = jest.fn();
 let offer: { portalMethods: string[]; portalDefault: string | null } | undefined;
 let capState: "ok" | "error" | "loading" = "ok";
 const push = jest.fn();
+const activeOrderArgs: unknown[] = [];
 let active: { id: string; orderNumber: string; fulfillPath: string } | undefined;
 
 jest.mock("next/navigation", () => ({
@@ -45,7 +46,10 @@ jest.mock("@/lib/buyer-cart", () => ({
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerProducts: () => ({ data: { data: [] } }),
   useBuyerCreateOrder: () => ({ mutateAsync, isPending: false }),
-  useBuyerActiveOrder: () => ({ data: active }),
+  useBuyerActiveOrder: (path?: string) => {
+    activeOrderArgs.push(path);
+    return { data: active };
+  },
   useBuyerPromotions: () => ({ data: [] }),
   toPromotionRules: () => [],
 }));
@@ -55,6 +59,7 @@ const place = async () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  activeOrderArgs.length = 0;
   mutateAsync.mockResolvedValue({ id: "o1", orderNumber: "SO-1" });
   offer = undefined;
   capState = "ok";
@@ -166,6 +171,22 @@ describe("buyer cart — merge follows the chosen fulfilment path", () => {
     await screen.findByRole("radio", { name: "Pick up at store" });
     expect(screen.queryByText(/added to your existing order/i)).toBeNull();
     expect(screen.getByRole("button", { name: /place order/i })).toBeInTheDocument();
+  });
+
+  it("reads the active order for the CHOSEN path (default, then after switching)", async () => {
+    offer = both;
+    render(<BuyerCartPage />);
+    await screen.findByRole("radio", { name: "Pick up at store" });
+    expect(activeOrderArgs[activeOrderArgs.length - 1]).toBe("PICKUP");
+    fireEvent.click(screen.getByRole("radio", { name: "Ship to me" }));
+    expect(activeOrderArgs[activeOrderArgs.length - 1]).toBe("SHIP");
+  });
+
+  it("no offer: the active order is read with no path (today's read)", async () => {
+    offer = { portalMethods: [], portalDefault: null };
+    render(<BuyerCartPage />);
+    await screen.findByRole("button", { name: /place order/i });
+    expect(activeOrderArgs[activeOrderArgs.length - 1]).toBeUndefined();
   });
 
   it("path mismatch: submit goes to the NEW order, not the active one", async () => {
