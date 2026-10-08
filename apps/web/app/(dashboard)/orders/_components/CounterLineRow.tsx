@@ -1,10 +1,14 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
+import { unitWords } from "@routeflow/pricing";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
+
+// The counter has no per-product label on a sale line yet, so its price unit prints the default words.
+const UW = unitWords();
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
@@ -161,6 +165,16 @@ export function CounterLineRow({
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
           {l.name} · {lineQtyLabel(l)}
+          <span className="block text-xs text-navy/70">
+            {l.listPrice !== undefined && l.listPrice !== l.unitPrice ? (
+              <s className="mr-1 text-navy/50" data-testid="line-unit-price-was">
+                {money(l.listPrice)}
+              </s>
+            ) : null}
+            <span data-testid="line-unit-price">
+              {money(l.unitPrice)} {isBoxedLine(l) ? `/ ${UW.pack.lower}` : "each"}
+            </span>
+          </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span>{money(cartTotals([l], 0).subtotal)}</span>
