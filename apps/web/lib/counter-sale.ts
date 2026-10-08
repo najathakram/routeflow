@@ -377,7 +377,7 @@ export function heldAttemptKey(tenant?: string | null, userId?: string | null): 
 }
 const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
 const optNum = (n: unknown): boolean => n === undefined || isNum(n);
-function validLine(l: unknown): boolean {
+export function validLine(l: unknown): boolean {
   if (!l || typeof l !== "object") return false;
   const o = l as Record<string, unknown>;
   return (
@@ -390,7 +390,7 @@ function validLine(l: unknown): boolean {
     optNum(o.unitsPerBox)
   );
 }
-function validCustomer(c: unknown): boolean {
+export function validCustomer(c: unknown): boolean {
   if (c === null || c === undefined) return true;
   if (typeof c !== "object") return false;
   const o = c as Record<string, unknown>;

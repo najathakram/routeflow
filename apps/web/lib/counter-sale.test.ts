@@ -560,3 +560,25 @@ describe("held attempt: minimal customer, validated read", () => {
     expect(heldAttemptKey("acme", "u-a")).toBe(SK);
   });
 });
+
+describe("live cart storage (SA-748 section 1)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const keys = require("./counter-live-cart-keys") as typeof import("./counter-live-cart-keys");
+
+  it("keys by tenant + user, and by nothing when either is unknown", () => {
+    expect(keys.liveCartKey("acme", "u1")).toBe("rf.counterSale.liveCart:acme:u1");
+    expect(keys.liveCartKey("acme", null)).toBeNull();
+    expect(keys.liveCartKey(undefined, "u1")).toBeNull();
+  });
+
+  it("logout wipes every stored live cart and nothing else", () => {
+    window.localStorage.setItem("rf.counterSale.liveCart:acme:u1", "{}");
+    window.localStorage.setItem("rf.counterSale.liveCart:other:u2", "{}");
+    window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+    keys.clearAllLiveCarts();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:acme:u1")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:other:u2")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
+    window.localStorage.clear();
+  });
+});
