@@ -21,6 +21,13 @@
 // Run (write):    railway run --service postgres node apps/api/scripts/backfill-supplier-invoice-number.mjs --execute
 import { readFile } from "node:fs/promises";
 import pg from "pg";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: protected tenants (paying | stripe-linked | PROTECTED_TENANT_SLUGS) are never written,
+// and neither is a bill with no tenant (it cannot be shown to be unprotected). Counts only.
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const EXECUTE = process.argv.includes("--execute");
 const BATCH = 500;
@@ -88,18 +95,26 @@ const DENORMALIZED_COUNT = `SELECT COUNT(*)::int AS n FROM "VendorBill"
 
 await assertInSyncWithService();
 
+// Loaded ONCE, against the URL this script dials, before connecting.
+const protectedSlugs = loadProtectedSlugs(process.env, connectionString);
 const client = new pg.Client({ connectionString });
 
 try {
   await client.connect();
   console.log(EXECUTE ? "MODE: EXECUTE (will write)\n" : "MODE: dry-run (no writes)\n");
 
+  const prot = await protectedTenantIds(client, protectedSlugs);
   const { rows } = await client.query(
     `SELECT id, "tenantId", notes FROM "VendorBill"
      WHERE "supplierInvoiceNumber" IS NULL AND notes IS NOT NULL
+       AND "tenantId" <> ALL($1::text[])
      ORDER BY id`,
+    [prot],
   );
-  console.log(`Candidate rows (NULL column, notes present): ${rows.length}`);
+  console.log(
+    `Candidate rows (NULL column, notes present, tenant not protected): ${rows.length} ` +
+      `(${prot.length} protected tenant(s) excluded)`,
+  );
 
   const updates = [];
   for (const row of rows) {
@@ -137,8 +152,9 @@ try {
       const res = await client.query(
         `UPDATE "VendorBill" b SET "supplierInvoiceNumber" = v.number
          FROM (VALUES ${values}) AS v(id, number)
-         WHERE b.id = v.id AND b."supplierInvoiceNumber" IS NULL`,
-        params,
+         WHERE b.id = v.id AND b."supplierInvoiceNumber" IS NULL
+           AND b."tenantId" <> ALL($${slice.length * 2 + 1}::text[])`,
+        [...params, prot],
       );
       written += res.rowCount ?? 0;
       console.log(`  batch ${i / BATCH + 1}: ${res.rowCount ?? 0} row(s)`);

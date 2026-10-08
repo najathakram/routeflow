@@ -165,6 +165,52 @@ describe("confirmProtectedOverride", () => {
   });
 });
 
+describe("confirmProtectedAdditive", () => {
+  const counts = { paying: 2, "stripe-linked": 1, "env-listed": 1 };
+  const base = (over = {}) => ({
+    counts,
+    argv: ["--backup-taken"],
+    stdin: tty,
+    stdout: tty,
+    ask: async () => "ALLOW PROTECTED ADDITIVE 4",
+    log: () => undefined,
+    ...over,
+  });
+
+  it("returns null and asks nothing when no protected tenant is in the run", async () => {
+    const ask = jest.fn();
+    await expect(
+      guard.confirmProtectedAdditive(base({ counts: { paying: 0 }, ask })),
+    ).resolves.toBeNull();
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("prints counts per arm only, and one valid confirmation covers every tenant of the run", async () => {
+    const lines: string[] = [];
+    const token = await guard.confirmProtectedAdditive(base({ log: (l: string) => lines.push(l) }));
+    expect(lines.join("\n")).toMatch(/4 \(paying 2 · stripe-linked 1 · env-listed 1\)/);
+    expect(lines.join("\n")).not.toMatch(/acme/);
+    expect(guard.assertWritableTenant(trial(), null, LISTED, { allowProtected: token })).toBe(
+      "env-listed",
+    );
+    expect(
+      guard.assertWritableTenant(trial({ id: "t-other" }), null, LISTED, { allowProtected: token }),
+    ).toBe("env-listed");
+  });
+
+  it("refuses without --backup-taken, on a non-TTY, and on a wrong count", async () => {
+    await expect(guard.confirmProtectedAdditive(base({ argv: [] }))).rejects.toThrow(
+      /--backup-taken/,
+    );
+    await expect(guard.confirmProtectedAdditive(base({ stdin: noTty }))).rejects.toThrow(
+      /real terminal/,
+    );
+    await expect(
+      guard.confirmProtectedAdditive(base({ ask: async () => "ALLOW PROTECTED ADDITIVE 3" })),
+    ).rejects.toThrow(/did not match/);
+  });
+});
+
 describe("protectedTenantIds", () => {
   const rows = [
     {

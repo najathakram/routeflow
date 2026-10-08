@@ -21,6 +21,7 @@ const { loadProtectedSlugs } = require("./protected-slugs.cjs");
 const ARMS = ["paying", "stripe-linked", "env-listed"];
 const RETIRED_FLAGS = ["--allow-paying-tenant", "--confirm-paying"];
 const OVERRIDE_BRAND = Symbol("protected-tenant-override");
+const ADDITIVE_BRAND = Symbol("protected-additive-override");
 
 class ProtectedTenantError extends Error {
   constructor(message) {
@@ -64,8 +65,8 @@ function assertWritableTenant(tenant, sub, slugs, { allowProtected } = {}) {
   if (arm === null) return null;
   const valid =
     allowProtected &&
-    allowProtected[OVERRIDE_BRAND] === true &&
-    allowProtected.tenantId === tenant.id;
+    ((allowProtected[OVERRIDE_BRAND] === true && allowProtected.tenantId === tenant.id) ||
+      allowProtected[ADDITIVE_BRAND] === true);
   if (valid) return arm;
   throw new ProtectedTenantError(
     `tenant ${tenant.id} is protected (${arm}): refused. An operator override needs ` +
@@ -121,6 +122,43 @@ async function confirmProtectedOverride({
   );
   if (String(typed).trim() !== phrase) throw refuse("the typed confirmation did not match");
   return Object.freeze({ [OVERRIDE_BRAND]: true, tenantId });
+}
+
+/**
+ * ONE confirmation for a whole run that only ADDS rows across many tenants (publish-and-repin's
+ * grandfather grants). Prints the number of protected tenants per arm — never a slug — then needs
+ * `--backup-taken` (or `backupFlag`), a real terminal on stdin AND stdout, and the typed phrase
+ * "ALLOW PROTECTED ADDITIVE <count>". Returns a token assertWritableTenant accepts for any tenant of
+ * this run, or null when nothing in the run is protected. Never use it for a destructive script.
+ * @param counts { paying, "stripe-linked", "env-listed" } protected tenants the run would touch
+ */
+async function confirmProtectedAdditive({
+  counts,
+  argv,
+  stdin = process.stdin,
+  stdout = process.stdout,
+  ask,
+  log = console.log,
+  backupFlag = "--backup-taken",
+}) {
+  const total = ARMS.reduce((n, a) => n + (counts[a] ?? 0), 0);
+  if (total === 0) return null;
+  const refuse = (why) =>
+    new ProtectedTenantError(`${total} protected tenant(s) in this run: refused — ${why}.`);
+  log(
+    `protected tenants in this run: ${total} ` +
+      `(${ARMS.map((a) => `${a} ${counts[a] ?? 0}`).join(" · ")})`,
+  );
+  refuseRetiredFlags(argv);
+  if (!argv.includes(backupFlag)) throw refuse(`${backupFlag} is required`);
+  if (!(stdin && stdin.isTTY && stdout && stdout.isTTY))
+    throw refuse("the confirmation needs a real terminal (stdin and stdout)");
+  const phrase = `ALLOW PROTECTED ADDITIVE ${total}`;
+  const typed = await (ask ?? ((q) => readline_ask(stdin, stdout, q)))(
+    `Type "${phrase}" to continue: `,
+  );
+  if (String(typed).trim() !== phrase) throw refuse("the typed confirmation did not match");
+  return Object.freeze({ [ADDITIVE_BRAND]: true, count: total });
 }
 
 const PROTECTION_SQL = `
@@ -192,6 +230,7 @@ module.exports = {
   filterWritableTenants,
   assertWritableTenant,
   confirmProtectedOverride,
+  confirmProtectedAdditive,
   refuseRetiredFlags,
   protectedTenantIds,
   describeCheck,

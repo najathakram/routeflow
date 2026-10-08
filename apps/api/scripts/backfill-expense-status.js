@@ -11,23 +11,44 @@
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
 
 (async () => {
+  // Row 195: never write a protected tenant (paying | stripe-linked | PROTECTED_TENANT_SLUGS).
+  const slugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  const protectedIds = new Set(await protectedTenantIds(prisma, slugs));
   const expenses = await prisma.expense.findMany({
     where: { vendorBillId: { not: null } },
-    select: { id: true, vendorBillId: true, receivedAt: true, paidAt: true, createdAt: true },
+    select: {
+      id: true,
+      tenantId: true,
+      vendorBillId: true,
+      receivedAt: true,
+      paidAt: true,
+      createdAt: true,
+    },
   });
   console.log(`Examining ${expenses.length} expenses linked to vendor bills...`);
   let paid = 0;
   let received = 0;
+  let skippedProtected = 0;
   for (const e of expenses) {
     const bill = await prisma.vendorBill.findUnique({
       where: { id: e.vendorBillId },
-      select: { status: true, receivedDate: true },
+      select: { status: true, receivedDate: true, tenantId: true },
     });
     if (!bill) continue;
+    // NULL-tenantId expenses derive their tenant from the parent bill; exclude by either side.
+    if (
+      (e.tenantId && protectedIds.has(e.tenantId)) ||
+      (bill.tenantId && protectedIds.has(bill.tenantId))
+    ) {
+      skippedProtected++;
+      continue;
+    }
     if (bill.status === "PAID") {
       await prisma.expense.update({
         where: { id: e.id },
@@ -50,5 +71,8 @@ const { Pool } = require("pg");
     }
   }
   console.log(`Done. Marked ${paid} PAID and ${received} RECEIVED.`);
+  console.log(
+    `protected-tenant guard: skipped ${skippedProtected} expense(s) of protected tenants.`,
+  );
   await prisma.$disconnect();
 })();

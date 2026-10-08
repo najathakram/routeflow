@@ -40,15 +40,22 @@ import {
 } from "../src/products/product-barcode-rules";
 import { lockBarcodeCodes, lockProductRow } from "../src/products/product-catalog-sync";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
-// paying-tenant.cjs has no .d.cts declaration file (unlike test-tenants.cjs), so it is required
-// rather than imported — informational-only use here (see the tenant guard below).
+// The guard libs have no .d.cts declaration files (unlike test-tenants.cjs), so they are required
+// rather than imported and typed by a local cast (see the tenant guard below).
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { isProtectedTenant } = require("../scripts/lib/paying-tenant.cjs") as {
-  isProtectedTenant: (
-    tenant: { slug: string; status: string; deletedAt: Date | null | undefined; class: string },
+const { assertWritableTenant } = require("../scripts/lib/live-target-guard.cjs") as {
+  assertWritableTenant: (
+    tenant: {
+      id: string;
+      slug: string;
+      status: string;
+      deletedAt: Date | null | undefined;
+      class: string;
+    },
     sub: { planKey?: string | null; stripeSubId?: string | null } | null | undefined,
     protectedSlugs: Set<string>,
-  ) => boolean;
+    opts?: { allowProtected?: unknown },
+  ) => string | null;
 };
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { loadProtectedSlugs } = require("../scripts/lib/protected-slugs.cjs") as {
@@ -177,9 +184,10 @@ export async function backfillProductCatalogRows(
         throw new BackfillRefused("protected-tenant list not loaded for a non-test tenant");
       }
       const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenant.id } });
-      if (
-        isProtectedTenant(
+      try {
+        assertWritableTenant(
           {
+            id: tenant.id,
             slug: tenant.slug,
             status: tenant.status,
             deletedAt: tenant.deletedAt,
@@ -187,8 +195,9 @@ export async function backfillProductCatalogRows(
           },
           sub,
           protectedSlugs,
-        )
-      ) {
+        );
+      } catch {
+        // No override exists for this script; the guard's text names the id and arm only.
         throw new BackfillRefused(`tenant ${tenant.id} is protected: refused (no override exists)`);
       }
     }

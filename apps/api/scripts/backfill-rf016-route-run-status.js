@@ -16,6 +16,8 @@
 "use strict";
 
 const { Client } = require("pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
 
 function ok(m) {
   console.log(`   ✓ ${m}`);
@@ -28,25 +30,33 @@ function step(m) {
 }
 
 async function main() {
+  // Row 195: protected tenants (paying | stripe-linked | PROTECTED_TENANT_SLUGS) are never written.
+  const slugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
   const pg = new Client({ connectionString: process.env.DATABASE_URL });
   try {
     step("Connecting to DB…");
     await pg.connect();
     ok("Connected");
+    const prot = await protectedTenantIds(pg, slugs);
+    info(`protected-tenant guard: ${prot.length} protected tenant(s) excluded`);
 
     // Find candidate runs: SCHEDULED or IN_PROGRESS only (NOT CANCELLED — that's
     // a terminal state and must not be auto-flipped). Every stop must be
     // COMPLETED|SKIPPED, and the run must have at least one stop.
     step("Locating runs with all stops finished but run.status != COMPLETED…");
-    const cand = await pg.query(`
+    const cand = await pg.query(
+      `
       SELECT r.id, r.status, COUNT(s.id)::int AS stop_count
       FROM "RouteRun" r
       JOIN "RouteRunStop" s ON s."routeRunId" = r.id
       WHERE r.status IN ('SCHEDULED', 'IN_PROGRESS')
+        AND r."tenantId" <> ALL($1::text[])
       GROUP BY r.id
       HAVING COUNT(*) FILTER (WHERE s.status NOT IN ('COMPLETED','SKIPPED')) = 0
          AND COUNT(s.id) > 0
-    `);
+    `,
+      [prot],
+    );
 
     if (cand.rows.length === 0) {
       info("No matching runs — nothing to do.");
@@ -66,9 +76,10 @@ async function main() {
           "completedAt" = COALESCE(r."completedAt", now()),
           "updatedAt" = now()
       WHERE r.id = ANY($1::text[])
+        AND r."tenantId" <> ALL($2::text[])
       RETURNING r.id, r."completedAt"
     `,
-      [cand.rows.map((r) => r.id)],
+      [cand.rows.map((r) => r.id), prot],
     );
 
     ok(`Updated ${upd.rowCount} RouteRun row(s).`);
