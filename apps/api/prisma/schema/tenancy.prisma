@@ -292,6 +292,19 @@ model TenantGoogleOAuth {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+/// Per-operator feature groups. Mirrored in packages/types/api/enums.ts (OPERATOR_PERMISSION_GROUP_VALUES).
+enum OperatorPermissionGroup {
+  ORDERS
+  DISPATCH
+  CUSTOMERS
+  CATALOG
+  PRICING
+  REGULATED
+  FINANCE
+  NOTIFICATIONS
+  REPORTS
+}
+
 // ─── Models (tenancy) ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -310,6 +323,10 @@ model User {
   lockedUntil         DateTime?
   /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
   lastLoginAt         DateTime?
+  /// Feature groups switched OFF for this user. [] = every group. Read for OPERATOR accounts only.
+  deniedPermissionGroups OperatorPermissionGroup[] @default([])
+  /// Bumped on every write to deniedPermissionGroups (compare-and-set token).
+  permissionsVersion  Int        @default(0)
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
