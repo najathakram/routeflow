@@ -30,7 +30,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   InlineReturnRefundEligibility,
-  InlineReturnRefundTender,
+  InlineRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
 import {
@@ -49,6 +49,7 @@ import {
   TENDER_OPTIONS,
   handBackLine,
   refundErrorKind,
+  tenderFromPaidMethods,
   TERMINAL_REFUND_ERRORS,
   type RefundErrorKind,
 } from "./refund-copy";
@@ -88,7 +89,7 @@ const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set(["needsPaid", "notR
 
 export interface RecordedInfo {
   resolution: InlineReturnResolution;
-  tender?: InlineReturnRefundTender;
+  tender?: InlineRefundTender;
   amount?: number;
   /** SA-727b: the return is saved but its refund is still pending (nothing paid out). */
   pending?: boolean;
@@ -140,12 +141,12 @@ export function RecordInlineReturnDialog({
   // POS-4b: refund-vs-credit state. `saved` = the return the capture recorded (a refund retry
   // never re-captures); `busyRef` absorbs a double click before React re-renders the disabled button.
   const [resolution, setResolution] = React.useState<InlineReturnResolution>("STORE_CREDIT");
-  const [tender, setTender] = React.useState<InlineReturnRefundTender | null>(null);
+  const [tender, setTender] = React.useState<InlineRefundTender | null>(null);
   const [saved, setSaved] = React.useState<InlineReturnRecord | null>(null);
   const [refunding, setRefunding] = React.useState(false);
   const [refundError, setRefundError] = React.useState<RefundErrorKind | null>(null);
   const [refundDone, setRefundDone] = React.useState<{
-    tender: InlineReturnRefundTender;
+    tender: InlineRefundTender;
     amount: number;
   } | null>(null);
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
@@ -193,7 +194,7 @@ export function RecordInlineReturnDialog({
     : walkIn
       ? "REFUND"
       : resolution;
-  const effTender: InlineReturnRefundTender = tender ?? quoted?.paidMethods?.[0] ?? "CASH";
+  const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
 
   /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
@@ -578,8 +579,8 @@ function RefundChoice({
   walkIn: boolean;
   resolution: InlineReturnResolution;
   onResolution: (r: InlineReturnResolution) => void;
-  tender: InlineReturnRefundTender;
-  onTender: (t: InlineReturnRefundTender) => void;
+  tender: InlineRefundTender;
+  onTender: (t: InlineRefundTender) => void;
   locked: boolean;
   error: RefundErrorKind | null;
 }) {
@@ -616,7 +617,7 @@ function RefundChoice({
             label="Refund by"
             value={tender}
             disabled={locked}
-            onChange={(e) => onTender(e.target.value as InlineReturnRefundTender)}
+            onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />
           <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>

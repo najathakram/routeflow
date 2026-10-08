@@ -615,4 +615,20 @@ describe("refund flow", () => {
     expect(confirm === null || (confirm as HTMLButtonElement).disabled).toBe(true);
     expect(refundReturn).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [["CREDIT_CARD"], "CARD"],
+    [["CHECK", "CREDIT_CARD"], "CHECK"],
+    [["CASH"], "CASH"],
+    [["ACH"], "CASH"],
+    [[], "CASH"],
+  ])("SA-727: paidMethods %j (PaymentMethod values) preselects %s", async (methods, expected) => {
+    refundReturn.mockResolvedValue({});
+    await refundFlow(quote({ paidMethods: methods as string[] }));
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+    expect(refundReturn.mock.calls[0][1].tender).toBe(expected);
+  });
 });
