@@ -13,6 +13,7 @@ import { packWordKey } from "../products/unit-pack-rules";
 import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
 import { isPieceSynonym, unitNameKey } from "./piece-words";
 import { lockTenantUnits } from "./tenant-units-lock";
+import { sqlKeyOf } from "./unit-name-sql";
 
 export interface UnitDto {
   id: string;
@@ -46,12 +47,6 @@ type CollisionReason = "NAME" | "DUPLICATE_LEVELS" | "LINES_AT_OTHER_SIZE";
 const RENAME_TX_OPTIONS = { timeout: 60_000, maxWait: 10_000 } as const;
 const CHUNK = 5000;
 
-/**
- * `unitNameKey` for a TEXT column in SQL: the same NFC, trim, case-fold the TS helper does. btrim gets
- * the whitespace set JS `trim()` strips most often (space, tab, newline, CR, FF, VT as \x0B because E-strings have no \v, NBSP).
- */
-const sqlKeyOf = (ref: Prisma.Sql) =>
-  Prisma.sql`lower(btrim(normalize(${ref}, NFC), E' \\t\\n\\r\\f\\x0B\\u00a0'))`;
 const sqlKey = (column: "baseUnitLabel" | "packLabel" | "unit") =>
   sqlKeyOf(Prisma.sql`p.${Prisma.raw(`"${column}"`)}`);
 

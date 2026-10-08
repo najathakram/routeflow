@@ -4,9 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PIECE_LABEL } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { isPieceSynonym, unitNameKey } from "../units/piece-words";
+import { sqlKeyOf } from "../units/unit-name-sql";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
@@ -314,20 +316,25 @@ export class ProductUnitsService {
     label: string,
     factorToBase: number,
   ): Promise<void> {
-    // Through the PARENT (order/invoice) relation, never `orderItem`/`invoiceItem` top-level: a
-    // top-level read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line.
-    const lineWhere = {
-      productId,
-      unitLabel: { equals: label, mode: "insensitive" as const },
-      // Explicit OR: SQL `NOT (col = n)` drops NULL rows, and a line with no snapshot factor is
-      // exactly the one we must not let slip past.
-      OR: [{ unitsPerBox: null }, { unitsPerBox: { not: factorToBase } }],
-    };
-    const [order, invoice] = await Promise.all([
-      db.order.findFirst({ where: { lineItems: { some: lineWhere } }, select: { id: true } }),
-      db.invoice.findFirst({ where: { items: { some: lineWhere } }, select: { id: true } }),
-    ]);
-    if (order || invoice) {
+    // Through the PARENT order / invoice of THIS tenant, never the item tables top-level: a top-level
+    // read is scoped by the ITEM's nullable tenantId and would miss a NULL-tenant line. The label is
+    // compared by the shared NFC key in SQL (a Prisma `equals`/insensitive cannot fold NFC), so lines
+    // carrying the NFD spelling of the label are found too. A line with no size snapshot counts as a
+    // different size (SQL `<>` drops NULLs, hence the explicit IS NULL).
+    const tenantId = this.prisma.getTenantId();
+    const key = unitNameKey(label);
+    const hit: unknown[] = await db.$queryRaw(Prisma.sql`
+      SELECT 1 FROM "OrderItem" oi JOIN "Order" o ON o."id" = oi."orderId"
+      WHERE o."tenantId" = ${tenantId} AND oi."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`oi."unitLabel"`)} = ${key}
+        AND (oi."unitsPerBox" IS NULL OR oi."unitsPerBox" <> ${factorToBase})
+      UNION ALL
+      SELECT 1 FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+      WHERE i."tenantId" = ${tenantId} AND ii."productId" = ${productId}
+        AND ${sqlKeyOf(Prisma.sql`ii."unitLabel"`)} = ${key}
+        AND (ii."unitsPerBox" IS NULL OR ii."unitsPerBox" <> ${factorToBase})
+      LIMIT 1`);
+    if (hit.length > 0) {
       throw new ConflictException(
         `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
       );

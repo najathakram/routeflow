@@ -50,14 +50,11 @@ function build(opts: {
       update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
       delete: jest.fn().mockResolvedValue({}),
     },
-    // Parents only: the immutability check must read lines through the order/invoice relation
-    // (a top-level orderItem/invoiceItem read would miss a NULL-tenant line).
-    order: {
-      findFirst: jest.fn().mockResolvedValue(opts.orderLineHit ? { id: "oi" } : null),
-    },
-    invoice: {
-      findFirst: jest.fn().mockResolvedValue(opts.invoiceLineHit ? { id: "ii" } : null),
-    },
+    // The line-size check is ONE raw query over OrderItem and InvoiceItem (through their parent
+    // order / invoice), keyed by the same NFC SQL key the rename uses.
+    $queryRaw: jest
+      .fn()
+      .mockResolvedValue(opts.orderLineHit || opts.invoiceLineHit ? [{ hit: 1 }] : []),
   };
   const prisma = {
     getTenantId: jest.fn().mockReturnValue(opts.noTenant ? null : "t1"),
@@ -189,18 +186,20 @@ describe("ProductUnitsService.create", () => {
     await expect(
       invoice.service.create("p1", { label: "Case", factorToBase: 300 }),
     ).rejects.toThrow(ConflictException);
-    expect(order.db.order.findFirst).toHaveBeenCalledWith({
-      where: {
-        lineItems: {
-          some: {
-            productId: "p1",
-            unitLabel: { equals: "Case", mode: "insensitive" },
-            OR: [{ unitsPerBox: null }, { unitsPerBox: { not: 300 } }],
-          },
-        },
-      },
-      select: { id: true },
-    });
+    const q = order.db.$queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+    // Through the PARENT order / invoice of this tenant (a top-level item read misses a NULL-tenant line).
+    expect(q.sql).toContain('JOIN "Order"');
+    expect(q.sql).toContain('JOIN "Invoice"');
+    expect(q.sql).toContain("normalize(");
+    expect(q.values).toEqual(expect.arrayContaining(["t1", "p1", "case", 300]));
+  });
+
+  it("looks lines up by the NFC key: Café at size 12 is checked against lines carrying the NFD spelling", async () => {
+    const { service, db } = build({});
+    await service.create("p1", { label: "Cafe\u0301", factorToBase: 12 });
+    const q = db.$queryRaw.mock.calls[0][0] as { values: unknown[] };
+    expect(q.values).toContain("caf\u00e9");
+    expect(q.values).not.toContain("Cafe\u0301");
   });
 });
 
@@ -318,7 +317,7 @@ describe("ProductUnitsService.update", () => {
   it("a price-only edit never consults the lines (prices are not immutable)", async () => {
     const { service, db, tx } = build({ rows: [caseRow], orderLineHit: true });
     await service.update("p1", "u-case", { price: 500 });
-    expect(db.order.findFirst).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
     expect(tx.productUnit.update).toHaveBeenCalledWith({
       select: expect.objectContaining({ id: true }),
       where: { id: "u-case" },
@@ -334,21 +333,18 @@ describe("ProductUnitsService.update", () => {
     expect(tx.productUnit.update).not.toHaveBeenCalled();
   });
 
-  it("a factor edit is allowed while no line uses the level, with ONE line check per table", async () => {
+  it("a factor edit is allowed while no line uses the level, with ONE line check (one query over both tables)", async () => {
     const { service, db, tx } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { factorToBase: 300 });
-    expect(db.order.findFirst).toHaveBeenCalledTimes(1);
-    expect(db.invoice.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
     expect(tx.productUnit.update).toHaveBeenCalled();
   });
 
   it("a rename + factor change also checks the OLD label's lines", async () => {
     const { service, db } = build({ rows: [caseRow] });
     await service.update("p1", "u-case", { label: "Crate", factorToBase: 300 });
-    const labels = db.order.findFirst.mock.calls.map(
-      (c) => c[0].where.lineItems.some.unitLabel.equals,
-    );
-    expect(labels).toEqual(["Case", "Crate"]);
+    const keys = db.$queryRaw.mock.calls.map((c) => (c[0] as { values: unknown[] }).values[2]);
+    expect(keys).toEqual(["case", "crate"]);
   });
 
   it("does not collide with itself when re-saving the same label/factor", async () => {
@@ -384,7 +380,7 @@ describe("ProductUnitsService.remove / list", () => {
     const { service, db } = build({ rows: [caseRow] });
     await expect(service.remove("p1", "u-case")).resolves.toEqual({ deleted: true });
     expect(db.productUnit.delete).toHaveBeenCalledWith({ where: { id: "u-case" } });
-    expect(db.order.findFirst).not.toHaveBeenCalled();
+    expect(db.$queryRaw).not.toHaveBeenCalled();
   });
 
   it("lists in sortOrder then factor order", async () => {
