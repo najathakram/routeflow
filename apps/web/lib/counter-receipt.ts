@@ -21,6 +21,12 @@ export interface ReceiptLineInput {
   pieces?: number;
   /** POS-3: the cashier's optional per-line note, printed under the line. */
   note?: string | null;
+  /**
+   * POS-5: an edited line (`unitPrice` is then the NET price) carries the system price it was rung at; the receipt
+   * shows the struck original line total and the discount. Absent on every other line.
+   */
+  tierPrice?: number;
+  override?: object | null;
 }
 
 /** The business answer of `GET /settings` (only the fields a receipt header reads). */
@@ -32,6 +38,8 @@ export interface ReceiptBusinessProfile {
   zip?: string | null;
   phone?: string | null;
   taxRate?: number;
+  /** IANA zone of the business (`GET /settings`): the live receipt reads the sale time in it */
+  timezone?: string | null;
 }
 
 export interface CounterReceiptLine {
@@ -42,6 +50,12 @@ export interface CounterReceiptLine {
   /** trimmed per-line note, or null */
   note: string | null;
   total: number;
+  /** POS-5: the line total at the system price, only for an edited line (struck on the receipt); else null */
+  original: number | null;
+  /** POS-5: money taken off an edited line (0 for a raised price and for every plain line) */
+  discount: number;
+  /** POS-5: an edited line priced at or above the system price (`Price changed`) */
+  priceChanged: boolean;
 }
 
 export interface CounterReceiptModel {
@@ -53,6 +67,8 @@ export interface CounterReceiptModel {
   lines: CounterReceiptLine[];
   cashier: string | null;
   subtotal: number;
+  /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
+  discounts: number;
   /** server total minus the client subtotal (tax, a re-price, a credit): 0 = hide the row */
   adjustment: number;
   total: number;
@@ -149,30 +165,42 @@ export function buildCounterReceipt(input: {
     }
   }
 
-  const rows = lines.map((l) => ({
-    key: l.tempId,
-    name: l.name,
-    detail: lineDetail(l),
-    note: clean(l.note) || null,
-    total: computeLineSubtotal({
-      unitPrice: l.unitPrice,
+  const lineTotal = (l: ReceiptLineInput, unitPrice: number) =>
+    computeLineSubtotal({
+      unitPrice,
       qty: l.qty,
       boxes: l.boxes,
       pieces: l.pieces,
       unitsPerBox: l.unitsPerBox,
-    }),
-  }));
+    });
+  const rows = lines.map((l) => {
+    const total = lineTotal(l, l.unitPrice);
+    const edited = !!l.override && l.tierPrice != null;
+    const original = edited ? lineTotal(l, l.tierPrice as number) : null;
+    return {
+      key: l.tempId,
+      name: l.name,
+      detail: lineDetail(l),
+      note: clean(l.note) || null,
+      total,
+      original,
+      discount: original == null ? 0 : Math.max(0, roundMoney(original - total)),
+      priceChanged: original != null && roundMoney(original - total) <= 0,
+    };
+  });
   const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
 
   return {
     header: receiptHeader(profile),
     orderNumber: receipt.orderNumber,
     invoiceNumber: receipt.invoiceNumber,
     invoiceId: receipt.invoiceId,
-    dateLabel: now.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+    dateLabel: formatSaleTime(now, profile?.timezone || undefined),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal,
+    discounts,
     adjustment: roundMoney(receipt.total - subtotal),
     total: receipt.total,
     paid: receipt.paid,
@@ -235,14 +263,23 @@ const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
   STORE_CREDIT: "Store credit",
 };
 
-/** "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). */
+/**
+ * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
+ * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
+ */
 export function formatSaleTime(at: string | Date, timeZone?: string): string {
   const d = at instanceof Date ? at : new Date(at);
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-  }).format(d);
+  const format = (zone: string | undefined) =>
+    new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: zone,
+    }).format(d);
+  try {
+    return format(timeZone);
+  } catch {
+    return format("UTC");
+  }
 }
 
 /**
@@ -275,6 +312,10 @@ export function receiptModelFromOrder(input: {
         name: line.name,
         detail: lineDetail(line),
         note: null,
+        // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
+        original: null,
+        discount: 0,
+        priceChanged: false,
         total: computeLineSubtotal({
           unitPrice: line.unitPrice,
           qty: line.qty,
@@ -298,6 +339,7 @@ export function receiptModelFromOrder(input: {
     cashier: clean(input.cashier) || null,
     subtotal,
     adjustment: roundMoney(order.total - subtotal),
+    discounts: 0,
     total: order.total,
     paid,
     balanceDue,

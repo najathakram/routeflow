@@ -119,6 +119,12 @@ function Reprint({
   onBack: () => void;
 }) {
   const { branding } = useTenant();
+  // While this view is open the page prints ONLY the receipt: app/shell.css hides the counter screen
+  // (`[data-counter-screen]`) under `@media print` for as long as this body class is set.
+  React.useEffect(() => {
+    document.body.classList.add("counter-reprint-open");
+    return () => document.body.classList.remove("counter-reprint-open");
+  }, []);
   const reprintedBy = useOptionalAuth()?.user?.username ?? null;
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
@@ -269,7 +275,11 @@ export function CounterTodaysSales() {
         }}
         title={reprint ? "Reprint receipt" : "Today's sales"}
         scroll
-        className="max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none"
+        className={cn(
+          "max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none",
+          // the modal's title row is not part of the receipt
+          reprint && "print:[&>div:first-child]:hidden",
+        )}
       >
         {reprint ? (
           <Reprint

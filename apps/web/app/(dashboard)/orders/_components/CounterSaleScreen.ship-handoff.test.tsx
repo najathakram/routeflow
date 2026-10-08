@@ -306,7 +306,8 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     fireEvent.click(shipBtn());
-    pickAcme(); // would let a pending hand-off run if one had been armed
+    // the customer pick that would let an armed hand-off run is itself frozen while the sale posts
+    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
     await new Promise((r) => setTimeout(r, 30));
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();

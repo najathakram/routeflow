@@ -83,7 +83,25 @@ export function CounterReceiptView({
                 </span>
               ) : null}
             </span>
-            <span className="tabular-nums">{money(l.total)}</span>
+            {l.original != null ? (
+              <span className="text-right tabular-nums">
+                <s
+                  className="block text-xs text-navy/60 print:text-black"
+                  data-testid="receipt-line-original"
+                >
+                  {money(l.original)}
+                </s>
+                <span data-testid="receipt-line-net">{money(l.total)}</span>
+                <span
+                  className="block text-xs text-navy/70 print:text-black"
+                  data-testid="receipt-line-discount"
+                >
+                  {l.priceChanged ? "Price changed" : `Discount -${money(l.discount)}`}
+                </span>
+              </span>
+            ) : (
+              <span className="tabular-nums">{money(l.total)}</span>
+            )}
           </li>
         ))}
       </ul>
@@ -121,6 +139,12 @@ export function CounterReceiptView({
           <div className="flex justify-between" data-testid="receipt-adjustment">
             <dt>Tax and adjustments</dt>
             <dd>{money(m.adjustment)}</dd>
+          </div>
+        ) : null}
+        {m.discounts > 0 ? (
+          <div className="flex justify-between" data-testid="receipt-discounts">
+            <dt>Discounts</dt>
+            <dd>-{money(m.discounts)}</dd>
           </div>
         ) : null}
         <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">
