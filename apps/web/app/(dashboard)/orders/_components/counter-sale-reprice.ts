@@ -10,7 +10,8 @@ import type { SaleLine } from "./counter-sale-scan";
  * A line the clerk priced by hand (`priceEdited`) keeps its NET price (a deliberate discount is never silently undone) while
  * its `tierPrice` (the struck "was" figure) follows the new customer; a net that now equals the new tier price (within 1/2
  * cent) is no override and the line becomes a plain line again. A line without a snapshot (held before this existed) is left
- * alone. `kept` counts the edited lines whose tier price the customer WOULD have changed.
+ * alone. `kept` counts the edited lines whose tier price the customer WOULD have changed; an edited line whose net
+ * stands and only whose STANDARD/SPECIAL flag moved is updated silently and is NOT counted as kept.
  */
 export interface RepriceResult {
   lines: SaleLine[];
@@ -24,6 +25,7 @@ export function repriceLines(
 ): RepriceResult {
   let changed = 0;
   let kept = 0;
+  let touched = false;
   const next = lines.map((l) => {
     if (!l.tierPrices) return l;
     const tier = tierFor(l.productId);
@@ -36,22 +38,35 @@ export function repriceLines(
         changed += 1;
         return { ...plain, unitPrice, priceType };
       }
-      if ((l.tierPrice ?? l.unitPrice) === unitPrice && l.priceType === priceType) return l;
+      if ((l.tierPrice ?? l.unitPrice) === unitPrice) {
+        if (l.priceType === priceType) return l;
+        // Only the STANDARD/SPECIAL flag moved (the tier price did not): not a kept price, nothing to tell the clerk.
+        touched = true;
+        return { ...l, priceType };
+      }
       kept += 1;
       return { ...l, tierPrice: unitPrice, priceType };
     }
     if (l.unitPrice === unitPrice && l.priceType === priceType) return l;
     if (l.priceEdited) {
+      if (l.unitPrice === unitPrice) {
+        // The net stands and equals the tier price: only the flag moved, so it is updated silently.
+        touched = true;
+        return { ...l, priceType };
+      }
       kept += 1;
       return l;
     }
     changed += 1;
     return { ...l, unitPrice, priceType };
   });
-  return { lines: changed || kept ? next : (lines as SaleLine[]), changed, kept };
+  return { lines: changed || kept || touched ? next : (lines as SaleLine[]), changed, kept };
 }
 
-/** The inline note after a re-price (names the price tier applied); null when nothing changed and nothing was kept. */
+/**
+ * The inline note after a re-price (names the price tier applied); null when nothing changed and nothing was kept.
+ * "Prices updated for <who>." always comes first; the "{n} edited price(s) kept." clause follows it.
+ */
 export function repriceNote(
   name: string,
   changed: number,
@@ -60,7 +75,7 @@ export function repriceNote(
 ): string | null {
   const keptText = kept === 1 ? "1 edited price kept." : `${kept} edited prices kept.`;
   const who = tierName ? `${name} (${tierName})` : name;
-  if (changed > 0)
-    return kept > 0 ? `Prices updated for ${who}. ${keptText}` : `Prices updated for ${who}.`;
-  return kept > 0 ? keptText : null;
+  if (changed === 0 && kept === 0) return null;
+  const updated = `Prices updated for ${who}.`;
+  return kept > 0 ? `${updated} ${keptText}` : updated;
 }

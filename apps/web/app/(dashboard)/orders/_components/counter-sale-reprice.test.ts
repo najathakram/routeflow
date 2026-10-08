@@ -38,8 +38,11 @@ describe("repriceLines (POS-2, display only)", () => {
 
   it("words the note", () => {
     expect(repriceNote("Acme", 2, 0)).toBe("Prices updated for Acme.");
-    expect(repriceNote("Acme", 0, 2)).toBe("2 edited prices kept.");
-    expect(repriceNote("Acme", 0, 1)).toBe("1 edited price kept.");
+    expect(repriceNote("Acme", 0, 2)).toBe("Prices updated for Acme. 2 edited prices kept.");
+    expect(repriceNote("Acme", 0, 1)).toBe("Prices updated for Acme. 1 edited price kept.");
+    expect(repriceNote("Acme Cafe", 0, 1, "Tier 2")).toBe(
+      "Prices updated for Acme Cafe (Tier 2). 1 edited price kept.",
+    );
     expect(repriceNote("Acme", 1, 1)).toBe("Prices updated for Acme. 1 edited price kept.");
     expect(repriceNote("Acme", 0, 0)).toBeNull();
     expect(repriceNote("Acme", 2, 0, "Wholesale")).toBe("Prices updated for Acme (Wholesale).");
@@ -85,6 +88,22 @@ describe("repriceLines: a POS-5 edited price survives a customer pick (the survi
     const r = repriceLines(lines, () => 1);
     expect(r.lines).toBe(lines);
     expect(r).toMatchObject({ changed: 0, kept: 0 });
+  });
+
+  it("an edited line whose net stands and only the STANDARD/SPECIAL flag moved is updated silently, never counted as kept", () => {
+    // tierPrice already 8 (tier 2's price) but the flag is stale: only the flag moves at tier 2.
+    const stale = edited({ tierPrice: 8, priceType: "STANDARD" });
+    const lines = [stale];
+    const r = repriceLines(lines, () => 2);
+    expect(r).toMatchObject({ changed: 0, kept: 0 });
+    expect(r.lines).not.toBe(lines);
+    expect(r.lines[0]).toMatchObject({
+      unitPrice: 9,
+      tierPrice: 8,
+      priceType: "SPECIAL",
+      priceEdited: true,
+    });
+    expect(repriceNote("Acme", r.changed, r.kept)).toBeNull();
   });
 
   it("is idempotent: a second pass over its own result changes nothing", () => {
