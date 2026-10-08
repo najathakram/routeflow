@@ -94,3 +94,12 @@ describe("settings index", () => {
     expect(searchIndex("", admin)).toEqual([]);
   });
 });
+
+describe("info rows name the controls as the user sees them", () => {
+  it("batch ship names the Orders list button 'Mark shipped'", () => {
+    const row = buildIndex({ isAdmin: true, fleet: true }).find((e) =>
+      /several orders/i.test(e.label),
+    );
+    expect(row?.answer).toBe("Select orders on the Orders list, then choose Mark shipped.");
+  });
+});

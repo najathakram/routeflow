@@ -549,7 +549,7 @@ const ENTRIES: IndexEntry[] = [
     kind: "info",
     label: "Ship several orders at once",
     desc: "Mark many orders shipped together",
-    answer: "Select orders on the Orders list, then choose Mark Shipped.",
+    answer: "Select orders on the Orders list, then choose Mark shipped.",
     groupKey: "orders",
     keywords: ["bulk", "batch", "ship", "mark shipped", "tracking"],
   },
