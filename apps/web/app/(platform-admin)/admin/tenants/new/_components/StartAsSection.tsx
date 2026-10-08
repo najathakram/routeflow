@@ -97,7 +97,7 @@ export function StartAsSection({
       )}
 
       <label
-        className={`flex min-h-[44px] items-center gap-3 text-sm ${trialOff ? "text-slate-500" : "text-slate-200"}`}
+        className={`flex min-h-[44px] items-center gap-3 text-sm ${trialOff ? "text-slate-400" : "text-slate-200"}`}
       >
         <input
           type="radio"
@@ -113,11 +113,11 @@ export function StartAsSection({
       )}
       {mode === "trial" && (
         <div className="flex flex-col gap-1.5 pl-7">
-          <label className="text-xs font-medium text-slate-300" htmlFor={`${name}-days`}>
+          <label className="text-xs font-medium text-slate-300" htmlFor="create-tenant-start-days">
             Trial length (days)
           </label>
           <input
-            id={`${name}-days`}
+            id="create-tenant-start-days"
             type="number"
             min={1}
             max={90}
@@ -142,11 +142,14 @@ export function StartAsSection({
         <div className="flex flex-col gap-3 pl-7">
           <p className="text-xs text-slate-400">You&apos;ve already been paid, outside Stripe.</p>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-300" htmlFor={`${name}-method`}>
+            <label
+              className="text-xs font-medium text-slate-300"
+              htmlFor="create-tenant-start-method"
+            >
               Payment method
             </label>
             <select
-              id={`${name}-method`}
+              id="create-tenant-start-method"
               value={value.paymentMethod}
               onChange={(e) => set({ paymentMethod: e.target.value })}
               className={FIELD}
@@ -159,11 +162,14 @@ export function StartAsSection({
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-300" htmlFor={`${name}-period`}>
+            <label
+              className="text-xs font-medium text-slate-300"
+              htmlFor="create-tenant-start-period"
+            >
               Billing period (days)
             </label>
             <select
-              id={`${name}-period`}
+              id="create-tenant-start-period"
               value={String(value.billingPeriodDays)}
               onChange={(e) => set({ billingPeriodDays: Number(e.target.value) })}
               className={FIELD}
@@ -176,11 +182,11 @@ export function StartAsSection({
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-300" htmlFor={`${name}-ref`}>
+            <label className="text-xs font-medium text-slate-300" htmlFor="create-tenant-start-ref">
               Reference (optional)
             </label>
             <input
-              id={`${name}-ref`}
+              id="create-tenant-start-ref"
               value={value.paymentRef}
               onChange={(e) => set({ paymentRef: e.target.value })}
               placeholder="e.g. Zelle confirmation ID"

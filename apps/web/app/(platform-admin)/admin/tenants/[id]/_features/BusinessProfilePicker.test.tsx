@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { BusinessProfilePicker } from "./BusinessProfilePicker";
 import {
@@ -494,6 +494,39 @@ describe("SA-1: the applied profile is marked 'Current'", () => {
       ).not.toBeNull(),
     );
     expect(await current()).toHaveLength(1);
+  });
+});
+
+describe("SA-1 review nit: an older 'Current' read cannot overwrite a newer one", () => {
+  it("a first read that resolves late leaves the marker where the newer read put it", async () => {
+    const late: Array<() => void> = [];
+    // the two reads of the first load (one per config key) stay pending and say "delivery" when released
+    mockConfigValue.mockImplementationOnce(
+      () => new Promise((resolve) => late.push(() => resolve("delivery"))),
+    );
+    mockConfigValue.mockImplementationOnce(
+      () => new Promise((resolve) => late.push(() => resolve("unset"))),
+    );
+    storedModes = { fulfilment_model: "ship" };
+    await renderPicker();
+    const dialog = await openPreview(/Shipping wholesaler/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!,
+        ).queryByText("Current"),
+      ).not.toBeNull(),
+    );
+    await act(async () => {
+      late.forEach((release) => release());
+    });
+    expect(await screen.findAllByTestId("profile-current")).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!,
+      ).queryByText("Current"),
+    ).not.toBeNull();
   });
 });
 

@@ -406,22 +406,20 @@ export function FeatureConsole({
                         )}
                         <span
                           title={LIFECYCLE_HELP[row.lifecycle] ?? undefined}
-                          aria-label={
-                            LIFECYCLE_HELP[row.lifecycle]
-                              ? `${row.lifecycle}: ${LIFECYCLE_HELP[row.lifecycle]}`
-                              : undefined
-                          }
                           className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400"
                         >
                           {row.lifecycle}
+                          {LIFECYCLE_HELP[row.lifecycle] && (
+                            <span className="sr-only">: {LIFECYCLE_HELP[row.lifecycle]}</span>
+                          )}
                         </span>
                         {row.gate.state === "dark" && (
                           <span
                             title={DARK_HELP}
-                            aria-label={`dark: ${DARK_HELP}`}
                             className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-300"
                           >
                             dark
+                            <span className="sr-only">: {DARK_HELP}</span>
                           </span>
                         )}
                         {appliedMode ? (

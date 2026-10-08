@@ -515,3 +515,21 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     expect(banner).toHaveAttribute("role", "alert");
   });
 });
+
+describe("SA-1 review nit: the applied-summary list keys are unique", () => {
+  it("two identical summary lines raise no duplicate-key warning", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockApplyProfile.mockResolvedValue({
+      summary: ["Recurring routes: off", "Recurring routes: off"],
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fillForm();
+    await createThroughSheet();
+    const list = await screen.findByTestId("profile-applied-summary");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const keyWarnings = spy.mock.calls.filter((c) => String(c[0]).includes("same key"));
+    spy.mockRestore();
+    expect(keyWarnings).toHaveLength(0);
+  });
+});

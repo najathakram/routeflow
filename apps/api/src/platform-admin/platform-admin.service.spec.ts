@@ -2070,7 +2070,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.where.status).toBe("ACTIVE");
       // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
       expect(args.where.plan).toBeUndefined();
-      expect(JSON.stringify(args.where)).toContain('"planKey":"STARTER"');
+      expect(JSON.stringify(args.where)).toContain('"planKey":{"in":["STARTER"]}');
       expect(args.where.OR).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
@@ -2090,7 +2090,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.where.AND).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            OR: expect.arrayContaining([{ subscription: { planKey: "GROWTH" } }]),
+            OR: expect.arrayContaining([{ subscription: { planKey: { in: ["GROWTH", "TEAM"] } } }]),
           }),
         ]),
       );
@@ -2106,6 +2106,18 @@ describe("PlatformAdminService — audit provenance", () => {
       // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
       expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
       expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
+    });
+
+    it("review nit: the filter matches every stored key the row normalizes to the chosen plan", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const first = args.where.AND[0].OR[0];
+      // a subscription still pinned to a legacy key (BUSINESS / PROFESSIONAL) displays as SCALE
+      expect([...first.subscription.planKey.in].sort()).toEqual(
+        ["BUSINESS", "PROFESSIONAL", "SCALE"].sort(),
+      );
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {

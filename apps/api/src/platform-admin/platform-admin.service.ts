@@ -26,6 +26,7 @@ import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService, isPayingRow } from "../billing/mrr.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import {
+  LEGACY_PLAN_KEY_ALIASES,
   normalizePlanKey,
   planKeyFromEnum,
   SELECTABLE_TENANT_PLANS,
@@ -163,10 +164,17 @@ export class PlatformAdminService {
       const legacyPlans = SELECTABLE_TENANT_PLANS.filter(
         (p) => planKeyFromEnum(p) === filters.plan,
       );
+      const storedKeys = [
+        filters.plan,
+        ...Object.entries(LEGACY_PLAN_KEY_ALIASES)
+          .filter(([, current]) => current === filters.plan)
+          .map(([legacy]) => legacy),
+      ];
       where.AND = [
         {
           OR: [
-            { subscription: { planKey: filters.plan } },
+            // every stored key the row would normalize to this plan (a legacy alias shows as its current plan)
+            { subscription: { planKey: { in: storedKeys } } },
             {
               AND: [
                 { OR: [{ subscription: null }, { subscription: { planKey: null } }] },

@@ -603,8 +603,8 @@ export default function AdminCreateTenantPage() {
                     data-testid="profile-applied-summary"
                     className="mt-1 list-disc pl-5 text-xs text-green-200"
                   >
-                    {profileResult.summary.map((line) => (
-                      <li key={line}>{line}</li>
+                    {profileResult.summary.map((line, i) => (
+                      <li key={`${i}-${line}`}>{line}</li>
                     ))}
                   </ul>
                 )}

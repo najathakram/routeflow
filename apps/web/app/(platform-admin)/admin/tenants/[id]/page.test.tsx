@@ -313,12 +313,14 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     expect(select.value).toBe("LITE");
   });
 
-  it("pin: an unreadable catalog falls back to every plan the API accepts, with a notice", async () => {
+  it("pin: an unreadable catalog falls back to every selectable plan (never the frozen LITE), with a notice", async () => {
     mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
     tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
     await gotoBillingTab();
     const select = await screen.findByRole("combobox", { name: "Plan" });
-    await waitFor(() => expect(optionValues(select)).toEqual([...PLAN_KEYS]));
+    await waitFor(() =>
+      expect(optionValues(select)).toEqual(PLAN_KEYS.filter((k) => k !== "LITE")),
+    );
     expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
   });
 });

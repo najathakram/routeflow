@@ -111,6 +111,8 @@ function ChoiceRow({
   expanded?: { heading: string; bullets: string[]; id: string };
 }) {
   const summaryId = expanded ? `${id}-summary` : undefined;
+  const noteId = unavailable ? `${id}-unavailable` : undefined;
+  const describedBy = [summaryId, noteId].filter(Boolean).join(" ") || undefined;
   return (
     <label
       htmlFor={id}
@@ -126,7 +128,7 @@ function ChoiceRow({
         checked={checked}
         disabled={unavailable}
         onChange={onSelect}
-        aria-describedby={summaryId}
+        aria-describedby={describedBy}
         className="mt-1"
       />
       <span className="flex flex-col gap-0.5">
@@ -143,6 +145,11 @@ function ChoiceRow({
         </span>
         <span className="text-xs text-slate-400">{description}</span>
         {secondary && <span className="text-[11px] text-slate-400">{secondary}</span>}
+        {unavailable && (
+          <span id={noteId} className="text-[11px] text-amber-400">
+            Not available for this tenant.
+          </span>
+        )}
         {expanded && (
           <span id={summaryId} className="mt-1 flex flex-col gap-1">
             {expanded.bullets.length > 0 && (

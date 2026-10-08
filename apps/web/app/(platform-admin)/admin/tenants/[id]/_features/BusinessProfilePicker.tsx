@@ -79,14 +79,23 @@ export function BusinessProfilePicker({
   React.useEffect(loadProfiles, [loadProfiles]);
 
   /** Which profile the tenant has now; a failed read just means no "Current" marker. */
+  const currentRead = React.useRef(0);
   const loadCurrent = React.useCallback(
     (list: BusinessProfileSummary[]) => {
+      // Only the newest read may write: an older one that resolves late is ignored.
+      const read = ++currentRead.current;
       const modeKeys = [...new Set(list.flatMap((p) => Object.keys(p.modes ?? {})))];
       Promise.all(
         modeKeys.map(async (k) => [k, await fetchTenantConfigValue(tenantId, k)] as const),
       )
-        .then((pairs) => setCurrentKey(matchAppliedProfile(list, Object.fromEntries(pairs))))
-        .catch(() => setCurrentKey(null));
+        .then((pairs) => {
+          if (read === currentRead.current) {
+            setCurrentKey(matchAppliedProfile(list, Object.fromEntries(pairs)));
+          }
+        })
+        .catch(() => {
+          if (read === currentRead.current) setCurrentKey(null);
+        });
     },
     [tenantId],
   );

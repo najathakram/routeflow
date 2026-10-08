@@ -619,7 +619,7 @@ describe("SA-1: plain names on the console's controls", () => {
     expect(screen.getByRole("button", { name: "Preview plan change" })).toBeInTheDocument();
   });
 
-  it("explains the 'dark' and 'proposed' chips by tooltip and aria-label", async () => {
+  it("explains the 'dark' and 'proposed' chips by tooltip and visually-hidden text", async () => {
     mockFetchRegistry.mockResolvedValue([
       {
         ...REGISTRY_FIXTURE[0],
@@ -641,9 +641,11 @@ describe("SA-1: plain names on the console's controls", () => {
     const row = document.querySelector('[data-feature-key="chip_row"]') as HTMLElement;
     const dark = within(row).getByText("dark");
     expect(dark).toHaveAttribute("title", expect.stringMatching(/allowed|not enforced|still on/i));
-    expect(dark.getAttribute("aria-label")).toMatch(/dark/i);
+    expect(dark).not.toHaveAttribute("aria-label");
+    expect(dark.querySelector(".sr-only")?.textContent).toMatch(/not enforced/i);
     const proposed = within(row).getByText("proposed");
     expect(proposed.getAttribute("title")).toMatch(/not released|planned|proposed/i);
-    expect(proposed.getAttribute("aria-label")).toMatch(/proposed/i);
+    expect(proposed).not.toHaveAttribute("aria-label");
+    expect(proposed.querySelector(".sr-only")?.textContent).toMatch(/not released/i);
   });
 });
