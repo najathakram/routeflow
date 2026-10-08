@@ -107,3 +107,29 @@ describe("StockCountTab - fuzzy single match (B1219)", () => {
     expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull();
   });
 });
+
+/**
+ * Slow-machine ordering (forced, not hoped for): applying a count queues a 900 ms autosave timer.
+ * That timer must never leak into the NEXT test, whose "nothing was written" assertion would then
+ * race it. The follow-up test's lookup answers 1 s late, which is exactly what a loaded box does.
+ */
+describe("StockCountTab - autosave timer does not leak across tests (B1219 flake)", () => {
+  it("first: an applied count leaves an autosave timer queued", async () => {
+    mockResolve.mockResolvedValue({ product: FUZZY, source: "barcode" });
+    renderWithProviders(<StockCountTab />);
+    await scan("FZ-1");
+    expect(await screen.findByText("Fuzzy Cola")).toBeInTheDocument();
+  });
+
+  it("next: a slow lookup + Cancel still writes nothing", async () => {
+    mockResolve.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(suggestion), 1000)),
+    );
+    renderWithProviders(<StockCountTab />);
+    await scan("123");
+    const picker = await screen.findByRole("group", { name: /did you mean/i }, { timeout: 5000 });
+    fireEvent.click(within(picker).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /did you mean/i })).toBeNull());
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+});
