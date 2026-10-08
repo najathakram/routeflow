@@ -46,6 +46,7 @@ import {
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
@@ -71,6 +72,14 @@ import { escapeHtml } from "../common/html-escape";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+
+/** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
+function activeTenantTrialRefusal(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.TENANT_TRIAL_EXTEND_NOT_ALLOWED,
+    message: "This tenant is Active. A trial can't be set on a paying tenant.",
+  });
+}
 
 @Injectable()
 export class PlatformAdminService {
@@ -537,6 +546,10 @@ export class PlatformAdminService {
           subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
         },
       });
+
+      // The same refusal as extendTrial, on the PRIOR status read under the row lock above: the status
+      // PATCH accepts any TenantStatus, so it must not be the back door for ACTIVE -> TRIAL.
+      if (dto.status === "TRIAL" && before.status === "ACTIVE") throw activeTenantTrialRefusal();
 
       let wasRealReactivation = false;
       if (dto.status === "ACTIVE") {
@@ -1825,12 +1838,18 @@ export class PlatformAdminService {
 
   async extendTrial(id: string, days: number, adminId: string | null = null) {
     await this._findOrThrow(id);
-    const updated = await this.prisma.tenant.update({
-      where: { id },
+    // An ACTIVE tenant is a paying tenant: extending a "trial" would silently demote it. The status
+    // predicate is part of the write itself (no read-then-write gap): count 0 = it is ACTIVE.
+    const { count } = await this.prisma.tenant.updateMany({
+      where: { id, status: { not: "ACTIVE" } },
       data: {
         trialEndsAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
         status: "TRIAL",
       },
+    });
+    if (count === 0) throw activeTenantTrialRefusal();
+    const updated = await this.prisma.tenant.findUniqueOrThrow({
+      where: { id },
       select: { id: true, slug: true, trialEndsAt: true, status: true },
     });
     // Evict cached status so the guard picks up the reactivation immediately

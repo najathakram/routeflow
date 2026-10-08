@@ -33,8 +33,22 @@ jest.mock("@/lib/api/addons", () => ({
 let gate: Record<string, unknown> = {};
 jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => gate }));
 jest.mock("./_components/CreateOrderModal", () => ({
-  CreateOrderModal: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="order-builder-open" /> : null,
+  CreateOrderModal: ({
+    isOpen,
+    initialFulfillPath,
+    resumeDraftId,
+  }: {
+    isOpen: boolean;
+    initialFulfillPath?: string | null;
+    resumeDraftId?: string | null;
+  }) =>
+    isOpen ? (
+      <div
+        data-testid="order-builder-open"
+        data-fulfill={initialFulfillPath ?? ""}
+        data-resume={resumeDraftId ?? ""}
+      />
+    ) : null,
 }));
 
 const OFF = { showButton: false, opensAsCounter: false, offerShipInstead: false };
@@ -83,6 +97,30 @@ describe("Orders page — counter sale gate", () => {
     search = "action=new&ship=1";
     renderWithProviders(<OrdersPage />);
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalledWith("/orders/counter-sale");
+  });
+
+  it("B1210: ?action=new&ship=1&preselect=SHIP opens the builder with SHIP preselected", () => {
+    gate = { showButton: true, opensAsCounter: true, offerShipInstead: true };
+    search = "action=new&ship=1&preselect=SHIP";
+    renderWithProviders(<OrdersPage />);
+    expect(screen.getByTestId("order-builder-open")).toHaveAttribute("data-fulfill", "SHIP");
+  });
+
+  it("B1210: ?action=new&ship=1 alone (no preselect) leaves the fulfilment default", () => {
+    gate = { showButton: true, opensAsCounter: true, offerShipInstead: true };
+    search = "action=new&ship=1";
+    renderWithProviders(<OrdersPage />);
+    expect(screen.getByTestId("order-builder-open")).toHaveAttribute("data-fulfill", "");
+  });
+
+  it("B1210: ?resumeDraft=<id> opens the builder on that draft even when the counter is the default", () => {
+    gate = { showButton: true, opensAsCounter: true, offerShipInstead: true };
+    search = "resumeDraft=d-1";
+    renderWithProviders(<OrdersPage />);
+    const open = screen.getByTestId("order-builder-open");
+    expect(open).toHaveAttribute("data-resume", "d-1");
+    expect(open).toHaveAttribute("data-fulfill", "");
     expect(replace).not.toHaveBeenCalledWith("/orders/counter-sale");
   });
 });

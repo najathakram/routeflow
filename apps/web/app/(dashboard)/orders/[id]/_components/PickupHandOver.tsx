@@ -4,6 +4,8 @@ import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
+import { useOptionalAuth } from "@/lib/auth-context";
+import { heldPickupStoreKey } from "@/lib/counter-sale";
 import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
 
 /**
@@ -31,9 +33,12 @@ export function PickupHandOverDialog({
 }) {
   // An UNKNOWN outcome's key outlives the dialog's close/reopen (cleared only on a known outcome).
   const heldKey = React.useRef<HeldPickupKey>(null);
+  const authUser = useOptionalAuth()?.user;
+  const storeKey = heldPickupStoreKey(authUser?.tenantSlug, authUser?.id, order.id);
   return (
     <PickupCompleteDialog
       heldKey={heldKey}
+      storeKey={storeKey}
       open={open}
       onClose={onClose}
       orderId={order.id}

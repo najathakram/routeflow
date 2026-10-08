@@ -9,7 +9,13 @@ jest.mock("../api-client", () => ({
   apiClient: { post: (...a: unknown[]) => post(...a), get: (...a: unknown[]) => get(...a) },
 }));
 let features: { data?: unknown; isLoading?: boolean; isError?: boolean } = { data: undefined };
-jest.mock("../tenant-features", () => ({ useTenantFeatures: () => features }));
+const featureOpts: unknown[] = [];
+jest.mock("../tenant-features", () => ({
+  useTenantFeatures: (o?: unknown) => {
+    featureOpts.push(o);
+    return features;
+  },
+}));
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider
@@ -96,5 +102,25 @@ describe("useCounterSaleByKey: GET /orders/counter-sale/by-key/:key?method=", ()
       params: { method: "CARD" },
     });
     expect(res).toEqual(body);
+  });
+});
+
+describe("useCounterSaleGate enabled option", () => {
+  beforeEach(() => {
+    featureOpts.length = 0;
+    features = { data: undefined };
+  });
+
+  it("passes enabled:false through so the features request is not made, and is never loading", () => {
+    features = { data: undefined, isLoading: true };
+    const { result } = renderHook(() => useCounterSaleGate({ enabled: false }), { wrapper });
+    expect(featureOpts[0]).toEqual({ enabled: false });
+    expect(result.current.showButton).toBe(false);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("defaults to enabled", () => {
+    renderHook(() => useCounterSaleGate(), { wrapper });
+    expect(featureOpts[0]).toEqual({ enabled: true });
   });
 });

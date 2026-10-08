@@ -41,6 +41,7 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../lib/sellable-products";
 import {
   applyUnitOption,
   isStaffRole,
@@ -795,6 +796,11 @@ function ProductPickView({
     code?: string,
   ): boolean => {
     const p = snap ?? productById.get(id);
+    // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
+    if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return false;
+    }
     const upb = Number(p?.unitsPerBox ?? 0);
     const prefill = rememberedPricePrefill(
       priceHistory?.[id],

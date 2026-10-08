@@ -9,6 +9,7 @@ import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { BILLING_EXPORT_INVOICE_FIELDS } from "./billing-export-fields";
 import { SubscriptionService } from "./subscription.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -156,13 +157,7 @@ describeDb("B1187 — billing export projection (real Postgres)", () => {
     ]) {
       expect(json).not.toContain(k);
     }
-    expect(Object.keys(out.invoices[0]).sort()).toEqual([
-      "amount",
-      "cycle",
-      "issuedAt",
-      "number",
-      "status",
-    ]);
+    expect(Object.keys(out.invoices[0]).sort()).toEqual([...BILLING_EXPORT_INVOICE_FIELDS].sort());
     expect(out.subscription).toEqual({ planKey: "GROWTH", flags: [], addons: [] });
     const first = out.billingEvents.find((e) => e.type === "plan.changed" && e.actor === "you")!;
     expect(first.payload).toEqual({ fromPlan: "STARTER", toPlan: "GROWTH" });
