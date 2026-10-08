@@ -82,6 +82,8 @@ export interface OrderItem {
    * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
    */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */

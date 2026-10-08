@@ -5,6 +5,7 @@ import {
   LineItemRowReadOnly,
   type LineItemRowReadOnlyProps,
 } from "@/components/LineItemRowReadOnly";
+import { lineBackorderPieces } from "@routeflow/types";
 import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
@@ -44,6 +45,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     note: li.notes ?? null,
     custom: !li.productId,
     components: li.components ?? null,
+    backorderPieces: lineBackorderPieces(li, orderStatus),
   };
 }
 
