@@ -1354,6 +1354,8 @@ describe("CounterSaleService.ring", () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
       // p2 carries a per-product tier override (tier 2); p1 follows the customer's default tier 3.
       prisma.customerPrice.findMany.mockResolvedValue([{ productId: "p2", pricingTier: 2 }]);
+      // the first product read is the sale's own existence check (the one item); the second is the tier lookup
+      prisma.product.findMany.mockResolvedValueOnce([{ id: "p1", pricePerUnit: 10 }]);
       prisma.product.findMany.mockResolvedValue([
         { id: "p1", pricePerUnit: 10, priceTier2: 9.5, priceTier3: 9.25 },
         { id: "p2", pricePerUnit: 20, priceTier2: 18, priceTier3: 17 },
