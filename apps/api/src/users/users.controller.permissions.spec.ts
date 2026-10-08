@@ -61,6 +61,14 @@ describe("GET /users/me/permissions", () => {
     expect(res.body.groups).toHaveLength(9);
   });
 
+  it("an operator whose token carries a legacy isAdmin flag is still not an account admin", async () => {
+    caller = { ...caller, isAdmin: true };
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 0 });
+    const res = await request(app.getHttpServer()).get("/users/me/permissions").expect(200);
+    expect(res.body.isAccountAdmin).toBe(false);
+    expect(res.body.role).toBe("OPERATOR");
+  });
+
   it("an operator with denied groups gets the rest, and the stored version", async () => {
     prisma.user.findFirst.mockResolvedValue({
       deniedPermissionGroups: ["FINANCE", "PRICING"],
