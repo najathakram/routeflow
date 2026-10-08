@@ -1,10 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  BILLING_PERIODS,
-  EXTERNAL_PAYMENT_METHODS,
-} from "@/lib/platform-admin/activate-subscription";
+import { BILLING_PERIODS, EXTERNAL_PAYMENT_METHODS } from "@routeflow/types";
 
 /** How the new account starts: a trial, or active because the business has already paid outside Stripe. */
 export interface StartAs {

@@ -4,7 +4,11 @@ import * as React from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
-import type { FeatureRegistryRow } from "@routeflow/types";
+import {
+  BILLING_PERIODS,
+  EXTERNAL_PAYMENT_METHODS,
+  type FeatureRegistryRow,
+} from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { setImpersonation } from "@/lib/impersonation";
@@ -828,22 +832,6 @@ function OverviewTab({
 }
 
 // ─── Billing Tab ───────────────────────────────────────────────────────────────
-
-const EXTERNAL_PAYMENT_METHODS = [
-  { value: "ZELLE", label: "Zelle" },
-  { value: "BANK_TRANSFER", label: "Bank Transfer (ACH/Wire)" },
-  { value: "WIRE", label: "Wire Transfer" },
-  { value: "CHECK", label: "Check" },
-  { value: "CASH", label: "Cash" },
-  { value: "OTHER", label: "Other" },
-] as const;
-
-const BILLING_PERIODS = [
-  { value: 30, label: "Monthly (30 days)" },
-  { value: 90, label: "Quarterly (90 days)" },
-  { value: 180, label: "Semi-Annual (180 days)" },
-  { value: 365, label: "Annual (365 days)" },
-] as const;
 
 function BillingTab({
   tenant,
