@@ -1958,6 +1958,19 @@ describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)
       expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
     });
 
+    it("a non-owner tab ringing its own sale never deletes the owner tab's stored cart", async () => {
+      installLocks(false);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      mutateAsync.mockReturnValue(new Promise(() => undefined));
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-other-tab");
+      await scan("012345678905");
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await new Promise((r) => setTimeout(r, 600));
+      expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
+    });
+
     it("the tab that wins the lock restores, even from a closed tab's cart", async () => {
       installLocks(true);
       window.localStorage.setItem(LIVE_KEY, liveCart());

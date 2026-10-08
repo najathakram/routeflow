@@ -26,7 +26,9 @@ function tabId(): string {
 /**
  * Is this tab the till's only live tab? A Web Lock held for the tab's lifetime says so: it frees itself when the tab closes
  * or crashes, and unlike a heartbeat a throttled background tab cannot lose it. Without Web Locks the stored writer id
- * decides: only the tab that wrote the cart (a refresh keeps its id) takes it back.
+ * decides: only the tab that wrote the cart (a refresh keeps its id) takes it back. Known gap of that fallback: a DUPLICATED
+ * tab copies sessionStorage and so shares the id. Dev-only note: React StrictMode's double effect run never takes ownership
+ * locally (the first run's cleanup cancels its claim); production mounts once.
  */
 async function claimTill(storeKey: string, storedOwner: string | undefined): Promise<boolean> {
   const locks = (globalThis.navigator as Navigator & { locks?: LockManager }).locks;
@@ -78,6 +80,7 @@ export function useCounterLiveCart({
   const [owner, setOwner] = React.useState(false); // this tab may write the stored cart
   const [sending, setSending] = React.useState(false);
   const sendingRef = React.useRef(false);
+  const ownerRef = React.useRef(false); // mirrors `owner` for the synchronous send guard
   const hydratedKeyRef = React.useRef<string | null>(null);
   const restoredLinesRef = React.useRef<unknown[] | null>(null);
   const onRestoreRef = React.useRef(onRestore);
@@ -110,6 +113,7 @@ export function useCounterLiveCart({
           setNotice("restored");
         }
       }
+      ownerRef.current = true;
       setOwner(true);
     });
     return () => {
@@ -162,7 +166,8 @@ export function useCounterLiveCart({
     dismissNotice: () => setNotice(null),
     beginSend: () => {
       sendingRef.current = true; // blocks every write NOW, not on the next render
-      if (storeKey) clearLiveCart(storeKey);
+      // Only the owner tab drops the stored cart: a second tab's sale must never delete the owner's cart.
+      if (storeKey && ownerRef.current) clearLiveCart(storeKey);
       setSending(true);
     },
     endSend: () => {
