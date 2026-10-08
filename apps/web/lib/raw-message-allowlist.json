@@ -96,7 +96,7 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    "count": 16,
+    "count": 15,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/page.tsx": {
@@ -414,6 +414,10 @@
     "count": 1,
     "permanent": true,
     "why": "log: console.error of a websocket error, never rendered"
+  },
+  "lib/invoice-void-copy.ts": {
+    "count": 1,
+    "why": "B986-6 invoices: the void-failure sentence (payments to reverse first) moved here from invoices/[id]/page.tsx; pending"
   },
   "lib/reason-copy.ts": {
     "count": 1,
