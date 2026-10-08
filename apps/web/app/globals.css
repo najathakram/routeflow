@@ -235,10 +235,6 @@ body {
     height: auto !important;
     overflow: visible !important;
   }
-  /* Counter "Today's sales" reprint: print only the receipt, not the sale screen behind the modal. */
-  body.counter-reprint-open [data-counter-screen] {
-    display: none !important;
-  }
 }
 
 /* #2080 (P0, owner-reported production, iOS Safari): the create-order dialog
