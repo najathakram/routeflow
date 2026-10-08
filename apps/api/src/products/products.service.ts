@@ -79,7 +79,13 @@ import {
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
-import { assertValidParent, tenantSafeParent, tenantSafeParentView } from "./product-parent";
+import {
+  assertValidParent,
+  parentInvalid,
+  PRODUCT_PARENT_REASONS,
+  tenantSafeParent,
+  tenantSafeParentView,
+} from "./product-parent";
 import {
   barcodeRowsToView,
   liveBarcodeRows,
@@ -756,7 +762,7 @@ export class ProductsService {
         })
       : null;
     if (dto.parentProductId && !parent) {
-      throw new BadRequestException("Parent product not found");
+      throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
     }
     // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
     // omits the section entirely, a variant inherits the parent family's pair

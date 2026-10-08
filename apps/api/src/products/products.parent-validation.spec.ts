@@ -147,6 +147,12 @@ describe("assertValidParent (the one parent check)", () => {
     const src = readFileSync(join(__dirname, "product-parent.ts"), "utf8");
     expect(src).not.toMatch(/new BadRequestException\(\s*["'`]/);
   });
+
+  it("the create pre-check for the parent row is coded too (no plain-text 'Parent product not found' throw)", () => {
+    const svc = readFileSync(join(__dirname, "products.service.ts"), "utf8");
+    expect(svc).not.toMatch(/new BadRequestException\(\s*["'`]Parent product not found/);
+    expect(svc).toMatch(/parentInvalid\(\s*PRODUCT_PARENT_REASONS\.NOT_FOUND/);
+  });
 });
 
 describe("assertParentUsable (the judgement on a parent row the caller already loaded)", () => {
