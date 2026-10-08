@@ -39,10 +39,10 @@ const CHUNK = 5000;
 
 /**
  * `unitNameKey` for a TEXT column in SQL: the same NFC, trim, case-fold the TS helper does. btrim gets
- * the whitespace set JS `trim()` strips most often (space, tab, newline, CR, FF, VT, NBSP).
+ * the whitespace set JS `trim()` strips most often (space, tab, newline, CR, FF, VT as \x0B because E-strings have no \v, NBSP).
  */
 const sqlKey = (column: "baseUnitLabel" | "packLabel" | "unit") =>
-  Prisma.sql`lower(btrim(normalize(p.${Prisma.raw(`"${column}"`)}, NFC), E' \\t\\n\\r\\f\\v\\u00a0'))`;
+  Prisma.sql`lower(btrim(normalize(p.${Prisma.raw(`"${column}"`)}, NFC), E' \\t\\n\\r\\f\\x0B\\u00a0'))`;
 
 function cleanName(raw: unknown): string {
   const name = typeof raw === "string" ? raw.normalize("NFC").trim() : "";

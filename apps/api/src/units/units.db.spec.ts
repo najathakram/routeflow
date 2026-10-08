@@ -104,6 +104,36 @@ describeDb("tenant units against real Postgres", () => {
     expect(row.productCount).toBe(3);
   });
 
+  it("a unit named Div keys as div: the SQL trim never eats the letter v (E-strings have no \\v)", async () => {
+    const div = await asA(() => service.create({ name: "Div" }, user));
+    const p1 = await product(A, "P1", { unit: "Div" });
+    const p2 = await product(A, "P2", { packLabel: " div " });
+    await product(A, "P3", { unit: "Di" }); // what a v-eating trim would match
+    const [row] = (await asA(() => service.list(false))).filter((u) => u.id === div.id);
+    expect(row.productCount).toBe(2);
+    const out = await asA(() => service.update(div.id, { name: "Dive" }, user));
+    expect(out.productsUpdated).toBe(2);
+    expect((await raw.product.findUnique({ where: { id: p1.id } }))?.unit).toBe("Dive");
+    expect((await raw.product.findUnique({ where: { id: p2.id } }))?.packLabel).toBe("Dive");
+  });
+
+  it("an NFD and an NFC spelling of one word are ONE unit, counted and renamed through the SQL NFC fold", async () => {
+    const nfc = "Caf\u00e9";
+    const nfd = "Cafe\u0301";
+    const unit = await asA(() => service.create({ name: nfc }, user));
+    const again = await asA(() => service.create({ name: nfd }, user));
+    expect(again.id).toBe(unit.id);
+    expect(await raw.tenantUnit.count({ where: { tenantId: A } })).toBe(1);
+    const p1 = await product(A, "P1", { unit: nfd }); // stored NFD, unit stored NFC
+    const p2 = await product(A, "P2", { packLabel: ` ${nfc} ` });
+    const [row] = (await asA(() => service.list(false))).filter((u) => u.id === unit.id);
+    expect(row.productCount).toBe(2);
+    const out = await asA(() => service.update(unit.id, { name: "Carton" }, user));
+    expect(out.productsUpdated).toBe(2);
+    expect((await raw.product.findUnique({ where: { id: p1.id } }))?.unit).toBe("Carton");
+    expect((await raw.product.findUnique({ where: { id: p2.id } }))?.packLabel).toBe("Carton");
+  });
+
   it("rename rewrites level labels and the three text columns in one go and returns the distinct count", async () => {
     const caseUnit = await asA(() => service.create({ name: "Case" }, user));
     const p1 = await product(A, "P1", { packLabel: "case", unit: "Case" });

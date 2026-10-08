@@ -145,6 +145,19 @@ describe("UnitsService", () => {
       expect(sql).toContain('"tenantId"');
     });
 
+    it("the SQL trim set uses only escapes PostgreSQL E-strings define (there is NO \\v: it reads as a literal v)", async () => {
+      const { service, prisma } = make();
+      await service.list(true);
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
+      const trimSets = sql.match(/E'[^']*'/g) ?? [];
+      expect(trimSets).toHaveLength(3);
+      for (const set of trimSets) {
+        expect(set).not.toMatch(/\\v/);
+        expect(set).toContain("\\x0B");
+        expect(set).toContain("\\u00a0");
+      }
+    });
+
     it("compares the text columns to nameKey through the same NFC normalisation", async () => {
       const { service, prisma } = make();
       await service.list(true);
