@@ -3696,3 +3696,25 @@ citations, closed-out with its own post-init assertion guard).
   screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
 - **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
   (Archived 2026-10-08 whole and verbatim to make room at cap: L-222 is fully guarded (`next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).) and is among the least-cited active entries.)
+
+### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
+
+- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
+- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
+- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
+- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-228: superseded by L-268 (the train is built off master and landed by rebase-merge, so master equals the verified tree) and guarded by the landing coordinator tree comparison.)
+
+### L-246 · 2026-09-29 · process · a code-map stamp never goes inside a PR that gets squashed
+
+- **Symptom:** a code-map `mappedSha` (or a sha in a landing bullet) written inside a PR that was then
+  squash-merged named a commit that never reached master, so the map read as stale from the moment it
+  landed and its cited sha resolved to nothing.
+- **Root cause:** a squash merge replaces the branch's commits with one new commit; any sha a PR
+  records about itself, or about its own branch, does not exist on master afterwards.
+- **Lesson:** **Stamp `mappedSha` and cite shas only from the docs follow-up PR, and only shas that are
+  already on master (the squash commit). Never write the PR's own head or a branch sha into the map.**
+- **Guard:** Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending`; the follow-up
+  cites the merged sha). No script yet: propose `git merge-base --is-ancestor <sha> origin/master`
+  before any stamp.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-246: fully guarded by Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending` and the follow-up cites the merged sha), which is a standing rule in CLAUDE.md.)
