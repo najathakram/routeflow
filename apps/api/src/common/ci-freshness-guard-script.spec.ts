@@ -340,7 +340,7 @@ describe("ci-freshness-guard.mjs contract", () => {
   // ── B621: a superseded deployment is only skipped once a later E2E run is CONFIRMED ─────────────
   // The world is scripted per endpoint (deployments / runs / statuses), each a queue of responses.
   // The confirmation poll's whole budget. Linux CI keeps it tight; win32 needs room for process spawns.
-  const SUCCESSOR_TIMEOUT_MS = process.platform === "win32" ? "3000" : "400";
+  const SUCCESSOR_TIMEOUT_MS = "400"; // virtual clock: 8 polls at the 50 ms interval, any platform
   const NEW = "ffffffffffffffffffffffffffffffffffffffff";
   const dep = (sha: string) => ({ body: [{ sha, id: 2 }] });
   const runs = (...r: object[]) => ({ body: { workflow_runs: r } });
@@ -351,8 +351,9 @@ describe("ci-freshness-guard.mjs contract", () => {
       fakeEnv("match", {
         FAKE_GH_STEPS: JSON.stringify(steps),
         FAKE_GH_STATE: stateFile,
-        // Each poll spawns the fake gh as a fresh node process; on win32 that costs a few hundred
-        // ms under load, so 400 ms left no room for a second poll (B621 read "unconfirmed").
+        // Each poll spawns the fake gh as a fresh node process, so a real-time window races machine
+        // load (B621 read "unconfirmed"). The virtual clock makes the window "timeout / interval"
+        // polls regardless of how long each spawn takes.
         CI_E2E_SUCCESSOR_TIMEOUT_MS: SUCCESSOR_TIMEOUT_MS,
         CI_E2E_SUCCESSOR_INTERVAL_MS: "50",
         CI_FRESHNESS_VIRTUAL_CLOCK: "1",
@@ -585,6 +586,7 @@ describe("ci-freshness-guard.mjs contract", () => {
         FAKE_GH_STATE: stateFile,
         CI_E2E_SUCCESSOR_TIMEOUT_MS: "300",
         CI_E2E_SUCCESSOR_INTERVAL_MS: "50",
+        CI_FRESHNESS_VIRTUAL_CLOCK: "1",
       }),
     );
     expect(readOutputs(outFile).run).not.toBe("true");
