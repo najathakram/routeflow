@@ -10,6 +10,7 @@ import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // Same stand-in as customers.service.spec.ts: a real advisory lock needs a live DB connection,
@@ -21,12 +22,14 @@ jest.mock("../common/db-locks", () => ({
   ),
 }));
 
-const operatorPayload = {
+const operatorPayload: JwtPayload = {
   sub: "user-op",
   username: "operator",
-  role: "OPERATOR" as const,
-  status: "ACTIVE" as const,
+  role: "OPERATOR",
+  status: "ACTIVE",
   forcePasswordChange: false,
+  tenantId: null,
+  tenantSlug: null,
 };
 
 // B1216: split into its own file rather than grown inline — customers.service.spec.ts is already at
