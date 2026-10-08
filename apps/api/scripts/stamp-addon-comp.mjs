@@ -101,17 +101,42 @@ async function main() {
   const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
+    const selectRows = (lock) =>
+      client.query(
+        `SELECT a.id, a."tenantId", a."addonKey", a.sku, a.active, a."stripeItemId", a."isComp",
+                a."priceSnapshot", t.slug, t.status AS "tenantStatus", t.class AS "tenantClass",
+                t."deletedAt" AS "tenantDeletedAt", s."planKey" AS "subPlanKey",
+                s."stripeSubId" AS "subStripeSubId"
+           FROM "TenantAddon" a JOIN "Tenant" t ON t.id = a."tenantId"
+           LEFT JOIN "TenantSubscription" s ON s."tenantId" = a."tenantId"
+          WHERE a.id = ANY($1::text[]) ${lock ? "FOR UPDATE OF a" : ""}`,
+        [ids],
+      );
+    // Row 195: the operator's typed confirmation is taken BEFORE the transaction opens, from an
+    // unlocked pre-scan, so no row lock is held while a human types. Inside the transaction a
+    // protected tenant is only re-asserted against the token minted here.
+    const overrides = new Map();
+    if (apply) {
+      for (const r of (await selectRows(false)).rows) {
+        if (isTestTenant(r.slug) || overrides.has(r.tenantId)) continue;
+        try {
+          assertWritableTenant(tenantOf(r), subOf(r), protectedSlugs);
+        } catch (e) {
+          if (!(e instanceof ProtectedTenantError)) throw e;
+          try {
+            overrides.set(
+              r.tenantId,
+              await confirmProtectedOverride({ tenantId: r.tenantId, argv: process.argv }),
+            );
+          } catch (e2) {
+            if (e2 instanceof ProtectedTenantError) e2.refuse = true;
+            throw e2;
+          }
+        }
+      }
+    }
     await client.query(apply ? "BEGIN" : "BEGIN READ ONLY");
-    const { rows } = await client.query(
-      `SELECT a.id, a."tenantId", a."addonKey", a.sku, a.active, a."stripeItemId", a."isComp",
-              a."priceSnapshot", t.slug, t.status AS "tenantStatus", t.class AS "tenantClass",
-              t."deletedAt" AS "tenantDeletedAt", s."planKey" AS "subPlanKey",
-              s."stripeSubId" AS "subStripeSubId"
-         FROM "TenantAddon" a JOIN "Tenant" t ON t.id = a."tenantId"
-         LEFT JOIN "TenantSubscription" s ON s."tenantId" = a."tenantId"
-        WHERE a.id = ANY($1::text[]) ${apply ? "FOR UPDATE OF a" : ""}`,
-      [ids],
-    );
+    const { rows } = await selectRows(apply);
     const byId = new Map(rows.map((r) => [r.id, r]));
     const plan = ids.map((id) => {
       const row = byId.get(id);
@@ -120,7 +145,9 @@ async function main() {
       let guarded = false;
       if (row && !test) {
         try {
-          assertWritableTenant(tenantOf(row), subOf(row), protectedSlugs);
+          assertWritableTenant(tenantOf(row), subOf(row), protectedSlugs, {
+            allowProtected: overrides.get(row.tenantId),
+          });
         } catch (e) {
           if (!(e instanceof ProtectedTenantError)) throw e;
           guarded = true;
@@ -182,20 +209,17 @@ async function main() {
         { refuse: true },
       );
     }
-    // Row 195: a protected tenant is stamped only after its id is named AND the phrase is typed.
-    // Checked before the first UPDATE; a refusal rolls everything back (exit 1, nothing written).
-    for (const tenantId of guardedTenants) {
-      const p = plan.find((x) => x.guarded && x.row.tenantId === tenantId);
-      try {
-        const token = await confirmProtectedOverride({ tenantId, argv: process.argv });
-        assertWritableTenant(tenantOf(p.row), subOf(p.row), protectedSlugs, {
-          allowProtected: token,
-        });
-      } catch (e) {
-        if (e instanceof ProtectedTenantError) e.refuse = true;
-        throw e;
-      }
-    }
+    // Row 195: a protected tenant is stamped only with the token minted before BEGIN. One that has
+    // no token here (it turned protected after the pre-scan) refuses the whole batch: exit 1, nothing
+    // written.
+    if (guardedTenants.length)
+      throw Object.assign(
+        new Error(
+          `protected tenant(s) ${guardedTenants.join(", ")} lack a confirmed override: ` +
+            "--allow-protected <tenantId> --backup-taken at a real terminal",
+        ),
+        { refuse: true },
+      );
     for (const p of plan) {
       const r = await client.query(
         `UPDATE "TenantAddon" SET "isComp" = true, "updatedAt" = now()

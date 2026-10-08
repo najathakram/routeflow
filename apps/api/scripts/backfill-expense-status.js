@@ -41,8 +41,11 @@ const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
       select: { status: true, receivedDate: true, tenantId: true },
     });
     if (!bill) continue;
-    // NULL-tenantId expenses derive their tenant from the parent bill; exclude by either side.
+    // NULL-tenantId expenses derive their tenant from the parent bill. Fail closed: skip when either
+    // side is protected, or when neither side names a tenant (it cannot be shown to be unprotected).
+    const owner = e.tenantId ?? bill.tenantId;
     if (
+      !owner ||
       (e.tenantId && protectedIds.has(e.tenantId)) ||
       (bill.tenantId && protectedIds.has(bill.tenantId))
     ) {
@@ -72,7 +75,7 @@ const { protectedTenantIds } = require("./lib/live-target-guard.cjs");
   }
   console.log(`Done. Marked ${paid} PAID and ${received} RECEIVED.`);
   console.log(
-    `protected-tenant guard: skipped ${skippedProtected} expense(s) of protected tenants.`,
+    `protected-tenant guard: skipped ${skippedProtected} expense(s) of protected tenants or with no derivable tenant (fail closed).`,
   );
   await prisma.$disconnect();
 })();

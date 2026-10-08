@@ -4,12 +4,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
- * #2639 part C / SA-547 — the b294 backfill refuses to touch a PROTECTED tenant (paying, or linked to a
- * Stripe subscription) unless explicitly admitted:
- *   - dry run: a protected tenant's candidates are PAYING-HELD, never planned, unless --allow-paying-tenant;
+ * #2639 part C / SA-547 / row 195 — the b294 backfill refuses to touch a PROTECTED tenant (paying,
+ * Stripe-linked, or named in PROTECTED_TENANT_SLUGS) unless explicitly admitted:
+ *   - dry run: a protected tenant's candidates are PAYING-HELD, never planned, unless its id is named with
+ *     --allow-protected;
  *   - apply: protection is RE-DERIVED in the transaction (the plan is never trusted); a tenant that turned
- *     protected since the dry run refuses the WHOLE apply; any protected tenant written needs
- *     --allow-paying-tenant AND --confirm-paying "APPLY TO PAYING <sorted slugs>";
+ *     protected since the dry run refuses the WHOLE apply; each protected tenant written needs its own
+ *     override token (--allow-protected <id> + a typed phrase at a real terminal, minted BEFORE the tx);
+ *   - --allow-paying-tenant / --confirm-paying are retired (unknown arguments);
  *   - the plan file and every log line carry tenant IDS and counts, never slugs.
  * Pure gates evaluated in a child node (the script is ESM); fixtures are qa-* slugs with a FAKE
  * stripeSubId. The executed dry-run/apply against a real database is F2's.

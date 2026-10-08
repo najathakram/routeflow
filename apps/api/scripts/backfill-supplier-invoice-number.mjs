@@ -112,7 +112,7 @@ try {
     [prot],
   );
   console.log(
-    `Candidate rows (NULL column, notes present, tenant not protected): ${rows.length} ` +
+    `Candidate rows (NULL column, notes present, tenant known and not protected; untenanted bills are skipped, fail closed): ${rows.length} ` +
       `(${prot.length} protected tenant(s) excluded)`,
   );
 

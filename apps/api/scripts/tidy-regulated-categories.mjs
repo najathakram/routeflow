@@ -152,7 +152,7 @@ async function tidyDivergedStructured(pg, tenantId) {
 }
 
 async function tidyTenant(pg, tenant) {
-  step(`Tenant ${tenant.slug} (${tenant.id})`);
+  step(`Tenant ${tenant.id}`); // ids only: a live tenant's slug is a client identifier
   const class1 = await tidyTypeNameLeakage(pg, tenant.id);
   const class2 = await tidyDivergedStructured(pg, tenant.id);
 
@@ -164,7 +164,7 @@ async function tidyTenant(pg, tenant) {
   ok(`Diverged structured categories aligned: ${class2.aligned}${EXECUTE ? "" : " (dry run)"}`);
 
   return {
-    slug: tenant.slug,
+    id: tenant.id,
     typeLeakageToSubName: class1.toSubName,
     typeLeakageToNull: class1.toNull,
     divergedAligned: class2.aligned,
@@ -234,7 +234,7 @@ async function main() {
     console.log(`${"═".repeat(65)}`);
     for (const r of results) {
       console.log(
-        `  ${r.slug.padEnd(30)} leakage→sub:${r.typeLeakageToSubName}  leakage→null:${
+        `  ${String(r.id).padEnd(38)} leakage→sub:${r.typeLeakageToSubName}  leakage→null:${
           r.typeLeakageToNull
         }  aligned:${r.divergedAligned}`,
       );

@@ -231,7 +231,8 @@ async function main() {
       );
       plan = planned.filter((r) => {
         const owner = parentTenant.get(r.id);
-        return !(owner && prot.has(owner));
+        // Fail closed: a row with no derivable tenant cannot be shown to be unprotected.
+        return Boolean(owner) && !prot.has(owner);
       });
       console.log(
         `protected-tenant guard: skipped ${planned.length - plan.length} of ${planned.length} row(s)`,

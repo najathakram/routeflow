@@ -47,6 +47,12 @@ function loadProtectedSlugs(env, dbUrl) {
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s !== "");
+  // Only the empty string means "none". A value that is present but yields no entries (",", " ") is a
+  // typo that would silently switch the env-listed protection off: refuse it.
+  if (String(raw) !== "" && entries.length === 0)
+    throw new Error(
+      "PROTECTED_TENANT_SLUGS has no entries (use an empty string for none): refusing.",
+    );
   entries.forEach((slug, i) => {
     const n = i + 1;
     if (!SLUG_SHAPE.test(slug))

@@ -135,7 +135,7 @@ export function planFreshStart(args, env, deps) {
     }
     if (args.execute && !args.backupTaken)
       return refuse(
-        `--execute on the live path needs --backup-taken. Take a fresh backup first:\n  ${BACKUP_COMMAND(args.slug)}`,
+        `--execute on the live path needs --backup-taken. Take a fresh backup first:\n  ${BACKUP_COMMAND("live")}`,
       );
     source = "Railway proxy";
     poolConfig = { connectionString: url };
@@ -147,7 +147,7 @@ export function planFreshStart(args, env, deps) {
     banner: `DB:     ${deps.redact(url)}  (source: ${source})`,
     poolConfig,
     // Printed on every live run, dry or not, so the backup is never a surprise at --execute.
-    ...(args.live ? { backupCommand: BACKUP_COMMAND(args.slug) } : {}),
+    ...(args.live ? { backupCommand: BACKUP_COMMAND("live") } : {}),
   };
 }
 

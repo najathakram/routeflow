@@ -18,7 +18,7 @@
 //   Test tenant, local database (the only test-tenant path):
 //     node apps/api/scripts/wipe-tenant-fresh-start.js <test-slug> --local [--execute]
 //   Live tenant, client-requested fresh start — OWNER-RUN ONLY, Railway proxy only:
-//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-<slug>
+//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live
 //     railway run --service postgres node apps/api/scripts/wipe-tenant-fresh-start.js <slug> \
 //       --live-tenant-override --exclude-tenant <slug,...> [--execute --backup-taken]
 //
@@ -182,7 +182,8 @@ async function confirm(slugToType, what = "the tenant slug") {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(
-      `\nType ${what} "${slugToType}" exactly to proceed (or anything else to abort): `,
+      // A live tenant's slug is a client identifier: ask for it without echoing it back.
+      `\nType ${what}${isTestTenant(slugToType) ? ` "${slugToType}"` : ""} exactly to proceed (or anything else to abort): `,
       (answer) => {
         rl.close();
         resolve(answer.trim() === slugToType);

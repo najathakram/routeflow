@@ -584,13 +584,13 @@ async function main() {
       // stops only) as releaseUndeliveredOrders (routes.service.ts).
       await client.query(
         `UPDATE "Order" SET status = 'CONFIRMED' WHERE id = ANY($1::text[]) AND status = 'OUT_FOR_DELIVERY' ` +
-          `AND ("tenantId" IS NULL OR "tenantId" <> ALL($2::text[]))`,
+          `AND "tenantId" <> ALL($2::text[])`,
         [ids, protectedIds],
       );
       await client.query(
         `UPDATE "Order" SET "routeRunId" = NULL, "routeRunStopId" = NULL ` +
           `WHERE id = ANY($1::text[]) AND status NOT IN ('DELIVERED','CANCELLED') ` +
-          `AND ("tenantId" IS NULL OR "tenantId" <> ALL($2::text[]))`,
+          `AND "tenantId" <> ALL($2::text[])`,
         [ids, protectedIds],
       );
       // Write 3, keyed by the SAME id array as write 2, which the drift check

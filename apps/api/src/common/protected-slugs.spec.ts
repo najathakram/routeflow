@@ -22,6 +22,15 @@ describe("loadProtectedSlugs", () => {
     expect(lib.loadProtectedSlugs({ PROTECTED_TENANT_SLUGS: "" }, REMOTE).size).toBe(0);
   });
 
+  it.each([",", " ", " , ,"])(
+    "a present value with no entries (%j) is refused, not read as none",
+    (v) => {
+      expect(() => lib.loadProtectedSlugs({ PROTECTED_TENANT_SLUGS: v }, REMOTE)).toThrow(
+        /has no entries/,
+      );
+    },
+  );
+
   it("unset on a target that is not provably local is refused", () => {
     expect(() => lib.loadProtectedSlugs({}, REMOTE)).toThrow(/not set and the database target/);
     expect(() => lib.loadProtectedSlugs({}, undefined)).toThrow(/not set/);

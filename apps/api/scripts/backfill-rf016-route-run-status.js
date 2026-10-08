@@ -38,7 +38,10 @@ async function main() {
     await pg.connect();
     ok("Connected");
     const prot = await protectedTenantIds(pg, slugs);
-    info(`protected-tenant guard: ${prot.length} protected tenant(s) excluded`);
+    info(
+      `protected-tenant guard: ${prot.length} protected tenant(s) excluded; RouteRuns with no tenant are ` +
+        "skipped too (fail closed)",
+    );
 
     // Find candidate runs: SCHEDULED or IN_PROGRESS only (NOT CANCELLED — that's
     // a terminal state and must not be auto-flipped). Every stop must be
