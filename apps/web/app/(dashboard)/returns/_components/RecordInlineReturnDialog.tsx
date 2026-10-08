@@ -83,9 +83,14 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "forbidden",
   "needsPaid",
   "notRefundable",
+  "paidWithCredit",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
-const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set(["needsPaid", "notRefundable"]);
+const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
+  "needsPaid",
+  "notRefundable",
+  "paidWithCredit",
+]);
 
 export interface RecordedInfo {
   resolution: InlineReturnResolution;
@@ -156,6 +161,7 @@ export function RecordInlineReturnDialog({
   // a refund POST already failed once: a later RETURN_ALREADY_RESOLVED means "check before handing over"
   const retriedRef = React.useRef(false);
   const pendingReportedRef = React.useRef(false);
+  const captureSentRef = React.useRef(false);
   const [crediting, setCrediting] = React.useState(false);
   const [requoting, setRequoting] = React.useState(false);
 
@@ -182,18 +188,19 @@ export function RecordInlineReturnDialog({
     setRequoting(false);
     retriedRef.current = false;
     pendingReportedRef.current = false;
+    captureSentRef.current = false;
     busyRef.current = false;
   }, [open, orderId]);
 
   const quoted = sectionState.quote as
     (InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>) | null;
-  const showChoice = allowRefund && !!quoted?.canRefund;
-  const walkIn = showChoice && !!quoted?.customerIsWalkIn;
-  const effResolution: InlineReturnResolution = !showChoice
-    ? "STORE_CREDIT"
-    : walkIn
-      ? "REFUND"
-      : resolution;
+  // F4: a sale paid with store credit goes back as store credit: show the refund as unavailable, not hidden.
+  const paidWithCredit =
+    allowRefund && !quoted?.canRefund && !!quoted?.paidWithStoreCredit && !quoted?.customerIsWalkIn;
+  const showChoice = allowRefund && (!!quoted?.canRefund || paidWithCredit);
+  const walkIn = showChoice && !!quoted?.canRefund && !!quoted?.customerIsWalkIn;
+  const effResolution: InlineReturnResolution =
+    !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
 
@@ -306,6 +313,9 @@ export function RecordInlineReturnDialog({
       if (saved) return doRefund(saved);
     }
     if (!returnKeyRef.current) returnKeyRef.current = mintReturnKey();
+    // SA-727: the replay fingerprint includes `resolution`, so once a capture is sent with this key the choice locks
+    // and a retry resends the identical body.
+    captureSentRef.current = true;
     captureMutation.mutate(
       {
         ...buildCaptureRequest({
@@ -347,6 +357,7 @@ export function RecordInlineReturnDialog({
           setRecordedReturn(recorded);
           if (recorded) {
             returnKeyRef.current = "";
+            captureSentRef.current = false;
             setOpenSeq((n) => n + 1);
           }
           setPhase("refused");
@@ -397,11 +408,18 @@ export function RecordInlineReturnDialog({
             <RefundChoice
               amount={money(quotedAmount)}
               walkIn={walkIn}
+              refundUnavailable={paidWithCredit}
               resolution={effResolution}
               onResolution={setResolution}
               tender={effTender}
               onTender={setTender}
-              locked={!!saved || refunding || crediting || captureMutation.isPending}
+              locked={
+                !!saved ||
+                refunding ||
+                crediting ||
+                captureMutation.isPending ||
+                captureSentRef.current
+              }
               error={refundError}
             />
           ) : null
@@ -568,6 +586,7 @@ export function RecordInlineReturnDialog({
 function RefundChoice({
   amount,
   walkIn,
+  refundUnavailable = false,
   resolution,
   onResolution,
   tender,
@@ -577,6 +596,7 @@ function RefundChoice({
 }: {
   amount: string;
   walkIn: boolean;
+  refundUnavailable?: boolean;
   resolution: InlineReturnResolution;
   onResolution: (r: InlineReturnResolution) => void;
   tender: InlineRefundTender;
@@ -605,12 +625,13 @@ function RefundChoice({
           type="radio"
           name="return-resolution"
           checked={refund}
-          disabled={locked}
+          disabled={locked || refundUnavailable}
           onChange={() => onResolution("REFUND")}
         />
         Refund {amount}
       </label>
       {walkIn && <p className="text-xs text-navy/70">{REFUND_COPY.walkIn}</p>}
+      {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
       {refund && (
         <>
           <Select

@@ -10,6 +10,7 @@ export type RefundErrorKind =
   | "needsPaid"
   | "refundedCash"
   | "notRefundable"
+  | "paidWithCredit"
   | "failed";
 
 /** Every kind except "failed" (retry) and "changed" (re-quote, fresh confirm) ends the refund: Close only. */
@@ -20,6 +21,7 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "refundedCash",
   "notRefundable",
+  "paidWithCredit",
 ]);
 
 export const REFUND_COPY = {
@@ -35,6 +37,8 @@ export const REFUND_COPY = {
     "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
   refundedCash: "This return was already refunded. Nothing more was refunded.",
   notRefundable: "There's nothing to refund on this return.",
+  /** F4: a sale paid (partly) with store credit goes back as store credit. */
+  paidWithCredit: "Paid with store credit, so it goes back as store credit",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;
@@ -53,6 +57,8 @@ export function refundErrorKind(err: unknown): RefundErrorKind {
     return "refundedCash";
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.RETURN_NOT_REFUNDABLE)
     return "notRefundable";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT)
+    return "paidWithCredit";
   return "failed";
 }
 
