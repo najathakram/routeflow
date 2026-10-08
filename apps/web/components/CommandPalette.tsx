@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -434,7 +435,7 @@ function useGroupLabel() {
 }
 
 export function CommandPalette({ open, onClose }: Props) {
-  const router = useRouter();
+  const router = useGuardedRouter(); // POS-7: a selection cannot leave the counter mid-sale
   const { user } = useAuth();
   const { t } = useI18n();
   const groupLabel = useGroupLabel();

@@ -1209,6 +1209,7 @@ export class ImportService {
 
     // Group by Invoice ID
     const groups: Record<string, any[]> = {};
+    const groupFirstRow = new Map<any[], number>();
     let rowIndex = 0;
     for (const row of rows) {
       rowIndex++;
@@ -1234,7 +1235,10 @@ export class ImportService {
         errors.push(`Row ${rowIndex}: missing invoice id`);
         continue;
       }
-      if (!groups[id]) groups[id] = [];
+      if (!groups[id]) {
+        groups[id] = [];
+        groupFirstRow.set(groups[id], rowIndex);
+      }
       groups[id].push(row);
     }
 
@@ -1251,11 +1255,24 @@ export class ImportService {
       ...groupEntries.filter(([, rows]) => !hasSourceNumber(rows)),
     ];
 
+    // The walk-in customer's name is reserved: an invoice naming it is skipped, never attached to it.
+    const walkInRow = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
+    const walkInName = walkInRow?.isWalkIn === true ? walkInRow.businessName : null;
+
     for (const [, invoiceRows] of orderedGroups) {
       const first = invoiceRows[0];
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
       if (!customerName) {
         skipped++;
+        continue;
+      }
+      if (walkInName && normalizeNameKey(customerName) === normalizeNameKey(walkInName)) {
+        skipped++;
+        errors.push(
+          `Row ${groupFirstRow.get(invoiceRows)} skipped: this name is reserved for walk-in sales.`,
+        );
         continue;
       }
 
@@ -1272,7 +1289,9 @@ export class ImportService {
 
       // Try to find existing customer
       let customer = await this.prisma.forTenant().customer.findFirst({
-        where: { businessName: { contains: customerName, mode: "insensitive" } },
+        where: excludeWalkIn({
+          businessName: { contains: customerName, mode: "insensitive" as const },
+        }),
       });
 
       // Auto-create customer if not found

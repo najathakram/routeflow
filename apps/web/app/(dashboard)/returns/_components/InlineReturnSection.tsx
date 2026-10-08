@@ -97,8 +97,14 @@ export interface InlineReturnSectionProps {
   onStateChange?: (state: InlineReturnSectionState) => void;
   /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
   renderLinesActions?: () => React.ReactNode;
+  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
+  hideBack?: boolean;
   /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
+  renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
+  quoteOverride?: InlineReturnQuoteResponse | null;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -118,6 +124,9 @@ export function InlineReturnSection({
   onStateChange,
   renderLinesActions,
   renderQuoteActions,
+  renderQuoteFooter,
+  hideBack,
+  quoteOverride,
   onQuoteRefused,
   hidden = false,
 }: InlineReturnSectionProps) {
@@ -132,6 +141,9 @@ export function InlineReturnSection({
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
+  React.useEffect(() => {
+    if (quoteOverride) setQuote(quoteOverride);
+  }, [quoteOverride]);
   // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
   const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
 
@@ -659,10 +671,13 @@ export function InlineReturnSection({
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
           />
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setStep("lines")}>
-              Back
-            </Button>
+          {renderQuoteFooter?.(quote)}
+          <div className="flex flex-wrap justify-end gap-2">
+            {!hideBack && (
+              <Button variant="ghost" onClick={() => setStep("lines")}>
+                Back
+              </Button>
+            )}
             {renderQuoteActions?.(quote)}
           </div>
         </div>

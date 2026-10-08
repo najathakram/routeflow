@@ -495,7 +495,7 @@ export function CreateOrderModal({
     if (!isOpen) return;
     reset({
       urgent: false,
-      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : "ROUTE",
+      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : undefined,
     });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");

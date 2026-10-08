@@ -112,6 +112,7 @@ export const LOCK_FAMILIES = [
   "mailbox",
   "policy-write",
   "counter-tender",
+  "fulfilment-settings",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -184,6 +185,10 @@ const POOL_MAX: Record<string, number | undefined> = {
   // recordPayment calls), one checkout per counter-sale call; same size as `billing` for the same
   // reason.
   "counter-tender": 4,
+  // `fulfilment-settings` (fulfilment toggle PR1, M2): the tenant-admin Settings PATCH and the Feature
+  // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
+  // request-path settings write: a deliberately small pool.
+  "fulfilment-settings": 2,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
