@@ -313,6 +313,13 @@ export const API_ERROR_CODES = {
    * tenant into a trial. 409; suspend or change the plan instead.
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /**
+   * 400 from POST /products, PATCH /products/:id, the bulk group-as-variants action and the variant split: the
+   * parent named for a product cannot be used. `reason`: NOT_FOUND (no such product in this tenant) | SELF |
+   * VARIANT_PARENT (the parent is itself a variant) | INACTIVE | HAS_VARIANTS (the product being moved has
+   * variants of its own). Nothing was written.
+   */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

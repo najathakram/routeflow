@@ -14,6 +14,11 @@ import {
  */
 export interface BuyerVisibilityContext {
   restrictedIds: ReadonlySet<string>;
+  /**
+   * B1211: when given, the parent-visibility relation filter also requires the parent to belong to this tenant, so a
+   * parent link that crosses tenants never makes a product visible (or hidden). Omitted = the filter is unchanged.
+   */
+  tenantId?: string;
 }
 export const NO_BUYER_RESTRICTIONS: BuyerVisibilityContext = { restrictedIds: new Set() };
 
@@ -36,7 +41,12 @@ export function buyerVisibleProductWhere(
     AND: [
       sellableProductWhere(),
       { portalVisible: true },
-      { OR: [{ parentProductId: null }, { parent: { portalVisible: true } }] },
+      {
+        OR: [
+          { parentProductId: null },
+          { parent: { portalVisible: true, ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}) } },
+        ],
+      },
       ...(ctx.restrictedIds.size > 0 ? [{ id: { notIn: [...ctx.restrictedIds] } }] : []),
       ...(extra ? [extra] : []),
     ],

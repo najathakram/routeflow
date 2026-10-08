@@ -79,7 +79,13 @@ import {
   propagateFamilyPrice,
   readFamilyPriceMode,
 } from "./family-price";
-import { assertValidParent } from "./product-parent";
+import {
+  assertValidParent,
+  parentInvalid,
+  PRODUCT_PARENT_REASONS,
+  tenantSafeParent,
+  tenantSafeParentView,
+} from "./product-parent";
 import {
   activeVariantIds,
   assertParentActiveForReactivation,
@@ -351,14 +357,17 @@ export class ProductsService {
     // display names for line items. The parent row is small (no nested
     // relations) so this is cheap. variants{} is still gated behind
     // includeVariants since it materially expands the payload.
+    // B1211 (read side): `tenantId` is selected only to drop a parent / variant from another tenant, and
+    // is removed again below, so the response keeps its shape.
+    const readTenantId = this.prisma.getTenantId();
     const includeRelations = {
-      parent: { select: { id: true, name: true, portalVisible: true } },
+      parent: { select: { id: true, name: true, portalVisible: true, tenantId: true } },
       // #2717 M1 (SA-572b Q5): additive barcodes[] on the list too (rows, else synthesized below).
       barcodes: { orderBy: { level: "asc" as const } },
       ...(query.includeVariants
         ? {
             variants: {
-              where: { isActive: true },
+              where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
               orderBy: { variantName: "asc" as const },
             },
           }
@@ -388,7 +397,12 @@ export class ProductsService {
           pBarcodeRows.length > 0
             ? barcodeRowsToView(pBarcodeRows as Parameters<typeof barcodeRowsToView>[0])
             : synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: p.unitsPerBox });
-        return { ...p, thumbnailUrl, barcodes };
+        return {
+          ...p,
+          parent: tenantSafeParentView(p.parent, readTenantId),
+          thumbnailUrl,
+          barcodes,
+        };
       }),
     );
 
@@ -429,10 +443,16 @@ export class ProductsService {
   }
 
   async findOne(id: string) {
+    // B1211 (read side): a variant / parent link is only followed inside THIS tenant, so a link that
+    // predates the write-time parent check can never hand back another tenant's row.
+    const readTenantId = this.prisma.getTenantId();
     const product = await this.prisma.forTenant().product.findUnique({
       where: { id },
       include: {
-        variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
+        variants: {
+          ...(readTenantId ? { where: { tenantId: readTenantId } } : {}),
+          orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }],
+        },
         parent: true,
         // Phase 4: the assigned regulated ("separately handled") section +
         // subcategory, shown on the product detail. Null for standard products.
@@ -496,7 +516,15 @@ export class ProductsService {
         origin: "LEGACY" as const,
       };
     });
-    return { ...product, imageKeys, imageUrls, stockAlertCount, barcodes, images };
+    return {
+      ...product,
+      parent: tenantSafeParent(product.parent, readTenantId),
+      imageKeys,
+      imageUrls,
+      stockAlertCount,
+      barcodes,
+      images,
+    };
   }
 
   async uploadImage(
@@ -586,14 +614,25 @@ export class ProductsService {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
+    // B1211 (read side): only this tenant's variants and parent are followed (see findOne).
+    const readTenantId = this.prisma.getTenantId();
     const hit = await findScanMatches(
       this.prisma.forTenant(),
       candidates,
       {},
-      { variants: { where: { isActive: true } }, parent: true },
+      {
+        variants: {
+          where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
+        },
+        parent: true,
+      },
     );
     if (!hit) throw new NotFoundException("Product not found");
-    return { ...hit.product, scanMatch: hit.scanMatch };
+    return {
+      ...hit.product,
+      parent: tenantSafeParent(hit.product.parent, readTenantId),
+      scanMatch: hit.scanMatch,
+    };
   }
 
   /**
@@ -730,7 +769,7 @@ export class ProductsService {
         })
       : null;
     if (dto.parentProductId && !parent) {
-      throw new BadRequestException("Parent product not found");
+      throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
     }
     // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
     // omits the section entirely, a variant inherits the parent family's pair

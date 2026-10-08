@@ -41,6 +41,8 @@
 //   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
 //                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
+//   PRODUCT_PARENT_INVALID — `body.code` of the 400 when the parent named for a product cannot be used; `body.reason` is
+//                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -481,6 +483,8 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

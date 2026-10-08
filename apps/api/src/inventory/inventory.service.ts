@@ -9,6 +9,11 @@ import {
   Optional,
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import {
+  assertParentUsable,
+  parentInvalid,
+  PRODUCT_PARENT_REASONS,
+} from "../products/product-parent";
 import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
@@ -534,12 +539,13 @@ export class InventoryService {
             await lockFamilyRow(tx, lockTenantId, dto.parentProductId);
           }
           const parent = await tx.product.findUnique({ where: { id: dto.parentProductId } });
-          if (!parent) throw new NotFoundException("Product not found");
-          // One level only: a variant of a variant is impossible in this model
-          // (mirrors products.service.ts bulkAssignParent's same rejection).
-          if (parent.parentProductId != null) {
-            throw new BadRequestException("A variant cannot itself be split");
+          if (!parent) {
+            throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
           }
+          // B1211: the same parent rule create() / update() / bulkAssignParent() apply, on the row just read under the
+          // lock above (tenant-scoped by the transaction): an inactive product or a variant (one level only: a variant
+          // of a variant is impossible in this model, so a variant cannot itself be split) is not a usable parent.
+          assertParentUsable(parent);
 
           // Resolve each assignment's qty. Boxes/pieces win over a raw qty —
           // recomputed via normalizeBoxesPieces against the PARENT's
