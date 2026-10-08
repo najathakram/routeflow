@@ -55,6 +55,8 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
     "The order was saved, but the credit notes weren't applied. Apply them on the order.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
+  [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
+    "A product family can't be priced or promoted. Use its variants instead.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are

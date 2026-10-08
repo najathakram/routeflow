@@ -16,6 +16,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useProducts, type ApiProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import {
   ruleCanZeroPrice,
   scanPromotionZeroPrice,
@@ -405,7 +406,13 @@ function PromotionFormModal({
     try {
       await onSubmit(input);
     } catch (e: any) {
-      setError(e?.response?.data?.message ?? e?.message ?? "Failed to save promotion.");
+      // A coded refusal (e.g. a family cannot be promoted) is fixed copy, never the server text.
+      setError(
+        codedToastCopy(e) ??
+          e?.response?.data?.message ??
+          e?.message ??
+          "Failed to save promotion.",
+      );
     }
   };
 
