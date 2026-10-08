@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { AuditInterceptor } from "../audit/audit.interceptor";
 
 /**
  * Contract for `apps/api/scripts/report-operator-account-blast-radius.mjs` and its pure layer
@@ -64,6 +65,16 @@ function cap(httpMethod: string): string {
 }
 
 describe("closed handler list (pinned against the controller sources)", () => {
+  it.each(Object.entries(BASE))(
+    "%s: BASE matches the first @Controller(...) argument",
+    (file, base) => {
+      const source = fs.readFileSync(path.join(SRC_DIR, file), "utf8");
+      const m = source.match(/@Controller\(\s*(\[\s*)?"([^"]+)"/);
+      expect(m).not.toBeNull();
+      expect(`/${m![2]}`).toBe(base);
+    },
+  );
+
   it("has unique ids and unique method+route pairs", () => {
     expect(new Set(handlers.map((x) => x.id)).size).toBe(handlers.length);
     expect(new Set(handlers.map((x) => `${x.httpMethod} ${x.route}`)).size).toBe(handlers.length);
@@ -307,5 +318,75 @@ describe("report-operator-account-blast-radius.mjs contract", () => {
     expect(flagged).toBeLessThan(code.indexOf("closed handlers:"));
     expect(flagged).toBeLessThan(perArea);
     expect(code).toContain("untraceable (reads are not audited)");
+  });
+
+  it("prints a positive control: total audit rows, admin/operator matches and tenants with an operator", () => {
+    const code = codeLines().join("\n");
+    expect(code).toContain('"audit rows in window"');
+    expect(code).toContain("TENANT_ADMIN rows matching a closed handler");
+    expect(code).toContain("tenants with an active operator");
+    expect(code).toContain("positiveControl");
+    // Counts only: the control query selects aggregates, never a personal column.
+    expect(code).not.toMatch(/SELECT[^;]*\b(username|email)\b/is);
+    expect(code.indexOf("Positive control")).toBeLessThan(code.indexOf("closed handlers:"));
+  });
+});
+
+describe("the real AuditInterceptor output is what the classifier expects", () => {
+  async function audited(method: string, url: string, userId = "u-1") {
+    const logged: Array<Record<string, unknown>> = [];
+    const interceptor = new AuditInterceptor({
+      log: async (dto: Record<string, unknown>) => {
+        logged.push(dto);
+      },
+    } as never);
+    const req = { method, url, ip: "127.0.0.1", user: { sub: userId, tenantId: "t-1" } };
+    const context = { switchToHttp: () => ({ getRequest: () => req }) };
+    interceptor.intercept(context as never, { handle: () => ({}) } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(logged).toHaveLength(1);
+    return logged[0] as {
+      action: string;
+      entityType: string;
+      entityId: string | null;
+      userId: string;
+    };
+  }
+
+  it("PATCH /api/v1/users/u-2?q=1 by u-1 classifies as users.update (non-self); by u-2 it does not", async () => {
+    const other = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-1");
+    expect(other).toMatchObject({
+      action: "PATCH /users/u-2",
+      entityType: "users",
+      entityId: "u-2",
+    });
+    const self = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-2");
+    const got = evalLib<Array<string | null>>(`
+      console.log(JSON.stringify([
+        lib.classifyAction(${JSON.stringify(other.action)}, { nonSelf: ${other.entityId !== other.userId} }),
+        lib.classifyAction(${JSON.stringify(self.action)}, { nonSelf: ${self.entityId !== self.userId} }),
+      ]));
+    `);
+    expect(got).toEqual(["users.update", null]);
+  });
+
+  it("classifies what the interceptor writes for other prefixed and aliased closed routes", async () => {
+    const rows = await Promise.all([
+      audited("DELETE", "/api/v1/customers/all?x=1"),
+      audited("POST", "/api/v1/tenant/settings/email/test"),
+      audited("PUT", "/api/v1/import/numbering/INVOICE"),
+      audited("PATCH", "/api/v1/users/u-9/status"),
+    ]);
+    const got = evalLib<Array<string | null>>(`
+      const actions = ${JSON.stringify(rows.map((r) => r.action))};
+      console.log(JSON.stringify(actions.map((a) => lib.classifyAction(a))));
+    `);
+    expect(got).toEqual([
+      "customers.deleteAll",
+      "settings.testEmailSettings",
+      "numbering.updateSettings",
+      "users.changeStatus",
+    ]);
   });
 });

@@ -113,7 +113,7 @@ async function main() {
   // Context the audit trail cannot give: active OPERATOR users carrying the legacy `isAdmin` flag
   // (the JWT strategy does not propagate it, so a role-only admin gate treats them as operators).
   // Counts per tenant only.
-  const flagged = await q(
+  const operatorTenants = await q(
     `SELECT t.slug AS slug,
             COUNT(*)::int AS operators,
             (COUNT(*) FILTER (WHERE u."isAdmin"))::int AS "flaggedAdmins"
@@ -121,8 +121,23 @@ async function main() {
        JOIN "Tenant" t ON t.id = u."tenantId"
       WHERE u.role = 'OPERATOR' AND u.status = 'ACTIVE' AND u."deletedAt" IS NULL
       GROUP BY t.slug
-     HAVING COUNT(*) FILTER (WHERE u."isAdmin") > 0
       ORDER BY t.slug ASC`,
+  );
+  const flagged = operatorTenants.filter((r) => r.flaggedAdmins > 0);
+
+  // Positive control (counts only): how much audit trail exists in the window at all, and how
+  // many rows match the closed-handler patterns for admins and for operators. Without this, "0
+  // operator calls" cannot be told apart from an empty or unwritten audit trail.
+  const [control] = await q(
+    `SELECT COUNT(*)::int AS "auditRows",
+            (COUNT(*) FILTER (WHERE a.action ~ $2 AND u.role = 'TENANT_ADMIN'
+                                AND a."impersonatedBy" IS NULL))::int AS "adminMatched",
+            (COUNT(*) FILTER (WHERE a.action ~ $2 AND u.role = 'OPERATOR'
+                                AND a."impersonatedBy" IS NULL))::int AS "operatorMatchedRaw"
+       FROM "AuditLog" a
+       LEFT JOIN "User" u ON u.id = a."userId"
+      WHERE a."createdAt" >= now() - make_interval(days => $1::int)`,
+    [days, buildActionRegex(traceable)],
   );
 
   const tenants = aggregateByTenant(rows);
@@ -140,6 +155,10 @@ async function main() {
           tenantsAffected: tenants.length,
           operatorCalls: grandTotal,
           totalsByHandler: totals,
+          positiveControl: {
+            ...control,
+            tenantsWithActiveOperators: operatorTenants.length,
+          },
           operatorsWithLegacyAdminFlag: flagged,
           tenants,
         },
@@ -152,6 +171,15 @@ async function main() {
 
   console.log(`\n=== OPERATOR ACCOUNT-ADMIN BLAST RADIUS — last ${days} days — ${host} ===`);
   console.log("    session is READ ONLY; counts only, no names / emails / ids\n");
+  console.log("Positive control (is the audit trail populated at all?):");
+  console.table([
+    {
+      "audit rows in window": control.auditRows,
+      "TENANT_ADMIN rows matching a closed handler": control.adminMatched,
+      "OPERATOR rows matching (before self-edit filter)": control.operatorMatchedRaw,
+      "tenants with an active operator": operatorTenants.length,
+    },
+  ]);
   console.log(
     `${flagged.length} tenant(s) have active OPERATOR users carrying the legacy isAdmin flag ` +
       "(a role-only admin gate does not honour it):",
