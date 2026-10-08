@@ -240,6 +240,22 @@ describe("CounterTodaysSales", () => {
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
   });
 
+  it("while a reprint is open the page prints only the receipt; closing it undoes that", async () => {
+    await open();
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(true);
+    const dialog = screen.getByRole("dialog");
+    // the modal's own title row is print-hidden; the receipt body is not
+    expect(dialog.className).toContain("print:[&>div:first-child]:hidden");
+    expect(root.closest(".print\\:hidden")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
+    await screen.findByTestId("today-row-o1");
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(false);
+    expect(screen.getByRole("dialog").className).not.toContain("print:[&>div:first-child]:hidden");
+  });
+
   it("a reprint credits the reprinter, never a Cashier line", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));

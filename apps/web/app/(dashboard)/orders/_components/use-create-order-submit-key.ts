@@ -116,7 +116,7 @@ export function idempotencyConflictOrderId(err: unknown): string | null {
 
 /** B1201: the create saved the order but its credit notes were not applied. Shown verbatim. */
 export const CREDITS_PENDING_COPY =
-  "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+  "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";
 
 /**
  * B1201: 503 ORDER_SAVED_CREDITS_PENDING carries the saved order's id. The order EXISTS, so the modal

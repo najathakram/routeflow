@@ -118,4 +118,8 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   expect(pageRule).toBe(true);
   await expect(page.getByRole("button", { name: "Print" })).toBeHidden();
   await expect(root).toBeVisible();
+  // only the receipt prints: the sale screen behind the modal (scan field, cart) and the title are hidden
+  await expect(page.getByLabel("Scan or search items")).toBeHidden();
+  await expect(page.getByTestId("counter-sale-screen")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Reprint receipt" })).toBeHidden();
 });
