@@ -76,30 +76,66 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
     expect(shared.length).toBe(server.length);
   });
 
-  it("InlineReturnQuoteResponse adds exactly the productBreakdown key quote()'s own return-type annotation adds", () => {
-    // quote()'s declared return type: `Promise<QuoteBreakdown & { productBreakdown:
-    // Record<string, QuoteBreakdown> }>` — pull the intersected object literal's own field
-    // names out (not `QuoteBreakdown`'s, which the previous test already pins).
+  /** The top-level field names of the `{ ... }` object literal in quote()'s declared return type, after `QuoteBreakdown &`. */
+  const engineExtraFields = (): string[] => {
     const sigMatch = quoteServiceSource.match(
-      /async quote\([^)]*\):\s*Promise<QuoteBreakdown\s*&\s*\{([\s\S]*?)\}>/,
+      /async quote\([^)]*\):\s*Promise<\s*QuoteBreakdown\s*&\s*\{([\s\S]*?)\}\s*>/,
     );
     expect(sigMatch).not.toBeNull();
-    const extraFields: string[] = [];
+    const out: string[] = [];
     for (const line of (sigMatch as RegExpMatchArray)[1].split("\n")) {
       const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\??:\s*/);
-      if (m) extraFields.push(m[1]);
+      if (m) out.push(m[1]);
     }
-    expect(extraFields).toEqual(["productBreakdown"]);
+    return out;
+  };
+
+  it("InlineReturnQuoteResponse = QuoteBreakdown + productBreakdown + InlineReturnRefundEligibility, exactly what quote()'s own return-type annotation adds", () => {
+    // quote()'s declared return type: `Promise<QuoteBreakdown & { productBreakdown, canRefund, paidInFull, paidMethods,
+    // customerIsWalkIn }>`: pull the intersected object literal's own field names out (not `QuoteBreakdown`'s, which the
+    // previous test already pins).
+    const engine = engineExtraFields();
 
     const responseSource = sharedTypesSource.match(
-      /export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown \{([\s\S]*?)\n\}/,
+      /export interface InlineReturnQuoteResponse\s+extends InlineReturnQuoteBreakdown,\s*InlineReturnRefundEligibility\s*\{([\s\S]*?)\n\}/,
     );
     expect(responseSource).not.toBeNull();
-    const sharedExtra: string[] = [];
-    for (const line of (responseSource as RegExpMatchArray)[1].split("\n")) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\??:\s*/);
-      if (m) sharedExtra.push(m[1]);
-    }
-    expect(sharedExtra).toEqual(["productBreakdown"]);
+    const own = interfaceFieldNames(
+      `export interface X {${(responseSource as RegExpMatchArray)[1]}\n}`,
+      "X",
+    );
+    expect(own).toEqual(["productBreakdown"]);
+
+    const eligibility = interfaceFieldNames(sharedTypesSource, "InlineReturnRefundEligibility");
+    expect(eligibility).toEqual(["canRefund", "paidInFull", "paidMethods", "customerIsWalkIn"]);
+    // the engine adds exactly the response's own key plus the eligibility fields: a rename, drop or add on either side fails here
+    expect(new Set(engine)).toEqual(new Set([...own, ...eligibility]));
+    expect(engine.length).toBe(own.length + eligibility.length);
+  });
+
+  it("the engine types the four eligibility fields as non-optional (canRefund is ALWAYS set explicitly)", () => {
+    const sigMatch = quoteServiceSource.match(
+      /async quote\([^)]*\):\s*Promise<\s*QuoteBreakdown\s*&\s*\{([\s\S]*?)\}\s*>/,
+    );
+    const body = (sigMatch as RegExpMatchArray)[1];
+    expect(body).toMatch(/canRefund: boolean;/);
+    expect(body).toMatch(/paidInFull: boolean;/);
+    expect(body).toMatch(/paidMethods: string\[\];/);
+    expect(body).toMatch(/customerIsWalkIn: boolean;/);
+  });
+});
+
+describe("SA-727: the refund tender list the API validates equals the shared one", () => {
+  it("INLINE_REFUND_TENDER_VALUES (packages/types) = REFUND_TENDERS (apps/api)", () => {
+    const shared = sharedTypesSource.match(
+      /INLINE_REFUND_TENDER_VALUES\s*=\s*\[([^\]]*)\]\s*as const/,
+    );
+    expect(shared).not.toBeNull();
+    const sharedList = (shared as RegExpMatchArray)[1]
+      .match(/"([A-Z_]+)"/g)
+      ?.map((v) => v.slice(1, -1));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { REFUND_TENDERS } = require("./inline-return-refund");
+    expect(sharedList).toEqual([...REFUND_TENDERS]);
   });
 });
