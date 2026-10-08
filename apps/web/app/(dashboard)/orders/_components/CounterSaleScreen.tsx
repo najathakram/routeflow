@@ -37,6 +37,7 @@ import {
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
   cartTotals,
+  amountDue,
   changeDue,
   clearHeldAttempt,
   counterSaleErrorCopy,
@@ -182,6 +183,9 @@ export function CounterSaleScreen() {
       ),
     [],
   );
+  // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
+  const clearUnderpaidError = () =>
+    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
   React.useEffect(() => {
@@ -256,6 +260,14 @@ export function CounterSaleScreen() {
   const [scanCue, setScanCue] = React.useState<string | null>(null);
   const scanCueArmedRef = React.useRef(false);
   const prevLinesRef = React.useRef<SaleLine[]>(lines);
+  const scanCueTimerRef = React.useRef<number | null>(null);
+  // The cue's timer lives in a ref: a later line change must not cancel it (the cue would stick with stale text).
+  React.useEffect(
+    () => () => {
+      if (scanCueTimerRef.current !== null) window.clearTimeout(scanCueTimerRef.current);
+    },
+    [],
+  );
   React.useEffect(() => {
     const before = prevLinesRef.current;
     prevLinesRef.current = lines;
@@ -267,8 +279,11 @@ export function CounterSaleScreen() {
     });
     if (!grown) return;
     setScanCue(`${grown.name} · now ${lineQtyLabel(grown).replace(/^× /, "")}`);
-    const t = window.setTimeout(() => setScanCue(null), 2500);
-    return () => window.clearTimeout(t);
+    if (scanCueTimerRef.current !== null) window.clearTimeout(scanCueTimerRef.current);
+    scanCueTimerRef.current = window.setTimeout(() => {
+      scanCueTimerRef.current = null;
+      setScanCue(null);
+    }, 2500);
   }, [lines]);
 
   // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
@@ -969,7 +984,7 @@ export function CounterSaleScreen() {
                       className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
                       onClick={(e) => {
                         setTendered(String(q.amount));
-                        setError("");
+                        clearUnderpaidError();
                         refocusAfterPointer(e);
                       }}
                     >
@@ -987,7 +1002,7 @@ export function CounterSaleScreen() {
                     disabled={locked}
                     onChange={(e) => {
                       setTendered(e.target.value);
-                      setError("");
+                      clearUnderpaidError();
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
@@ -1108,9 +1123,9 @@ export function CounterSaleScreen() {
             </div>
 
             {method === "CASH" ? (
-              <p className="text-3xl font-bold" data-testid="change-due">
-                {roundMoney(tenderedNum) < roundMoney(totals.total)
-                  ? `Amount due ${money(roundMoney(totals.total - tenderedNum))}`
+              <p className="text-3xl font-bold" data-testid="change-due" role="status">
+                {amountDue(totals.total, tenderedNum) > 0
+                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
                   : `Change ${money(changeDue(totals.total, tenderedNum))}`}
               </p>
             ) : null}

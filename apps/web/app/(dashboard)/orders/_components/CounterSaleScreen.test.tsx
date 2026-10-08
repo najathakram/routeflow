@@ -196,6 +196,35 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("running-total")).toHaveTextContent("$10.00");
   });
 
+  it("the repeat-scan cue still clears 2.5 s after it was SET, even when the line changes meanwhile", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("counter-scan-cue")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Add one Cola" })); // a line change inside the window
+    await waitFor(() => expect(screen.queryByTestId("counter-scan-cue")).toBeNull(), {
+      timeout: 4000,
+    });
+  }, 10000);
+
+  it("editing the tender keeps a server error on screen; only the underpaid copy clears (review nit)", async () => {
+    mutateAsync.mockRejectedValue({ response: { status: 409, data: { message: "RAW" } } });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed/);
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "$50" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed/);
+  });
+
+  it("the amount-due / change line is announced politely (review nit)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByTestId("change-due")).toHaveAttribute("role", "status");
+  });
+
   it("Complete & show receipt posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
