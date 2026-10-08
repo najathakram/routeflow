@@ -756,6 +756,60 @@ describe("ProductsService", () => {
         );
       });
 
+      const lockingTx = (exec: jest.Mock) =>
+        prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+          fn({
+            ...prisma.forTenant(),
+            $executeRaw: exec,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+
+      it("lock order for a pack edit: tenant units (shared) -> THIS product's units lock -> fresh pack read -> levels read -> write", async () => {
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await service.update("prod-1", { unitsPerBox: 12 } as any);
+        const [s0, ...v0] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
+        const [s1, ...v1] = exec.mock.calls[1] as [TemplateStringsArray, ...string[]];
+        expect(s0.join("?")).toContain("pg_advisory_xact_lock_shared(");
+        expect(v0).toEqual(["tenant-units", "test-tenant"]);
+        // The SAME key ProductUnitsService.locked takes: a level write and a pack edit of one product serialize.
+        expect(s1.join("?")).toContain("pg_advisory_xact_lock(hashtext('product-units')");
+        expect(s1.join("?")).not.toContain("_shared");
+        expect(v1).toEqual(["prod-1"]);
+        const at = (c: number) => exec.mock.invocationCallOrder[c];
+        const freshRead = prisma.product.findUnique.mock.invocationCallOrder[1];
+        expect(at(0)).toBeLessThan(at(1));
+        expect(at(1)).toBeLessThan(freshRead);
+        expect(freshRead).toBeLessThan(prisma.productUnit.findMany.mock.invocationCallOrder[0]);
+        expect(prisma.productUnit.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.product.update.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("a stale echo of the pack word is judged against the row UNDER THE LOCK: Case echoed after a rename to Crate, with a Case level added meanwhile, is a 409", async () => {
+        // existing (read before the tx) says Case; by the time the locks are held the rename has made it Crate.
+        prisma.product.findUnique
+          .mockResolvedValueOnce({ ...MOCK_PRODUCT, unit: "Case", unitsPerBox: 24 })
+          .mockResolvedValueOnce({ unit: "Crate", unitsPerBox: 24, trackedCategoryId: null });
+        prisma.productUnit.findMany.mockResolvedValue([{ label: "Case", factorToBase: 12 }]);
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await expect(service.update("prod-1", { unit: "Case" } as any)).rejects.toThrow(
+          ConflictException,
+        );
+        expect(exec).toHaveBeenCalledTimes(2);
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+
+      it("any dto.unit / dto.unitsPerBox takes the locks, even when it echoes the current pack", async () => {
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await service.update("prod-1", { unit: "Box", unitsPerBox: 24 } as any);
+        expect(exec).toHaveBeenCalledTimes(2);
+        expect(prisma.product.update).toHaveBeenCalled();
+      });
+
       it("an edit that leaves the pack alone takes no units lock", async () => {
         const exec = jest.fn().mockResolvedValue(0);
         prisma.tenantTransaction.mockImplementationOnce((fn: any) =>

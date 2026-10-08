@@ -47,7 +47,7 @@ import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
 import { buildProductListWhere } from "./product-list-where";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
-import { lockTenantUnits } from "../units/tenant-units-lock";
+import { lockProductPack } from "../units/tenant-units-lock";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -1019,14 +1019,6 @@ export class ProductsService {
       (field) => dto[field] !== undefined && (dto[field] ?? null) !== (existing[field] ?? null),
     );
     const sectionChanged = (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null);
-    // units_v1: a pack edit (name, size, or moving into a regulated section) must not
-    // invalidate the unit levels already defined on this product.
-    const nextUnit = dto.unit !== undefined ? dto.unit : existing.unit;
-    const nextUnitsPerBox = dto.unitsPerBox !== undefined ? dto.unitsPerBox : existing.unitsPerBox;
-    const packTouched =
-      nextUnit !== existing.unit ||
-      (nextUnitsPerBox ?? null) !== (existing.unitsPerBox ?? null) ||
-      (sectionChanged && effectiveCategoryId != null);
     // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
     // and validating it would 400 on "requires a regulated type" before the
     // auto-clear below ever runs.
@@ -1140,18 +1132,40 @@ export class ProductsService {
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-      // units_v1: a pack edit must not invalidate the levels on this product. FIRST in the tx, before
-      // any other lock: a unit rename holds this lock EXCLUSIVE, so the levels read below are the ones
-      // the rename left (units/tenant-units-lock.ts).
-      if (packTouched) {
-        await lockTenantUnits(tx, tenantId, "shared");
-        assertPackKeepsLevelsValid(
-          await tx.productUnit.findMany({
-            where: { productId: id },
-            select: { label: true, factorToBase: true },
-          }),
-          { unit: nextUnit, unitsPerBox: nextUnitsPerBox, regulated: effectiveCategoryId != null },
-        );
+      // units_v1: a pack edit (unit word, size or regulated section) must not invalidate the levels on
+      // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
+      // exclusive) and THIS product's lock (the one every level write takes). Whether the pack really
+      // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`: a stale
+      // echo of the old pack word would otherwise slip through (or write it back over a rename).
+      if (
+        dto.unit !== undefined ||
+        dto.unitsPerBox !== undefined ||
+        dto.trackedCategoryId !== undefined
+      ) {
+        await lockProductPack(tx, tenantId, id);
+        const locked = await tx.product.findUnique({
+          where: { id },
+          select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
+        });
+        if (!locked) throw new NotFoundException("Product not found");
+        const nextUnit = dto.unit !== undefined ? dto.unit : locked.unit;
+        const nextUnitsPerBox =
+          dto.unitsPerBox !== undefined ? dto.unitsPerBox : locked.unitsPerBox;
+        const nextCategoryId =
+          dto.trackedCategoryId !== undefined ? dto.trackedCategoryId : locked.trackedCategoryId;
+        const packTouched =
+          nextUnit !== locked.unit ||
+          (nextUnitsPerBox ?? null) !== (locked.unitsPerBox ?? null) ||
+          (nextCategoryId != null && nextCategoryId !== (locked.trackedCategoryId ?? null));
+        if (packTouched) {
+          assertPackKeepsLevelsValid(
+            await tx.productUnit.findMany({
+              where: { productId: id },
+              select: { label: true, factorToBase: true },
+            }),
+            { unit: nextUnit, unitsPerBox: nextUnitsPerBox, regulated: nextCategoryId != null },
+          );
+        }
       }
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.

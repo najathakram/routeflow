@@ -7,7 +7,7 @@ import {
 import { PIECE_LABEL } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { isPieceSynonym, unitNameKey } from "../units/piece-words";
-import { lockTenantUnits } from "../units/tenant-units-lock";
+import { lockProductPack } from "../units/tenant-units-lock";
 import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
@@ -152,9 +152,8 @@ export class ProductUnitsService {
     }
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
-        // A unit rename holds this EXCLUSIVE; level writes share it (tenant-units-lock.ts: taken first).
-        await lockTenantUnits(tx, tenantId, "shared");
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+        // Tenant units lock (shared; a rename holds it exclusive), then this product's lock.
+        await lockProductPack(tx, tenantId, productId);
         return fn(tx);
       });
     } catch (e) {
