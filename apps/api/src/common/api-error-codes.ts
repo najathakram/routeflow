@@ -291,6 +291,28 @@ export const API_ERROR_CODES = {
   PICKUP_PAYMENT_REQUIRED: "PICKUP_PAYMENT_REQUIRED",
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
+  /**
+   * Manual invoices due (platform-admin /rf-invoices). 409s: ALREADY_PAID / IS_VOID / NOT_PAID carry the
+   * current `row`; NOTHING_TO_ISSUE, INVOICING_OFF (RF_INVOICING_MODE=off), NOT_MANUAL and NO_PRICE come from
+   * POST tenants/:id/rf-invoices/issue. 400s: a missing or card-like payment reference, and a `paidAt` that
+   * is more than 60 days back or in the future. Prefixed because a bare VOIDED / NO_PRICE is also data elsewhere.
+   */
+  RF_INVOICE_ALREADY_PAID: "RF_INVOICE_ALREADY_PAID",
+  RF_INVOICE_IS_VOID: "RF_INVOICE_IS_VOID",
+  RF_INVOICE_NOT_PAID: "RF_INVOICE_NOT_PAID",
+  RF_INVOICE_NOTHING_TO_ISSUE: "RF_INVOICE_NOTHING_TO_ISSUE",
+  RF_INVOICING_OFF: "RF_INVOICING_OFF",
+  RF_INVOICE_NOT_MANUAL: "RF_INVOICE_NOT_MANUAL",
+  RF_INVOICE_NO_PRICE: "RF_INVOICE_NO_PRICE",
+  RF_INVOICE_REFERENCE_REQUIRED: "RF_INVOICE_REFERENCE_REQUIRED",
+  RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD: "RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD",
+  RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
+  RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
+  /**
+   * An ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH): that would turn a paying
+   * tenant into a trial. 409; suspend or change the plan instead.
+   */
+  TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

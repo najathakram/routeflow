@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   ArrowLeft,
   ShoppingCart,
@@ -16,6 +17,11 @@ import {
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import {
+  BUYER_ORDER_CONFLICT_COPY,
+  BUYER_ORDER_CONFLICT_NO_ID_COPY,
+  buyerOrderConflict,
+} from "@/lib/buyer-order-conflict";
 import {
   useBuyerProducts,
   useBuyerCreateOrder,
@@ -59,6 +65,8 @@ export default function BuyerCartPage() {
     null,
   );
   const [orderError, setOrderError] = React.useState<string | null>(null);
+  // An idempotency refusal means the order already exists: fixed copy, linked when its id is known.
+  const [conflict, setConflict] = React.useState<{ orderId?: string } | null>(null);
 
   // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
   // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
@@ -69,7 +77,11 @@ export default function BuyerCartPage() {
     pickedMethod && choice.methods.includes(pickedMethod) ? pickedMethod : choice.defaultMethod;
 
   // Whether we'll merge into the existing order
-  const willMerge = !forceNew && activeOrder != null;
+  // The server folds a buyer cart only into an order on the SAME fulfil path, so with a path being
+  // sent a differing active order is not a merge target. No path sent => today's rule.
+  const pathMatches = !fulfillPath || activeOrder?.fulfillPath === fulfillPath;
+  const mergeable = activeOrder != null && pathMatches;
+  const willMerge = !forceNew && mergeable;
 
   // Resolve prices for exactly the cart's products. This MUST be an id filter:
   // a plain page of the catalog silently omits any product outside it, and the
@@ -180,6 +192,7 @@ export default function BuyerCartPage() {
 
   const handlePlaceOrder = async () => {
     setOrderError(null);
+    setConflict(null);
     try {
       const result = await createOrder.mutateAsync({
         items: cart.items.map((i) => ({
@@ -206,6 +219,11 @@ export default function BuyerCartPage() {
       }
     } catch (err: any) {
       const data = err?.response?.data;
+      const existing = buyerOrderConflict(err);
+      if (existing) {
+        setConflict(existing);
+        return;
+      }
       // A regulated line the buyer isn't licensed for (e.g. a stale cart item whose
       // license lapsed) — point them at the Licenses page instead of a generic retry.
       if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
@@ -329,7 +347,7 @@ export default function BuyerCartPage() {
         </div>
       )}
 
-      {forceNew && activeOrder && (
+      {forceNew && mergeable && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
           <p className="text-sm text-navy/70">A new order will be created.</p>
           <button
@@ -653,6 +671,21 @@ export default function BuyerCartPage() {
               {willMerge ? "Add to existing order" : "Place Order"}
             </Button>
           </div>
+
+          {conflict && (
+            <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
+              {conflict.orderId ? (
+                <Link
+                  href={`/buyer/portal/${sellerSlug}/orders/${conflict.orderId}`}
+                  className="underline"
+                >
+                  {BUYER_ORDER_CONFLICT_COPY}
+                </Link>
+              ) : (
+                BUYER_ORDER_CONFLICT_NO_ID_COPY
+              )}
+            </div>
+          )}
 
           {orderError && (
             <div role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">

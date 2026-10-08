@@ -66,6 +66,15 @@ features.ts`) to offer a Stripe-price-or-free-grant choice (no silent default �
   `DeleteTenantDialog` (type-the-slug, both sites; Delete stays visible and enabled; the page's refusal
   is fixed copy shown inside the dialog). Titles carry name AND slug; `TENANT_ACTION_COPY` holds the fixed
   failure copy (no raw server strings); Extend Trial validates 1–365 days and warns when it shortens.
+  **Back-office P2 (2026-10-07):** an ACTIVE tenant cannot be put on a trial: server 409 `TENANT_TRIAL_EXTEND_NOT_ALLOWED`
+  (`platform-admin.service.ts` `extendTrial` = one `updateMany where status != ACTIVE`, `updateStatus` refuses ACTIVE→TRIAL under
+  its row lock; `activeTenantTrialRefusal()`; pinned by `trial-write-sites.spec.ts`). Web: `ExtendTrialDialog` blocks ACTIVE
+  (N1), `extendFailureCopy(err)` maps the code to `TENANT_ACTION_COPY.trialNotAllowed`, the tenant page's Extend Trial is off for
+  ACTIVE and Delete Tenant is dim unless SUSPENDED (both with a `DisabledHint`); the list row loses Suspend/Impersonate (keeps
+  Reactivate + Delete for SUSPENDED). `lib/impersonation.ts`: `setImpersonation(token, slug, username?, sourceTenantId?)` stores
+  only the tenant id; `exitImpersonationTarget()` = `/admin/tenants/<uuid>` when the stored id is a UUID, else `/admin/tenants`.
+  Override form: Expires defaults to 30 days for Complimentary/Trial (`defaultExpiryFor`, `expiryOptions(now)` shows end dates,
+  "No end date" caption); `EnableAddonModal` gains optional `onCustomise` ("Add Override" link on the free-grant path).
 - `admin/buyers/page.tsx` + `[id]/page.tsx`; `admin/buyers/merge-requests/page.tsx` + `[id]/page.tsx`.
 - `admin/plans/page.tsx`, `admin/billing/page.tsx`, `admin/audit-logs/page.tsx`, `admin/{profile,settings}/page.tsx` — settings' AI usage panel (`AiUsage` type off `GET /platform-admin/ai-config/usage`) shows OCR scans / Forecast runs / **Route insights (`insightRuns`, 2026-08-28 — populated now that `recordAiUsage` is wired server-side)** / tokens / est. spend / error rate.
   - **`admin/billing/page.tsx`'s MRR card (REG-743-F1, review round #3, 2026-09-15)** — fetches `GET /billing/admin/mrr` (`MrrService.computeOverview()`, `mrr.service.ts`) as its ONE MRR source; on failure the card shows **"MRR unavailable"**, never a number. A prior client-side `PLAN_PRICES` fallback estimate (a second pricing engine) is DELETED — it could show a free pilot at full list price. Three warning chips (`unpricedActiveTenants`/`zeroPricedActiveTenants`/`activeWithoutSubscription`) render when nonzero; "Active Subscriptions" shows `payingTenants` as its subtext so the two figures are never side by side unexplained. Test: `page.test.tsx` (asserts no dollar figure renders on API error).
