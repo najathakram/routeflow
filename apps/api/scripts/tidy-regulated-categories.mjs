@@ -21,9 +21,10 @@
  *   node apps/api/scripts/tidy-regulated-categories.mjs --all-tenants --execute
  *
  * `--tenant <slug>` is guarded by assertTestTenant (fail-closed — only
- * approved test tenants). `--all-tenants` skips that guard: it is the
- * OWNER's prod-migration mode, meant to be run via
- * `railway run --service postgres node apps/api/scripts/tidy-regulated-categories.mjs --all-tenants --execute`.
+ * approved test tenants). `--all-tenants` without `--execute` is a read-only DRY RUN across every
+ * tenant. `--all-tenants --execute` applies the SAME test-tenant guard to EVERY targeted tenant
+ * BEFORE any write: one tenant that is not an approved test tenant refuses the whole run
+ * (exit 1, nothing written; tenant ids only are printed).
  */
 
 "use strict";
@@ -179,11 +180,8 @@ async function main() {
 
   if (ALL_TENANTS) {
     console.log("\n⚠️  ⚠️  ⚠️   ALL-TENANTS MODE  ⚠️  ⚠️  ⚠️");
-    console.log("This touches EVERY tenant's product categories, including live client data.");
-    console.log("This mode is for the OWNER only, run against prod via:");
-    console.log(
-      "  railway run --service postgres node apps/api/scripts/tidy-regulated-categories.mjs --all-tenants --execute",
-    );
+    console.log("This READS every tenant's product categories, including live client data.");
+    console.log("--execute is refused unless EVERY targeted tenant is an approved test tenant.");
     if (!EXECUTE) {
       console.log("Currently in DRY RUN — no writes will be made.\n");
     }
@@ -204,6 +202,26 @@ async function main() {
         process.exit(1);
       }
       tenants = r.rows;
+    }
+
+    // `--all-tenants --execute` gets the same guard the single-tenant path has: every targeted tenant
+    // must pass assertTestTenant, all-or-nothing, before the first write. Dry-run stays read-only.
+    if (ALL_TENANTS && EXECUTE) {
+      const offenderIds = [];
+      for (const tenant of tenants) {
+        try {
+          assertTestTenant(tenant.slug, "tidy-regulated-categories --all-tenants --execute");
+        } catch {
+          offenderIds.push(tenant.id);
+        }
+      }
+      if (offenderIds.length > 0) {
+        console.error(
+          `Refused: ${offenderIds.length} of ${tenants.length} targeted tenant(s) are not approved ` +
+            `test tenants (ids: ${offenderIds.join(", ")}). Nothing was written.`,
+        );
+        process.exit(1);
+      }
     }
 
     const results = [];
