@@ -1,6 +1,6 @@
 {
-  "mappedSha": "a14627e853878817cde3df53b97ef22f58efbf9a",
-  "generatedAt": "2026-10-08T06:00:00.000Z",
+  "mappedSha": "39485bc520aad62b42a64642ab358bd69a8ef6fe",
+  "generatedAt": "2026-10-08T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1050,
-  "notes": "**2026-10-08 \u2014 W18/W18b landings #3279, #3272, #3274, #3266, #3276, #3273, #3270, #3268 and #3264 (master `a14627e85`) (docs-only bookkeeping).** W18/W18b sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`: #3279 `assertWalkInTenderCoversTotal` + `beforeWrite` and the counter-sale scan hook, #3274 `BuyerBackorderViewResolver`/`backorder-visibility.ts`, #3273 `create-credit-tail.ts`, #3270 `billing-export-fields.ts`, #3268 `document-prefix.ts` and `InvoiceNumberingCard`, #3272 `TenantActionDialogs`, #3266 oversell card/override, #3276 `last-known-routes-access.ts`, #3264 `Table` `meta.className`. `mappedSha` = W18b master `a14627e85`. No source changed. See CHANGELOG.md."
+  "notes": "**2026-10-08 — W19+W20 squash #3297 (master `2757454db`) and B1224 #3305 (master `39485bc520aad62b42a64642ab358bd69a8ef6fe`) (docs-only bookkeeping).** W19/W20 sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`: per-line backorder marker, manual-pay RF invoices (schema, queue and actions, emails and reminders), fleet-off and ship-mode UI, walk-in customer protection, scan 'Did you mean' on web and mobile, derived per-purpose signing keys, back-office trial block, counter receipt and the counter POS stack; B1224 `declare` on `CreateSaleDto.idempotencyKey` plus `dto-no-own-undefined-keys.guard.spec.ts`. The W18 commit (cherry-picked) carries the earlier W18/W18b entries. `mappedSha` = `39485bc520aad62b42a64642ab358bd69a8ef6fe`. History: CHANGELOG.md."
 }
