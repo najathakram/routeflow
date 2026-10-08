@@ -1,3 +1,5 @@
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../../platform-admin/audit-actions.constant";
 import { writeAdminNotice } from "../manual-invoice-notice";
 
@@ -24,6 +26,20 @@ export async function resolveActivationWindow(
   return { windowStart, windowEnd: new Date(windowStart.getTime() + input.days * DAY_MS) };
 }
 
+/**
+ * Owner ruling (SA): an activation whose prepaid window has already ended (windowEnd <= now) is REFUSED, never
+ * clamped - the payment covers a period that is over, so recording it would leave the newer periods unbilled or
+ * billed twice. 409 ACTIVATION_PERIOD_ALREADY_ENDED, thrown inside the activation transaction right after
+ * `resolveActivationWindow` and BEFORE any write, so the transaction rolls back with nothing changed.
+ */
+export function assertActivationWindowNotEnded(window: { windowEnd: Date }, now: Date): void {
+  if (window.windowEnd.getTime() > now.getTime()) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED,
+    message: `This payment covers an invoice period that already ended on ${window.windowEnd.toISOString().slice(0, 10)}. Activate for more days to reach today, or record the newer invoices first.`,
+  });
+}
+
 export interface VoidCoveredInput {
   tenantId: string;
   /** The activation's prepaid window: [windowStart, windowEnd). */
@@ -39,8 +55,13 @@ export interface VoidCoveredInput {
  * SAME transaction, so the queue never asks for money the activation already recorded.
  *
  * Fully covered = invoice.periodStart >= windowStart AND invoice.periodEnd <= windowEnd. Each void is a CAS
- * (`status: "OPEN"`, tenant-scoped) shaped exactly like the admin void: periodKey becomes "<iso>:void:<id>",
- * plus an RF_INVOICE_VOIDED audit row.
+ * (`status: "OPEN"`, tenant-scoped) plus an RF_INVOICE_VOIDED audit row.
+ *
+ * ACTIVATION void vs ADMIN void (the difference is the periodKey). An activation void is "settled outside,
+ * period consumed": the voided row KEEPS its periodKey, so the (tenant, periodKey) unique still holds the slot
+ * and the issuer's catch-up branch (a paid prior row ends where this period starts) finds the key taken and
+ * re-bills nothing. The admin void (RfInvoicesService.voidInvoice) is "period released": it renames the key to
+ * "<iso>:void:<id>" so a corrected invoice can be issued for the same period. Do not copy that rename here.
  *
  * A PARTIAL overlap is never voided: it stays OPEN, is flagged `needsReview`, and one claim-keyed
  * RF_INVOICE_PARTLY_COVERED notice is raised per invoice (a rerun adds none). PAID / VOID rows and rows with
@@ -63,7 +84,6 @@ export async function voidCoveredRfInvoices(
     id: string;
     number: string;
     amount: unknown;
-    periodKey: string | null;
     periodStart: Date;
     periodEnd: Date;
   }> = await tx.rfInvoice.findMany({
@@ -77,7 +97,6 @@ export async function voidCoveredRfInvoices(
       id: true,
       number: true,
       amount: true,
-      periodKey: true,
       periodStart: true,
       periodEnd: true,
     },
@@ -114,7 +133,7 @@ export async function voidCoveredRfInvoices(
         status: "VOID",
         voidedAt: now,
         voidReason: reason,
-        ...(row.periodKey ? { periodKey: `${row.periodKey}:void:${row.id}` } : {}),
+        // periodKey is deliberately NOT renamed: the period is consumed (see the header), unlike the admin void.
       },
     });
     if (count === 0) continue; // paid / voided by someone else since the read: leave it alone

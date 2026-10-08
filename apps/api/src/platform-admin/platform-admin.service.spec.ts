@@ -2906,10 +2906,13 @@ describe("PlatformAdminService — audit provenance", () => {
         where: { id: "inv-1", tenantId: TENANT_ID, status: "OPEN" },
         data: {
           status: "VOID",
-          periodKey: "2026-10-10T00:00:00.000Z:void:inv-1",
           voidReason: expect.stringMatching(/^Covered by manual activation on \d{4}-\d{2}-\d{2}$/),
         },
       });
+      // an activation void KEEPS the periodKey (period consumed; only the admin void renames it)
+      expect((prisma as any).rfInvoice.updateMany.mock.calls[0][0].data).not.toHaveProperty(
+        "periodKey",
+      );
       const actions = (prisma as any).auditLog.create.mock.calls.map((c: any) => c[0].data.action);
       expect(actions).toEqual(expect.arrayContaining(["RF_INVOICE_VOIDED"]));
     });
@@ -2963,6 +2966,31 @@ describe("PlatformAdminService — audit provenance", () => {
       const upsert = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
       expect(upsert.update.periodStart).toEqual(out.periodStart);
       expect(upsert.update.periodEnd).toEqual(out.periodEnd);
+    });
+
+    it("PIN (ended window): an OPEN invoice whose 30-day window already ended -> 409 ACTIVATION_PERIOD_ALREADY_ENDED, nothing written", async () => {
+      const DAY = 86_400_000;
+      const ended = new Date(Date.now() - 40 * DAY);
+      const endedOn = new Date(ended.getTime() + 30 * DAY).toISOString().slice(0, 10);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValue({ periodStart: ended });
+
+      const err = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toEqual({
+        code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+        message: `This payment covers an invoice period that already ended on ${endedOn}. Activate for more days to reach today, or record the newer invoices first.`,
+      });
+      // refused before any write of the transaction
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.findMany).not.toHaveBeenCalled();
+      expect((prisma as any).rfInvoice.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).auditLog.create).not.toHaveBeenCalled();
     });
 
     it("a void failure fails the activation (the transaction rolls back as one)", async () => {

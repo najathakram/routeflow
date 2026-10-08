@@ -15,6 +15,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
 import {
+  assertActivationWindowNotEnded,
   resolveActivationWindow,
   voidCoveredRfInvoices,
 } from "../billing/rf-invoice/rf-invoice-activation-void";
@@ -1046,6 +1047,8 @@ export class PlatformAdminService {
           now,
           days: dto.billingPeriodDays,
         });
+        // Owner ruling: a window that already ended is refused (409), before any write in this transaction.
+        assertActivationWindowNotEnded(activationWindow, now);
         periodStart = activationWindow.windowStart;
         periodEnd = activationWindow.windowEnd;
         if (transition && preparedTransition) {

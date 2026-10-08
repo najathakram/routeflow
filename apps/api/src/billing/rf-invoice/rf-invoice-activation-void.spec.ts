@@ -9,8 +9,14 @@ jest.mock("../../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { AdminAuditAction } from "../../platform-admin/audit-actions.constant";
-import { resolveActivationWindow, voidCoveredRfInvoices } from "./rf-invoice-activation-void";
+import {
+  assertActivationWindowNotEnded,
+  resolveActivationWindow,
+  voidCoveredRfInvoices,
+} from "./rf-invoice-activation-void";
 import { RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
 
 const TENANT = "tenant-1";
@@ -102,7 +108,7 @@ const run = (tx: any) =>
   });
 
 describe("voidCoveredRfInvoices (manual activation auto-void)", () => {
-  it("voids an OPEN invoice the new prepaid window fully covers, with reason, periodKey suffix and audit", async () => {
+  it("voids an OPEN invoice the new prepaid window fully covers, with reason, audit and the periodKey KEPT", async () => {
     const rows = [row({})];
     const tx = fakeTx(rows);
     const out = await run(tx);
@@ -111,8 +117,11 @@ describe("voidCoveredRfInvoices (manual activation auto-void)", () => {
       status: "VOID",
       voidedAt: NOW,
       voidReason: "Covered by manual activation on 2026-10-07",
-      periodKey: `${D("2026-10-10").toISOString()}:void:inv-1`,
+      // an activation void is "settled outside, period consumed": the key is NOT renamed (the admin void's
+      // "<iso>:void:<id>" rename releases the period; this must not), so the unique holds the slot
+      periodKey: D("2026-10-10").toISOString(),
     });
+    expect(tx.rfInvoice.updateMany.mock.calls[0][0].data).not.toHaveProperty("periodKey");
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
     const data = tx.auditLog.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
@@ -242,6 +251,7 @@ describe("activation window anchored on the earliest OPEN invoice (PR4a, owner r
     expect(w.windowEnd).toEqual(plus(P, 30)); // the subscription period is written from this window
     expect(out).toEqual({ voided: ["inv-1"], flagged: [] });
     expect(rows[0].status).toBe("VOID");
+    expect(rows[0].periodKey).toBe(P.toISOString()); // the voided row still holds the period's key
 
     // the issuer reads the subscription period the activation wrote: its next invoice starts where it ends
     const issuer = new (RfInvoiceIssuerService as any)(
@@ -319,5 +329,113 @@ describe("activation window anchored on the earliest OPEN invoice (PR4a, owner r
     expect(locks).toHaveLength(2); // one per partly covered invoice
     expect(Math.max(...locks)).toBeLessThan(Math.min(...writes));
     expect(rows.map((r) => r.status)).toEqual(["VOID", "OPEN", "OPEN"]);
+  });
+});
+
+describe("an activation void keeps the period consumed (the issuer's catch-up must not re-bill it)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const P = D("2026-11-01");
+  const plus = (d: Date, days: number) => new Date(d.getTime() + days * DAY_MS);
+
+  it("PIN 4: PAID [P-30d, P) + OPEN [P, P+30d), activated at P-3d for 30 days -> the issuer's catch-up window for [P, P+30d) is 'exists', nothing is built", async () => {
+    const now = plus(P, -3);
+    const rows = [
+      row({
+        id: "paid",
+        status: "PAID",
+        periodStart: plus(P, -30),
+        periodEnd: P,
+        periodKey: plus(P, -30).toISOString(),
+      }),
+      row({ id: "open", periodStart: P, periodEnd: plus(P, 30), periodKey: P.toISOString() }),
+    ];
+    const tx = fakeTx(rows);
+    const w = await resolveActivationWindow(tx, { tenantId: TENANT, now, days: 30 });
+    await voidCoveredRfInvoices(tx, {
+      tenantId: TENANT,
+      windowStart: w.windowStart,
+      windowEnd: w.windowEnd,
+      actorId: ACTOR,
+      now,
+    });
+    expect(rows[1]).toMatchObject({ status: "VOID", periodKey: P.toISOString() });
+
+    // the issuer over the same rows: findFirst honours tenantId / periodKey / periodEnd / status {not}
+    const findFirst = jest.fn(async ({ where }: any) => {
+      const hit = rows.find(
+        (r) =>
+          r.tenantId === where.tenantId &&
+          (where.periodKey === undefined || r.periodKey === where.periodKey) &&
+          (where.periodEnd === undefined ||
+            (r.periodEnd as Date).getTime() === where.periodEnd.getTime()) &&
+          (where.status?.not === undefined || r.status !== where.status.not),
+      );
+      return hit ? { id: hit.id } : null;
+    });
+    const build = jest.fn();
+    const issuer = new (RfInvoiceIssuerService as any)(
+      { rfInvoice: { findFirst } },
+      { build },
+      {},
+    ) as RfInvoiceIssuerService;
+    const sub = {
+      tenantId: TENANT,
+      cycle: "MONTHLY",
+      periodStart: w.windowStart,
+      periodEnd: w.windowEnd,
+    };
+
+    const windows = await issuer.windowsFor(sub as any, now);
+    // the PAID prior row ends at P, so the catch-up branch proposes [P, P+30d) again ...
+    expect(windows).toEqual([{ periodStart: P, periodEnd: plus(P, 30) }]);
+    // ... and the voided row's kept key makes it 'exists': no draft is built, no invoice is created
+    expect(await issuer.issuePeriod(sub as any, windows[0], now)).toEqual({ status: "exists" });
+    expect(build).not.toHaveBeenCalled();
+  });
+});
+
+describe("assertActivationWindowNotEnded (owner ruling: an ended window is refused, never clamped)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const MESSAGE =
+    "This payment covers an invoice period that already ended on 2026-10-01. Activate for more days to reach today, or record the newer invoices first.";
+
+  const refusal = (fn: () => void): ConflictException => {
+    try {
+      fn();
+    } catch (e) {
+      return e as ConflictException;
+    }
+    throw new Error("expected the activation window to be refused");
+  };
+
+  it("windowEnd <= now -> 409 ACTIVATION_PERIOD_ALREADY_ENDED with the exact message", () => {
+    const err = refusal(() => assertActivationWindowNotEnded({ windowEnd: D("2026-10-01") }, NOW));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toEqual({
+      code: API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED,
+      message: MESSAGE,
+    });
+  });
+
+  it("windowEnd exactly equal to now is refused; one millisecond later is allowed", () => {
+    expect(() => assertActivationWindowNotEnded({ windowEnd: NOW }, NOW)).toThrow(
+      ConflictException,
+    );
+    expect(() =>
+      assertActivationWindowNotEnded({ windowEnd: new Date(NOW.getTime() + 1) }, NOW),
+    ).not.toThrow();
+  });
+
+  it("an OPEN invoice 40 days back anchors a 30-day window that ended 10 days ago -> refused, not clamped", async () => {
+    const rows = [
+      row({
+        periodStart: new Date(NOW.getTime() - 40 * DAY_MS),
+        periodEnd: new Date(NOW.getTime() - 10 * DAY_MS),
+      }),
+    ];
+    const w = await resolveActivationWindow(fakeTx(rows), { tenantId: TENANT, now: NOW, days: 30 });
+    expect(w.windowEnd.getTime()).toBe(NOW.getTime() - 10 * DAY_MS); // the window is resolved unclamped ...
+    expect(() => assertActivationWindowNotEnded(w, NOW)).toThrow(ConflictException); // ... then refused
   });
 });

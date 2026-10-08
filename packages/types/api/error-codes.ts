@@ -504,6 +504,8 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** Back office: a manual activation whose prepaid window already ended is refused. 409. */
+  ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
   /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;
