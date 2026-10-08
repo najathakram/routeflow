@@ -103,3 +103,41 @@ describe("info rows name the controls as the user sees them", () => {
     expect(row?.answer).toBe("Select orders on the Orders list, then choose Mark shipped.");
   });
 });
+
+describe("#3320 review folds", () => {
+  const all = buildIndex({ isAdmin: true, fleet: true });
+  const byId = (id: string, list = all) => list.find((e) => e.id === id);
+
+  it("N1 driver access is the operator/driver view switch and needs a fleet", () => {
+    expect(byId("driver-access")?.desc).toMatch(/driver view/i);
+    expect(byId("driver-access", buildIndex({ isAdmin: true, fleet: false }))).toBeUndefined();
+  });
+
+  it("N2 the low-stock digest is admin-only", () => {
+    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeUndefined();
+    expect(byId("low-stock-digest")).toBeDefined();
+  });
+
+  it("N3 card descriptions say what the card really holds", () => {
+    expect(byId("deposits")?.desc).toMatch(/when the order is placed/i);
+    expect(byId("invoice-defaults")?.desc).toMatch(/terms/i);
+    expect(byId("payment-instructions")?.desc).toMatch(/Payments page/);
+    expect(byId("margin-floors")?.desc).toMatch(/warn/i);
+  });
+
+  it("N4 card payments reads as a hub card, not a billing page", () => {
+    expect(byId("card-payments")?.groupKey).toBe("hub");
+  });
+
+  it("N5 regulated sections and product labels answer the restriction words", () => {
+    for (const q of ["state", "blocked", "banned", "age"]) {
+      const ids = searchIndex(q, all).map((e) => e.id);
+      expect(ids).toEqual(expect.arrayContaining(["regulated-sections", "product-labels"]));
+    }
+  });
+
+  it("N7 a label match ranks above a keyword-only match", () => {
+    const ids = searchIndex("low stock", all).map((e) => e.id);
+    expect(ids[0]).toBe("low-stock-digest");
+  });
+});
