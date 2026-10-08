@@ -72,6 +72,7 @@ import {
   type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { CounterReturnAction } from "./CounterReturnAction";
 
 interface PickedCustomer {
   id: string;
@@ -615,6 +616,7 @@ export function CounterSaleScreen() {
           <Button className={RECEIPT_BTN} onClick={() => window.print()}>
             Print
           </Button>
+          <CounterReturnAction orderId={receipt.orderId} />
           <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
             New sale
           </Button>
