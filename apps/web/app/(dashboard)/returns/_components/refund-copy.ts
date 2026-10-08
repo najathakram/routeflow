@@ -1,6 +1,6 @@
 // POS-4b: fixed copy + error classification for the refund-vs-credit choice. Never render
 // server text for these errors (apps/web/lib/raw-message-allowlist.json must not grow).
-import type { InlineRefundTender } from "@routeflow/types";
+import { API_ERROR_CODES, type InlineRefundTender } from "@routeflow/types";
 
 export type RefundErrorKind =
   | "changed"
@@ -43,11 +43,16 @@ export function refundErrorKind(err: unknown): RefundErrorKind {
   const res = (err as { response?: { status?: number; data?: { code?: string } } } | undefined)
     ?.response;
   if (res?.status === 403) return "forbidden";
-  if (res?.status === 409 && res.data?.code === "REFUND_AMOUNT_CHANGED") return "changed";
-  if (res?.status === 409 && res.data?.code === "RETURN_ALREADY_RESOLVED") return "resolved";
-  if (res?.status === 409 && res.data?.code === "REFUND_NEEDS_PAID_INVOICE") return "needsPaid";
-  if (res?.status === 409 && res.data?.code === "RETURN_REFUNDED_CASH") return "refundedCash";
-  if (res?.status === 409 && res.data?.code === "RETURN_NOT_REFUNDABLE") return "notRefundable";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_AMOUNT_CHANGED)
+    return "changed";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.RETURN_ALREADY_RESOLVED)
+    return "resolved";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE)
+    return "needsPaid";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.RETURN_REFUNDED_CASH)
+    return "refundedCash";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.RETURN_NOT_REFUNDABLE)
+    return "notRefundable";
   return "failed";
 }
 
