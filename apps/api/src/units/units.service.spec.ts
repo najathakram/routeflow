@@ -36,11 +36,13 @@ function stubs() {
   const prisma = {
     getTenantId: jest.fn().mockReturnValue(T),
     forTenant: jest.fn().mockReturnValue(db),
-    tenantTransaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
-      const out = await fn(db);
-      order.push("tx-end");
-      return out;
-    }),
+    tenantTransaction: jest.fn(
+      async (fn: (tx: unknown) => Promise<unknown>, _options?: unknown) => {
+        const out = await fn(db);
+        order.push("tx-end");
+        return out;
+      },
+    ),
     $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const audit = {
