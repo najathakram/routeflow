@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import { unitNameKey } from "../units/piece-words";
 
 /**
  * The comparison form of a product's PACK word: the ladder names the pack `Product.unit`, or "Box"
@@ -6,7 +7,7 @@ import { ConflictException } from "@nestjs/common";
  * keep a level from sharing the pack's word (`assertPackKeepsLevelsValid`, the unit rename check).
  */
 export const packWordKey = (unit: string | null | undefined): string =>
-  (unit ?? "").trim().toLowerCase() || "box";
+  unitNameKey(unit ?? "") || "box";
 
 /**
  * Editing a product's PACK (`unit`, `unitsPerBox`, regulated section) must never invalidate the
@@ -23,7 +24,7 @@ export function assertPackKeepsLevelsValid(
   const upb = Math.trunc(Number(pack.unitsPerBox ?? 0));
   const factor = upb > 1 ? upb : 1;
   const label = packWordKey(pack.unit);
-  const clash = levels.find((l) => l.label.trim().toLowerCase() === label);
+  const clash = levels.find((l) => unitNameKey(l.label) === label);
   if (clash) {
     throw new ConflictException(
       `This product has a "${clash.label}" unit — the pack can't be named the same. Remove or rename that unit first.`,

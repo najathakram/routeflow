@@ -10,6 +10,7 @@ function stubs() {
   const order: string[] = [];
   const db = {
     $executeRaw: jest.fn().mockResolvedValue(0),
+    $queryRaw: jest.fn().mockResolvedValue([]),
     tenantUnit: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
@@ -143,6 +144,13 @@ describe("UnitsService", () => {
       for (const col of ['"baseUnitLabel"', '"packLabel"', '"unit"']) expect(sql).toContain(col);
       expect(sql).toContain('"tenantId"');
     });
+
+    it("compares the text columns to nameKey through the same NFC normalisation", async () => {
+      const { service, prisma } = make();
+      await service.list(true);
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
+      expect(sql.match(/normalize\(/g)).toHaveLength(3);
+    });
   });
 
   describe("create", () => {
@@ -195,6 +203,38 @@ describe("UnitsService", () => {
       expect(db.tenantUnit.create).not.toHaveBeenCalled();
       expect(out).toEqual(dtoRow({ productCount: 4 }));
     });
+
+    it("an NFD and an NFC spelling of one word are ONE unit: both look up the NFC nameKey", async () => {
+      const { service, db, prisma } = make();
+      db.tenantUnit.findFirst.mockResolvedValue(row({ name: "Caf\u00e9", nameKey: "caf\u00e9" }));
+      prisma.$queryRaw.mockResolvedValue([dtoRow({ name: "Caf\u00e9" })]);
+      await service.create({ name: "Cafe\u0301" }, user);
+      await service.create({ name: "CAF\u00c9" }, user);
+      for (const call of db.tenantUnit.findFirst.mock.calls) {
+        expect(call[0].where).toEqual({ tenantId: T, nameKey: "caf\u00e9" });
+      }
+      expect(db.tenantUnit.create).not.toHaveBeenCalled();
+    });
+
+    it("a new unit is stored NFC (name and nameKey)", async () => {
+      const { service, db, prisma } = make();
+      db.tenantUnit.create.mockResolvedValue(row({ name: "Caf\u00e9" }));
+      prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await service.create({ name: "Cafe\u0301" }, user);
+      expect(db.tenantUnit.create.mock.calls[0][0].data).toEqual({
+        tenantId: T,
+        name: "Caf\u00e9",
+        nameKey: "caf\u00e9",
+      });
+    });
+
+    it.each(["Each", "\u00a0Each\u00a0", "PIECES", "\u00a0pcs"])(
+      "%j is refused as a piece synonym (NBSP-wrapped included)",
+      async (name) => {
+        const { service } = make();
+        await expect(service.create({ name }, user)).rejects.toMatchObject({ status: 400 });
+      },
+    );
 
     it("two concurrent creates of one name end as ONE row: a P2002 loser re-reads the winner", async () => {
       const { service, db, prisma } = make();
@@ -326,6 +366,8 @@ describe("UnitsService", () => {
           where.tenantUnitId ? (opts.linked ?? []) : opts.levels,
       );
       h.db.product.findMany.mockResolvedValue(opts.products);
+      // The SQL text-hit query: every seeded product is a candidate (linked ones dedupe).
+      h.db.$queryRaw.mockResolvedValue(opts.products.map((p) => ({ id: p.id })));
     }
     const productsUpdateCalls = (h: ReturnType<typeof make>, key: string) =>
       h.db.product.updateMany.mock.calls.filter(([a]) => key in a.data);
@@ -522,6 +564,50 @@ describe("UnitsService", () => {
         expect(h.db.tenantUnit.update).not.toHaveBeenCalled();
       },
     );
+
+    it("NFC and NFD spellings of one word collide: a level typed Cafe+U+0301 blocks a rename to Caf\u00e9", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Each" }],
+        levels: [
+          { productId: "p1", label: "Case", tenantUnitId: "u1" },
+          { productId: "p1", label: "Cafe\u0301", tenantUnitId: null },
+        ],
+      });
+      await expect(h.service.update("u1", { name: "Caf\u00e9" }, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "UNIT_RENAME_COLLISION" }),
+      });
+      expect(h.db.tenantUnit.update).not.toHaveBeenCalled();
+    });
+
+    it("an NFD pack word blocks a rename to the NFC spelling of the same word", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [
+          { id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Cafe\u0301" },
+        ],
+        levels: [{ productId: "p1", label: "Case", tenantUnitId: "u1" }],
+      });
+      await expect(h.service.update("u1", { name: "Caf\u00e9" }, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "UNIT_RENAME_COLLISION" }),
+      });
+    });
+
+    it("the stored nameKey is the NFC key, and the rename candidates are found by that same key in SQL", async () => {
+      const h = make();
+      seedRename(h, { products: [], levels: [] });
+      await h.service.update("u1", { name: "Cafe\u0301" }, user);
+      expect(h.db.tenantUnit.update.mock.calls[0][0].data).toEqual({
+        name: "Caf\u00e9",
+        nameKey: "caf\u00e9",
+      });
+      const sql = (h.db.$queryRaw.mock.calls[0][0] as Prisma.Sql).sql;
+      expect(sql).toContain("normalize(");
+      expect(sql).toContain('"baseUnitLabel"');
+      expect(sql).toContain('"tenantId"');
+    });
 
     it("the 409 names at most 10 products", async () => {
       const h = make();

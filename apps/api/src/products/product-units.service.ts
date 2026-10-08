@@ -6,9 +6,9 @@ import {
 } from "@nestjs/common";
 import { PIECE_LABEL } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
-import { isPieceSynonym } from "../units/piece-words";
+import { isPieceSynonym, unitNameKey } from "../units/piece-words";
 import { lockTenantUnits } from "../units/tenant-units-lock";
-import { MAX_UNIT_NAME_LENGTH, unitNameKey } from "../units/units.service";
+import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
 interface PackInfo {
@@ -22,7 +22,7 @@ interface LevelKey {
   factorToBase: number;
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+const norm = unitNameKey;
 
 /** What the API returns for a level — never `tenantId` or audit columns. */
 const UNIT_SELECT = {
@@ -172,7 +172,7 @@ export class ProductUnitsService {
    * An ARCHIVED unit still links (it hides from pickers; the level keeps its meaning).
    */
   private async tenantUnitIdFor(tx: any, label: string): Promise<string | null> {
-    const name = label.trim();
+    const name = label.normalize("NFC").trim();
     if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) return null;
     const tenantId = this.prisma.getTenantId();
     const nameKey = unitNameKey(name);

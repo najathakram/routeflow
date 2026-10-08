@@ -38,6 +38,11 @@ describe("checkUnitName", () => {
       expect(checkUnitName(name, [])).toBe("Piece is always there as the smallest unit.");
     },
   );
+  it("an NFD spelling duplicates its NFC twin (same word)", () => {
+    expect(checkUnitName("Cafe\u0301", [unit("Caf\u00e9")])).toBe(
+      "You already have a unit called Caf\u00e9.",
+    );
+  });
   it("a duplicate is case-insensitive and names the existing unit", () => {
     expect(checkUnitName("case", [unit("Case")])).toBe("You already have a unit called Case.");
   });

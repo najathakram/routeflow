@@ -240,6 +240,28 @@ describe("ProductUnitsService: levels are linked to the tenant's unit by name (t
     expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBeNull();
   });
 
+  it("an NFD and an NFC spelling of one word look up ONE unit (the NFC nameKey) and create it once", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValue(null);
+    await service.create("p1", { label: "Cafe\u0301", factorToBase: 6 });
+    expect(db.tenantUnit.findFirst.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      nameKey: "caf\u00e9",
+    });
+    expect(db.tenantUnit.createMany.mock.calls[0][0].data).toEqual([
+      { tenantId: "t1", name: "Caf\u00e9", nameKey: "caf\u00e9" },
+    ]);
+  });
+
+  it("a pack named with the NFC spelling refuses a level typed NFD (same word)", async () => {
+    const { service } = build({
+      product: { unit: "Caf\u00e9", unitsPerBox: 24, trackedCategoryId: null },
+    });
+    await expect(service.create("p1", { label: "Cafe\u0301", factorToBase: 6 })).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
   it("a label edit re-links the level to the NEW name's unit (else a later rename of the old unit would relabel it)", async () => {
     const { service, db, tx } = build({ rows: [caseRow] });
     db.tenantUnit.findFirst.mockResolvedValue({ id: "tu-crate" });

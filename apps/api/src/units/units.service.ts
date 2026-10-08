@@ -11,7 +11,7 @@ import { AuditService } from "../audit/audit.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { packWordKey } from "../products/unit-pack-rules";
 import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
-import { isPieceSynonym } from "./piece-words";
+import { isPieceSynonym, unitNameKey } from "./piece-words";
 import { lockTenantUnits } from "./tenant-units-lock";
 
 export interface UnitDto {
@@ -37,11 +37,15 @@ export const MAX_UNIT_NAME_LENGTH = 30;
 const MAX_COLLISION_PRODUCTS = 10;
 const CHUNK = 5000;
 
-/** The comparison form of a unit name: lower(trim(name)). */
-export const unitNameKey = (name: string): string => name.trim().toLowerCase();
+/**
+ * `unitNameKey` for a TEXT column in SQL: the same NFC, trim, case-fold the TS helper does. btrim gets
+ * the whitespace set JS `trim()` strips most often (space, tab, newline, CR, FF, VT, NBSP).
+ */
+const sqlKey = (column: "baseUnitLabel" | "packLabel" | "unit") =>
+  Prisma.sql`lower(btrim(normalize(p.${Prisma.raw(`"${column}"`)}, NFC), E' \\t\\n\\r\\f\\v\\u00a0'))`;
 
 function cleanName(raw: unknown): string {
-  const name = typeof raw === "string" ? raw.trim() : "";
+  const name = typeof raw === "string" ? raw.normalize("NFC").trim() : "";
   if (!name) throw new BadRequestException(UNIT_NAME_EMPTY);
   if (name.length > MAX_UNIT_NAME_LENGTH) throw new BadRequestException(UNIT_NAME_TOO_LONG);
   // Piece (and its synonyms) is every product's factor-1 level: resolveLadderLevel answers it before
@@ -108,9 +112,9 @@ export class UnitsService {
           UNION
           SELECT p."id" FROM "Product" p
           WHERE p."tenantId" = u."tenantId"
-            AND (lower(btrim(p."baseUnitLabel")) = u."nameKey"
-              OR lower(btrim(p."packLabel")) = u."nameKey"
-              OR lower(btrim(p."unit")) = u."nameKey")
+            AND (${sqlKey("baseUnitLabel")} = u."nameKey"
+              OR ${sqlKey("packLabel")} = u."nameKey"
+              OR ${sqlKey("unit")} = u."nameKey")
         ) used) AS "productCount"
       FROM "TenantUnit" u
       WHERE u."tenantId" = ${tenantId} ${archivedFilter} ${idFilter}
@@ -249,24 +253,28 @@ export class UnitsService {
         select: { id: true, productId: true },
       });
       const levelProductIds = [...new Set(linked.map((l) => l.productId))];
+      // Text candidates by the SAME key the productCount SQL uses (a Prisma `contains` cannot NFC-fold).
+      const textHits: Array<{ id: string }> = await tx.$queryRaw(Prisma.sql`
+        SELECT p."id" FROM "Product" p
+        WHERE p."tenantId" = ${tenantId}
+          AND (${sqlKey("baseUnitLabel")} = ${oldKey}
+            OR ${sqlKey("packLabel")} = ${oldKey}
+            OR ${sqlKey("unit")} = ${oldKey})`);
       const products: Array<{
         id: string;
         name: string;
         baseUnitLabel: string | null;
         packLabel: string | null;
         unit: string | null;
-      }> = await tx.product.findMany({
-        where: {
-          tenantId,
-          OR: [
-            { id: { in: levelProductIds } },
-            { baseUnitLabel: { contains: oldKey, mode: "insensitive" } },
-            { packLabel: { contains: oldKey, mode: "insensitive" } },
-            { unit: { contains: oldKey, mode: "insensitive" } },
-          ],
-        },
-        select: { id: true, name: true, baseUnitLabel: true, packLabel: true, unit: true },
-      });
+      }> = [];
+      for (const part of chunks([...new Set([...levelProductIds, ...textHits.map((h) => h.id)])])) {
+        products.push(
+          ...(await tx.product.findMany({
+            where: { tenantId, id: { in: part } },
+            select: { id: true, name: true, baseUnitLabel: true, packLabel: true, unit: true },
+          })),
+        );
+      }
 
       const matches = (v: string | null) => v != null && unitNameKey(v) === oldKey;
       const levelRows: Array<{ productId: string; label: string; tenantUnitId: string | null }> =

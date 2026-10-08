@@ -66,4 +66,14 @@ describe("assertPackKeepsLevelsValid", () => {
       }),
     ).toThrow(ConflictException);
   });
+
+  it("refuses a pack word that is the NFC/NFD twin of a level label", () => {
+    expect(() =>
+      assertPackKeepsLevelsValid([{ label: "Cafe\u0301", factorToBase: 6 }], {
+        unit: "Caf\u00e9",
+        unitsPerBox: 24,
+        regulated: false,
+      }),
+    ).toThrow(/can't be named the same/);
+  });
 });

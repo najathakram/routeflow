@@ -1,8 +1,9 @@
 import {
   PIECE_SYNONYMS as SHARED,
   isPieceSynonym as sharedIsPieceSynonym,
+  unitNameKey as sharedUnitNameKey,
 } from "../../../../packages/types/piece-synonyms";
-import { PIECE_SYNONYMS, isPieceSynonym } from "./piece-words";
+import { PIECE_SYNONYMS, isPieceSynonym, unitNameKey } from "./piece-words";
 import { PIECE_LABEL } from "@routeflow/pricing";
 
 describe("piece words: the API copy equals the shared list", () => {
@@ -34,5 +35,35 @@ describe("piece words: the API copy equals the shared list", () => {
         expect(sharedIsPieceSynonym(name)).toBe(false);
       },
     );
+  });
+
+  describe("unitNameKey: NFC, then trim, then case-fold (one normaliser everywhere)", () => {
+    const NFC = "Caf\u00e9";
+    const NFD = "Cafe\u0301";
+    const TABLE: Array<[string, string]> = [
+      ["Case", "case"],
+      ["  CASE  ", "case"],
+      ["\u00a0Each\u00a0", "each"],
+      ["\tPcs\n", "pcs"],
+      [NFC, "caf\u00e9"],
+      [NFD, "caf\u00e9"],
+      [`  ${NFD.toUpperCase()}`, "caf\u00e9"],
+      ["", ""],
+      ["   ", ""],
+    ];
+    it.each(TABLE)("%j -> %j in the API copy AND the shared helper", (input, key) => {
+      expect(unitNameKey(input)).toBe(key);
+      expect(sharedUnitNameKey(input)).toBe(key);
+    });
+    it("NFC and NFD spellings of one word are the same key", () => {
+      expect(NFC).not.toBe(NFD);
+      expect(unitNameKey(NFD)).toBe(unitNameKey(NFC));
+    });
+    it("the piece check goes through the same key (NBSP, NFD-wrapped input)", () => {
+      for (const w of ["\u00a0Each", "Each\u00a0", "  PCS", "Pie\u0063e"]) {
+        expect(isPieceSynonym(w)).toBe(true);
+        expect(sharedIsPieceSynonym(w)).toBe(true);
+      }
+    });
   });
 });
