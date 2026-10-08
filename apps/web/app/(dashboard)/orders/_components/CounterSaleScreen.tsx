@@ -938,6 +938,7 @@ export function CounterSaleScreen() {
                       className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
                       onClick={(e) => {
                         setTendered(String(q.amount));
+                        setError("");
                         refocusAfterPointer(e);
                       }}
                     >
@@ -953,7 +954,10 @@ export function CounterSaleScreen() {
                     className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
                     value={tendered}
                     disabled={locked}
-                    onChange={(e) => setTendered(e.target.value)}
+                    onChange={(e) => {
+                      setTendered(e.target.value);
+                      setError("");
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -962,9 +966,6 @@ export function CounterSaleScreen() {
                     }}
                   />
                 </label>
-                <p className="text-3xl font-bold" data-testid="change-due">
-                  Change {money(changeDue(totals.total, tenderedNum))}
-                </p>
               </div>
             ) : null}
 
@@ -1074,6 +1075,14 @@ export function CounterSaleScreen() {
               <span>Estimated total</span>
               <span>{money(totals.total)}</span>
             </div>
+
+            {method === "CASH" ? (
+              <p className="text-3xl font-bold" data-testid="change-due">
+                {roundMoney(tenderedNum) < roundMoney(totals.total)
+                  ? `Amount due ${money(roundMoney(totals.total - tenderedNum))}`
+                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+              </p>
+            ) : null}
 
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button

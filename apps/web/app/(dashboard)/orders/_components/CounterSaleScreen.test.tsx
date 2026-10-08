@@ -142,6 +142,39 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.00");
   });
 
+  it("cash: the change line sits inside the sticky checkout bar, never under it (row 112)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(
+      screen.getByTestId("change-due"),
+    );
+  });
+
+  it("cash: an underpayment reads 'Amount due', never 'Change $0.00' (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $2.50");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $1.50");
+    expect(screen.getByTestId("change-due")).not.toHaveTextContent("Change");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.50");
+  });
+
+  it("cash: the 'less than the total' error clears the moment the tender is fixed (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("less than the total");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+    expect(screen.queryByText(/less than the total/)).toBeNull();
+  });
+
   it("Complete & show receipt posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
