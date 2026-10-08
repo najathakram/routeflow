@@ -2,7 +2,6 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
-import { COUNTER_LEAVE_BLOCKED_COPY } from "@/lib/counter-cart-signal";
 import { RegisterHeader } from "@/components/RegisterHeader";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -10,7 +9,7 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
  * Typing a line note on the counter must never reach the shell's "g" page shortcuts ("gift wrap" -> g i = Invoices, and the
  * cart is gone). (1) Opening the note puts focus IN the note field. (2) With lines in the cart and focus NOT in a text field,
  * a g shortcut asks the shared leave guard: the same "Discard this sale?" dialog as every other way out (Discard goes once; a
- * sale being recorded refuses without stacking a dialog); an empty cart navigates at once. The shell's real handler
+ * sale being recorded is covered in lib/nav-shortcuts.test.ts); an empty cart navigates at once. The shell's real handler
  * (lib/nav-shortcuts, given the RAW push) is attached to window here, exactly as the layout does, with the real register
  * header beside the real CounterSaleScreen (the header renders the dialog).
  */
@@ -97,6 +96,7 @@ const scan = async (text: string) => {
 };
 
 const pressGI = () => {
+  (document.activeElement as HTMLElement | null)?.blur(); // the screen may hand focus back to its scan field between presses
   fireEvent.keyDown(document.body, { key: "g" });
   fireEvent.keyDown(document.body, { key: "i" });
 };
@@ -162,28 +162,11 @@ describe("counter line note: focus and the g-shortcuts", () => {
     renderWithProviders(counter());
     expect(screen.getByTestId("counter-sale-screen")).toBeInTheDocument();
 
+    (document.activeElement as HTMLElement | null)?.blur(); // the scan field holds focus on mount: a text field
     pressGI();
 
     expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate).toHaveBeenCalledWith("/invoices");
     expect(screen.queryByText("Discard this sale?")).toBeNull();
-  });
-
-  it("a sale being recorded: g then i neither navigates nor stacks a Discard dialog (the notice shows)", async () => {
-    const view = renderWithProviders(counter());
-    await scan("COLA");
-    mockSalePending = true;
-    view.rerender(counter()); // the real screen sees createSale.isPending and marks itself busy
-
-    (document.activeElement as HTMLElement | null)?.blur();
-    pressGI();
-    pressGI();
-
-    expect(await screen.findByText(COUNTER_LEAVE_BLOCKED_COPY)).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalled();
-    expect(screen.queryByText("Discard this sale?")).toBeNull();
-
-    mockSalePending = false;
-    view.rerender(counter());
   });
 });
