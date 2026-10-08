@@ -17,7 +17,7 @@ export type IndexEntry = {
   href?: string;
   /** Info rows only: the sentence shown instead of desc. */
   answer?: string;
-  /** business | selling | orders | notifications | compliance | integrations | billing | footer */
+  /** business | selling | orders | notifications | compliance | integrations | billing | footer | hub */
   groupKey: string;
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
   page?: string;
@@ -197,7 +197,18 @@ const ENTRIES: IndexEntry[] = [
     href: "/settings?tab=regulated",
     groupKey: "compliance",
     show: "admin",
-    keywords: ["tobacco", "vape", "compliance", "tax rules", "subcategory"],
+    keywords: [
+      "tobacco",
+      "vape",
+      "compliance",
+      "tax rules",
+      "subcategory",
+      "restriction",
+      "state",
+      "blocked",
+      "banned",
+      "age",
+    ],
   },
   {
     id: "restrictions-compliance",
@@ -216,7 +227,7 @@ const ENTRIES: IndexEntry[] = [
     href: "/settings/product-categories",
     groupKey: "compliance",
     show: "admin",
-    keywords: ["restriction", "category", "tag", "compliance"],
+    keywords: ["restriction", "category", "tag", "compliance", "state", "blocked", "banned", "age"],
   },
   // ── Integrations ─────────────────────────────────────────────────────────────────────────
   {
@@ -266,7 +277,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Card payments",
     desc: "Take card payments from customers with Stripe",
     href: "/settings#card-payments",
-    groupKey: "billing",
+    groupKey: "hub",
     page: "Card payments",
     keywords: ["stripe", "card", "credit card", "online payment", "pay online"],
   },
@@ -337,7 +348,7 @@ const ENTRIES: IndexEntry[] = [
   ...card(
     "deposits",
     "Deposits",
-    "Ask for a deposit before an order ships",
+    "Collect a deposit when the order is placed",
     "invoicing",
     "selling",
     "Invoicing",
@@ -355,11 +366,11 @@ const ENTRIES: IndexEntry[] = [
   ...card(
     "invoice-defaults",
     "Invoice defaults",
-    "Notes and footer printed on every invoice",
+    "Customer notes and terms & conditions on every invoice",
     "invoicing",
     "selling",
     "Invoicing",
-    ["notes", "footer", "default notes", "invoice"],
+    ["notes", "footer", "default notes", "terms", "conditions", "invoice"],
   ),
   ...card(
     "costing-method",
@@ -373,7 +384,7 @@ const ENTRIES: IndexEntry[] = [
   ...card(
     "margin-floors",
     "Margin floors",
-    "The lowest margin you will sell at",
+    "Warn when a price falls below your margin floor",
     "costing",
     "selling",
     "Costing",
@@ -391,7 +402,7 @@ const ENTRIES: IndexEntry[] = [
   ...card(
     "payment-instructions",
     "Payment instructions",
-    "Bank, ACH, wire or Zelle details shown on invoices",
+    "Check, ACH, wire and notes shown on the buyer Payments page",
     "remittance",
     "selling",
     "How to pay",
@@ -423,6 +434,7 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
+    { show: "admin" },
   ),
   ...card(
     "push",
@@ -494,11 +506,12 @@ const ENTRIES: IndexEntry[] = [
   ...card(
     "driver-access",
     "Driver access",
-    "How drivers sign in to the app",
+    "Switch between the operator view and the driver view",
     "account",
     "footer",
     undefined,
-    ["driver", "pin", "app"],
+    ["driver", "act as driver", "driver view", "switch view", "app"],
+    { needs: "fleet" },
   ),
 
   // ── Answers (not links) ──────────────────────────────────────────────────────────────────
@@ -584,9 +597,20 @@ function card(
   groupKey: string,
   page: string | undefined,
   keywords: string[],
+  extra: Pick<IndexEntry, "show" | "needs"> = {},
 ): IndexEntry[] {
   return [
-    { id, kind: "card", label, desc, href: `/settings?tab=${tab}#${id}`, groupKey, page, keywords },
+    {
+      id,
+      kind: "card",
+      label,
+      desc,
+      href: `/settings?tab=${tab}#${id}`,
+      groupKey,
+      page,
+      keywords,
+      ...extra,
+    },
   ];
 }
 

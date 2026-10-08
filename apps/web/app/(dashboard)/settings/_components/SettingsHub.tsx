@@ -97,6 +97,7 @@ const GROUP_META: Omit<HubGroup, "items">[] = [
 const GROUP_TITLES: Record<string, string> = {
   ...Object.fromEntries(GROUP_META.map((g) => [g.key, g.title])),
   footer: "My account",
+  hub: "Settings",
 };
 
 const CHIPS: { label: string; href: string }[] = [
