@@ -448,7 +448,6 @@ model InvoicePayment {
   @@index([status])
   @@index([tenantId])
   @@index([tenantId, settledAt])
-  @@index([tenantId, paidAt])
   @@index([tenantId, checkDate])
   @@index([tenantId, checkStatus])
 }
