@@ -66,6 +66,10 @@ export type PriceDisclosureFact = (typeof PRICE_DISCLOSURE_FACTS)[number];
 export const BUYER_OVERSELL_MODES = ["off", "backorder"] as const;
 export type BuyerOversellMode = (typeof BUYER_OVERSELL_MODES)[number];
 
+/** What a buyer is shown about a backordered line: "show" = the tag + "ships when restocked", "hide" = looks in stock. */
+export const BUYER_BACKORDER_VISIBILITY_MODES = ["show", "hide"] as const;
+export type BuyerBackorderVisibility = (typeof BUYER_BACKORDER_VISIBILITY_MODES)[number];
+
 export const POLICY_REGISTRY = [
   entry<AtDoorEditMode>({
     key: "orders.driverAtDoorEdit",
@@ -134,6 +138,23 @@ export const POLICY_REGISTRY = [
       "readable stock error (today); 'backorder' = yes, the line is marked backorder and stock " +
       "may go below zero. Staff may always oversell; the standing-order cron is unchanged.",
     added: "2026-09-30",
+  }),
+  entry<BuyerBackorderVisibility>({
+    key: "orders.buyerBackorderVisibility",
+    area: "orders",
+    kind: "enum",
+    schema: z.enum(BUYER_BACKORDER_VISIBILITY_MODES),
+    default: "show",
+    // The seller's choice for the whole business; a customer cannot be pinned to a different one.
+    scopes: ["TENANT"],
+    // Resolved server-side; a buyer client only ever sees the result (stock status, a derived tag).
+    clientVisible: false,
+    description:
+      "What a buyer can see about backordered items (only where that buyer may order out-of-stock " +
+      "items): 'show' = the item says it ships when restocked and the order line carries a tag; " +
+      "'hide' = the item looks in stock and nothing about backorders reaches a buyer. Staff always " +
+      "see the real stock and the tag.",
+    added: "2026-10-07",
   }),
 ] as const;
 

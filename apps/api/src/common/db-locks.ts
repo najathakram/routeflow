@@ -111,6 +111,7 @@ export const LOCK_FAMILIES = [
   "demo-booking",
   "mailbox",
   "policy-write",
+  "counter-tender",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -178,6 +179,11 @@ const POOL_MAX: Record<string, number | undefined> = {
   // settings action: request-path, short (one tx), rarer than even `billing`'s add-on toggles —
   // same size as `billing` for the same reason.
   "policy-write": 4,
+  // `counter-tender` (SA-672 M1): `CounterSaleService`'s re-read -> "no tender yet" -> recordPayment
+  // window, keyed on the order id. Staff request-path and short (one invoice read + one or two
+  // recordPayment calls), one checkout per counter-sale call; same size as `billing` for the same
+  // reason.
+  "counter-tender": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -366,7 +372,7 @@ export async function withAdvisoryLock<T>(
  * bound as a parameter — so the SQL below is written out once PER TABLE instead of interpolating
  * an identifier at all.
  */
-export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice"] as const;
+export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice", "Order"] as const;
 export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
 
 /**
@@ -403,6 +409,10 @@ export async function lockRowsNoWait(
     // hand-written statements it replaced locked a single id (`WHERE id = $1`); it takes a set.
     if (table === "RouteRunStop") {
       await tx.$executeRaw`SELECT id FROM "RouteRunStop" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
+    } else if (table === "Order") {
+      // B1053: the order-merge guard. FOR UPDATE (not NO KEY UPDATE) so it also conflicts with the FK
+      // KEY SHARE an invoice insert takes on the order; ORDER BY id so two lockers share one order.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE NOWAIT`;
     } else {
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(ids)}) FOR NO KEY UPDATE NOWAIT`;
     }

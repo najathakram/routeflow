@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Param, Put, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { DocumentNumberType, UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -29,6 +38,15 @@ export class NumberingController {
   @Get()
   getSettings() {
     return this.numbering.getSettings();
+  }
+
+  /**
+   * B1188: preview what a prefix change would mint next, and the version token the save must
+   * echo (`expectedNextNumber`). Read-only.
+   */
+  @Get(":docType/preview")
+  previewPrefix(@Param("docType") docType: string, @Query("prefix") prefix: string) {
+    return this.numbering.previewPrefix(this.parseDocType(docType), prefix);
   }
 
   /**

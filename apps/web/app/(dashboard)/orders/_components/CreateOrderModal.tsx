@@ -75,10 +75,12 @@ import {
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -88,11 +90,19 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import {
+  CREDITS_PENDING_COPY,
+  creditsPendingOrderId,
+  idempotencyConflictOrderId,
+  isUnknownOutcome,
+  useCreateOrderSubmitKey,
+} from "./use-create-order-submit-key";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
@@ -194,8 +204,23 @@ export interface CreateOrderModalProps {
   resumeDraftId?: string | null;
   /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
   initialScanCode?: string | null;
+  /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
+  initialFulfillPath?: "SHIP" | null;
   /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
   onViewOrder?: (orderId: string) => void;
+}
+
+/** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
+function isSameAttemptRefusal(err: any): boolean {
+  const body = err?.response?.data;
+  if (
+    err?.response?.status === 409 &&
+    body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
+    body?.activeOrder
+  ) {
+    return true;
+  }
+  return (parseRegulatedAuthError(err)?.length ?? 0) > 0;
 }
 
 export function CreateOrderModal({
@@ -203,10 +228,23 @@ export function CreateOrderModal({
   onClose,
   resumeDraftId,
   initialScanCode,
+  initialFulfillPath,
   onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
+  // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
+  // reopen (accepted residual risk), so tell the operator to check before re-entering it.
+  React.useEffect(() => {
+    if (!isOpen && submitKey.hasUnknown()) {
+      toast({
+        title: "Your last order may have gone through. Check Orders before re-entering it.",
+        variant: "warning",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -284,6 +322,8 @@ export function CreateOrderModal({
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // scan_v2 (dark, owner-granted per tenant): the accumulating scan screen replaces the
@@ -409,6 +449,8 @@ export function CreateOrderModal({
       const { created, refused } = addLineItem(product, level, opts);
       return { created, refused };
     },
+    onSuggestion: (matches) => setScanMatches(matches),
+    suggestionsSuppressed: () => scanScreenActive,
     onUnknownCode: (code) => {
       setCreateProductInitialName("");
       setCreateProductInitialSku(code);
@@ -430,12 +472,16 @@ export function CreateOrderModal({
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
+    defaultValues: { urgent: false },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
-  const fulfillPath = watch("fulfillPath");
+  const staffFulfilment = useStaffFulfilment();
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
+  // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
+  const fulfilmentPending = !staffFulfilment.known;
   // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
@@ -447,7 +493,10 @@ export function CreateOrderModal({
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false, fulfillPath: "ROUTE" });
+    reset({
+      urgent: false,
+      fulfillPath: initialFulfillPath === "SHIP" && !resumeDraftId ? "SHIP" : "ROUTE",
+    });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
@@ -470,6 +519,7 @@ export function CreateOrderModal({
     setAppliedCredits([]);
     setFloorAcked(new Set());
     setCreateProductOpen(false);
+    setScanMatches([]);
     setCreateProductInitialName("");
     setCreateProductInitialSku("");
     createOrder.reset();
@@ -995,6 +1045,7 @@ export function CreateOrderModal({
   const { user } = useAuth();
   const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -1012,7 +1063,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: fulfillPath ?? "ROUTE",
+      fulfillPath,
     }),
     [
       selectedCustomer,
@@ -1148,7 +1199,11 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
+    reset({
+      notes: p.notes ?? "",
+      urgent: !!p.urgent,
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
+    });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -1163,7 +1218,7 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: p.fulfillPath ?? "ROUTE",
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -1218,6 +1273,7 @@ export function CreateOrderModal({
     data: FormValues,
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
+    if (fulfilmentPending) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
@@ -1294,30 +1350,38 @@ export function CreateOrderModal({
             ...note,
           };
     });
+    const payload = {
+      customerId: selectedCustomer!.id,
+      items: itemsForSubmit,
+      notes: data.notes,
+      urgent: data.urgent,
+      fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
+      requestedDeliveryDate: requestedDeliveryDate || undefined,
+      orderDate: orderDate || undefined,
+      ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+      ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
+      // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
+      // blank field (null) is omitted so the agent/customer default applies.
+      ...(commissionRatePct != null ? { commissionRatePct } : {}),
+      ...(asDraft ? { status: "DRAFT" as const } : {}),
+      ...(mergeChoice ? { mergeChoice } : {}),
+      // Bill-now (createSale) has no path through this modal today — only
+      // the create-order payload needs threading here.
+      ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
+      // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
+      ...(inlineReturn ? { inlineReturn } : {}),
+    } as any;
+    // BUG-A: ONE request in flight per modal (a synchronous latch — `isPending` is stale for the
+    // second click of a double click) and one Idempotency-Key per attempt. mergeChoice is NOT part
+    // of the cart fingerprint: the merge-prompt round trip re-submits the SAME attempt.
+    const { mergeChoice: _mc, idempotencyKey: _ik, ...cartForKey } = payload;
+    const attemptKey = submitKey.begin(JSON.stringify(cartForKey));
+    if (attemptKey === null) return;
     createOrder.mutate(
-      {
-        customerId: selectedCustomer!.id,
-        items: itemsForSubmit,
-        notes: data.notes,
-        urgent: data.urgent,
-        fulfillPath: data.fulfillPath || "ROUTE",
-        requestedDeliveryDate: requestedDeliveryDate || undefined,
-        orderDate: orderDate || undefined,
-        ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-        ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
-        // 0 MUST be sent (it means exempt) — `!= null` preserves it; only a
-        // blank field (null) is omitted so the agent/customer default applies.
-        ...(commissionRatePct != null ? { commissionRatePct } : {}),
-        ...(asDraft ? { status: "DRAFT" as const } : {}),
-        ...(mergeChoice ? { mergeChoice } : {}),
-        // Bill-now (createSale) has no path through this modal today — only
-        // the create-order payload needs threading here.
-        ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
-        // SA-484a: the create's Idempotency-Key HEADER rides with the returnKey (same lifecycle).
-        ...(inlineReturn ? { inlineReturn, idempotencyKey: returnSave.idempotencyKey() } : {}),
-      } as any,
+      { ...payload, idempotencyKey: attemptKey },
       {
         onSuccess: (created: any) => {
+          submitKey.settle("success");
           toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
@@ -1326,14 +1390,45 @@ export function CreateOrderModal({
           pendingAsDraftRef.current = false;
           returnSave.onSuccess();
           onClose();
+          // B1201: a lost-response replay of a create whose credits were never applied (read-only hint).
+          if (created?.creditsPending && created?.id) {
+            toast({ title: CREDITS_PENDING_COPY, variant: "warning" });
+            onViewOrder?.(created.id);
+          }
         },
         onError: (err: any) => {
+          // SA-715: the key already made an order: open it, never resubmit. Checked FIRST so no
+          // key-conflict code can fall through to the refused / re-mint branch.
+          const pendingOrderId = creditsPendingOrderId(err); // B1201: saved, credits not applied
+          const heldOrderId = idempotencyConflictOrderId(err) ?? pendingOrderId;
+          submitKey.settle(
+            heldOrderId
+              ? "conflict"
+              : isUnknownOutcome(err)
+                ? "unknown"
+                : isSameAttemptRefusal(err)
+                  ? "same-attempt"
+                  : "refused",
+          );
+          if (heldOrderId) {
+            toast(
+              pendingOrderId
+                ? { title: CREDITS_PENDING_COPY, variant: "warning" }
+                : {
+                    title: "Your earlier submit went through. Opening that order.",
+                    variant: "success",
+                  },
+            );
+            onClose();
+            onViewOrder?.(heldOrderId);
+            return;
+          }
           // Belt-and-braces: if our pre-check missed an active order (race) the API
           // returns 409 with code MERGE_CHOICE_REQUIRED. Surface the modal from that.
           const body = err?.response?.data;
           if (
             err?.response?.status === 409 &&
-            body?.code === "MERGE_CHOICE_REQUIRED" &&
+            body?.code === API_ERROR_CODES.MERGE_CHOICE_REQUIRED &&
             body?.activeOrder
           ) {
             pendingFormValuesRef.current = data;
@@ -1608,6 +1703,7 @@ export function CreateOrderModal({
               variant="secondary"
               type="button"
               loading={createOrder.isPending}
+              disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
               Save as Draft
@@ -1617,7 +1713,9 @@ export function CreateOrderModal({
               form="create-order-form"
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
-              disabled={lineItems.some(isPendingDefaultUnit)}
+              disabled={
+                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+              }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order
@@ -1644,6 +1742,18 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {staffFulfilment.failed && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>Couldn&apos;t load your delivery settings.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={staffFulfilment.retry}>
+                Retry
+              </Button>
             </div>
           )}
 
@@ -1714,7 +1824,7 @@ export function CreateOrderModal({
                               // effect) so hydrating a parked draft's own
                               // fulfillPath — via the same setSelectedCustomer call
                               // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
+                              setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
                               setCustomerSearch("");
                               setDebouncedCustomerSearch("");
                             }}
@@ -1918,6 +2028,20 @@ export function CreateOrderModal({
                   </ul>
                 )}
             </div>
+
+            {scanMatches.length > 0 && (
+              <DidYouMeanPicker
+                matches={scanMatches}
+                onConfirm={(product) => {
+                  setScanMatches([]);
+                  addPicked(product);
+                }}
+                onCancel={() => {
+                  setScanMatches([]);
+                  scheduleScannerRefocus(productSearchRef, 50);
+                }}
+              />
+            )}
 
             {lineItemsError && lineItems.length === 0 && (
               <p className="text-xs text-danger">{lineItemsError}</p>
@@ -2180,36 +2304,29 @@ export function CreateOrderModal({
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
-              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "ROUTE")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Delivery route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "SHIP")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Ship via carrier
-                </button>
+            {staffFulfilment.choice && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+                <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                  {staffFulfilment.formMethods.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setValue("fulfillPath", m)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === m ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
+                    </button>
+                  ))}
+                </div>
+                {fulfillPath === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
+                )}
               </div>
-              {fulfillPath === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            )}
 
             <Textarea
               label="Notes"

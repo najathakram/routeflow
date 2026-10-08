@@ -27,9 +27,9 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PolicyService } from "../policy/policy.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
-  deriveFulfilmentCapability,
+  capabilityFromInputs,
   heldAddonKeys,
-  isFleetHeld,
+  readFulfilmentInputs,
 } from "../billing/fulfilment-capability";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -100,30 +100,33 @@ export class TenantsController {
     for (const f of FEATURE_REGISTRY) {
       resolver[f.key] = resolved.byKey.get(f.key)?.effective ?? false;
     }
-    // Business profiles 1A: the fulfilment modes and the ONE derived capability answer. A failed
-    // mode read falls back to `unset` (today's behavior): never a 5xx for a field old clients ignore.
-    const [fulfilmentMode, counterSales, fleetHeld] = await Promise.all([
-      this.featureConfig.getEffectiveMode(user.tenantId, "fulfilment_model").catch(() => "unset"),
-      this.featureConfig.getEffectiveMode(user.tenantId, "counter_sales").catch(() => "unset"),
-      // A failed read must not 500 (and must not guess fleet=false): the existing 503.
-      isFleetHeld(this.addonService, this.featureOverrides, user.tenantId).catch(() => {
-        throw new ServiceUnavailableException({
-          code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
-          message: "Feature resolution is temporarily unavailable. Please retry.",
-        });
-      }),
-    ]);
+    // Business profiles 1A: the fulfilment modes and the ONE derived capability answer, read by the shared
+    // `readFulfilmentInputs` (also behind the counter-sale gate). A failed mode read falls back to `unset`
+    // (today's behavior): never a 5xx for a field old clients ignore. A failed fleet read must not 500 (and
+    // must not guess fleet=false): the existing 503.
+    const fulfilment = await readFulfilmentInputs(
+      {
+        featureConfig: this.featureConfig,
+        addonService: this.addonService,
+        featureOverrides: this.featureOverrides,
+      },
+      user.tenantId,
+    );
+    if (fulfilment.fleet === null) {
+      throw new ServiceUnavailableException({
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
     return {
       served,
       resolver,
-      modes: { ...policyModes, fulfilment_model: fulfilmentMode, counter_sales: counterSales },
-      capabilities: {
-        fulfilment: deriveFulfilmentCapability({
-          mode: fulfilmentMode,
-          counterSales,
-          fleet: fleetHeld,
-        }),
+      modes: {
+        ...policyModes,
+        fulfilment_model: fulfilment.fulfilmentMode,
+        counter_sales: fulfilment.counterSales,
       },
+      capabilities: { fulfilment: capabilityFromInputs(fulfilment) },
       catalogVersionId: resolved.catalogVersionId,
       computedAt: resolved.computedAt,
     };

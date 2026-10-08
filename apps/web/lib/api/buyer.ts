@@ -7,7 +7,13 @@ import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type InvoiceStatus, type OrderTrackingResponse } from "@routeflow/types";
+import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
+import {
+  isTrackingLive,
+  type FulfilmentMethod,
+  type InvoiceStatus,
+  type OrderTrackingResponse,
+} from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
@@ -71,6 +77,9 @@ export interface DashboardData {
     createdAt: string;
     requestedDeliveryDate: string | null;
     itemCount: number;
+    /** Business profiles 1B: the badge reads the order detail's label (buyerOrderStatusLabel). */
+    fulfillPath: string;
+    shippedAt: string | null;
   }>;
   stats: {
     activeOrders: number;
@@ -370,6 +379,8 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
+    // The cart and shelf render their own sentence for the "order already placed" refusals.
+    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
     mutationFn: (data: {
       items: Array<{
         productId: string;
@@ -383,6 +394,8 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
       forceNew?: boolean;
+      /** order ahead: the buyer's pickup / ship choice; omitted = the server's own default */
+      fulfillPath?: FulfilmentMethod;
     }) =>
       // B1094: the same cart carries the same key, so a double click / timeout retry applies once.
       buyerApiClient

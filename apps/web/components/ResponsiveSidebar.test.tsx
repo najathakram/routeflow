@@ -208,3 +208,12 @@ describe("MobileSidebarDrawer — focus trap (Tab/Shift+Tab stay inside while op
     expect(document.activeElement).toBe(trigger);
   });
 });
+
+describe("SidebarCollapseToggle reduced motion (PKG-6)", () => {
+  it("drops its colour transition under prefers-reduced-motion", () => {
+    render(<SidebarCollapseToggle collapsed={false} onToggle={() => undefined} />);
+    const btn = screen.getByLabelText("Collapse sidebar");
+    expect(btn).toHaveClass("transition-colors");
+    expect(btn).toHaveClass("motion-reduce:transition-none");
+  });
+});

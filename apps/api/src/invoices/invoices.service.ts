@@ -48,6 +48,7 @@ import {
   matchEditLines,
 } from "./invoice-edit-plan";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import {
   CONFIRMED_PAYMENT,
   CREDIT_NOTE_METHOD,
@@ -132,6 +133,7 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
@@ -176,7 +178,7 @@ import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
 import { calendarDayOf } from "./settled-date-filter";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
@@ -617,17 +619,15 @@ export class InvoicesService {
     // participates in the dueDate computation, so it is not a candidate.)
     const paymentTermsLabel =
       overrides?.paymentTermsLabel?.trim() || (overrides?.dueDate ? null : defaultTerms);
-    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this
-    // invoice doesn't already carry an explicit deposit — an explicit caller-supplied
-    // deposit (overrides.depositPercent, e.g. a future "New sale" deposit field)
-    // always wins and is never clobbered. Otherwise falls back to
-    // effectiveDepositPercent (WP-D1: customer override when set, else the
-    // tenant-wide default) — already null-or-positive, so no extra >0 guard is
-    // needed here. The deposit is due immediately (depositDueDate = issueDate); the
-    // remainder still rides the terms-label dueDate resolved above.
-    // computeDepositFields does all the read-time math — nothing derived is stored
-    // here. No effective deposit leaves these keys OUT of extraInvoiceData entirely,
-    // so the create payload is byte-identical to before this change.
+    // Deposit default ("X% upfront, remainder on terms"): applies ONLY when this invoice doesn't
+    // already carry an explicit deposit — an explicit caller-supplied deposit
+    // (overrides.depositPercent, e.g. a future "New sale" deposit field) always wins and is never
+    // clobbered. Otherwise falls back to effectiveDepositPercent (WP-D1: customer override when
+    // set, else the tenant-wide default) — already null-or-positive, so no extra >0 guard is needed
+    // here. The deposit is due immediately (depositDueDate = issueDate); the remainder still rides
+    // the terms-label dueDate resolved above. computeDepositFields does all the read-time math —
+    // nothing derived is stored here. No effective deposit leaves these keys OUT of
+    // extraInvoiceData entirely, so the create payload is byte-identical to before this change.
     const depositFields: Record<string, any> =
       overrides?.depositPercent != null
         ? {
@@ -1240,6 +1240,7 @@ export class InvoicesService {
       ? null
       : await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any): Promise<any[]> => {
+      if (!callerTx) await lockOrderRow(tx, tenantId, order.id); // SA-706: before the first insert
       // Right before the first insert — never above the caller's transaction.
       const baseNumber =
         hoistedBaseNumber ?? (await this.generateInvoiceNumber(tenantId ?? undefined, tx));
@@ -2781,20 +2782,19 @@ export class InvoicesService {
           : {};
     const tenantId = this.prisma.getTenantId();
 
-    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside
-    // ONE tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape.
-    // Previously this ran with no transaction at all AND never settled the
-    // order's explicit-amount OrderCreditNote selections, so a leftover selection
-    // was neither auto-applied (send()'s explicitIds exclusion assumes settle
-    // already ran) nor settled here — stranding it. B100/F16b: the number is reserved
-    // BEFORE this transaction opens, in reserveNext's own short transaction
-    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method
-    // never receives a caller tx; if it ever does, it must reserve INSIDE it with
-    // `generateInvoiceNumber(tenantId, tx)`, the createSplitInvoices rule
-    // (fix-round-2b.md D7) — a hoisted reservation under a caller's tx is the
-    // pool-starving nested open.
+    // F03/R7/T-B85: the create + invoicedQty bump + credit-note settle run inside ONE
+    // tenantTransaction — mirrors createSplitInvoices's runCreation(tx) shape. Previously this ran
+    // with no transaction at all AND never settled the order's explicit-amount OrderCreditNote
+    // selections, so a leftover selection was neither auto-applied (send()'s explicitIds exclusion
+    // assumes settle already ran) nor settled here — stranding it. B100/F16b: the number is
+    // reserved BEFORE this transaction opens, in reserveNext's own short transaction
+    // (fix-round-2.md D1) — a failure below leaves a gap in the series. This method never receives
+    // a caller tx; if it ever does, it must reserve INSIDE it with `generateInvoiceNumber(tenantId,
+    // tx)`, the createSplitInvoices rule (fix-round-2b.md D7) — a hoisted reservation under a
+    // caller's tx is the pool-starving nested open.
     const invoiceNumber = await this.generateInvoiceNumber(tenantId ?? undefined);
     const runCreation = async (tx: any) => {
+      await lockOrderRow(tx, tenantId, order.id); // SA-706: before the insert's FK takes KEY SHARE
       let created: any;
       try {
         created = await tx.invoice.create({
@@ -2949,13 +2949,11 @@ export class InvoicesService {
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
         inv.status === InvoiceStatus.WRITTEN_OFF;
-      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below —
-      // totalConfirmed sums three separately-computed floats (cash + credit +
-      // advance), so an invoice fully settled by a mix of methods can leave a
-      // sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...) doesn't
-      // catch, rendering a red "Balance Due $0.00" on an otherwise-settled
-      // invoice. fmt() rounds for DISPLAY but this raw value drives the color/
-      // isOverdue logic directly.
+      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below — totalConfirmed sums
+      // three separately-computed floats (cash + credit + advance), so an invoice fully settled by
+      // a mix of methods can leave a sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...)
+      // doesn't catch, rendering a red "Balance Due $0.00" on an otherwise-settled invoice. fmt()
+      // rounds for DISPLAY but this raw value drives the color/isOverdue logic directly.
       const balanceDue = isSettled
         ? 0
         : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
@@ -2983,7 +2981,7 @@ export class InvoicesService {
     });
 
     return {
-      data: computedData,
+      data: customerInvoiceList(computedData, user?.role === UserRole.CUSTOMER),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -3047,6 +3045,7 @@ export class InvoicesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
+      if (inv.status === InvoiceStatus.DRAFT) throw new NotFoundException("Invoice not found");
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
@@ -3054,7 +3053,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
-    return {
+    return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(inv),
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
@@ -3062,7 +3061,7 @@ export class InvoicesService {
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
-    };
+    });
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {
@@ -3466,7 +3465,7 @@ export class InvoicesService {
     }
   }
 
-  async send(id: string, opts?: { allowPreDelivery?: boolean }) {
+  async send(id: string, opts?: { allowPreDelivery?: boolean; suppressNotify?: boolean }) {
     const inv = await this.findOneOrThrow(id);
     const refusal = sendRefusal(inv.status); // #2255: fast pre-tx; markSent re-checks under the lock
     if (refusal) throw new BadRequestException(refusal);
@@ -3483,7 +3482,8 @@ export class InvoicesService {
     });
     // P6-5: INVOICE_SENT (EMAIL/PORTAL only — G12 blocks WA/SMS in the engine).
     // Once, on the DRAFT→SENT flip; a re-send doesn't re-notify. System sender.
-    if (inv.status === InvoiceStatus.DRAFT) {
+    // SA-655: `suppressNotify` = the counter sale's walk-in customer, who has no mailbox to tell.
+    if (inv.status === InvoiceStatus.DRAFT && !opts?.suppressNotify) {
       this.messaging
         .notifyEvent(NotificationEvent.INVOICE_SENT, {
           customerId: updated.customerId,
@@ -3511,7 +3511,7 @@ export class InvoicesService {
    */
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    return retryOnTxConflict(`invoice mark-sent id=${id}`, () =>
+    return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           // #2255 / SA-404: FIRST statement — lock (Order →) Invoice and re-read, then decide from
@@ -3521,6 +3521,7 @@ export class InvoicesService {
           const refusal = sendRefusal(locked.status, emailSent);
           if (refusal) throw new BadRequestException(refusal);
           const nextStatus = nextSentStatus(locked.status);
+          await lockCreditsForSend(tx, this.prisma.getTenantId(), locked);
           const updated = await tx.invoice.update({
             where: { id },
             data: { status: nextStatus, sentAt: new Date() },

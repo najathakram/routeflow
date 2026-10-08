@@ -235,6 +235,17 @@ describe("settleOrderInvoice", () => {
     expect(out).toBeInstanceOf(ConflictException);
     expect(out?.message).toContain("marked shipped");
     expect(out?.message).toContain("tx conflict");
+    expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICE_SETTLE_FAILED" });
+  });
+
+  it("the invoice-check failure (:134) carries ORDER_INVOICE_SETTLE_FAILED with the same text", async () => {
+    const { self, invoicesService, tenantDb } = harness();
+    invoicesService.findOpenOrderDraft.mockResolvedValue(null);
+    tenantDb.invoice.findMany.mockRejectedValue(new Error("db down"));
+    const out = await settleOrderInvoice(self, "ord-1", logger, "shipped");
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out?.message).toContain("marked shipped, but its invoice could not be checked");
+    expect(out?.getResponse()).toMatchObject({ code: "ORDER_INVOICE_SETTLE_FAILED" });
   });
 
   it("shipped then delivered: the second pass reuses the one invoice and never creates another", async () => {
@@ -269,6 +280,7 @@ describe("settleOrderInvoice", () => {
     expect(shipped).toBeInstanceOf(ConflictException);
     expect(shipped?.message).toContain("marked shipped");
     expect(shipped?.message).toContain("the order stays shipped and nothing has been billed yet");
+    expect(shipped?.getResponse()).toMatchObject({ code: "ORDER_INVOICE_SETTLE_FAILED" });
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("after 1 attempt(s): boom"));
 
     const delivered = await settleOrderInvoice(self, "ord-1", logger, "delivered");

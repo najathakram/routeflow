@@ -48,7 +48,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeaturePreviewService } from "../billing/feature-preview.service";
 import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
 import { toEffectiveFeature } from "../billing/feature-resolver.service";
-import type { FeaturePreviewRequest } from "@routeflow/types";
+import type { EffectiveFeature, FeatureModeState, FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -63,6 +63,11 @@ import type {
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
+
+/** Attach a config key's applied mode to its explain-trace row (B1132); no mode, no change. */
+function withConfigMode(feature: EffectiveFeature, mode?: FeatureModeState): EffectiveFeature {
+  return mode ? { ...feature, mode } : feature;
+}
 
 @ApiTags("platform-admin")
 @ApiBearerAuth()
@@ -598,6 +603,7 @@ export class PlatformAdminController {
     if (!resolved) {
       return { effective: [], computedAt: new Date().toISOString(), unavailable: true };
     }
+    const modes = await this.configModesByKey(id);
     return {
       effective: FEATURE_REGISTRY.map((f) => {
         const entry = resolved.byKey.get(f.key)!;
@@ -607,12 +613,15 @@ export class PlatformAdminController {
         // explain trace is to show where they diverge. `enforced` reflects the REAL mode:
         // true only once "live" makes the resolver's verdict the one that's applied.
         const serving = oldPathByKey.get(f.key) ?? entry.effective;
-        return toEffectiveFeature(
-          entry,
-          serving,
-          resolved.planKey,
-          resolved.catalogVersionId,
-          mode === "live",
+        return withConfigMode(
+          toEffectiveFeature(
+            entry,
+            serving,
+            resolved.planKey,
+            resolved.catalogVersionId,
+            mode === "live",
+          ),
+          modes.get(f.key),
         );
       }),
       computedAt: resolved.computedAt,
@@ -631,13 +640,41 @@ export class PlatformAdminController {
     const entry = resolved.byKey.get(key);
     if (!entry) throw new NotFoundException(`"${key}" is not a registered feature key.`);
     const serving = oldPathByKey.get(key) ?? entry.effective;
-    return toEffectiveFeature(
-      entry,
-      serving,
-      resolved.planKey,
-      resolved.catalogVersionId,
-      mode === "live",
+    const modes = await this.configModesByKey(id, key);
+    return withConfigMode(
+      toEffectiveFeature(
+        entry,
+        serving,
+        resolved.planKey,
+        resolved.catalogVersionId,
+        mode === "live",
+      ),
+      modes.get(key),
     );
+  }
+
+  /**
+   * B1132: the tenant's applied mode for every config-bearing registry key (or just `only`), from
+   * `FeatureConfigService.getState`, the SAME read behind `GET .../feature-config/:key` that the
+   * Setup tab's "Current setup" card shows, so the console row can never disagree with it. A failed
+   * read leaves that key without a `mode` (the console falls back to its plain row) rather than
+   * failing the whole explain trace.
+   */
+  private async configModesByKey(
+    tenantId: string,
+    only?: string,
+  ): Promise<Map<string, FeatureModeState>> {
+    const keys = FEATURE_REGISTRY.filter((f) => f.config && (only === undefined || f.key === only));
+    const states = await Promise.all(
+      keys.map(async (f) => {
+        try {
+          return [f.key, await this.featureConfig.getState(tenantId, f.key)] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return new Map(states.filter((e): e is NonNullable<typeof e> => e !== null));
   }
 
   @Post("tenants/:id/features/preview")

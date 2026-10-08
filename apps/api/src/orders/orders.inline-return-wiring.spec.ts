@@ -81,9 +81,21 @@ describe("OrdersService.create(): inline-return call order (#2094)", () => {
   });
 
   it("the existing appliedCreditNotes sync keeps its OWN Serializable tx, outside the order tx (SA-221 change 1)", () => {
-    const sync = at("syncOrderCreditSelections(");
-    expect(sync).toBeGreaterThan(commit());
-    expect(body.slice(sync, sync + 500)).toContain('isolationLevel: "Serializable"');
+    // SA-706 MUST 2: create() hands the credit tx to the shared helper (Order lock first, retried).
+    // B1201: via syncCreateCredits. It is called ONLY from the tail: a keyed replay never writes credits.
+    expect(body.split("syncCreateCredits(").length - 1).toBe(1);
+    expect(body.indexOf("syncCreateCredits(")).toBeGreaterThan(commit());
+    const firstReplayExit = body.indexOf("replayAfterCheck(");
+    expect(body.slice(0, body.lastIndexOf("replayAfterCheck(") + 200)).not.toContain(
+      "syncCreateCredits(",
+    );
+    expect(firstReplayExit).toBeGreaterThan(-1);
+    expect(methodBody("syncCreateCredits")).toContain("syncAndSettleOrderCredits(");
+    const helper = methodBody("syncAndSettleOrderCredits");
+    expect(helper).toContain('isolationLevel: "Serializable"');
+    expect(helper.indexOf("lockOrderRow(")).toBeLessThan(
+      helper.indexOf("syncOrderCreditSelections("),
+    );
   });
 
   it("nothing between the customer lock and the commit takes another advisory lock or a tx-less recompute", () => {

@@ -7,6 +7,8 @@ export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
   id: string;
+  /** SA-655: the tenant's system walk-in customer (counter sales): never deactivated, deleted or merged. */
+  isWalkIn?: boolean | null;
   businessName: string;
   contactName: string;
   phone?: string;
@@ -163,11 +165,11 @@ export function useCustomerOrders<T = unknown>(id: string) {
   });
 }
 
-export function useCustomerRoutes(id: string) {
+export function useCustomerRoutes(id: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["customers", id, "routes"],
     queryFn: () => apiClient.get(`/customers/${id}/routes`).then((r) => r.data),
-    enabled: !!id,
+    enabled: !!id && (options?.enabled ?? true),
   });
 }
 

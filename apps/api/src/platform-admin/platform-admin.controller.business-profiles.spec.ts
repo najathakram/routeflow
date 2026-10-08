@@ -28,6 +28,8 @@ import { PlatformAdminController } from "./platform-admin.controller";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BusinessProfileService } from "../billing/business-profile.service";
 import { AdminAuditAction } from "./audit-actions.constant";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
 
 const T = "tenant-a";
 const FLEET = ["recurring_routes", "order_delivery"];
@@ -74,6 +76,7 @@ function fakeTenant(start: {
     counter_sales: "unset",
     ...start.modes,
   };
+  const stored = new Set<string>(Object.keys(start.modes ?? {}));
   const writes: string[] = [];
   const active = (key: string) => rows.find((r) => r.featureKey === key && !r.revokedAt);
   const can = (key: string) => {
@@ -122,6 +125,10 @@ function fakeTenant(start: {
     getState: jest.fn(async (_t: string, key: string) => ({
       value: modes[key],
       effective: modes[key],
+      // a stored row is TENANT; a key never written reads its registry default (like the real store)
+      source: stored.has(key) ? ("TENANT" as const) : ("REGISTRY_DEFAULT" as const),
+      allowed: [] as string[],
+      blocked: [] as string[],
     })),
     set: jest.fn(async (_t: string, key: string, mode: string) => {
       if (key === failing.setKey) throw new Error("connection terminated unexpectedly");
@@ -131,6 +138,7 @@ function fakeTenant(start: {
         }
       }
       modes[key] = mode;
+      stored.add(key);
       writes.push(`mode ${key}=${mode}`);
     }),
   };
@@ -142,7 +150,22 @@ function fakeTenant(start: {
       }
     }),
     invalidate: jest.fn(),
+    // the explain trace (B1132): every registry key resolves ON from the plan default, exactly the
+    // "the new resolver says ON, the old path says OFF" shape the demo console showed
+    resolveAll: jest.fn(async () => ({
+      planKey: "SCALE",
+      catalogVersionId: "cat-1",
+      computedAt: "2026-10-05T00:00:00.000Z",
+      byKey: new Map(
+        FEATURE_REGISTRY.map((f) => [
+          f.key,
+          { key: f.key, effective: true, source: "PRESET", term: "default", charged: false },
+        ]),
+      ),
+    })),
+    computeOldPathAll: jest.fn(async () => new Map(FEATURE_REGISTRY.map((f) => [f.key, false]))),
   };
+  const entitlementsMode = { getMode: jest.fn(async () => "shadow") };
   const featurePreview = {
     preview: jest.fn(async () => ({ before: [], after: [], changed: ["fleet-change"] })),
   };
@@ -177,7 +200,7 @@ function fakeTenant(start: {
     stub() as any, // billingService
     addonService as any,
     featureOverrides as any,
-    stub() as any, // entitlementsMode
+    entitlementsMode as any,
     stub() as any, // configSnapshotFlag
     stub() as any, // featureDiffs
     authority as any,
@@ -501,29 +524,70 @@ describe("POST business-profile (confirm) — through the existing audited write
     expect(t.writes).toEqual([]);
   });
 
-  it.each(["in_store_retailer", "in_store_shipping_retailer"])(
-    "SA-671 M1: %s is refused with BUSINESS_PROFILE_UNAVAILABLE before ANY write",
-    async (profile) => {
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 lifted: %s (%s, now available) applies through the audited writes",
+    async (profile, mode) => {
       const t = fakeTenant({ addons: ["recurring_routes"] });
-      const err = await t.controller
-        .applyBusinessProfile(T, { profile: profile as never }, admin)
-        .catch((e) => e);
-      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
-      expect(t.writes).toEqual([]);
-      expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+      await t.controller.applyBusinessProfile(T, { profile: profile as never }, admin);
+      expect(t.writes).toEqual(
+        expect.arrayContaining([
+          `mode fulfilment_model=${mode}`,
+          "mode counter_sales=on",
+          "disable recurring_routes",
+        ]),
+      );
+      expect(t.svc.recordAdminAction).toHaveBeenCalled();
+      expect(t.state().modes).toMatchObject({ fulfilment_model: mode, counter_sales: "on" });
     },
   );
 
-  it("SA-671 M1 bypass: a tenant ALREADY stored in-store is still refused — no counter_sales, no DENYs", async () => {
-    const t = fakeTenant({
-      addons: ["recurring_routes"],
-      modes: { fulfilment_model: "pickup", counter_sales: "unset" },
+  // The refusal is DERIVED from registry availability (unavailableModes), so it stays covered by marking the
+  // live registry row unavailable for one test (restored in finally).
+  const withUnavailable = async (mode: string, run: () => Promise<void>) => {
+    const row = FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model")!.config!.modes[mode] as {
+      available: boolean;
+    };
+    row.available = false;
+    try {
+      await run();
+    } finally {
+      row.available = true;
+    }
+  };
+
+  it.each([
+    ["in_store_retailer", "pickup"],
+    ["in_store_shipping_retailer", "pickup_ship"],
+  ])(
+    "SA-671 M1 (registry fixture: %s's mode %s marked unavailable) is refused with BUSINESS_PROFILE_UNAVAILABLE before ANY write",
+    async (profile, mode) => {
+      await withUnavailable(mode, async () => {
+        const t = fakeTenant({ addons: ["recurring_routes"] });
+        const err = await t.controller
+          .applyBusinessProfile(T, { profile: profile as never }, admin)
+          .catch((e) => e);
+        expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+        expect(t.writes).toEqual([]);
+        expect(t.svc.recordAdminAction).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("SA-671 M1 bypass (registry fixture): a tenant ALREADY stored in-store is still refused while its mode is unavailable — no counter_sales, no DENYs", async () => {
+    await withUnavailable("pickup", async () => {
+      const t = fakeTenant({
+        addons: ["recurring_routes"],
+        modes: { fulfilment_model: "pickup", counter_sales: "unset" },
+      });
+      const err = await t.controller
+        .applyBusinessProfile(T, { profile: "in_store_retailer" }, admin)
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
+      expect(t.writes).toEqual([]);
     });
-    const err = await t.controller
-      .applyBusinessProfile(T, { profile: "in_store_retailer" }, admin)
-      .catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
-    expect(t.writes).toEqual([]);
   });
 
   it("an unknown profile is refused before ANY write", async () => {
@@ -775,5 +839,68 @@ describe("SA MUST: a failure AFTER a successful billing disable returns the SAME
       .catch((e) => e);
     expect(err.message).toBe("connection terminated unexpectedly");
     expect(t.addonService.disableAddon).not.toHaveBeenCalled();
+  });
+});
+
+describe("effective-features carries the applied fulfilment mode (B1132)", () => {
+  const consoleRow = async (t: ReturnType<typeof fakeTenant>, key: string) => {
+    const res = (await t.controller.getTenantFeaturesEffective(T)) as {
+      effective: Array<{ key: string; mode?: Record<string, unknown> }>;
+    };
+    return res.effective.find((f) => f.key === key);
+  };
+
+  it("after a profile is applied, the console row's mode IS the one the Current setup card reads", async () => {
+    const t = fakeTenant({ addons: [] });
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+
+    // the card: GET feature-config/fulfilment_model -> featureConfig.getState(...).value
+    const card = await t.featureConfig.getState(T, "fulfilment_model");
+    expect(card.value).toBe("ship");
+
+    // the console row: effective-features, same resolver, with its true source
+    const row = await consoleRow(t, "fulfilment_model");
+    expect(row?.mode).toMatchObject({ value: "ship", effective: "ship", source: "TENANT" });
+    expect(row?.mode?.value).toBe(card.value);
+    // ...and the capability the apps act on agrees: SHIP only
+    expect(
+      deriveFulfilmentCapability({
+        mode: String(row?.mode?.effective),
+        counterSales: "off",
+        fleet: false,
+      }).methods,
+    ).toEqual(["SHIP"]);
+  });
+
+  it("a never-configured tenant reads its registry default, not a tenant value", async () => {
+    const t = fakeTenant({});
+    const row = await consoleRow(t, "fulfilment_model");
+    expect(row?.mode).toMatchObject({
+      value: "unset",
+      effective: "unset",
+      source: "REGISTRY_DEFAULT",
+    });
+  });
+
+  it("the single-key route carries the same mode", async () => {
+    const t = fakeTenant({});
+    await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
+    const one = (await t.controller.getTenantFeatureEffective(T, "fulfilment_model")) as {
+      mode?: { value: string };
+    };
+    expect(one.mode?.value).toBe("ship");
+  });
+
+  it("a key with no config block carries no mode", async () => {
+    const t = fakeTenant({});
+    const plain = FEATURE_REGISTRY.find((f) => !f.config)!;
+    expect((await consoleRow(t, plain.key))?.mode).toBeUndefined();
+  });
+
+  it("a failed mode read leaves the row without a mode instead of failing the whole trace", async () => {
+    const t = fakeTenant({});
+    t.featureConfig.getState.mockRejectedValueOnce(new Error("db blip"));
+    const res = (await t.controller.getTenantFeaturesEffective(T)) as { effective: unknown[] };
+    expect(res.effective.length).toBe(FEATURE_REGISTRY.length);
   });
 });

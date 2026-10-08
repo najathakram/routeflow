@@ -7,6 +7,8 @@ import { ChevronLeft, ChevronRight, ShoppingCart, Loader2, AlertTriangle } from 
 import { Badge } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerOrders } from "@/lib/api/buyer";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { buyerOrderStatusLabel, sellerShowsRouteWording } from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +88,17 @@ export default function BuyerOrdersPage() {
 
   const [page, setPage] = React.useState(1);
   const [statusFilter, setStatusFilter] = React.useState("");
+  // Business profiles 1B: a configured seller without a fleet has no delivery run, so no
+  // "Out for Delivery" filter. Each order's badge is the order detail's own label
+  // (buyerOrderStatusLabel). Unset / unread / loading = today's tabs and labels.
+  const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
+  const showsRoute = sellerShowsRouteWording(capabilities);
+  const statusLabel = (order: {
+    status: string;
+    fulfillPath?: string | null;
+    shippedAt?: string | null;
+    shippingTrackingNumber?: string | null;
+  }) => buyerOrderStatusLabel(order, capabilities, capLoading) ?? formatStatus(order.status);
   const {
     data: result,
     isLoading,
@@ -139,22 +152,24 @@ export default function BuyerOrdersPage() {
           { label: "Out for Delivery", value: "OUT_FOR_DELIVERY" },
           { label: "Delivered", value: "DELIVERED" },
           { label: "Cancelled", value: "CANCELLED" },
-        ].map((tab) => (
-          <button
-            key={tab.value}
-            onClick={() => {
-              setStatusFilter(tab.value);
-              setPage(1);
-            }}
-            className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-              statusFilter === tab.value
-                ? "border-buyer-500 bg-buyer-500 text-white"
-                : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        ]
+          .filter((tab) => showsRoute || tab.value !== "OUT_FOR_DELIVERY")
+          .map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => {
+                setStatusFilter(tab.value);
+                setPage(1);
+              }}
+              className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                statusFilter === tab.value
+                  ? "border-buyer-500 bg-buyer-500 text-white"
+                  : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
       </div>
 
       {/* Error */}
@@ -191,10 +206,7 @@ export default function BuyerOrdersPage() {
                     <span className="min-w-0 truncate text-sm font-semibold text-navy">
                       {orderLabel(order)}
                     </span>
-                    <Badge
-                      variant={getStatusVariant(order.status)}
-                      label={formatStatus(order.status)}
-                    />
+                    <Badge variant={getStatusVariant(order.status)} label={statusLabel(order)} />
                   </div>
                   <div className="mt-2 flex items-end justify-between gap-3">
                     <p className="text-xs text-navy/70">
@@ -252,7 +264,7 @@ export default function BuyerOrdersPage() {
                       <td className="px-4 py-3">
                         <Badge
                           variant={getStatusVariant(order.status)}
-                          label={formatStatus(order.status)}
+                          label={statusLabel(order)}
                         />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">

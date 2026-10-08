@@ -40,6 +40,8 @@ const CODE_COPY: Record<string, string> = {
     "This order is already with the carrier. Use a return instead of cancelling.",
   ORDER_WITH_CARRIER_NO_REDUCE:
     "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+  ORDER_WITH_CARRIER_NO_ADD:
+    "This order is already with the carrier. Create a new order for the extra items.",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
@@ -50,6 +52,8 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
+  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
+    "The order was saved, but the credit notes weren't applied. Apply them on the order.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
