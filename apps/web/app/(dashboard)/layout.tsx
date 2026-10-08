@@ -37,6 +37,7 @@ import { TenantLogo } from "@/components/TenantLogo";
 import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
+import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { useSubscription } from "@/lib/api/billing";
@@ -1107,63 +1108,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   React.useEffect(() => {
-    let sequence = "";
-    let seqTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const handler = (e: KeyboardEvent) => {
-      // Skip if user is typing in an input/textarea
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        (e.target as HTMLElement)?.isContentEditable
-      )
-        return;
-      // Skip if modifier keys held (except shift for ?)
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      if (e.key === "?") {
-        setShortcutHelpOpen((v) => !v);
-        return;
-      }
-
-      // Sequence shortcuts (g + letter)
-      sequence += e.key.toLowerCase();
-      if (seqTimer) clearTimeout(seqTimer);
-      seqTimer = setTimeout(() => {
-        sequence = "";
-      }, 800);
-
-      if (sequence === "go") {
-        shellRouter.push("/orders");
-        sequence = "";
-      } else if (sequence === "gr") {
-        if (routesAccess) shellRouter.push("/routes");
-        sequence = "";
-      } else if (sequence === "gd") {
-        if (routesAccess) shellRouter.push("/drivers");
-        sequence = "";
-      } else if (sequence === "gc") {
-        shellRouter.push("/customers");
-        sequence = "";
-      } else if (sequence === "gi") {
-        shellRouter.push("/invoices");
-        sequence = "";
-      } else if (sequence === "gf") {
-        shellRouter.push("/finance/dashboard");
-        sequence = "";
-      } else if (sequence === "gs") {
-        shellRouter.push("/settings");
-        sequence = "";
-      } else if (sequence === "gt") {
-        if (counterEnabled) shellRouter.push("/orders/counter-sale");
-        sequence = "";
-      } else if (sequence === "gh") {
-        shellRouter.push("/dashboard");
-        sequence = "";
-      }
-    };
+    // "g" + letter navigation and "?" help; the rules (typing, modifiers, a screen holding a cart) live in lib/nav-shortcuts.
+    const handler = createNavShortcutHandler({
+      push: (href) => shellRouter.push(href),
+      routesAccess,
+      counterEnabled,
+      toggleHelp: () => setShortcutHelpOpen((v) => !v),
+    });
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [shellRouter, routesAccess, counterEnabled]);

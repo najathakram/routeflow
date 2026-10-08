@@ -176,10 +176,11 @@ export function CounterSaleScreen() {
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
   const refocus = React.useCallback(
     () =>
-      window.setTimeout(
-        () => (awaitingCustomerRef.current ? customerFindRef.current : scanRef.current)?.focus(),
-        0,
-      ),
+      window.setTimeout(() => {
+        // A line's note field the clerk just opened (or is typing in) keeps focus: never pull it back to the scan field.
+        if (document.activeElement?.hasAttribute("data-counter-note")) return;
+        (awaitingCustomerRef.current ? customerFindRef.current : scanRef.current)?.focus();
+      }, 0),
     [],
   );
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
@@ -652,7 +653,12 @@ export function CounterSaleScreen() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-4" data-testid="counter-sale-screen">
+    <div
+      className="mx-auto w-full max-w-5xl space-y-4 p-4"
+      data-testid="counter-sale-screen"
+      // A cart with lines is work a "g i" jump would throw away: the shell's g-shortcuts stay off while it has any.
+      data-nav-shortcuts-suspended={lines.length > 0 ? "true" : undefined}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
         {gate.offerShipInstead ? (

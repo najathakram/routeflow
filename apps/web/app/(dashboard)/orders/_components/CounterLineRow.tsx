@@ -256,6 +256,8 @@ export function CounterLineRow({
           disabled={locked}
           value={l.note ?? ""}
           onChange={(e) => onNote(l.tempId, e.target.value)}
+          data-counter-note=""
+          autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut
         />
       ) : hasNote ? (
         <p className="break-words text-xs text-navy/70" data-testid="line-note">
