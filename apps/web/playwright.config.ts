@@ -388,7 +388,7 @@ export default defineConfig({
       name: "migration-hub-gate",
       testMatch: /25-migration-hub\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
@@ -402,7 +402,7 @@ export default defineConfig({
       name: "import-duplicates",
       testMatch: /26-import-duplicates\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
@@ -511,7 +511,7 @@ export default defineConfig({
       name: "invoice-numbering-card",
       testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
@@ -887,7 +887,7 @@ export default defineConfig({
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
-        storageState: path.join(AUTH_DIR, "operator.json"),
+        storageState: path.join(AUTH_DIR, "tenant-admin.json"),
       },
     },
 
