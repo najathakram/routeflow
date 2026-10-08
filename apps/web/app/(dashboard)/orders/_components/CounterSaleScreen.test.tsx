@@ -175,6 +175,27 @@ describe("CounterSaleScreen", () => {
     expect(screen.queryByText(/less than the total/)).toBeNull();
   });
 
+  it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    expect(screen.queryByTestId("counter-scan-cue")).toBeNull(); // a new line is its own signal
+    await scan("012345678905");
+    await waitFor(() =>
+      expect(screen.getByTestId("counter-scan-cue")).toHaveTextContent("Cola · now 2"),
+    );
+  });
+
+  it("Enter on a typed quantity hands focus back to the scan field (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    const qty = screen.getByLabelText("Set quantity of Cola");
+    qty.focus();
+    fireEvent.change(qty, { target: { value: "4" } });
+    fireEvent.keyDown(qty, { key: "Enter" });
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$10.00");
+  });
+
   it("Complete & show receipt posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");

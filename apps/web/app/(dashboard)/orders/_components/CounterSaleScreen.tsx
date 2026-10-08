@@ -246,9 +246,30 @@ export function CounterSaleScreen() {
   const scan = useCounterSaleScan({
     locked: lineLocked,
     refocus,
-    add: (product, level, n) =>
-      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id))),
+    add: (product, level, n) => {
+      scanCueArmedRef.current = true;
+      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+    },
   });
+
+  // A scan that lands on a line already in the cart says so (a new line is its own signal): "Cola · now 2".
+  const [scanCue, setScanCue] = React.useState<string | null>(null);
+  const scanCueArmedRef = React.useRef(false);
+  const prevLinesRef = React.useRef<SaleLine[]>(lines);
+  React.useEffect(() => {
+    const before = prevLinesRef.current;
+    prevLinesRef.current = lines;
+    if (!scanCueArmedRef.current) return;
+    scanCueArmedRef.current = false;
+    const grown = lines.find((l) => {
+      const was = before.find((b) => b.tempId === l.tempId);
+      return !!was && was.qty !== l.qty;
+    });
+    if (!grown) return;
+    setScanCue(`${grown.name} · now ${lineQtyLabel(grown).replace(/^× /, "")}`);
+    const t = window.setTimeout(() => setScanCue(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [lines]);
 
   // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
   const wasPendingRef = React.useRef(false);
@@ -800,6 +821,15 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {scanCue ? (
+            <p
+              role="status"
+              className="rounded bg-navy/5 px-2 py-1 text-sm font-medium"
+              data-testid="counter-scan-cue"
+            >
+              {scanCue}
+            </p>
+          ) : null}
           {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
           {scan.failed ? (
             <div
@@ -848,6 +878,7 @@ export function CounterSaleScreen() {
                 onRemove={removeLine}
                 onNote={noteLine}
                 onQty={typeQty}
+                onQtyEnter={refocus}
               />
             ))}
           </ul>
