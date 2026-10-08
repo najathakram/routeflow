@@ -298,7 +298,7 @@ function expected() {
     // per return: the priced credit, or the stored amount when no priced split was stored
     creditIssued:
       credits.reduce((s, r) => {
-        const priced = (r.credit ?? []).reduce((a, n) => a + cents(n), 0);
+        const priced = (r.credit ?? ([] as number[])).reduce((a, n) => a + cents(n), 0);
         return s + (priced > 0 ? priced : cents(r.refundAmount ?? 0));
       }, 0) / 100,
     net: (cash + card + check - refundTotal) / 100,
