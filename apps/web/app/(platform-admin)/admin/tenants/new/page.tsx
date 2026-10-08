@@ -25,7 +25,7 @@ import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePr
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { TimeZoneInput } from "@/components/TimeZoneInput";
-import { SUGGESTED_TIME_ZONE, isValidTimeZone } from "@/lib/timezones";
+import { SUGGESTED_TIME_ZONE, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { CopyButton } from "@/components/CopyButton";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
@@ -469,11 +469,14 @@ export default function AdminCreateTenantPage() {
     e.preventDefault();
     if (isLoading) return;
     // The time zone is checked here (not natively) so its message reads inline next to the field.
-    if (!isValidTimeZone(form.timezone)) {
+    const zone = canonicalTimeZone(form.timezone);
+    if (!zone) {
       setFieldErrors((prev) => ({ ...prev, timezone: FIELD_COPY.timezone }));
       fieldRefs.current.timezone?.focus();
       return;
     }
+    // Store the canonical spelling (america/chicago becomes America/Chicago).
+    if (zone !== form.timezone) setForm((prev) => ({ ...prev, timezone: zone }));
     // Nothing is sent here: the form (native required-field checks already passed) opens the review.
     setSheetOpen(true);
   };
@@ -760,6 +763,8 @@ export default function AdminCreateTenantPage() {
                   onClick={() => {
                     setForm((prev) => ({ ...prev, timezone: SUGGESTED_TIME_ZONE }));
                     setFieldErrors((prev) => ({ ...prev, timezone: undefined }));
+                    // The button unmounts once the suggestion is applied: keep focus on the field.
+                    fieldRefs.current.timezone?.focus();
                   }}
                   className="admin-tap shrink-0 rounded-lg px-3 text-sm text-indigo-300 hover:bg-slate-700"
                 >

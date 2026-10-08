@@ -72,4 +72,21 @@ describe("create tenant: time zone", () => {
     expect(post.mock.calls[0]![0]).toBe("/platform-admin/tenants");
     expect(post.mock.calls[0]![1]).toMatchObject({ timezone: "America/Chicago" });
   });
+
+  it("keeps focus on the time-zone input after the suggestion is used", () => {
+    render(<AdminCreateTenantPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Use America/New_York" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Time zone"));
+  });
+
+  it("sends the canonical spelling of a lower-case zone", async () => {
+    render(<AdminCreateTenantPage />);
+    fillRest();
+    fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "america/chicago" } });
+    fireEvent.click(createButton());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0]![1]).toMatchObject({ timezone: "America/Chicago" });
+  });
 });
