@@ -263,14 +263,23 @@ const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
   STORE_CREDIT: "Store credit",
 };
 
-/** "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). */
+/**
+ * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
+ * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
+ */
 export function formatSaleTime(at: string | Date, timeZone?: string): string {
   const d = at instanceof Date ? at : new Date(at);
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-  }).format(d);
+  const format = (zone: string | undefined) =>
+    new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: zone,
+    }).format(d);
+  try {
+    return format(timeZone);
+  } catch {
+    return format("UTC");
+  }
 }
 
 /**

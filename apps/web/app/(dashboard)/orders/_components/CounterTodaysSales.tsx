@@ -119,7 +119,7 @@ function Reprint({
   onBack: () => void;
 }) {
   const { branding } = useTenant();
-  // While this view is open the page prints ONLY the receipt: globals.css hides the counter screen
+  // While this view is open the page prints ONLY the receipt: app/shell.css hides the counter screen
   // (`[data-counter-screen]`) under `@media print` for as long as this body class is set.
   React.useEffect(() => {
     document.body.classList.add("counter-reprint-open");
