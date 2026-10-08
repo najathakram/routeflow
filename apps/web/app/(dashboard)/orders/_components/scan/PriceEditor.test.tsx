@@ -4,6 +4,11 @@ import { computeLineSubtotal } from "@routeflow/pricing";
 import type { LineItemRowItem } from "@/components/LineItemRow";
 import { PriceEditor, type PriceEditorProps } from "./PriceEditor";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+
 // MarginHint is the SAME component the row renders; stubbing it lets these tests assert it is wired
 // with the row's exact props (so the floor check cannot be bypassed by the sheet) without its
 // query hooks.
@@ -185,7 +190,7 @@ describe("PriceEditor", () => {
     it("Case mode edits whole cases and extra units through the row's handlers", () => {
       const props = setup(boxed());
       fireEvent.change(screen.getByLabelText("Boxes"), { target: { value: "3" } });
-      fireEvent.click(screen.getByRole("button", { name: "+ pieces" })); // #2696 (d): opt-in
+      fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA })); // #2696 (d): opt-in
       fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "2" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(3);
       expect(props.onSetPieces).toHaveBeenLastCalledWith(2);
@@ -219,7 +224,7 @@ describe("PriceEditor", () => {
 
     it("extra units are capped below one case", () => {
       setup(boxed());
-      fireEvent.click(screen.getByRole("button", { name: "+ pieces" }));
+      fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
       expect(screen.getByLabelText("Extra pieces")).toHaveAttribute("max", "5");
     });
 

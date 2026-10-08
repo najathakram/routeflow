@@ -157,12 +157,17 @@ const FILES: Pin[] = [
 describe("U-3a unit words: operator copy comes from the helper (web)", () => {
   describe.each(FILES)("$file", ({ file, gone, allow = [], present = [] }) => {
     const src = read(file);
-    it.each(present)("now contains %j", (s) => {
-      expect(src).toContain(s);
-    });
-    it.each(gone)("no longer contains %j", (s) => {
-      expect(src).not.toContain(s);
-    });
+    // jest rejects it.each([]), and most files pin only one side.
+    if (present.length > 0) {
+      it.each(present)("now contains %j", (s) => {
+        expect(src).toContain(s);
+      });
+    }
+    if (gone.length > 0) {
+      it.each(gone)("no longer contains %j", (s) => {
+        expect(src).not.toContain(s);
+      });
+    }
     it("imports unitWords from @routeflow/pricing", () => {
       expect(src).toMatch(/import\s*\{[^}]*\bunitWords\b[^}]*\}\s*from\s*"@routeflow\/pricing"/);
     });

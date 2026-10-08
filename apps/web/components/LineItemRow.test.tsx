@@ -3,6 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+
 /**
  * Characterization + layout-contract tests for the shared editable row.
  *
@@ -257,10 +262,10 @@ describe("SA-563: the remove-extra-units control needs at least one case", () =>
 // with a pseudo-element (layout unchanged).
 it("the '+ pieces' and remove-units controls carry an 8px hit-area extension", () => {
   renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 0 }));
-  expect(screen.getByRole("button", { name: "+ pieces" })).toHaveClass(
+  expect(screen.getByRole("button", { name: ADD_EXTRA })).toHaveClass(
     "relative",
     "before:-inset-2",
   );
-  fireEvent.click(screen.getByRole("button", { name: "+ pieces" }));
+  fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
   expect(screen.getByLabelText("Remove extra pieces")).toHaveClass("relative", "before:-inset-2");
 });
