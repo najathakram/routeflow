@@ -290,6 +290,71 @@ describe("refund flow", () => {
     expect(captureMutate).toHaveBeenCalledTimes(1);
   });
 
+  it("a 409 carrying the server amount shows it, makes no re-quote, and re-POSTs with that amount", async () => {
+    refundReturn
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+      })
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("The refund amount changed. Check it and confirm again.");
+    const btn = await screen.findByRole("button", { name: /^return & refund \$10\.00$/i });
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+    fireEvent.click(btn);
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    expect(refundReturn.mock.calls[1]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 10 }]);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second 409 with a different amount updates the confirm again, still without a re-quote", async () => {
+    const changed = (amount: number) => ({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount } },
+    });
+    refundReturn
+      .mockRejectedValueOnce(changed(10))
+      .mockRejectedValueOnce(changed(9.5))
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$10\.00$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    expect(refundReturn.mock.calls[1][1].expectedAmount).toBe(10);
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$9\.50$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(3));
+    expect(refundReturn.mock.calls[2][1].expectedAmount).toBe(9.5);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 409 with an amount then a 409 without one re-quotes, and the re-quote beats the stale server amount", async () => {
+    refundReturn
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+      })
+      .mockRejectedValueOnce(apiErr(409, "REFUND_AMOUNT_CHANGED"))
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$10\.00$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    // the second 409 carries no usable amount: fall back to a re-quote
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    act(() => lastCall(quoteMutate)[1].onSuccess(quote({ total: 9.0, paidMethods: ["CARD"] })));
+    const btn = await screen.findByRole("button", { name: /^return & refund \$9\.00$/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(3));
+    expect(refundReturn.mock.calls[2]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 9 }]);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+  });
+
   it("RETURN_ALREADY_RESOLVED shows fixed copy and offers no retry", async () => {
     refundReturn.mockRejectedValue(apiErr(409, "RETURN_ALREADY_RESOLVED"));
     await refundFlow();

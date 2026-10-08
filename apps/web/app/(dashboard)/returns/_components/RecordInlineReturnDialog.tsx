@@ -102,6 +102,13 @@ export interface RecordedInfo {
 
 type DialogPhase = "capture" | "success" | "refused";
 
+/** The real amount a 409 REFUND_AMOUNT_CHANGED body carries; null when absent or unusable. */
+function serverAmountOf(err: unknown): number | null {
+  const amount = (err as { response?: { data?: { amount?: unknown } } } | undefined)?.response?.data
+    ?.amount;
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 export function RecordInlineReturnDialog({
   open,
   onClose,
@@ -157,6 +164,9 @@ export function RecordInlineReturnDialog({
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
     null,
   );
+  // The amount the 409 REFUND_AMOUNT_CHANGED body carried: the server's real figure, which the
+  // clerk's fresh confirm sends as expectedAmount (no re-quote, so it cannot loop on a re-priced quote).
+  const [serverAmount, setServerAmount] = React.useState<number | null>(null);
   const busyRef = React.useRef(false);
   // a refund POST already failed once: a later RETURN_ALREADY_RESOLVED means "check before handing over"
   const retriedRef = React.useRef(false);
@@ -184,6 +194,7 @@ export function RecordInlineReturnDialog({
     setRefundError(null);
     setRefundDone(null);
     setRequoteOverride(null);
+    setServerAmount(null);
     setCrediting(false);
     setRequoting(false);
     retriedRef.current = false;
@@ -203,9 +214,11 @@ export function RecordInlineReturnDialog({
     !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
+  const shownAmount = serverAmount ?? quotedAmount;
 
   /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
   function savedAmountOf(ret: InlineReturnRecord): number {
+    if (serverAmount !== null) return serverAmount;
     if (requoteOverride) return quotedAmount;
     return refundAmountOf(ret.refundAmount) ?? quotedAmount;
   }
@@ -285,8 +298,14 @@ export function RecordInlineReturnDialog({
         setRefunding(false);
         const kind = classify(err);
         setRefundError(kind);
-        if (kind === "changed") {
+        const changedAmount = kind === "changed" ? serverAmountOf(err) : null;
+        if (changedAmount !== null) {
+          // The server's own figure came back: show it; the clerk's confirm re-POSTs with it.
+          setServerAmount(changedAmount);
+        } else if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          // A stale server amount from an earlier 409 must not outrank the re-quote.
+          setServerAmount(null);
           setRequoting(true);
           requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
             onSuccess: (fresh) => {
@@ -406,7 +425,7 @@ export function RecordInlineReturnDialog({
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice
-              amount={money(quotedAmount)}
+              amount={money(shownAmount)}
               walkIn={walkIn}
               refundUnavailable={paidWithCredit}
               resolution={effResolution}
@@ -477,7 +496,7 @@ export function RecordInlineReturnDialog({
                 : refunding
                   ? "Refunding…"
                   : effResolution === "REFUND"
-                    ? `Return & refund ${money(quotedAmount)}`
+                    ? `Return & refund ${money(shownAmount)}`
                     : "Return & issue store credit"}
             </Button>
           )
