@@ -61,10 +61,12 @@ export function upcEToUpcA(code: string): string | null {
 }
 
 /**
- * Length-driven GTIN equivalences. One hop each, no recursion, so the list
- * stays small and predictable.
+ * Length-driven GTIN IDENTITY forms of an all-digit code: the other strings the SAME physical label reaches
+ * us as (UPC-E expanded, UPC-A <-> EAN-13 with a leading zero, GTIN-14 -> its inner GTIN). One hop each, no
+ * recursion. `numericVariants` below starts from exactly this list, so scan lookup and the catalog's
+ * "who holds this barcode" check share ONE equivalence (B1214).
  */
-function numericVariants(n: string): string[] {
+function gtinVariants(n: string): string[] {
   const out: string[] = [];
   if (n.length === 8) {
     const upcA = upcEToUpcA(n);
@@ -78,6 +80,15 @@ function numericVariants(n: string): string[] {
     out.push(thirteen);
     if (thirteen.startsWith("0")) out.push(thirteen.slice(1));
   }
+  return out;
+}
+
+/**
+ * Everything scan lookup tries beyond the literal for an all-digit code: the GTIN identity forms first, then the
+ * fuzzy fallbacks (zero-stripped, check-digit-stripped), which are NOT identity.
+ */
+function numericVariants(n: string): string[] {
+  const out: string[] = gtinVariants(n);
   const stripped = n.replace(/^0+/, "");
   if (stripped && stripped !== n) out.push(stripped);
   // LAST, deliberately: some legacy catalogues store the GTIN without its
@@ -113,6 +124,23 @@ export function normalizeScanCode(raw: string): string[] {
     deduped.push(candidate);
   }
   return deduped.slice(0, MAX_SCAN_CANDIDATES);
+}
+
+/**
+ * The strings that denote the SAME physical label as `raw` (B1214): the code as given, its trimmed form, and, for an
+ * all-digit code, its GTIN identity forms (see `gtinVariants`). A strict subset of `normalizeScanCode(raw)`, which
+ * adds fuzzy fallback tiers (zero-stripped, check-digit-stripped, upper-cased) that rank matches but never mean
+ * "the same product". Claim checks and advisory-lock keys use this, so a 12-digit UPC and its 0+12 EAN-13 form can
+ * never be held by two active products.
+ */
+export function gtinEquivalents(raw: string): string[] {
+  const exact = raw ?? "";
+  const trimmed = exact.trim();
+  if (!trimmed) return exact ? [exact] : [];
+  const out = [exact];
+  if (trimmed !== exact) out.push(trimmed);
+  if (DIGITS.test(trimmed)) out.push(...gtinVariants(trimmed));
+  return [...new Set(out)];
 }
 
 /** The subset of a product row this module needs to rank a match. */

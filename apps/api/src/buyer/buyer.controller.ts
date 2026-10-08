@@ -74,7 +74,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import {
   buyerSubmitHash,
   normalizeBuyerIdempotencyKey,
@@ -497,7 +497,7 @@ export class BuyerController {
       this.prisma.forTenant(),
       candidates,
       // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
-      buyerVisibleProductWhere({ ...NO_BUYER_RESTRICTIONS, tenantId: ctx.tenantId }),
+      buyerVisibleProductWhere(noBuyerRestrictions(ctx.tenantId)),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;

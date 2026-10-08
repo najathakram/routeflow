@@ -29,8 +29,16 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",

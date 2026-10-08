@@ -87,6 +87,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };

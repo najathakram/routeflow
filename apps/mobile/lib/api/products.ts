@@ -196,7 +196,11 @@ export function useUpdateProduct() {
   return useMutation<
     { id: string },
     Error,
-    { id: string; deactivateHolderIds?: string[] } & Partial<CreateProductDto>
+    {
+      id: string;
+      deactivateHolderIds?: string[];
+      confirmCascade?: boolean;
+    } & Partial<CreateProductDto>
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/products/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -209,8 +213,16 @@ export function useUpdateProduct() {
 
 export function useDeleteProduct() {
   const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => apiClient.delete(`/products/${id}`).then(() => undefined),
+  return useMutation<void, Error, string | { id: string; confirmCascade?: boolean }>({
+    mutationFn: (arg) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .delete(
+          `/products/${id}`,
+          confirmCascade ? { params: { confirmCascade: "true" } } : undefined,
+        )
+        .then(() => undefined);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["admin", "products"] });
