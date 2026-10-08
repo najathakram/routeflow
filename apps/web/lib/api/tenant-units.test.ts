@@ -93,6 +93,12 @@ describe("unitErrorMessage", () => {
     expect(unitErrorMessage(http(409, body("MIXED", 2)), "Carton")).toBe(
       "Can't rename to Carton. Gift Box and Mug can't take that name. Change those first.",
     );
+    expect(unitErrorMessage(http(409, body("LINES_AT_OTHER_SIZE", 1)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box already sold Carton at a different size on an order or invoice. Pick another name.",
+    );
+    expect(unitErrorMessage(http(409, body("LINES_AT_OTHER_SIZE", 2)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box and Mug already sold Carton at a different size on an order or invoice. Pick another name.",
+    );
     expect(unitErrorMessage(http(409, body("NAME", 1)), "Carton")).toBe(
       "Can't rename to Carton. Gift Box already has a Carton. Change that first.",
     );

@@ -36,7 +36,7 @@ interface RawUnitRow {
 export const MAX_UNIT_NAME_LENGTH = 30;
 const MAX_COLLISION_PRODUCTS = 10;
 /** Why a product refuses a rename; `MIXED` is the body reason when several causes apply. */
-type CollisionReason = "NAME" | "DUPLICATE_LEVELS";
+type CollisionReason = "NAME" | "DUPLICATE_LEVELS" | "LINES_AT_OTHER_SIZE";
 /**
  * A rename reads and relabels every product of the tenant that uses the unit, in CHUNK-sized writes,
  * and first waits for the tenant units lock behind in-flight pack edits (milliseconds each). Sized for
@@ -50,8 +50,10 @@ const CHUNK = 5000;
  * `unitNameKey` for a TEXT column in SQL: the same NFC, trim, case-fold the TS helper does. btrim gets
  * the whitespace set JS `trim()` strips most often (space, tab, newline, CR, FF, VT as \x0B because E-strings have no \v, NBSP).
  */
+const sqlKeyOf = (ref: Prisma.Sql) =>
+  Prisma.sql`lower(btrim(normalize(${ref}, NFC), E' \\t\\n\\r\\f\\x0B\\u00a0'))`;
 const sqlKey = (column: "baseUnitLabel" | "packLabel" | "unit") =>
-  Prisma.sql`lower(btrim(normalize(p.${Prisma.raw(`"${column}"`)}, NFC), E' \\t\\n\\r\\f\\x0B\\u00a0'))`;
+  sqlKeyOf(Prisma.sql`p.${Prisma.raw(`"${column}"`)}`);
 
 function cleanName(raw: unknown): string {
   const name = typeof raw === "string" ? raw.normalize("NFC").trim() : "";
@@ -286,13 +288,17 @@ export class UnitsService {
       }
 
       const matches = (v: string | null) => v != null && unitNameKey(v) === oldKey;
-      const levelRows: Array<{ productId: string; label: string; tenantUnitId: string | null }> =
-        [];
+      const levelRows: Array<{
+        productId: string;
+        label: string;
+        factorToBase: number;
+        tenantUnitId: string | null;
+      }> = [];
       for (const part of chunks(products.map((p) => p.id))) {
         levelRows.push(
           ...(await tx.productUnit.findMany({
             where: { productId: { in: part } },
-            select: { productId: true, label: true, tenantUnitId: true },
+            select: { productId: true, label: true, factorToBase: true, tenantUnitId: true },
           })),
         );
       }
@@ -306,6 +312,38 @@ export class UnitsService {
         const list = levelsByProduct.get(l.productId);
         if (list) list.push(l);
         else levelsByProduct.set(l.productId, [l]);
+      }
+      // A level's meaning (label -> size) is fixed once order or invoice lines carry the label (the same
+      // rule ProductUnitsService enforces for a direct label edit). Relabelling to a name that lines
+      // already carry at ANOTHER size would make those lines read as this level. Lines are read through
+      // their parent order / invoice (a top-level read would miss a NULL-tenant line).
+      const lineSizeClash = new Set<string>();
+      if (newKey !== oldKey) {
+        const factorOf = new Map<string, number>();
+        for (const l of levelRows)
+          if (l.tenantUnitId === id) factorOf.set(l.productId, l.factorToBase);
+        for (const part of chunks([...factorOf.keys()])) {
+          const ids = Prisma.join(part);
+          const lines: Array<{ productId: string; unitsPerBox: number | null }> =
+            await tx.$queryRaw(
+              Prisma.sql`
+            SELECT oi."productId" AS "productId", oi."unitsPerBox" AS "unitsPerBox"
+            FROM "OrderItem" oi JOIN "Order" o ON o."id" = oi."orderId"
+            WHERE o."tenantId" = ${tenantId} AND oi."productId" IN (${ids})
+              AND ${sqlKeyOf(Prisma.sql`oi."unitLabel"`)} = ${newKey}
+            UNION
+            SELECT ii."productId", ii."unitsPerBox"
+            FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+            WHERE i."tenantId" = ${tenantId} AND ii."productId" IN (${ids})
+              AND ${sqlKeyOf(Prisma.sql`ii."unitLabel"`)} = ${newKey}`,
+            );
+          for (const line of lines) {
+            const factor = factorOf.get(line.productId);
+            if (factor !== undefined && (line.unitsPerBox == null || line.unitsPerBox !== factor)) {
+              lineSizeClash.add(line.productId);
+            }
+          }
+        }
       }
       // Why a product cannot take the new name (null = it can). First cause wins per product.
       const collisionOf = (p: (typeof products)[number]): CollisionReason | null => {
@@ -322,7 +360,8 @@ export class UnitsService {
         if (p.packLabel && !matches(p.packLabel)) keys.push(unitNameKey(p.packLabel));
         // A pack word that renames with this unit is the renamed one, not a clash.
         if (renamed.length > 0 && !matches(p.unit)) keys.push(packWordKey(p.unit));
-        return keys.includes(newKey) ? "NAME" : null;
+        if (keys.includes(newKey)) return "NAME";
+        return lineSizeClash.has(p.id) ? "LINES_AT_OTHER_SIZE" : null;
       };
       const colliding = products.flatMap((p) => {
         const reason = collisionOf(p);
@@ -414,6 +453,7 @@ export class UnitsService {
     const message: Record<CollisionReason | "MIXED", string> = {
       NAME: `Can't rename to ${newName}: some products already have a ${newName}.`,
       DUPLICATE_LEVELS: `Can't rename to ${newName}: some products have two ${oldName} units that would both become ${newName}.`,
+      LINES_AT_OTHER_SIZE: `Can't rename to ${newName}: some products already sold ${newName} at a different size on orders or invoices.`,
       MIXED: `Can't rename to ${newName}: some products can't take that name.`,
     };
     return new ConflictException({

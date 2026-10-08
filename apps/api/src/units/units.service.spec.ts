@@ -742,6 +742,69 @@ describe("UnitsService", () => {
       });
     });
 
+    describe("line immutability (a level's meaning is fixed once lines carry its label)", () => {
+      const seedCrate = (h: ReturnType<typeof make>, lines: Array<Record<string, unknown>>) => {
+        seedRename(h, {
+          linked: [{ id: "l1", productId: "p1" }],
+          products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Each" }],
+          levels: [{ productId: "p1", label: "Case", factorToBase: 12, tenantUnitId: "u1" }],
+        });
+        // 1st raw query: text hits; 2nd: order/invoice lines already carrying the NEW name.
+        h.db.$queryRaw.mockReset();
+        h.db.$queryRaw.mockResolvedValueOnce([{ id: "p1" }]).mockResolvedValueOnce(lines);
+      };
+
+      it("renaming Case(12) to Crate is refused when lines already say Crate at another size (409)", async () => {
+        const h = make();
+        seedCrate(h, [{ productId: "p1", unitsPerBox: 24 }]);
+        const err = await h.service.update("u1", { name: "Crate" }, user).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toEqual(
+          expect.objectContaining({
+            code: "UNIT_RENAME_COLLISION",
+            reason: "LINES_AT_OTHER_SIZE",
+            products: [{ id: "p1", name: "Mug" }],
+          }),
+        );
+        expect(h.db.tenantUnit.update).not.toHaveBeenCalled();
+        expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a line with NO size snapshot counts as a different size", async () => {
+        const h = make();
+        seedCrate(h, [{ productId: "p1", unitsPerBox: null }]);
+        await expect(h.service.update("u1", { name: "Crate" }, user)).rejects.toMatchObject({
+          response: expect.objectContaining({ reason: "LINES_AT_OTHER_SIZE" }),
+        });
+      });
+
+      it("lines at the SAME size agree with the level and do not block", async () => {
+        const h = make();
+        seedCrate(h, [{ productId: "p1", unitsPerBox: 12 }]);
+        await expect(h.service.update("u1", { name: "Crate" }, user)).resolves.toBeDefined();
+      });
+
+      it("looks the lines up through the parent order/invoice of THIS tenant, by the NFC key of the new name", async () => {
+        const h = make();
+        seedCrate(h, []);
+        await h.service.update("u1", { name: "Crate" }, user);
+        const q = h.db.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+        expect(q.sql).toContain('"OrderItem"');
+        expect(q.sql).toContain('"InvoiceItem"');
+        expect(q.sql).toContain('JOIN "Order"');
+        expect(q.sql).toContain('JOIN "Invoice"');
+        expect(q.sql).toContain("normalize(");
+        expect(q.values).toEqual(expect.arrayContaining([T, "crate", "p1"]));
+      });
+
+      it("a case-only rename skips the line lookup (the label key is unchanged)", async () => {
+        const h = make();
+        seedCrate(h, []);
+        await h.service.update("u1", { name: "CASE" }, user);
+        expect(h.db.$queryRaw).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("the 409 names at most 10 products", async () => {
       const h = make();
       const ids = Array.from({ length: 12 }, (_, i) => `p${i}`);

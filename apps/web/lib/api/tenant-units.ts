@@ -70,6 +70,9 @@ export function unitErrorMessage(err: unknown, name: string): string {
         ? `Can't rename to ${name}. ${text} have two units that would both become ${name}. Change those first.`
         : `Can't rename to ${name}. ${text} has two units that would both become ${name}. Change that first.`;
     }
+    if (reason === "LINES_AT_OTHER_SIZE") {
+      return `Can't rename to ${name}. ${text} already sold ${name} at a different size on an order or invoice. Pick another name.`;
+    }
     if (reason === "MIXED") {
       return `Can't rename to ${name}. ${text} can't take that name. Change ${many ? "those" : "that"} first.`;
     }
