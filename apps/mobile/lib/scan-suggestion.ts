@@ -65,9 +65,11 @@ export function decideScanResult<T = any>(
     };
   }
   if (result.ambiguous) {
+    // An empty list would open an empty sheet; nothing to choose from is a plain miss.
+    if (!result.matches?.length) return { kind: "not-found" };
     return {
       kind: "pick-from-list",
-      matches: result.matches ?? [],
+      matches: result.matches,
       confirmText: screen === "stock" ? "Apply" : "Add",
     };
   }

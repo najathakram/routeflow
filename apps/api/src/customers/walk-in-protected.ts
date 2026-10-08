@@ -11,7 +11,7 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
     throw new BadRequestException({
       code: API_ERROR_CODES.WALK_IN_PROTECTED,
       message:
-        "The walk-in customer is part of counter sales and cannot be deactivated or deleted.",
+        "The walk-in customer is part of counter sales, so its account details can't be changed or removed.",
     });
   }
 }

@@ -147,6 +147,16 @@ export class CaptureInlineReturnDto extends InlineReturnLinesDto {
   @IsNotEmpty()
   customerId!: string;
 
+  /**
+   * SA-727: how the return will be resolved. STORE_CREDIT (the default, byte-identical to before) mints the
+   * credit note right after the capture. REFUND restocks and records the return (RECEIVED) WITHOUT minting a
+   * credit note, so `POST /returns/inline/:id/refund` can resolve it in cash/card/check; it needs an office
+   * role and every source invoice paid in full (409 REFUND_NEEDS_PAID_INVOICE before anything is written).
+   */
+  @IsOptional()
+  @IsIn(["STORE_CREDIT", "REFUND"])
+  resolution?: "STORE_CREDIT" | "REFUND";
+
   /** The order that CARRIES the credit — never the (possibly different) order(s) the
    * returned goods were originally sold on (`ReturnItem.sourceOrderId`, resolved by the
    * matching engine per item). */
