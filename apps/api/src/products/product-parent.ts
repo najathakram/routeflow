@@ -102,16 +102,16 @@ export async function assertValidParent(
 /**
  * Read-side twin of the write check (B1211): a parent row that belongs to ANOTHER tenant is treated as
  * "no parent". Write-time validation only protects links made after it shipped; a link that already
- * crosses tenants must still never be followed on a read. `tenantId` null/undefined means the caller
- * has no tenant context (nothing to compare against), so the row passes through; a row that does not
- * carry its own `tenantId` fails CLOSED (null), so a select that forgets the column cannot leak.
+ * crosses tenants must still never be followed on a read. It fails CLOSED both ways: a caller with no
+ * tenant (null/undefined/empty) gets null, and so does a row that does not carry its own `tenantId`,
+ * so neither a missing tenant context nor a select that forgets the column can leak a parent.
  */
 export function tenantSafeParent<T extends { tenantId?: string | null }>(
   parent: T | null | undefined,
   tenantId: string | null | undefined,
 ): T | null {
   if (!parent) return null;
-  if (!tenantId) return parent;
+  if (!tenantId) return null;
   return parent.tenantId === tenantId ? parent : null;
 }
 

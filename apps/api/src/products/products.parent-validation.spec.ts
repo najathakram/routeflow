@@ -184,12 +184,11 @@ describe("tenantSafeParent / tenantSafeParentView (read side of the parent rule)
     expect(tenantSafeParent(undefined, TENANT)).toBeNull();
   });
 
-  it("with no tenant context there is nothing to compare against, so the row passes through", () => {
-    expect(tenantSafeParent(own, null)).toBe(own);
-    expect(tenantSafeParent({ ...own, tenantId: "other-tenant" }, undefined)).toEqual({
-      ...own,
-      tenantId: "other-tenant",
-    });
+  it("with no tenant (null, undefined or empty) it fails closed: a parent is never returned", () => {
+    expect(tenantSafeParent(own, null)).toBeNull();
+    expect(tenantSafeParent(own, undefined)).toBeNull();
+    expect(tenantSafeParent(own, "")).toBeNull();
+    expect(tenantSafeParentView(own, "")).toBeNull();
   });
 
   it("the view form removes tenantId from what it returns (and returns null for a foreign parent)", () => {
