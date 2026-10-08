@@ -269,6 +269,8 @@ export class PlatformAdminService {
               drivers: true,
               routes: true,
               customerLinks: true,
+              // SA-3: the Readiness card's "Has at least one product" row (tenant-scoped relation count).
+              products: true,
             },
           },
         },

@@ -30,6 +30,7 @@ import {
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
+import { ReadinessCard } from "./_components/ReadinessCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -87,6 +88,8 @@ interface TenantDetail {
     drivers: number;
     routes: number;
     customerLinks: number;
+    /** SA-3: absent on an older API; the Readiness card then says "Not checked". */
+    products?: number;
   } | null;
   orders30d?: number;
   estMrrUsd?: number;
@@ -410,6 +413,8 @@ function OverviewTab({
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <ReadinessCard tenant={tenant} />
+
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
@@ -536,11 +541,13 @@ function OverviewTab({
       )}
 
       {/* Admin Account */}
-      <TenantAdminSection
-        tenantId={tenant.id}
-        onRefreshTenant={onRefreshTenant}
-        onAdminChange={setAdminUsername}
-      />
+      <div id="admin-account">
+        <TenantAdminSection
+          tenantId={tenant.id}
+          onRefreshTenant={onRefreshTenant}
+          onAdminChange={setAdminUsername}
+        />
+      </div>
 
       <ImpersonateDialog
         open={confirming === "impersonate"}
@@ -1169,14 +1176,16 @@ function SetupTab({
         onApplied={() => setSetupVersion((v) => v + 1)}
       />
 
-      <FeatureConsole
-        key={`console-${setupVersion}`}
-        tenant={tenant}
-        tenantLabel={tenant.businessName ?? tenant.slug}
-        onChangePlan={(plan) => onAction("change-plan", { plan })}
-        changePlanLoading={actionLoading === "change-plan"}
-        onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
-      />
+      <div id="features">
+        <FeatureConsole
+          key={`console-${setupVersion}`}
+          tenant={tenant}
+          tenantLabel={tenant.businessName ?? tenant.slug}
+          onChangePlan={(plan) => onAction("change-plan", { plan })}
+          changePlanLoading={actionLoading === "change-plan"}
+          onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
+        />
+      </div>
 
       <FeatureOverridesSection
         key={`overrides-${setupVersion}`}

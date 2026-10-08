@@ -778,3 +778,20 @@ describe("SA-1: the applied business profile is marked 'Current'", () => {
     expect(screen.queryByTestId("profile-current")).toBeNull();
   });
 });
+
+describe("SA-3: the Readiness card on Overview", () => {
+  it("is the first card, above Tenant Info, and the fix anchors exist", async () => {
+    mockFetchEffective.mockResolvedValue([
+      {
+        ...EFFECTIVE_FIXTURE[0],
+        key: "fulfilment_model",
+        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
+      },
+    ]);
+    const { container } = render(<TenantDetailPage />);
+    const heading = await screen.findByRole("heading", { name: "Ready to take a sale?" });
+    const info = await screen.findByRole("heading", { name: "Tenant Info" });
+    expect(heading.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("#admin-account")).not.toBeNull();
+  });
+});
