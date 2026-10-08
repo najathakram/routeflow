@@ -120,6 +120,10 @@ const NON_WRITERS = new Set([
   // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
   // and pack come from the line's own snapshot. Writes no line.
   "customers/customer-price-history.service.ts",
+  // completeSetup (import setup confirmation): reads the product's LIVE pack ONLY to tell whether the pack
+  // it is about to WRITE moved, and to check it against the product's levels (assertPackKeepsLevelsValid)
+  // under the product's units lock. It builds no line and derives no factor, quantity or price.
+  "import/variant-resolution.service.ts",
   // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
   // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
   // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
