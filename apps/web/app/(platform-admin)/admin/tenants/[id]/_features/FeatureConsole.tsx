@@ -113,6 +113,17 @@ export interface FeatureConsoleProps {
   onCustomise: (featureKey: string) => void;
 }
 
+/** What the small status chips mean, in plain words (tooltip + aria-label). */
+const DARK_HELP =
+  "Not enforced yet: the check only logs a warning when this feature would be refused, and still allows it.";
+const LIFECYCLE_HELP: Record<string, string> = {
+  proposed: "Planned, not released yet. Nothing relies on it today.",
+  beta: "Released for testing. It may still change.",
+  ga: "Fully released.",
+  deprecated: "Being phased out. Avoid turning it on for new businesses.",
+  sunset: "Retired. It is no longer offered.",
+};
+
 export function FeatureConsole({
   tenant,
   tenantLabel,
@@ -319,7 +330,7 @@ export function FeatureConsole({
               ? "Applying..."
               : previewLoading
                 ? "Loading preview..."
-                : "Preview tier change"}
+                : "Preview plan change"}
           </button>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-400">
@@ -393,11 +404,23 @@ export function FeatureConsole({
                             {BADGE_LABELS[badge]}
                           </span>
                         )}
-                        <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
+                        <span
+                          title={LIFECYCLE_HELP[row.lifecycle] ?? undefined}
+                          aria-label={
+                            LIFECYCLE_HELP[row.lifecycle]
+                              ? `${row.lifecycle}: ${LIFECYCLE_HELP[row.lifecycle]}`
+                              : undefined
+                          }
+                          className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400"
+                        >
                           {row.lifecycle}
                         </span>
                         {row.gate.state === "dark" && (
-                          <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-300">
+                          <span
+                            title={DARK_HELP}
+                            aria-label={`dark: ${DARK_HELP}`}
+                            className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-300"
+                          >
                             dark
                           </span>
                         )}
@@ -435,9 +458,9 @@ export function FeatureConsole({
                       <button
                         onClick={() => onCustomise(row.key)}
                         className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
-                        aria-label={`Customise ${row.label}`}
+                        aria-label={`Set override ${row.label}`}
                       >
-                        Customise
+                        Set override
                       </button>
                       {ADDON_ROW_KEY_BY_REGISTRY_KEY[row.key] && (
                         <button
@@ -449,9 +472,9 @@ export function FeatureConsole({
                             })
                           }
                           className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-500"
-                          aria-label={`Enable ${row.label} as an add-on`}
+                          aria-label={`Turn on ${row.label} as an add-on`}
                         >
-                          Enable as add-on
+                          Turn on as add-on
                         </button>
                       )}
                     </div>
@@ -496,7 +519,7 @@ export function FeatureConsole({
 
       <PreviewDrawer
         open={!!pending}
-        title={pending?.kind === "tier" ? "Preview tier change" : "Preview mode change"}
+        title={pending?.kind === "tier" ? "Preview plan change" : "Preview mode change"}
         response={pending?.response ?? null}
         registryByKey={registryByKey}
         confirming={applying}

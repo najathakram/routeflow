@@ -2068,7 +2068,9 @@ describe("PlatformAdminService — audit provenance", () => {
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeNull();
       expect(args.where.status).toBe("ACTIVE");
-      expect(args.where.plan).toBe("STARTER");
+      // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
+      expect(args.where.plan).toBeUndefined();
+      expect(JSON.stringify(args.where)).toContain('"planKey":"STARTER"');
       expect(args.where.OR).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
@@ -2077,6 +2079,33 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.orderBy).toEqual({ slug: "asc" });
       expect(result.meta.total).toBe(5);
       expect(result.meta.deletedCount).toBe(3);
+    });
+
+    it("SA-1: plan=GROWTH matches a tenant by subscription.planKey, not the legacy Tenant.plan enum", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "GROWTH", search: "acme" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.plan).toBeUndefined();
+      expect(args.where.AND).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([{ subscription: { planKey: "GROWTH" } }]),
+          }),
+        ]),
+      );
+      // The search OR is untouched (the plan clause must not overwrite it).
+      expect(args.where.OR).toHaveLength(3);
+    });
+
+    it("SA-1: a drifted tenant (no subscription.planKey) is still found under the plan its row displays", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
+      expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
+      expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {

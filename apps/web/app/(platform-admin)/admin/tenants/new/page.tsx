@@ -34,6 +34,13 @@ interface CreatedTenant {
   welcomeEmail?: { to: string; delivered: boolean; transport: string; error?: string };
 }
 
+/** The apply response's plain-English change list, when the response carries one. */
+function appliedSummary(applied: { summary?: unknown } | null | undefined): string[] | undefined {
+  return Array.isArray(applied?.summary)
+    ? applied.summary.filter((l): l is string => typeof l === "string")
+    : undefined;
+}
+
 export default function AdminCreateTenantPage() {
   const [form, setForm] = React.useState({
     slug: "",
@@ -58,7 +65,9 @@ export default function AdminCreateTenantPage() {
   const [profilesFailed, setProfilesFailed] = React.useState(false);
   const [profile, setProfile] = React.useState<BusinessProfileKey | "">("");
   const [profileResult, setProfileResult] = React.useState<
-    { status: "applied"; label: string } | { status: "failed"; message: string } | null
+    | { status: "applied"; label: string; summary?: string[] }
+    | { status: "failed"; message: string }
+    | null
   >(null);
   /** A profile that would stop billing is never auto-applied: the admin reviews it here first. */
   const [profileReview, setProfileReview] = React.useState<{
@@ -148,8 +157,8 @@ export default function AdminCreateTenantPage() {
             setProfileReview({ tenantId: res.data.id, key: profile, label, response: preview });
             return;
           }
-          await applyBusinessProfile(res.data.id, profile, preview.planFingerprint);
-          setProfileResult({ status: "applied", label });
+          const applied = await applyBusinessProfile(res.data.id, profile, preview.planFingerprint);
+          setProfileResult({ status: "applied", label, summary: appliedSummary(applied) });
         } catch (applyErr: unknown) {
           const reason = profileErrorCopy(applyErr, "");
           setProfileResult({
@@ -181,12 +190,16 @@ export default function AdminCreateTenantPage() {
     setReviewApplying(true);
     setReviewError(null);
     try {
-      await applyBusinessProfile(
+      const applied = await applyBusinessProfile(
         profileReview.tenantId,
         profileReview.key,
         profileReview.response.planFingerprint,
       );
-      setProfileResult({ status: "applied", label: profileReview.label });
+      setProfileResult({
+        status: "applied",
+        label: profileReview.label,
+        summary: appliedSummary(applied),
+      });
       setProfileReview(null);
     } catch (err: unknown) {
       setReviewError(profileErrorCopy(err, "Could not apply that business profile. Try again."));
@@ -278,9 +291,27 @@ export default function AdminCreateTenantPage() {
               }}
             />
             {profileResult?.status === "applied" && (
-              <p className="mt-3 text-sm text-green-300" data-testid="profile-applied">
-                Business profile applied{profileResult.label ? `: ${profileResult.label}` : ""}.
-              </p>
+              <div className="mt-3 text-sm text-green-300">
+                <p data-testid="profile-applied">
+                  Business profile applied{profileResult.label ? `: ${profileResult.label}` : ""}.
+                </p>
+                {/* Interim result line (SA-1): what the apply actually set, straight from its response. */}
+                {profileResult.summary && profileResult.summary.length > 0 && (
+                  <ul
+                    data-testid="profile-applied-summary"
+                    className="mt-1 list-disc pl-5 text-xs text-green-200"
+                  >
+                    {profileResult.summary.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+                {profileResult.summary && profileResult.summary.length === 0 && (
+                  <p data-testid="profile-applied-nothing" className="mt-1 text-xs text-green-200">
+                    Nothing needed to change: this account already matched.
+                  </p>
+                )}
+              </div>
             )}
             {profileResult?.status === "failed" && (
               <div

@@ -9,12 +9,30 @@ import type {
 import {
   applyBusinessProfile,
   fetchBusinessProfiles,
+  fetchTenantConfigValue,
   previewBusinessProfile,
 } from "@/lib/platform-admin/business-profiles";
 import { AdminCard } from "../../../../_components/AdminCard";
 import { BusinessProfileChoices } from "./BusinessProfileChoices";
 import { BusinessProfilePreviewModal } from "./BusinessProfilePreviewModal";
 import { profileErrorCopy, profilePartlyApplied, profilePlanChanged } from "./profile-errors";
+
+/**
+ * The profile the tenant already has, derived from its stored config modes: the one profile whose every mode
+ * (`fulfilment_model`, and `counter_sales` for the in-store ones) equals what the tenant stores — the same values the
+ * "Current setup" card reads. `null` when nothing matches or more than one does (an unset or hand-set tenant): no
+ * marker is better than a wrong one.
+ */
+export function matchAppliedProfile(
+  profiles: readonly BusinessProfileSummary[],
+  stored: Readonly<Record<string, string>>,
+): BusinessProfileKey | null {
+  const matches = profiles.filter((p) => {
+    const entries = Object.entries(p.modes ?? {});
+    return entries.length > 0 && entries.every(([key, mode]) => stored[key] === mode);
+  });
+  return matches.length === 1 ? matches[0]!.key : null;
+}
 
 type Pending = { profile: BusinessProfileSummary; response: BusinessProfilePreviewResponse };
 
@@ -44,6 +62,7 @@ export function BusinessProfilePicker({
   /** Re-previewing after a failed confirm: Confirm stays off until the fresh plan is on screen. */
   const [refreshing, setRefreshing] = React.useState(false);
   const [appliedLabel, setAppliedLabel] = React.useState<string | null>(null);
+  const [currentKey, setCurrentKey] = React.useState<BusinessProfileKey | null>(null);
 
   const loadProfiles = React.useCallback(() => {
     setListFailed(false);
@@ -52,6 +71,22 @@ export function BusinessProfilePicker({
       .catch(() => setListFailed(true));
   }, []);
   React.useEffect(loadProfiles, [loadProfiles]);
+
+  /** Which profile the tenant has now; a failed read just means no "Current" marker. */
+  const loadCurrent = React.useCallback(
+    (list: BusinessProfileSummary[]) => {
+      const modeKeys = [...new Set(list.flatMap((p) => Object.keys(p.modes ?? {})))];
+      Promise.all(
+        modeKeys.map(async (k) => [k, await fetchTenantConfigValue(tenantId, k)] as const),
+      )
+        .then((pairs) => setCurrentKey(matchAppliedProfile(list, Object.fromEntries(pairs))))
+        .catch(() => setCurrentKey(null));
+    },
+    [tenantId],
+  );
+  React.useEffect(() => {
+    if (profiles) loadCurrent(profiles);
+  }, [profiles, loadCurrent]);
 
   const chosen = profiles?.find((p) => p.key === selected);
 
@@ -94,12 +129,16 @@ export function BusinessProfilePicker({
       setAppliedLabel(pending.profile.label);
       setPending(null);
       setSelected("");
+      if (profiles) loadCurrent(profiles);
       onApplied();
     } catch (err) {
       setApplyError(profileErrorCopy(err, "Could not apply that business profile. Try again."));
       // Billing already stopped for some add-ons: the tenant HAS changed, so the screen behind must catch up.
       const partly = profilePartlyApplied(err);
-      if (partly) onApplied();
+      if (partly) {
+        if (profiles) loadCurrent(profiles);
+        onApplied();
+      }
       // Either way the shown plan is stale: re-preview BEFORE Confirm can be pressed again (#3220 c).
       if (partly || profilePlanChanged(err)) {
         setApplying(false);
@@ -137,6 +176,7 @@ export function BusinessProfilePicker({
           <BusinessProfileChoices
             profiles={profiles}
             value={selected}
+            currentKey={currentKey}
             onChange={setSelected}
             name="setup-business-profile"
             legend="Business profile"

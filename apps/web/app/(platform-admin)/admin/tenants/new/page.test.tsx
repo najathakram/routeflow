@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
 import { API_ERROR_CODES } from "@routeflow/types";
 import AdminCreateTenantPage from "./page";
@@ -338,10 +338,38 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /Shipping wholesaler/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
     expect(screen.getByRole("radio", { name: /In-store \+ shipping retailer/ })).toBeDisabled();
-    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
     expect(screen.getByRole("radio", { name: /Set up later/ })).toBeChecked();
+  });
+
+  it("SA-1: after the profile applies, an interim line lists what was set (from the apply response)", async () => {
+    mockApplyProfile.mockResolvedValue({
+      profile: "shipping_wholesaler",
+      changed: ["fulfilment_model"],
+      summary: ["Where orders go: Not configured → Ship by carrier", "Recurring routes: off"],
+    });
+    await createWithProfile();
+    const list = await screen.findByTestId("profile-applied-summary");
+    expect(
+      within(list).getByText("Where orders go: Not configured → Ship by carrier"),
+    ).toBeInTheDocument();
+    expect(within(list).getByText("Recurring routes: off")).toBeInTheDocument();
+    expect(screen.getByText("Business profile applied: Shipping wholesaler.")).toBeInTheDocument();
+  });
+
+  it("SA-1: an apply that changed nothing says so instead of showing an empty list", async () => {
+    mockApplyProfile.mockResolvedValue({
+      profile: "shipping_wholesaler",
+      changed: [],
+      summary: [],
+    });
+    await createWithProfile();
+    expect(await screen.findByTestId("profile-applied-nothing")).toHaveTextContent(
+      "Nothing needed to change",
+    );
+    expect(screen.queryByTestId("profile-applied-summary")).toBeNull();
   });
 
   it("without a profile: creates the tenant with no profile field and applies nothing", async () => {

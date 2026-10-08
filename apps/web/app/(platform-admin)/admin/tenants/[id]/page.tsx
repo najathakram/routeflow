@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
 import type { FeatureRegistryRow } from "@routeflow/types";
@@ -111,11 +111,17 @@ interface AuditLogEntry {
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
-  { key: "addons", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
+  { key: "setup", label: "Setup", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
   { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
 ];
+
+/** The tab named by `?tab=`; the legacy `addons` is the Setup tab, and anything else (or nothing) is Overview. */
+function resolveTab(param: string | null | undefined): string {
+  const key = param === "addons" ? "setup" : param;
+  return TABS.some((t) => t.key === key) ? (key as string) : "overview";
+}
 
 // ─── Helper ────────────────────────────────────────────────────────────────────
 
@@ -1151,7 +1157,7 @@ function BillingTab({
 }
 
 // ─── Setup Tab ─────────────────────────────────────────────────────────────────
-// The tab key stays "addons" (it is internal); the label is "Setup": the tenant's current setup in plain English,
+// The tab key is "setup" (the legacy ?tab=addons still resolves to it); the label is "Setup": the tenant's current setup in plain English,
 // the business-profile picker, then the feature console and the per-feature overrides.
 
 function SetupTab({
@@ -1911,12 +1917,20 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
 export default function AdminTenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlTab = resolveTab(searchParams?.get("tab"));
   const [tenant, setTenant] = React.useState<TenantDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
   const [statusMsg, setStatusMsg] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState("overview");
+  const [activeTab, setActiveTab] = React.useState(urlTab);
+  // The URL is the source of truth: back/forward, a pasted link and an old ?tab=addons all land here.
+  React.useEffect(() => setActiveTab(urlTab), [urlTab]);
+  const changeTab = (key: string) => {
+    setActiveTab(key);
+    router.replace(`/admin/tenants/${id}?tab=${key}`, { scroll: false });
+  };
 
   const fetchTenant = React.useCallback(() => {
     setLoading(true);
@@ -2061,7 +2075,7 @@ export default function AdminTenantDetailPage() {
       </p>
 
       {/* Tabs */}
-      <AdminTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
+      <AdminTabs tabs={TABS} active={activeTab} onChange={changeTab} />
 
       {/* Tab Content */}
       {activeTab === "overview" && (
@@ -2074,7 +2088,7 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && (
+      {activeTab === "setup" && (
         <SetupTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
       )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
