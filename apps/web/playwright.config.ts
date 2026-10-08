@@ -189,6 +189,17 @@ export default defineConfig({
       },
     },
 
+    // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
+    // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
+    {
+      name: "counter-todays-sales",
+      testMatch: /70-counter-todays-sales\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {

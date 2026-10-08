@@ -73,6 +73,7 @@ import {
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterReturnAction } from "./CounterReturnAction";
+import { CounterTodaysSales } from "./CounterTodaysSales";
 
 interface PickedCustomer {
   id: string;
@@ -629,6 +630,7 @@ export function CounterSaleScreen() {
     <div className="mx-auto w-full max-w-5xl space-y-4 p-4" data-testid="counter-sale-screen">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
+        <CounterTodaysSales />
         {gate.offerShipInstead ? (
           <Button
             className="min-h-[44px]"

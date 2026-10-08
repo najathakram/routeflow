@@ -30,7 +30,14 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
     : `Return recorded. Store credit added to ${who}.`;
 }
 
-export function CounterReturnAction({ orderId }: { orderId: string }) {
+export function CounterReturnAction({
+  orderId,
+  onDone,
+}: {
+  orderId: string;
+  /** called when the return dialog closes or records (Today's sales refetches its list) */
+  onDone?: () => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
@@ -43,7 +50,7 @@ export function CounterReturnAction({ orderId }: { orderId: string }) {
     <>
       <Button
         variant="secondary"
-        className="w-full sm:w-auto"
+        className="min-h-11 w-full sm:w-auto"
         leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
         onClick={() => setOpen(true)}
       >
@@ -51,12 +58,18 @@ export function CounterReturnAction({ orderId }: { orderId: string }) {
       </Button>
       <RecordInlineReturnDialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false);
+          onDone?.();
+        }}
         customerId={order.customerId}
         customerName={order.customer?.businessName}
         orderId={order.id}
         allowRefund
-        onRecorded={(_ret, info) => setRecorded(info ?? { resolution: "STORE_CREDIT" })}
+        onRecorded={(_ret, info) => {
+          setRecorded(info ?? { resolution: "STORE_CREDIT" });
+          onDone?.();
+        }}
       />
       {recorded ? (
         <p role="status" className="order-last basis-full text-sm font-medium text-navy">
