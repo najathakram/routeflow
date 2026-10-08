@@ -143,7 +143,11 @@ describe("DriversService", () => {
       prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
       prisma.driver.update.mockResolvedValue({});
 
-      const result = await service.changeStatus("drv-1", { status: "INACTIVE" as any });
+      const result = await service.changeStatus(
+        "drv-1",
+        { status: "INACTIVE" as any },
+        UserRole.OPERATOR,
+      );
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.update).toHaveBeenCalledWith({
@@ -155,7 +159,7 @@ describe("DriversService", () => {
     it("should throw NotFoundException for non-existent driver", async () => {
       prisma.driver.findUnique.mockResolvedValue(null);
       await expect(
-        service.changeStatus("nonexistent", { status: "INACTIVE" as any }),
+        service.changeStatus("nonexistent", { status: "INACTIVE" as any }, UserRole.OPERATOR),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -191,12 +195,16 @@ describe("DriversService", () => {
         }),
       }) as any;
 
-      await service.update("drv-1", {
-        homeLine1: "123 Main St",
-        homeCity: "Springfield",
-        homeState: "IL",
-        homeZip: "62701",
-      });
+      await service.update(
+        "drv-1",
+        {
+          homeLine1: "123 Main St",
+          homeCity: "Springfield",
+          homeState: "IL",
+          homeZip: "62701",
+        },
+        UserRole.OPERATOR,
+      );
 
       expect(prisma.driver.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -219,12 +227,16 @@ describe("DriversService", () => {
       global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as any;
 
       await expect(
-        service.update("drv-1", {
-          homeLine1: "123 Main St",
-          homeCity: "Springfield",
-          homeState: "IL",
-          homeZip: "62701",
-        }),
+        service.update(
+          "drv-1",
+          {
+            homeLine1: "123 Main St",
+            homeCity: "Springfield",
+            homeState: "IL",
+            homeZip: "62701",
+          },
+          UserRole.OPERATOR,
+        ),
       ).resolves.toEqual(MOCK_DRIVER);
 
       expect(prisma.driver.update).toHaveBeenCalledWith(
@@ -246,7 +258,7 @@ describe("DriversService", () => {
       );
       global.fetch = jest.fn();
 
-      await service.update("drv-1", { contactName: "New Name" });
+      await service.update("drv-1", { contactName: "New Name" }, UserRole.OPERATOR);
 
       expect(global.fetch).not.toHaveBeenCalled();
       expect(prisma.driver.update).toHaveBeenCalledWith(
@@ -307,6 +319,71 @@ describe("DriversService", () => {
       );
 
       expect(prisma.driverLocation.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── admin-target check on edits (B1061, same rule as remove and the users module) ─────
+
+  describe("edits of an admin account's driver record", () => {
+    const noWrites = () => {
+      expect(prisma.driver.update).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    };
+    const arrange = (linkedRole: string) => {
+      prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+      prisma.driver.update.mockResolvedValue(MOCK_DRIVER);
+      prisma.user.findUnique.mockResolvedValue({ role: linkedRole } as any);
+    };
+    const edits: [string, (role: UserRole | undefined) => Promise<unknown>][] = [
+      ["update", (role) => service.update("drv-1", { contactName: "New" }, role)],
+      [
+        "changeStatus",
+        (role) => service.changeStatus("drv-1", { status: "INACTIVE" } as any, role),
+      ],
+    ];
+
+    it.each(edits)(
+      "%s: an OPERATOR is refused for an admin target, before any write",
+      async (_n, run) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(UserRole.OPERATOR)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      },
+    );
+
+    it.each(edits)("%s: fail-closed when the caller role is missing", async (_n, run) => {
+      arrange("TENANT_ADMIN");
+      await expect(run(undefined)).rejects.toThrow(ForbiddenException);
+      noWrites();
+    });
+
+    it.each(edits)("%s: a TENANT_ADMIN may edit an admin's driver record", async (_n, run) => {
+      arrange("TENANT_ADMIN");
+      await expect(run(UserRole.TENANT_ADMIN)).resolves.toBeDefined();
+      expect(prisma.driver.update).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(edits)(
+      "%s: an OPERATOR may still edit a driver or operator target",
+      async (_n, run) => {
+        arrange("DRIVER");
+        await expect(run(UserRole.OPERATOR)).resolves.toBeDefined();
+        arrange("OPERATOR");
+        await expect(run(UserRole.OPERATOR)).resolves.toBeDefined();
+        expect(prisma.driver.update).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it("update refuses before the geocoder is called", async () => {
+      arrange("TENANT_ADMIN");
+      configGet.mockImplementation((key: string) =>
+        key === "googleMaps.apiKey" ? "test-key" : null,
+      );
+      global.fetch = jest.fn() as any;
+      await expect(
+        service.update("drv-1", { homeLine1: "1 Main St" }, UserRole.OPERATOR),
+      ).rejects.toThrow(ForbiddenException);
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 

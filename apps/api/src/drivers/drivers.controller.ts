@@ -59,7 +59,7 @@ export class DriversController {
 
   @Patch("me")
   updateMe(@CurrentUser() user: JwtPayload, @Body() dto: UpdateDriverDto) {
-    return this.driversService.updateByUserId(user.sub, dto);
+    return this.driversService.updateByUserId(user.sub, dto, user.role);
   }
 
   @Post("me/location")
@@ -77,15 +77,19 @@ export class DriversController {
   @Patch(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateDriverDto) {
-    return this.driversService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateDriverDto, @CurrentUser() user: JwtPayload) {
+    return this.driversService.update(id, dto, user.role);
   }
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  changeStatus(@Param("id") id: string, @Body() dto: ChangeDriverStatusDto) {
-    return this.driversService.changeStatus(id, dto);
+  changeStatus(
+    @Param("id") id: string,
+    @Body() dto: ChangeDriverStatusDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.driversService.changeStatus(id, dto, user.role);
   }
 
   @Delete(":id")

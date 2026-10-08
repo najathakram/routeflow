@@ -85,10 +85,10 @@ export class DriversService {
     return driver;
   }
 
-  async updateByUserId(userId: string, dto: UpdateDriverDto) {
+  async updateByUserId(userId: string, dto: UpdateDriverDto, callerRole: UserRole | undefined) {
     const driver = await this.prisma.forTenant().driver.findFirst({ where: { userId } });
     if (!driver) throw new NotFoundException("Driver profile not found");
-    return this.update(driver.id, dto);
+    return this.update(driver.id, dto, callerRole);
   }
 
   async recordLocation(userId: string, dto: PostLocationDto) {
@@ -184,8 +184,9 @@ export class DriversService {
     });
   }
 
-  async update(id: string, dto: UpdateDriverDto) {
-    await this.findOneOrThrow(id);
+  async update(id: string, dto: UpdateDriverDto, callerRole: UserRole | undefined) {
+    const driver = await this.findOneOrThrow(id);
+    await this.assertMayChangeDriver(driver.userId, callerRole);
     const { homeLine1, homeCity, homeState, homeZip, ...rest } = dto;
     const data: Record<string, unknown> = { ...rest };
     const homeFieldPresent =
@@ -222,8 +223,9 @@ export class DriversService {
     });
   }
 
-  async changeStatus(id: string, dto: ChangeDriverStatusDto) {
-    await this.findOneOrThrow(id);
+  async changeStatus(id: string, dto: ChangeDriverStatusDto, callerRole: UserRole | undefined) {
+    const driver = await this.findOneOrThrow(id);
+    await this.assertMayChangeDriver(driver.userId, callerRole);
     await this.prisma.forTenant().driver.update({ where: { id }, data: { status: dto.status } });
     return { success: true };
   }
@@ -259,13 +261,9 @@ export class DriversService {
   async remove(id: string, callerRole: UserRole | undefined) {
     const driver = await this.findOneOrThrow(id);
 
-    // B1061: the users module's admin-account rule, before any write. Re-checked on the row read inside
-    // the transaction below, so a role change between the two reads cannot slip past it.
-    const linked = await this.prisma.forTenant().user.findUnique({
-      where: { id: driver.userId },
-      select: { role: true },
-    });
-    if (linked) assertMayChangeAccount(linked, callerRole);
+    // B1061: the admin-account rule, before any write. Re-checked on the row read inside the transaction
+    // below, so a role change between the two reads cannot slip past it.
+    await this.assertMayChangeDriver(driver.userId, callerRole);
 
     // Block deletion if the driver has any active or scheduled runs
     const activeRuns = await this.prisma.forTenant().routeRun.count({
@@ -307,6 +305,18 @@ export class DriversService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * B1061: editing, re-statusing or removing the driver record of an admin account needs an admin caller:
+   * the users module's rule (users/admin-account-protection.ts), on the linked user's role (tenant-scoped
+   * read), fail-closed on a missing caller role. Call it before any write or external call.
+   */
+  private async assertMayChangeDriver(userId: string, callerRole: UserRole | undefined) {
+    const linked = await this.prisma
+      .forTenant()
+      .user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (linked) assertMayChangeAccount(linked, callerRole);
   }
 
   private async findOneOrThrow(id: string) {
