@@ -10,26 +10,28 @@ import {
   getCounterCartBusy,
   getCounterCartHasLines,
   getCounterLeaveNotice,
+  cancelCounterLeave,
+  confirmCounterLeave,
+  getCounterLeaveRequest,
   guardCounterLeave,
   subscribeCounterCart,
 } from "@/lib/counter-cart-signal";
+import { useCounterBackGuard } from "@/lib/counter-back-guard";
 import { readExitTarget } from "@/lib/register-mode";
 import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 
 /**
  * POS-7: the slim header the shell shows in register mode (on the counter screen only). Exit counter is the FIRST
  * focusable control; the clerk and the store name follow. When the cart has lines, Exit asks "Discard this sale?" first
- * (Keep selling is the default, Escape keeps the cart). Only this Exit is guarded - nav links are not.
+ * (Keep selling is the default, Escape keeps the cart). Every other way out (rail links, palette, user menu, g shortcuts, browser Back) goes through the same guard and
+ * opens the same dialog.
  */
 export function RegisterHeader({
   onOpenMobileNav,
-  actions,
   drivePill,
   tools,
 }: {
   onOpenMobileNav: () => void;
-  /** A slot on the right, after the store name, for counter actions mounted later (e.g. "Today's sales"). Empty by default. */
-  actions?: React.ReactNode;
   /** The shell's drive-mode exit pill (same component the full header renders). */
   drivePill?: React.ReactNode;
   /** The shell's bell, palette trigger and avatar/user menu (same component the full header renders). */
@@ -43,7 +45,15 @@ export function RegisterHeader({
     () => false,
   );
   const busy = React.useSyncExternalStore(subscribeCounterCart, getCounterCartBusy, () => false);
-  const [asking, setAsking] = React.useState(false);
+  // The dialog is driven by the shared guard, so any way out (not just Exit) parks its leave behind it.
+  const asking = React.useSyncExternalStore(
+    subscribeCounterCart,
+    getCounterLeaveRequest,
+    () => false,
+  );
+  useCounterBackGuard(hasLines);
+  const exitRef = React.useRef<HTMLButtonElement>(null);
+  const openerRef = React.useRef<HTMLElement | null>(null);
   // The notice is raised by the shared guard, so it also shows when a rail link, a g shortcut, the palette or the user menu was refused.
   const blocked = React.useSyncExternalStore(
     subscribeCounterCart,
@@ -51,15 +61,6 @@ export function RegisterHeader({
     () => false,
   );
   const keepRef = React.useRef<HTMLButtonElement>(null);
-  const leave = () => {
-    if (guardCounterLeave()) {
-      // A sale is being recorded: leaving now would drop the receipt and invite a second ring-up.
-      setAsking(false);
-      return;
-    }
-    setAsking(false);
-    router.push(readExitTarget());
-  };
   const storeName = branding?.businessName ?? "RouteFlow";
 
   return (
@@ -69,15 +70,16 @@ export function RegisterHeader({
     >
       <button
         type="button"
+        ref={exitRef}
         aria-disabled={busy || undefined}
         onClick={() => {
-          if (guardCounterLeave()) return;
-          if (hasLines) setAsking(true);
-          else leave();
+          const exit = () => router.push(readExitTarget());
+          if (guardCounterLeave(exit)) return;
+          exit();
         }}
         className={cn(
           TAP_TARGET,
-          "gap-2 rounded-lg px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-raised",
+          "gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-raised",
           "aria-disabled:cursor-not-allowed aria-disabled:opacity-50",
         )}
       >
@@ -97,14 +99,12 @@ export function RegisterHeader({
       </button>
       <p
         data-testid="register-store"
-        className="min-w-0 flex-1 truncate text-base font-semibold text-navy"
+        title={storeName}
+        className="min-w-[4rem] flex-1 truncate text-base font-semibold text-navy"
       >
         {storeName}
       </p>
       {drivePill}
-      <div data-testid="register-header-actions" className="flex shrink-0 items-center gap-2">
-        {actions}
-      </div>
       {tools}
       {blocked && (
         <p
@@ -117,12 +117,20 @@ export function RegisterHeader({
 
       <Modal
         open={asking}
-        onClose={() => setAsking(false)}
+        onClose={cancelCounterLeave}
         title="Discard this sale?"
         className={DIALOG_FIT}
         onOpenAutoFocus={(e) => {
           e.preventDefault();
+          const was = document.activeElement;
+          openerRef.current = was instanceof HTMLElement && was !== document.body ? was : null;
           keepRef.current?.focus();
+        }}
+        onCloseAutoFocus={(e) => {
+          // Focus goes back to where the leave was asked from (Exit by default; a link or menu item that has since gone falls back to Exit).
+          e.preventDefault();
+          const back = openerRef.current?.isConnected ? openerRef.current : exitRef.current;
+          back?.focus();
         }}
         footer={
           <>
@@ -130,11 +138,11 @@ export function RegisterHeader({
               ref={keepRef}
               variant="secondary"
               className={DIALOG_FOOTER_BUTTON}
-              onClick={() => setAsking(false)}
+              onClick={cancelCounterLeave}
             >
               Keep selling
             </Button>
-            <Button variant="danger" className={DIALOG_FOOTER_BUTTON} onClick={leave}>
+            <Button variant="danger" className={DIALOG_FOOTER_BUTTON} onClick={confirmCounterLeave}>
               Discard
             </Button>
           </>

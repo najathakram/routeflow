@@ -1,5 +1,8 @@
 import {
   guardCounterLeave,
+  getCounterLeaveRequest,
+  confirmCounterLeave,
+  cancelCounterLeave,
   getCounterLeaveNotice,
   getCounterCartBusy,
   setCounterCartBusy,
@@ -59,5 +62,32 @@ describe("counter cart signal", () => {
     setCounterCartBusy(false);
     expect(getCounterLeaveNotice()).toBe(false);
     expect(guardCounterLeave()).toBe(false);
+  });
+
+  it("with lines and a proceed, the guard parks the leave and asks; confirm runs it once, cancel drops it", () => {
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(false); // empty cart: caller goes on itself
+    setCounterCartHasLines(true);
+    expect(guardCounterLeave(proceed)).toBe(true);
+    expect(getCounterLeaveRequest()).toBe(true);
+    expect(proceed).not.toHaveBeenCalled();
+    confirmCounterLeave();
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(getCounterLeaveRequest()).toBe(false);
+    confirmCounterLeave();
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(guardCounterLeave(proceed)).toBe(true);
+    cancelCounterLeave();
+    expect(getCounterLeaveRequest()).toBe(false);
+    confirmCounterLeave();
+    expect(proceed).toHaveBeenCalledTimes(1);
+  });
+
+  it("busy still wins over the Discard request", () => {
+    setCounterCartHasLines(true);
+    setCounterCartBusy(true);
+    expect(guardCounterLeave(jest.fn())).toBe(true);
+    expect(getCounterLeaveRequest()).toBe(false);
+    expect(getCounterLeaveNotice()).toBe(true);
   });
 });
