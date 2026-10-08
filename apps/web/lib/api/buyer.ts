@@ -326,10 +326,17 @@ export function toPromotionRules(promos: BuyerPromotion[] | undefined): Promotio
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export function useBuyerActiveOrder() {
+/**
+ * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
+ * merge search); omitted = the buyer's most recent active order, as before.
+ */
+export function useBuyerActiveOrder(fulfillPath?: string) {
   return useQuery<BuyerOrder | null>({
-    queryKey: ["buyer", "activeOrder"],
-    queryFn: () => buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
+    queryKey: fulfillPath ? ["buyer", "activeOrder", fulfillPath] : ["buyer", "activeOrder"],
+    queryFn: () =>
+      buyerApiClient
+        .get("/buyer/orders/active", fulfillPath ? { params: { fulfillPath } } : undefined)
+        .then((r) => r.data),
   });
 }
 

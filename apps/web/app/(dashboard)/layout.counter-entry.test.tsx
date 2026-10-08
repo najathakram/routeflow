@@ -206,7 +206,8 @@ describe("POS-7a counter entry", () => {
     mockGate = { showButton: true };
     const active = () =>
       Array.from(screen.getByTestId("sidebar-aside").querySelectorAll('[aria-current="page"]')).map(
-        (a) => a.textContent?.trim(),
+        // POS-7: on the counter the rail is collapsed (icon only), so the label is the link's title.
+        (a) => a.getAttribute("title") ?? a.textContent?.trim(),
       );
     mockPath = "/orders/counter-sale";
     renderShell();
