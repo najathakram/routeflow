@@ -62,6 +62,16 @@ describe("units P0a additive columns", () => {
     }
   });
 
+  it.each(["name", "nameKey"])("TenantUnit.%s is NOT NULL", (field) => {
+    expect(modelBody("TenantUnit")).toMatch(new RegExp(`^\\s*${field}\\s+String\\s*$`, "m"));
+  });
+
+  it("pins the two new indexes", () => {
+    expect(modelBody("ProductUnit")).toMatch(/@@index\(\[tenantUnitId\]\)/);
+    expect(modelBody("ProductUnit")).toMatch(/@@index\(\[tenantId, sku\]\)/);
+    expect(modelBody("ProductBarcode")).toMatch(/@@index\(\[productUnitId\]\)/);
+  });
+
   it("TenantUnit is tenant-scoped with a (tenantId, nameKey) unique", () => {
     expect(modelBody("TenantUnit")).toMatch(/@@unique\(\[tenantId, nameKey\]\)/);
   });
