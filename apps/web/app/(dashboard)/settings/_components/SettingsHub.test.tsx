@@ -99,6 +99,47 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("Compliance")).toBeInTheDocument();
   });
 
+  describe("Units (U-1)", () => {
+    const unitsLinks = () =>
+      screen.getAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
+
+    it("is the LAST item of Selling & catalog and appears exactly once", () => {
+      renderWithProviders(<SettingsHub isAdmin />);
+      const hrefs = within(section("Selling & catalog"))
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href"));
+      expect(hrefs[hrefs.length - 1]).toBe("/settings/units");
+      expect(unitsLinks()).toHaveLength(1);
+      expect(within(unitsLinks()[0]).getByText("Units")).toBeInTheDocument();
+    });
+
+    it("operators see it too (all staff may edit units)", () => {
+      renderWithProviders(<SettingsHub isAdmin={false} />);
+      expect(unitsLinks()).toHaveLength(1);
+    });
+
+    it("nothing else in Selling & catalog moved: the earlier links keep their order", () => {
+      renderWithProviders(<SettingsHub isAdmin />);
+      const hrefs = within(section("Selling & catalog"))
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href"));
+      expect(hrefs.slice(0, -1)).toEqual([
+        "/settings?tab=invoicing",
+        "/settings?tab=costing",
+        "/settings?tab=remittance",
+        "/settings/restrictions",
+        "/settings/import",
+        "/settings/migration",
+      ]);
+    });
+
+    it.each(["unit", "case", "bottle", "pieces per box", "pack"])("search %j finds it", (q) => {
+      renderWithProviders(<SettingsHub isAdmin />);
+      fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+      expect(unitsLinks()).toHaveLength(1);
+    });
+  });
+
   describe("a page loaded with a card's hash scrolls to that card", () => {
     const scroll = jest.fn();
     beforeEach(() => {
