@@ -1,3 +1,24 @@
+-- Units rebuild P0a: tenant unit names and multi-level ladders. ADDITIVE ONLY: one new table
+-- ("TenantUnit"), nullable columns with no default, indexes, and two nullable SET NULL foreign keys.
+-- No data writes; the backfill is a separate later script.
+--
+-- LOCK PROFILE: ADD COLUMN of a nullable column without a default is metadata-only (no rewrite, no
+-- scan). ACCESS EXCLUSIVE is held only for the catalog change; lock_timeout below bounds the wait
+-- behind a long writer. The two FK adds on "ProductUnit"/"ProductBarcode" cover columns that are NULL
+-- on every existing row, so the validation scan has nothing to check.
+--
+-- HARD DEPLOY ORDER (L-184): Prisma selects every scalar, so code that knows these columns merged
+-- BEFORE they exist breaks reads (P2022). Owner sitting -> `prod-migrate.mjs` (fresh backup first) ->
+-- `schema-drift.mjs` exit 0 -> ONLY THEN merge the PR that ships the code.
+--
+-- Rollback: drop the added columns, indexes and constraints, then DROP TABLE "TenantUnit" (nothing reads them yet).
+-- Recovery: if the lock wait exceeds 5s the migration rolls back and is recorded FAILED:
+--   prisma migrate resolve --rolled-back 20261008000000_units_p0a_tenant_units_ladders
+-- from apps/api, then re-run. NEVER `--applied`.
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 -- AlterTable
 ALTER TABLE "Product" ADD COLUMN     "baseUnitLabel" TEXT,
 ADD COLUMN     "invoiceLineCode" TEXT,
@@ -78,3 +99,4 @@ ALTER TABLE "TenantUnit" ADD CONSTRAINT "TenantUnit_tenantId_fkey" FOREIGN KEY (
 -- AddForeignKey
 ALTER TABLE "ProductBarcode" ADD CONSTRAINT "ProductBarcode_productUnitId_fkey" FOREIGN KEY ("productUnitId") REFERENCES "ProductUnit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+COMMIT;
