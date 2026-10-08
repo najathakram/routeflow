@@ -1,3 +1,5 @@
+import { PIECE_SYNONYMS } from "@routeflow/types";
+
 /**
  * Common unit suggestions for the product unit fields. ONE list: UnitCombobox (create flows) and the
  * product edit page both import it (they used to declare their own, 23 vs 19 entries).
@@ -43,9 +45,6 @@ export const UNIT_CHIPS: readonly string[] = [
   "Bottle",
   "Can",
 ];
-
-/** Words for the smallest unit: Piece is always there, so these are never offered as chips. */
-export const PIECE_SYNONYMS: readonly string[] = ["each", "unit", "pcs"];
 
 /** Measures keep their own casing (kg, L, ml) and sit behind the chips' "More" button. */
 const MEASURES: readonly string[] = ["kg", "g", "lb", "oz", "L", "ml"];

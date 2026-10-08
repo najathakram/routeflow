@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, isPieceSynonym } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 // Tenant unit NAMES (Settings > Units). A names list, not a math source: order, invoice and return
@@ -34,6 +34,7 @@ export function checkUnitName(raw: string, units: TenantUnitDto[]): string | nul
   const name = raw.trim();
   if (!name) return "Enter a name.";
   if (name.length > MAX_UNIT_NAME) return "Keep it to 30 characters or fewer.";
+  if (isPieceSynonym(name)) return "Piece is always there as the smallest unit.";
   const dup = units.find(
     (u) => !u.archivedAt && u.name.trim().toLowerCase() === name.toLowerCase(),
   );

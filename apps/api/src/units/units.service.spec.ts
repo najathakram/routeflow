@@ -153,6 +153,19 @@ describe("UnitsService", () => {
       expect(db.tenantUnit.create).not.toHaveBeenCalled();
     });
 
+    it.each(["Piece", " piece ", "PIECES", "Each", "unit", "Pcs"])(
+      "refuses %j (Piece and its synonyms are the smallest unit, always there) with a 400 and no write",
+      async (name) => {
+        const { service, db } = make();
+        await expect(service.create({ name }, user)).rejects.toMatchObject({
+          status: 400,
+          message: "Piece is always there as the smallest unit.",
+        });
+        expect(db.tenantUnit.findFirst).not.toHaveBeenCalled();
+        expect(db.tenantUnit.create).not.toHaveBeenCalled();
+      },
+    );
+
     it("trims, stores the nameKey as lower(trim(name)), and returns the row", async () => {
       const { service, db, prisma } = make();
       db.tenantUnit.create.mockResolvedValue(row({ name: "Half Case", nameKey: "half case" }));
@@ -239,6 +252,21 @@ describe("UnitsService", () => {
         message,
       });
     });
+  });
+
+  describe("update: Piece words", () => {
+    it.each(["Piece", "pcs", "EACH"])(
+      "renaming a unit to %j is a 400 before any read or write",
+      async (name) => {
+        const { service, db, prisma } = make();
+        await expect(service.update("u1", { name }, user)).rejects.toMatchObject({
+          status: 400,
+          message: "Piece is always there as the smallest unit.",
+        });
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+        expect(db.tenantUnit.update).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe("rename (one transaction, match by nameKey)", () => {

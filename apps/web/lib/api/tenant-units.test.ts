@@ -32,6 +32,12 @@ describe("checkUnitName", () => {
     expect(checkUnitName("x".repeat(31), [])).toBe("Keep it to 30 characters or fewer.");
     expect(checkUnitName("x".repeat(30), [])).toBeNull();
   });
+  it.each(["Piece", " pieces ", "Each", "UNIT", "pcs"])(
+    "%j is the smallest unit, which is always there: refused before a request",
+    (name) => {
+      expect(checkUnitName(name, [])).toBe("Piece is always there as the smallest unit.");
+    },
+  );
   it("a duplicate is case-insensitive and names the existing unit", () => {
     expect(checkUnitName("case", [unit("Case")])).toBe("You already have a unit called Case.");
   });

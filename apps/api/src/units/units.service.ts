@@ -10,7 +10,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { packWordKey } from "../products/unit-pack-rules";
-import { UNIT_NAME_EMPTY, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
+import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
+import { isPieceSynonym } from "./piece-words";
 
 export interface UnitDto {
   id: string;
@@ -42,6 +43,9 @@ function cleanName(raw: unknown): string {
   const name = typeof raw === "string" ? raw.trim() : "";
   if (!name) throw new BadRequestException(UNIT_NAME_EMPTY);
   if (name.length > MAX_NAME) throw new BadRequestException(UNIT_NAME_TOO_LONG);
+  // Piece (and its synonyms) is every product's factor-1 level: resolveLadderLevel answers it before
+  // any level row, so a unit of that name could never be sold at its own size.
+  if (isPieceSynonym(name)) throw new BadRequestException(UNIT_NAME_IS_PIECE);
   return name;
 }
 
