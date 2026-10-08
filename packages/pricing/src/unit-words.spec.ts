@@ -107,8 +107,8 @@ describe("unitWords custom labels", () => {
   });
 });
 
-describe("formatQtySplit uses the same plural rules", () => {
-  it("keeps the old outputs and never doubles the s", () => {
+describe("formatQtySplit keeps its own (old) plural rule until U-5", () => {
+  it("box -> boxes, a custom label just gets an s, never doubles it", () => {
     expect(formatQtySplit({ qty: 25, boxes: 2, pieces: 1 })).toBe("2 boxes + 1 pcs");
     expect(formatQtySplit({ qty: 25, boxes: 2, pieces: 1, boxLabel: "Cases" })).toBe(
       "2 Cases + 1 pcs",
@@ -116,9 +116,7 @@ describe("formatQtySplit uses the same plural rules", () => {
     expect(formatQtySplit({ qty: 25, boxes: 2, pieces: 1, boxLabel: "Case" })).toBe(
       "2 Cases + 1 pcs",
     );
-    expect(formatQtySplit({ qty: 5, boxes: 2, pieces: 0, boxLabel: "Battery" })).toBe(
-      "2 Batteries",
-    );
+    expect(formatQtySplit({ qty: 5, boxes: 2, pieces: 0, boxLabel: "Battery" })).toBe("2 Batterys");
   });
 });
 

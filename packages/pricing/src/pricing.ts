@@ -18,7 +18,6 @@
  * drift never reaches the database. This package (`@routeflow/pricing`) is the
  * single source imported by api, web and mobile — there are no mirrors.
  */
-import { pluralize } from "./unit-words";
 
 /**
  * Round a monetary amount to 2 decimal places (cents), guarding against binary
@@ -1184,7 +1183,8 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
   const p = Math.max(0, Math.trunc(Number(pieces ?? 0)));
   const label = (unitLabel ?? "").trim() || "pcs";
   const boxSingular = (boxLabel ?? "").trim() || "box";
-  const boxPlural = pluralize(boxSingular);
+  const boxPlural =
+    boxSingular === "box" ? "boxes" : boxSingular.endsWith("s") ? boxSingular : `${boxSingular}s`;
   const parts: string[] = [];
   if (b > 0) parts.push(`${b} ${b === 1 ? boxSingular : boxPlural}`);
   if (p > 0) parts.push(`${p} ${label}`);
