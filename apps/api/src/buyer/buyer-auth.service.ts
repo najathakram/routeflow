@@ -315,6 +315,7 @@ export class BuyerAuthService {
     }
     // A refresh token that names an audience must name this realm's; one with no `aud`
     // (minted before audiences existed) is still accepted.
+    // Remove in PR-4a; strict refresh is safe only 30 days after deploy.
     if (hasForeignAudience(payload, BUYER_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }

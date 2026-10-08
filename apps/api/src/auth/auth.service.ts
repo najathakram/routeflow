@@ -301,6 +301,9 @@ export class AuthService {
     }
     // A refresh token that names an audience must name this realm's; one with no `aud`
     // (minted before audiences existed) is still accepted.
+    // Remove in PR-4a; strict refresh is safe only 30 days after deploy.
+    // The staff refresh path re-derives role and tenant from the database row; the audience
+    // does not separate platform-admin from tenant sessions.
     if (hasForeignAudience(payload, STAFF_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
