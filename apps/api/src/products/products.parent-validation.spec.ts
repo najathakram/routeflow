@@ -177,7 +177,9 @@ describe("tenantSafeParent / tenantSafeParentView (read side of the parent rule)
   it("keeps a parent of this tenant, drops one of another tenant, and fails closed when the row carries no tenantId", () => {
     expect(tenantSafeParent(own, TENANT)).toBe(own);
     expect(tenantSafeParent({ ...own, tenantId: "other-tenant" }, TENANT)).toBeNull();
-    expect(tenantSafeParent({ id: "fam", name: "Family" }, TENANT)).toBeNull();
+    expect(
+      tenantSafeParent({ id: "fam", name: "Family" } as { tenantId?: string | null }, TENANT),
+    ).toBeNull();
     expect(tenantSafeParent(null, TENANT)).toBeNull();
     expect(tenantSafeParent(undefined, TENANT)).toBeNull();
   });
