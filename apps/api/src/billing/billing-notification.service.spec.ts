@@ -1,4 +1,5 @@
 import { BillingNotificationService } from "./billing-notification.service";
+import { cancelledTemplate } from "./billing-notification.templates";
 
 /** Simulates the real (tenantId, milestone, key) unique constraint: the same tuple throws
  *  P2002 on a repeat create(), exactly like Postgres would. Used by every test that asserts
@@ -175,6 +176,23 @@ describe("BillingNotificationService", () => {
       });
       await svc.notifyCancelled("t1");
       expect(sendPlatform).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("pr3 pin: an existing sendIfClaimed caller is byte-identical", () => {
+    it("notifyCancelled sends EXACTLY {to, subject, html, text} - no replyTo key, template output unchanged", async () => {
+      const { svc, sendPlatform } = makeService();
+      await svc.notifyCancelled("t1");
+      const expected = cancelledTemplate({ businessName: "Acme Retail", adminName: "Jamie" });
+      expect(sendPlatform).toHaveBeenCalledTimes(1);
+      expect(sendPlatform.mock.calls[0][0]).toStrictEqual({
+        to: "admin@acme.test",
+        subject: expected.subject,
+        html: expected.html,
+        text: expected.text,
+      });
+      expect(Object.keys(sendPlatform.mock.calls[0][0])).toEqual(["to", "subject", "html", "text"]);
+      expect(expected.subject).toBe("Subscription cancelled — Acme Retail");
     });
   });
 
