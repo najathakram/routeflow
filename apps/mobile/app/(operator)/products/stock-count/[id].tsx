@@ -294,7 +294,7 @@ export default function StockCountSessionScreen() {
         })
       ) {
         promptShownRef.current = true;
-        return { feedback: { kind: "error", text: promptText(decision) } };
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     }
     const product = res.product as any;
