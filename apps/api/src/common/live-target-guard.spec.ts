@@ -264,6 +264,52 @@ describe("protectedTenantIds", () => {
   });
 });
 
+describe("assertNoLiveProtectedTenants (tunnel-proof refusal for destructive local scripts)", () => {
+  const row = (over = {}) => ({
+    id: "t-a",
+    slug: "acme-foods",
+    status: "TRIAL",
+    class: "PRODUCTION",
+    deletedAt: null,
+    planKey: null,
+    stripeSubId: null,
+    ...over,
+  });
+
+  it("passes a local database that holds only test tenants, even paying-looking ones", async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({
+        rows: [
+          row({ id: "t-1", slug: "qa-lite", status: "ACTIVE", planKey: "STARTER" }),
+          row({ id: "t-2", slug: "test", stripeSubId: "sub_fake_qa" }),
+        ],
+      }),
+    };
+    await expect(guard.assertNoLiveProtectedTenants(client, NONE)).resolves.toBeUndefined();
+  });
+
+  it("passes when no tenant is protected", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [row({ slug: "acme-deli" })] }) };
+    await expect(guard.assertNoLiveProtectedTenants(client, LISTED)).resolves.toBeUndefined();
+  });
+
+  it("refuses a database that holds a protected non-test tenant, with counts only", async () => {
+    const client = {
+      $queryRawUnsafe: jest
+        .fn()
+        .mockResolvedValue([
+          row(),
+          row({ id: "t-p", slug: "acme-paying", status: "ACTIVE", planKey: "STARTER" }),
+        ]),
+    };
+    const err = await guard.assertNoLiveProtectedTenants(client, LISTED).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(guard.ProtectedTenantError);
+    expect(err.message).toMatch(/2 protected non-test tenant/);
+    expect(err.message).toMatch(/paying 1 · stripe-linked 0 · env-listed 1/);
+    expect(err.message).not.toMatch(/acme/);
+  });
+});
+
 describe("--check output", () => {
   it("prints counts only, and flags a configured slug that matches no tenant", () => {
     expect(guard.describeCheck(2, 2)).toEqual(["2 configured · 2 matched a tenant"]);

@@ -17,10 +17,12 @@ const API_DIR = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(API_DIR, "../..");
 
 // protectedTenantIds feeds the SQL exclusion (`AND "tenantId" <> ALL($1::text[])`) of row-level writers.
+// assertNoLiveProtectedTenants is the destructive local scripts' tunnel-proof refusal.
 const GUARD_CALLS = new Set([
   "assertWritableTenant",
   "filterWritableTenants",
   "protectedTenantIds",
+  "assertNoLiveProtectedTenants",
 ]);
 const DB_MODULES = [
   /^pg$/,
@@ -47,6 +49,8 @@ type Reason = (typeof EXEMPT_REASONS)[number];
 
 /** path (relative to the repo root, forward slashes) -> reason. */
 const EXEMPT: Record<string, Reason> = {
+  "apps/api/scripts/create-super-admin.js": "platform-users",
+  "apps/api/scripts/pdf-render-smoke.mjs": "not-a-db-client",
   "apps/api/prisma/publish-plan-catalog-v10.ts": "global-catalog",
   "apps/api/prisma/publish-plan-catalog-v11.ts": "global-catalog",
   "apps/api/prisma/publish-plan-catalog-v12.ts": "global-catalog",
@@ -58,7 +62,6 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/prisma/seed-expenses.ts": "global-catalog",
   "apps/api/prisma/seed-parity-buyer.ts": "test-slug-only",
   "apps/api/prisma/seed.ts": "test-slug-only",
-  "apps/api/scripts/DANGER-fresh-data-WIPES-ALL-DATA.js": "local-only",
   "apps/api/scripts/apply-rls.js": "schema-only",
   "apps/api/scripts/audit-buyer-verification-grandfather.mjs": "read-only",
   "apps/api/scripts/audit-tenant-entitlements.mjs": "read-only",
@@ -68,7 +71,6 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-customer-tenants.js": "read-only",
   "apps/api/scripts/check-discrepancies.js": "read-only",
   "apps/api/scripts/check-tenant-logo.js": "read-only",
-  "apps/api/scripts/cleanup-qa-data.js": "local-only",
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
@@ -79,10 +81,6 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/lib/railway-db-url.mjs": "not-a-db-client",
   "apps/api/scripts/lib/report-db-url.mjs": "not-a-db-client",
   "apps/api/scripts/link-google.js": "platform-users",
-  "apps/api/scripts/merge-duplicate-products.js": "local-only",
-  "apps/api/scripts/merge-pending-orders.js": "local-only",
-  "apps/api/scripts/nuke-db.js": "local-only",
-  "apps/api/scripts/nuke-tenant-data.js": "local-only",
   "apps/api/scripts/order-invoice-divergence-report.mjs": "read-only",
   "apps/api/scripts/prod-migrate.mjs": "schema-only",
   "apps/api/scripts/prod-readonly-audit.mjs": "read-only",
@@ -118,8 +116,6 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
   "apps/api/scripts/report-train4-damage.mjs": "read-only",
   "apps/api/scripts/report-unsafe-customer-names.mjs": "read-only",
-  "apps/api/scripts/reset-and-seed.ts": "local-only",
-  "apps/api/scripts/reset-seed.js": "local-only",
   "apps/api/scripts/sa077-split-qty-consistency.mjs": "read-only",
   "apps/api/scripts/sales-facts-timing.ts": "local-only",
   "apps/api/scripts/sales-gap-analysis.js": "read-only",
@@ -149,6 +145,9 @@ export function analyze(fileName: string, text: string): Analysis {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, kind);
   const specifiers: string[] = [];
   let usesDbIdentifier = false;
+  // A computed require()/import() path (e.g. require(path.join(...))) hides which module is loaded,
+  // so the file cannot be proven DB-free: it is treated as in scope.
+  let usesComputedLoad = false;
   let hasGuardCall = false;
 
   const visit = (node: ts.Node) => {
@@ -156,13 +155,12 @@ export function analyze(fileName: string, text: string): Analysis {
       specifiers.push(node.moduleSpecifier.text);
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
-      if (
-        (callee.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(callee) && callee.text === "require")) &&
-        node.arguments[0] &&
-        ts.isStringLiteralLike(node.arguments[0])
-      )
+      const isLoad =
+        callee.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(callee) && callee.text === "require");
+      if (isLoad && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]))
         specifiers.push(node.arguments[0].text);
+      else if (isLoad) usesComputedLoad = true;
       const name = ts.isIdentifier(callee)
         ? callee.text
         : ts.isPropertyAccessExpression(callee)
@@ -177,7 +175,7 @@ export function analyze(fileName: string, text: string): Analysis {
 
   const importsDb = specifiers.some((s) => DB_MODULES.some((re) => re.test(s)));
   return {
-    inScope: importsDb || usesDbIdentifier,
+    inScope: importsDb || usesDbIdentifier || usesComputedLoad,
     hasGuardCall,
     relativeImports: specifiers.filter((s) => s.startsWith(".")),
   };
@@ -277,6 +275,22 @@ describe("analyze() — the pin's own fixtures", () => {
   it("a file with no DB client is out of scope; a PrismaClient identifier alone is in scope", () => {
     expect(analyze("c.mjs", `console.log("hi");`).inScope).toBe(false);
     expect(analyze("d.ts", `const p = new PrismaClient();`).inScope).toBe(true);
+  });
+
+  it("a computed require path cannot hide a DB client: it is in scope", () => {
+    expect(
+      analyze("f.js", `const pg = require(path.join(root, "node_modules", "pg"));`),
+    ).toMatchObject({ inScope: true, hasGuardCall: false });
+    expect(analyze("g.js", `const x = require("path");`).inScope).toBe(false);
+  });
+
+  it("the tunnel-proof destructive-script refusal counts as a real guard call", () => {
+    expect(
+      analyze(
+        "h.js",
+        `const pg = require("pg");\nawait assertNoLiveProtectedTenants(prisma, slugs);`,
+      ),
+    ).toMatchObject({ inScope: true, hasGuardCall: true });
   });
 
   it("a relative import is recorded for the transitive scope", () => {

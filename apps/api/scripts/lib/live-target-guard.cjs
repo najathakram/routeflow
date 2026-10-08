@@ -17,6 +17,7 @@
 
 const { protectedArm } = require("./paying-tenant.cjs");
 const { loadProtectedSlugs } = require("./protected-slugs.cjs");
+const { isTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const ARMS = ["paying", "stripe-linked", "env-listed"];
 const RETIRED_FLAGS = ["--allow-paying-tenant", "--confirm-paying"];
@@ -165,19 +166,16 @@ const PROTECTION_SQL = `
   SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id`;
 
-/**
- * SQL writers: ids of every protected tenant, for `AND "tenantId" <> ALL($1::text[])`. Fillers of
- * NULL tenantIds use the PARENT's derived tenant, so they exclude by the derived id the same way.
- * `client` is a pg Client/Pool (`query`) or a Prisma client (`$queryRawUnsafe`).
- * @returns {Promise<string[]>}
- */
-async function protectedTenantIds(client, slugs) {
-  const rows =
-    typeof client.query === "function"
-      ? (await client.query(PROTECTION_SQL)).rows
-      : await client.$queryRawUnsafe(PROTECTION_SQL);
-  const ids = [];
-  for (const r of rows) {
+async function fetchProtectionRows(client) {
+  return typeof client.query === "function"
+    ? (await client.query(PROTECTION_SQL)).rows
+    : await client.$queryRawUnsafe(PROTECTION_SQL);
+}
+
+/** Protected rows of the database as [{ id, slug, arm }]. Throws if a row lacks a string slug. */
+async function protectedRows(client, slugs) {
+  const out = [];
+  for (const r of await fetchProtectionRows(client)) {
     if (typeof r.slug !== "string")
       throw new ProtectedTenantError("protectedTenantIds: a tenant row has no string slug");
     const arm = protectedArm(
@@ -185,9 +183,35 @@ async function protectedTenantIds(client, slugs) {
       { planKey: r.planKey, stripeSubId: r.stripeSubId },
       slugs,
     );
-    if (arm !== null) ids.push(r.id);
+    if (arm !== null) out.push({ id: r.id, slug: r.slug, arm });
   }
-  return ids;
+  return out;
+}
+
+/**
+ * SQL writers: ids of every protected tenant, for `AND "tenantId" <> ALL($1::text[])`. Fillers of
+ * NULL tenantIds use the PARENT's derived tenant, so they exclude by the derived id the same way.
+ * `client` is a pg Client/Pool (`query`) or a Prisma client (`$queryRawUnsafe`).
+ * @returns {Promise<string[]>}
+ */
+async function protectedTenantIds(client, slugs) {
+  return (await protectedRows(client, slugs)).map((r) => r.id);
+}
+
+/**
+ * For destructive scripts whose only defence is productionGuard's host allow-list (a tunnel can make
+ * production look local): refuse when the database they are about to wipe holds a PROTECTED tenant
+ * that is not an approved test tenant. A local dev database holds only test tenants, so it passes.
+ * Prints and throws counts only, never a slug.
+ */
+async function assertNoLiveProtectedTenants(client, slugs) {
+  const live = (await protectedRows(client, slugs)).filter((r) => !isTestTenant(r.slug));
+  if (live.length === 0) return;
+  const per = Object.fromEntries(ARMS.map((a) => [a, live.filter((r) => r.arm === a).length]));
+  throw new ProtectedTenantError(
+    `this database holds ${live.length} protected non-test tenant(s) ` +
+      `(${ARMS.map((a) => `${a} ${per[a]}`).join(" · ")}): a destructive local script refuses to run here.`,
+  );
 }
 
 /** `--check` output: counts only. */
@@ -233,6 +257,7 @@ module.exports = {
   confirmProtectedAdditive,
   refuseRetiredFlags,
   protectedTenantIds,
+  assertNoLiveProtectedTenants,
   describeCheck,
 };
 
