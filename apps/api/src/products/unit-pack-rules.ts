@@ -1,6 +1,14 @@
 import { ConflictException } from "@nestjs/common";
 
 /**
+ * The comparison form of a product's PACK word: the ladder names the pack `Product.unit`, or "Box"
+ * when that is blank (packages/pricing `packLabelOf`). One definition for every caller that must
+ * keep a level from sharing the pack's word (`assertPackKeepsLevelsValid`, the unit rename check).
+ */
+export const packWordKey = (unit: string | null | undefined): string =>
+  (unit ?? "").trim().toLowerCase() || "box";
+
+/**
  * Editing a product's PACK (`unit`, `unitsPerBox`, regulated section) must never invalidate the
  * `ProductUnit` levels already defined on it — the ladder resolves a label to the pack FIRST, so
  * a pack renamed onto a level's label (or resized onto a level's factor) would silently re-price
@@ -14,7 +22,7 @@ export function assertPackKeepsLevelsValid(
   if (levels.length === 0) return;
   const upb = Math.trunc(Number(pack.unitsPerBox ?? 0));
   const factor = upb > 1 ? upb : 1;
-  const label = (pack.unit ?? "").trim().toLowerCase() || "box";
+  const label = packWordKey(pack.unit);
   const clash = levels.find((l) => l.label.trim().toLowerCase() === label);
   if (clash) {
     throw new ConflictException(

@@ -351,6 +351,52 @@ describe("UnitsService", () => {
       expect(h.db.product.updateMany).not.toHaveBeenCalled();
     });
 
+    it("a rename onto the product's PACK word (Product.unit) refuses the whole rename (409)", async () => {
+      // "Crate" is p1's pack word: resolveLadderLevel lets the pack win, so a level renamed to it
+      // would be unreachable and every new "Crate" line would price at the pack factor.
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [
+          { id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: " crate " },
+        ],
+        levels: [{ productId: "p1", label: "Case", tenantUnitId: "u1" }],
+      });
+      const err = await h.service.update("u1", { name: "Crate" }, user).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({
+          code: "UNIT_RENAME_COLLISION",
+          products: [{ id: "p1", name: "Mug" }],
+        }),
+      );
+      expect(h.db.tenantUnit.update).not.toHaveBeenCalled();
+      expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a blank Product.unit is the implicit pack word Box, so a level cannot be renamed to Box", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: null }],
+        levels: [{ productId: "p1", label: "Case", tenantUnitId: "u1" }],
+      });
+      await expect(h.service.update("u1", { name: "BOX" }, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "UNIT_RENAME_COLLISION" }),
+      });
+      expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a unit that IS the pack word renames with it: no self-collision", async () => {
+      const h = make();
+      seedRename(h, {
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Case" }],
+        levels: [],
+      });
+      await expect(h.service.update("u1", { name: "Carton" }, user)).resolves.toBeDefined();
+      expect(productsUpdateCalls(h, "unit")[0][0].where.id.in).toEqual(["p1"]);
+    });
+
     it("the 409 names at most 10 products", async () => {
       const h = make();
       const ids = Array.from({ length: 12 }, (_, i) => `p${i}`);

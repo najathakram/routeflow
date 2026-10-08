@@ -9,6 +9,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { packWordKey } from "../products/unit-pack-rules";
 import { UNIT_NAME_EMPTY, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
 
 export interface UnitDto {
@@ -260,29 +261,32 @@ export class UnitsService {
         );
       }
 
-      // Refuse the WHOLE rename when, in any product, the new name would equal a level that is NOT
-      // being renamed (the (productId,label) unique, or base/pack sharing a label with a level).
-      if (newKey !== oldKey) {
-        const colliding = products.filter((p) => {
-          const others: string[] = [];
-          for (const l of levelRows) {
-            if (l.productId === p.id && l.tenantUnitId !== id) others.push(unitNameKey(l.label));
-          }
-          if (p.baseUnitLabel && !matches(p.baseUnitLabel))
-            others.push(unitNameKey(p.baseUnitLabel));
-          if (p.packLabel && !matches(p.packLabel)) others.push(unitNameKey(p.packLabel));
-          return others.includes(newKey);
+      // Refuse the WHOLE rename when, in any product, it would leave two labels equal: the (productId,
+      // label) unique, base/pack sharing a label with a level, or a level sharing the PACK word
+      // (`Product.unit`, "Box" when blank) which the ladder resolves first and so would make the
+      // level unreachable (mirrors unit-pack-rules `assertPackKeepsLevelsValid`).
+      const colliding = products.filter((p) => {
+        const mine = levelRows.filter((l) => l.productId === p.id);
+        const renamed = mine.filter((l) => l.tenantUnitId === id);
+        if (newKey === oldKey) return false;
+        const others: string[] = mine
+          .filter((l) => l.tenantUnitId !== id)
+          .map((l) => unitNameKey(l.label));
+        if (p.baseUnitLabel && !matches(p.baseUnitLabel)) others.push(unitNameKey(p.baseUnitLabel));
+        if (p.packLabel && !matches(p.packLabel)) others.push(unitNameKey(p.packLabel));
+        // A pack word that renames with this unit is the renamed one, not a clash.
+        if (renamed.length > 0 && !matches(p.unit)) others.push(packWordKey(p.unit));
+        return others.includes(newKey);
+      });
+      if (colliding.length > 0) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.UNIT_RENAME_COLLISION,
+          message: `Can't rename to ${newName}: some products already have a ${newName}.`,
+          products: colliding
+            .slice(0, MAX_COLLISION_PRODUCTS)
+            .map((p) => ({ id: p.id, name: p.name })),
+          total: colliding.length,
         });
-        if (colliding.length > 0) {
-          throw new ConflictException({
-            code: API_ERROR_CODES.UNIT_RENAME_COLLISION,
-            message: `Can't rename to ${newName}: some products already have a ${newName}.`,
-            products: colliding
-              .slice(0, MAX_COLLISION_PRODUCTS)
-              .map((p) => ({ id: p.id, name: p.name })),
-            total: colliding.length,
-          });
-        }
       }
 
       const baseIds = products.filter((p) => matches(p.baseUnitLabel)).map((p) => p.id);
