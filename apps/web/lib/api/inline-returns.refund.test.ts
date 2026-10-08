@@ -26,3 +26,18 @@ describe("refundReturn", () => {
     expect(post.mock.calls[0][0]).not.toBe("/returns/ret-1/refund");
   });
 });
+
+describe("storeCreditInstead", () => {
+  beforeEach(() =>
+    post.mockReset().mockResolvedValue({ data: { id: "ret-1", creditNoteId: "cn-1" } }),
+  );
+
+  it("POSTs /returns/inline/:id/store-credit (SA-727b) and answers the return", async () => {
+    const { storeCreditInstead } = await import("./inline-returns");
+    await expect(storeCreditInstead("ret-1")).resolves.toEqual({
+      id: "ret-1",
+      creditNoteId: "cn-1",
+    });
+    expect(post).toHaveBeenCalledWith("/returns/inline/ret-1/store-credit", {});
+  });
+});

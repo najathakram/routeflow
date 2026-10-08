@@ -35,7 +35,7 @@ function buildService(prisma: ReturnType<typeof createMockPrisma>) {
     get: (key: string) => {
       if (key === "jwt")
         return {
-          secret: "s",
+          secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
           refreshSecret: "rs",
           expiresIn: "15m",
           refreshExpiresIn: "30d",

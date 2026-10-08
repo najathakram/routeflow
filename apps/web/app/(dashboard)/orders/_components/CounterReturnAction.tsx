@@ -14,7 +14,7 @@ import {
   RecordInlineReturnDialog,
   type RecordedInfo,
 } from "@/app/(dashboard)/returns/_components/RecordInlineReturnDialog";
-import { handBackLine } from "@/app/(dashboard)/returns/_components/refund-copy";
+import { handBackLine, REFUND_COPY } from "@/app/(dashboard)/returns/_components/refund-copy";
 import { orderActionAccess } from "../[id]/order-action-access";
 
 function money(n: number): string {
@@ -73,9 +73,11 @@ export function CounterReturnAction({
       />
       {recorded ? (
         <p role="status" className="order-last basis-full text-sm font-medium text-navy">
-          {recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
-            ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
-            : storeCreditLine(recorded.amount, order.customer?.businessName)}
+          {recorded.pending
+            ? REFUND_COPY.pendingReceipt
+            : recorded.resolution === "REFUND" && recorded.tender && recorded.amount !== undefined
+              ? `Return recorded. ${handBackLine(recorded.tender, money(recorded.amount))}`
+              : storeCreditLine(recorded.amount, order.customer?.businessName)}
         </p>
       ) : null}
     </>

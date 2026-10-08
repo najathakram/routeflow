@@ -88,11 +88,35 @@ describe("buildPackingSlipPages", () => {
     expect(p.trackingNumber).toBe("1Z999");
     expect(p.shipTo).toEqual(expect.arrayContaining(["Shop One", "9 Elm"]));
   });
+  const withMarkers = (status: string) => {
+    const base = order();
+    return order({
+      status,
+      items: [
+        { ...base.items[0], backorderedPieces: "3" },
+        { ...base.items[0], name: "Zero", backorderedPieces: "0" },
+        { ...base.items[0], name: "Legacy" },
+        { ...base.items[0], name: "Struck", status: "CANCELLED", backorderedPieces: "3" },
+      ],
+    } as never);
+  };
+  it("SA-716 M1: the slip prints NO backorder tag by default (it is customer-facing)", () => {
+    const [p] = buildPackingSlipPages([withMarkers("PENDING")], seller);
+    expect(p.lines.map((l) => l.backordered)).toEqual([false, false, false]);
+  });
+  it("opted in (PR2 policy): tag only on a live order's live line carrying pieces", () => {
+    const [p] = buildPackingSlipPages([withMarkers("CONFIRMED")], seller, { showBackorder: true });
+    expect(p.lines.map((l) => l.backordered)).toEqual([true, false, false]);
+  });
+  it.each(["DELIVERED", "DRAFT", "CANCELLED"])("opted in, still no tag on a %s order", (s2) => {
+    const [p] = buildPackingSlipPages([withMarkers(s2)], seller, { showBackorder: true });
+    expect(p.lines.every((l) => !l.backordered)).toBe(true);
+  });
   it("NO money field anywhere on a page", () => {
     const json = JSON.stringify(buildPackingSlipPages([order()], seller));
     expect(json).not.toMatch(/unitPrice|subtotal|price|total|amount|tax|"5"|\$/i);
     for (const l of buildPackingSlipPages([order()], seller)[0].lines) {
-      expect(Object.keys(l).sort()).toEqual(["name", "qtyText", "sku"]);
+      expect(Object.keys(l).sort()).toEqual(["backordered", "name", "qtyText", "sku"]);
     }
   });
   it("the template source prints no money", () => {

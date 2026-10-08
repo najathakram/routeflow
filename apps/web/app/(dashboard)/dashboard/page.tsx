@@ -28,6 +28,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -35,6 +36,8 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
@@ -135,7 +138,9 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge status={row.original.status} fulfillPath={row.original.fulfillPath} />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -300,6 +305,12 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       </div>
     </div>
   );
+}
+
+/** Exact server total for a count-only list query; "—" while loading, failed or unknown (never 0). */
+function shipCount(q: { data?: { meta?: { total?: number } } }): string | number {
+  const n = q.data?.meta?.total;
+  return typeof n === "number" && Number.isFinite(n) ? n : "—";
 }
 
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
@@ -573,6 +584,14 @@ export default function DashboardPage() {
     resolved: addonsResolved,
     pending: addonsPending,
   });
+  // SHIP fulfilment mode: "Out for Delivery" reads "Shipped". (The route / driver cards below are already
+  // keyed on routesAccess, which a tenant with no fleet module never holds, so they stay hidden.)
+  const statusLabel = useOrderStatusLabel();
+  // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
+  // route / driver ones. Any other account, including an unset one, is untouched.
+  const fulfilmentCaps = useFulfilmentCaps();
+  const shippingAccount =
+    !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
 
   const baseIsOperator =
     !user?.role ||
@@ -648,6 +667,24 @@ export default function DashboardPage() {
     isError: recentError,
     error: recentErrorObj,
   } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
+  // Shipping cards (exact server totals via the list's meta.total; "—" while unknown, never 0).
+  const readyToShipQ = useOrders(
+    { status: "CONFIRMED", fulfillPath: "SHIP", page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  // Exact server totals via `meta.total` at limit 1 (hasTracking / shippedFrom are server filters), so the
+  // cards and the lists they link to always agree.
+  const noTrackingQ = useOrders(
+    { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", hasTracking: false, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  // A week starts Sunday 00:00 in the BUSINESS's own timezone (same helper as the orders week view, so
+  // card count = list total). Until the zone is known the card keeps its loading placeholder.
+  const weekStart = useShippedWeekFrom(readsBusinessData && isOperator && shippingAccount);
+  const shippedWeekQ = useOrders(
+    { fulfillPath: "SHIP", shippedFrom: weekStart, page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount && !!weekStart },
+  );
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
   // the cards they feed — same condition as the render gates below.
@@ -864,6 +901,37 @@ export default function DashboardPage() {
             />
           </Link>
         )}
+        {isOperator && shippingAccount && (
+          <>
+            <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
+              <StatCard
+                label="Ready to ship"
+                value={shipCount(readyToShipQ)}
+                icon={<Package className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link
+              href="/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP&shipView=no-tracking"
+              className="block"
+            >
+              <StatCard
+                label="Shipped, no tracking"
+                value={shipCount(noTrackingQ)}
+                icon={<AlertTriangle className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
+              <StatCard
+                label="Shipped this week"
+                value={weekStart ? shipCount(shippedWeekQ) : "—"}
+                icon={<Truck className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+          </>
+        )}
         {(isOperator || isDriver) &&
           (routesAccess || reserveRoutesSlot) &&
           (!routesAccess || runsLoading ? (
@@ -946,7 +1014,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: "Out for Delivery",
+                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",

@@ -12,12 +12,16 @@ export function CounterReceiptView({
   model: m,
   logoUrl,
   reprintLabel,
+  headingRef,
 }: {
   model: CounterReceiptModel;
   logoUrl?: string | null;
   reprintLabel?: string;
+  /** POS-1: the screen focuses this heading when the receipt appears. */
+  headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
   const hasHeader = logoUrl || m.header.name || m.header.addressLines.length > 0 || m.header.phone;
+
   return (
     <div
       className="space-y-4 print:w-full print:max-w-none print:space-y-2 print:p-0 print:text-black"
@@ -38,7 +42,13 @@ export function CounterReceiptView({
           {m.header.phone ? <p>{m.header.phone}</p> : null}
         </div>
       ) : null}
-      <h1 className="text-xl font-semibold print:text-base">Receipt</h1>
+      <h1
+        ref={headingRef}
+        tabIndex={-1}
+        className="text-xl font-semibold outline-none print:text-base"
+      >
+        Receipt
+      </h1>
       <div className="text-sm text-navy/70 print:text-black">
         <p data-testid="receipt-numbers">
           Order {m.orderNumber} · Invoice {m.invoiceNumber}
@@ -60,6 +70,14 @@ export function CounterReceiptView({
             <span>
               {l.name}
               <span className="block text-xs text-navy/60 print:text-black">{l.detail}</span>
+              {l.note ? (
+                <span
+                  className="block break-words text-xs text-navy/70 print:text-black"
+                  data-testid="receipt-line-note"
+                >
+                  {l.note}
+                </span>
+              ) : null}
             </span>
             <span className="tabular-nums">{money(l.total)}</span>
           </li>
@@ -84,7 +102,7 @@ export function CounterReceiptView({
           <p className="font-semibold">Sale recorded — payment not recorded</p>
           <Link
             href={`/invoices/${m.invoiceId}`}
-            className="inline-block text-brand-700 underline print:hidden"
+            className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
           >
             Record payment
           </Link>

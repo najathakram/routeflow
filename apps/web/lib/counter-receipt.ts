@@ -15,6 +15,8 @@ export interface ReceiptLineInput {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** POS-3: the cashier's optional per-line note, printed under the line. */
+  note?: string | null;
 }
 
 /** The business answer of `GET /settings` (only the fields a receipt header reads). */
@@ -33,6 +35,8 @@ export interface CounterReceiptLine {
   name: string;
   /** "3 × $2.50" or "1 box + 3 pcs × $12.00 per box" */
   detail: string;
+  /** trimmed per-line note, or null */
+  note: string | null;
   total: number;
 }
 
@@ -145,6 +149,7 @@ export function buildCounterReceipt(input: {
     key: l.tempId,
     name: l.name,
     detail: lineDetail(l),
+    note: clean(l.note) || null,
     total: computeLineSubtotal({
       unitPrice: l.unitPrice,
       qty: l.qty,
@@ -264,6 +269,7 @@ export function receiptModelFromOrder(input: {
         key: line.tempId,
         name: line.name,
         detail: lineDetail(line),
+        note: null,
         total: computeLineSubtotal({
           unitPrice: line.unitPrice,
           qty: line.qty,

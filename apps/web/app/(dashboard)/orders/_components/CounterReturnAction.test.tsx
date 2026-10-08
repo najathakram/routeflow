@@ -111,4 +111,17 @@ describe("CounterReturnAction", () => {
       "Return recorded. Give $12.40 back on the customer's card at the terminal.",
     );
   });
+  it("a saved return with the refund still pending says so and never says to hand money over", () => {
+    orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Acme Deli" } } };
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() =>
+      recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4, pending: true }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return — refund pending, nothing paid out",
+    );
+    expect(screen.getByRole("status").textContent).not.toMatch(/\$/);
+    expect(screen.getByRole("status").textContent).not.toMatch(/^Return recorded/);
+  });
 });

@@ -1,4 +1,4 @@
-import type { DraftLinePriceSource } from "@routeflow/types";
+import type { DraftLinePriceSource, ProductKind } from "@routeflow/types";
 
 /**
  * Shared by NewOrderScreen.tsx and its CartRow — split out so CartRow can move to its own
@@ -36,6 +36,10 @@ export type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is a non-sellable container (see lib/sellable-products). */
+  kind?: ProductKind | null;
+  /** Active variants, nested by the list when `includeVariants` is requested. */
+  variants?: Product[] | null;
   /**
    * `GET /products/:id` (draft-resume hydration) and the barcode ladder both
    * return an archived product, unlike the catalog list. Such a line is KEPT

@@ -19,6 +19,9 @@ import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
+import { RfInvoiceBuilder } from "./rf-invoice/rf-invoice-builder";
+import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
+import { RfInvoiceMailerService } from "./rf-invoice/rf-invoice-mailer.service";
 import { MrrService } from "./mrr.service";
 import { FeatureOverrideReviewJob } from "./feature-override-review.job";
 import { FeatureOverrideExpiryJob } from "./feature-override-expiry.job";
@@ -49,6 +52,11 @@ import { EntitlementsModule } from "./entitlements.module";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
+    // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
+    RfInvoiceBuilder,
+    RfInvoiceIssuerService,
+    // PR3: issue email, manual resend and the d0/d7/d14 reminders (RF_INVOICING_MODE gated).
+    RfInvoiceMailerService,
     MrrService,
     BillingNotificationService,
     // Feature grants v2 PR-3 (brief B): nightly review sweep for expired-unrevoked overrides.
@@ -89,6 +97,11 @@ import { EntitlementsModule } from "./entitlements.module";
     ConfigSnapshotFlagService,
     PlanTransitionConfigService,
     TenantConfigSnapshotAdminService,
+    // Manual invoices due PR2: the platform-admin queue issues an invoice on demand and prices tenants.
+    RfInvoiceBuilder,
+    RfInvoiceIssuerService,
+    // PR3: the platform-admin controller's send routes.
+    RfInvoiceMailerService,
   ],
 })
 export class BillingModule {}
