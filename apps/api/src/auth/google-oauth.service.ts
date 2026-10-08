@@ -24,6 +24,12 @@ import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
 import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
 import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  STAFF_ACCESS_AUDIENCE,
+  STAFF_REFRESH_AUDIENCE,
+} from "./session-token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -938,11 +944,16 @@ export class GoogleOAuthService {
     if (claims) Object.assign(payload, claims);
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
     await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
@@ -969,11 +980,16 @@ export class GoogleOAuthService {
     };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: buyerAccountId, type: "buyer" }, // F5-003: realm discriminator (Google buyer login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: BUYER_REFRESH_AUDIENCE,
+      },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     const decoded = this.jwtService.decode(refreshToken);
