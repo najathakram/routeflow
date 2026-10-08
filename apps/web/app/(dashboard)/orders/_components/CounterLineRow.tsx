@@ -166,13 +166,13 @@ export function CounterLineRow({
         <span className="min-w-0 break-words">
           {l.name} · {lineQtyLabel(l)}
           <span className="block text-xs text-navy/70">
-            {l.listPrice !== undefined && l.listPrice !== l.unitPrice ? (
-              <s className="mr-1 text-navy/50" data-testid="line-unit-price-was">
+            {l.listPrice !== undefined && l.unitPrice < l.listPrice ? (
+              <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
                 {money(l.listPrice)}
               </s>
             ) : null}
-            <span data-testid="line-unit-price">
-              {money(l.unitPrice)} {isBoxedLine(l) ? `/ ${UW.pack.lower}` : "each"}
+            <span className="tabular-nums" data-testid="line-unit-price">
+              {money(l.unitPrice)} {isBoxedLine(l) ? `/ ${UW.pack.lower}` : `/ ${UW.base.lower}`}
             </span>
           </span>
         </span>

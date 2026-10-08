@@ -33,20 +33,27 @@ function renderRow(l: SaleLine) {
 describe("CounterLineRow per-unit price", () => {
   it("a plain line reads the price each", () => {
     renderRow(line({ unitPrice: 2.5, listPrice: 2.5 }));
-    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 each");
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / piece");
     expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
   });
 
   it("a line with no catalogue price on file still reads the price each", () => {
     renderRow(line({ unitPrice: 2.5 }));
-    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 each");
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / piece");
     expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
   });
 
   it("a tier price shows was (catalogue) and now (tier)", () => {
     renderRow(line({ unitPrice: 2.1, listPrice: 2.5, priceType: "SPECIAL" }));
     expect(screen.getByTestId("line-unit-price-was")).toHaveTextContent("$2.50");
-    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.10 each");
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.10 / piece");
+  });
+
+  it("a tier price HIGHER than the catalogue never shows the catalogue price (upsell redaction)", () => {
+    renderRow(line({ unitPrice: 3, listPrice: 2.5, priceType: "SPECIAL" }));
+    expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$3.00 / piece");
+    expect(screen.queryByText("$2.50")).toBeNull();
   });
 
   it("a boxed line reads the price per box", () => {
