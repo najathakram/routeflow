@@ -111,6 +111,13 @@ describe("VU-4b: the New-invoice screen reuses Create Order's unit machinery", (
     expect(onSave).toMatch(/normalizeInvoiceUnitLines\(settled\.lines/);
   });
 
+  it("a refused unit resets only the lines whose label the refreshed ladder no longer offers", () => {
+    const fn = between(screen, "const onUnitNotOffered = ", "const onSave = ");
+    expect(fn).toMatch(/await Promise\.all\(/);
+    expect(fn).toMatch(/dropStaleUnitLines\(\s*cur,/);
+    expect(fn).toMatch(/staleTime: 0/);
+  });
+
   it("BoxedQtyBand shows only for a pack line (a unit line has no cases/loose)", () => {
     expect(screen).toMatch(/Number\(p\.unitsPerBox \?\? 0\) > 1 && !line\.unitLabel/);
     expect(screen).toMatch(/unitLabel=\{line\?\.unitLabel\}/); // ProductRow prices a unit line per unit

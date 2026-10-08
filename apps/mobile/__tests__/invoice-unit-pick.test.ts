@@ -191,7 +191,7 @@ describe("M: money", () => {
     const single: LadderProduct = { unit: "Each", unitsPerBox: 1, pricePerUnit: "3.50" };
     const opts = buildUnitOptions(single, [level({ label: "Case", factorToBase: 6 })], 1);
     const line = chooseInvoiceUnit({ qty: 4 }, opts[0]!, 1);
-    expect(line).toMatchObject({ qty: 1 });
+    expect(line).toMatchObject({ qty: 4 }); // already on the pack: the count is kept
     expect(line.boxes).toBeUndefined();
     expect(line.pieces).toBeUndefined();
     const four = { ...line, qty: 4 };
@@ -377,13 +377,18 @@ describe("U: picker behaviour", () => {
     );
     expect(line.unitLabel).toBeUndefined();
     expect(line.unitBasePrice).toBeUndefined();
-    expect(line).toMatchObject({ sellBy: "unit", boxes: 0, pieces: 1, qty: 1, unitPrice: 11 });
+    // B1: leaving the box for Piece changes ONLY sellBy; the split and the Box price are kept
+    expect(line).toMatchObject({ sellBy: "unit", boxes: 1, pieces: 0, qty: 6, unitPrice: 11 });
     expect(pickerLineOf("p1", line, 12)).toEqual({
       productId: "p1",
       unitPrice: 11,
       unitLabel: "Piece",
     });
     expect(setLineUnits(line, 7, 6)).toMatchObject({ boxes: 1, pieces: 1, qty: 7 });
+    // Piece -> Box restores the split exactly
+    const sevenPcs = setLineUnits(line, 7, 6)!;
+    const backToBox = chooseInvoiceUnit(sevenPcs, pick(opts, ""), 6);
+    expect(backToBox).toMatchObject({ sellBy: "case", boxes: 1, pieces: 1, qty: 7 });
     // a pack line and a level line read straight from the line
     expect(pickerLineOf("p1", BOX_LINE, 48)).toEqual({
       productId: "p1",
@@ -423,7 +428,13 @@ describe("S: payloads", () => {
     };
     const piece = chooseInvoiceUnit(BOX_LINE, pick(optionsFor(), "Piece"), 24);
     const plain: InvoiceLineState = { qty: 3, boxes: 3, pieces: 0 };
-    const fixed = dropStaleUnitLines({ a: lvl, b: piece, c: plain }, () => 24);
+    const still = { ...lvl, unitLabel: "Pallet", unitFactor: 288 }; // still offered
+    const fixed = dropStaleUnitLines(
+      { a: lvl, b: piece, c: plain, d: still },
+      (_id, label) => label !== "Case",
+      () => 24,
+    );
+    expect(fixed.d).toBe(still); // B2: only the refused label is reset, not every unit line
     expect(fixed.a).toMatchObject({ qty: 24, boxes: 1, pieces: 0, sellBy: "case" });
     expect(fixed.a!.unitLabel).toBeUndefined();
     expect(fixed.a!.unitPrice).toBeUndefined(); // a unit price is meaningless on a box
@@ -473,7 +484,11 @@ describe("S: payloads", () => {
     const ctx = { catalogPrice: 48, listPrice: 48, isSpecial: false };
     const dto = saleItemDto({ qty: 51, boxes: 2, pieces: 3 }, p, ctx);
     expect(dto).toEqual({ productId: "p1", qty: 51, unitPrice: 48, boxes: 2, pieces: 3 });
-    const piece = chooseInvoiceUnit(BOX_LINE, pick(optionsFor(), "Piece"), 24);
+    const piece = setLineUnits(
+      chooseInvoiceUnit(BOX_LINE, pick(optionsFor(), "Piece"), 24),
+      1,
+      24,
+    )!;
     expect(saleItemDto(piece, p, ctx)).toEqual({
       productId: "p1",
       qty: 1,
@@ -597,5 +612,68 @@ describe("N: a factor-1 Piece default never becomes a unit line on a boxed produ
       ),
     ).toBe(items);
     expect(normalizeInvoiceUnitLines(items, () => undefined)).toBe(items); // unknown product: untouched
+  });
+});
+
+describe("B1: Box / Piece never throw the quantity away", () => {
+  const OPTS = optionsFor();
+  const five3: InvoiceLineState = { qty: 123, boxes: 5, pieces: 3, sellBy: "case", unitPrice: 50 };
+
+  it("re-picking the selected row is a no-op (same object)", () => {
+    expect(chooseInvoiceUnit(five3, pick(OPTS, ""), 24)).toBe(five3);
+    const asPiece = chooseInvoiceUnit(five3, pick(OPTS, "Piece"), 24);
+    expect(chooseInvoiceUnit(asPiece, pick(OPTS, "Piece"), 24)).toBe(asPiece);
+  });
+
+  it("Box <-> Piece changes only sellBy: 5 boxes + 3 pcs survive both ways, with the Box price", () => {
+    const asPiece = chooseInvoiceUnit(five3, pick(OPTS, "Piece"), 24);
+    expect(asPiece).toMatchObject({ sellBy: "unit", boxes: 5, pieces: 3, qty: 123, unitPrice: 50 });
+    expect(asPiece.unitLabel).toBeUndefined();
+    const back = chooseInvoiceUnit(asPiece, pick(OPTS, ""), 24);
+    expect(back).toMatchObject({ sellBy: "case", boxes: 5, pieces: 3, qty: 123, unitPrice: 50 });
+    expect(totalOf(back, 24, 48).total).toBe(totalOf(five3, 24, 48).total);
+  });
+
+  it("only LEAVING a level resets the count", () => {
+    const lvl = { ...chooseInvoiceUnit(five3, pick(OPTS, "Case"), 24), qty: 4 };
+    expect(chooseInvoiceUnit(lvl, pick(OPTS, ""), 24)).toMatchObject({
+      boxes: 1,
+      pieces: 0,
+      qty: 24,
+    });
+    expect(chooseInvoiceUnit(lvl, pick(OPTS, "Piece"), 24)).toMatchObject({
+      sellBy: "unit",
+      boxes: 0,
+      pieces: 1,
+      qty: 1,
+    });
+  });
+
+  it("a pending default-start line still has its flag consumed by a Box re-pick", () => {
+    const pending: InvoiceLineState = { ...BOX_LINE, startOnDefaultUnit: 24, pendingTaps: 1 };
+    const chosen = chooseInvoiceUnit(pending, pick(OPTS, ""), 24);
+    expect(chosen).not.toBe(pending);
+    expect(chosen.startOnDefaultUnit).toBeUndefined();
+    expect(chosen).toMatchObject({ boxes: 1, qty: 24 });
+  });
+});
+
+describe("nits: the picker sees the chosen Piece row; a unit sale carries the unit's own list price", () => {
+  it("pickerLineOf reports the Piece option's own value, not a hard-coded label", () => {
+    const each = level({ label: "Each", factorToBase: 1 });
+    const opts = buildUnitOptions(PRODUCT, [CASE, each], 1);
+    const piece = opts.find((o) => o.kind === "piece")!;
+    expect(piece.value).toBe("Each");
+    const line = chooseInvoiceUnit(BOX_LINE, piece, 24);
+    expect(pickerLineOf("p1", line, 48).unitLabel).toBe("Each");
+    expect(line.unitLabel).toBeUndefined();
+    expect(pickerLineOf("p1", chooseInvoiceUnit(line, opts[0]!, 24), 48).unitLabel).toBeUndefined();
+  });
+
+  it("a level pick remembers the unit's list price for the sale override decision", () => {
+    const t3 = optionsFor([CASE], 3);
+    const lvl = chooseInvoiceUnit(BOX_LINE, pick(t3, "Case"), 24);
+    expect(lvl.unitListPrice).toBe(pick(t3, "Case").listPrice);
+    expect(lvl.unitListPrice).not.toBe(48);
   });
 });

@@ -30,6 +30,10 @@ export type InvoiceLineState = LineState & {
   discount?: number;
   /** Charged the tenant tax rate at submit. */
   taxable?: boolean;
+  /** UI-only: the ladder's own label for the Piece row this line is sold by (sellBy "unit"). */
+  pieceLabel?: string;
+  /** UI-only: the picked unit's own tier-1 price (the sale override decision's list price). */
+  unitListPrice?: number;
 };
 
 type Upb = number | string | null | undefined;
@@ -82,7 +86,24 @@ export function chooseInvoiceUnit(
   const upb = packSize(unitsPerBox);
   const isPack = option.value === "" || option.kind === "pack";
   const isPiece = !isPack && option.factorToBase === 1;
-  if (!isPack && !isPiece) return applyUnitOption(prev, option, unitsPerBox) as InvoiceLineState;
+  if (!isPack && !isPiece) {
+    return {
+      ...applyUnitOption(prev, option, unitsPerBox),
+      pieceLabel: undefined,
+      unitListPrice: option.listPrice,
+    } as InvoiceLineState;
+  }
+
+  const pending = prev.startOnDefaultUnit != null;
+  // Already on the pack axis: Box <-> Piece changes ONLY how the count is entered (sellBy); the split
+  // and the Box price stay. Re-picking the selected row is a no-op (unless it must consume a pending
+  // default-start flag). Only LEAVING a level resets the count.
+  if (!prev.unitLabel) {
+    const sellBy = upb > 1 ? (isPiece ? "unit" : "case") : undefined;
+    const pieceLabel = isPiece && upb > 1 ? option.value : undefined;
+    if (!pending && prev.sellBy === sellBy && prev.pieceLabel === pieceLabel) return prev;
+    return { ...prev, ...FLAG_CONSUMED, sellBy, pieceLabel };
+  }
 
   const base: InvoiceLineState = {
     ...prev,
@@ -91,10 +112,14 @@ export function chooseInvoiceUnit(
     unitLabel: undefined,
     unitBasePrice: undefined,
     unitFactor: undefined,
+    unitListPrice: undefined,
+    pieceLabel: undefined,
   };
   if (!(upb > 1))
     return { ...base, qty: 1, boxes: undefined, pieces: undefined, sellBy: undefined };
-  if (isPiece) return { ...base, sellBy: "unit", boxes: 0, pieces: 1, qty: 1 };
+  if (isPiece) {
+    return { ...base, sellBy: "unit", pieceLabel: option.value, boxes: 0, pieces: 1, qty: 1 };
+  }
   return { ...base, sellBy: "case", boxes: 1, pieces: 0, qty: upb };
 }
 
@@ -110,7 +135,8 @@ export function pickerLineOf(
   return {
     productId,
     unitPrice: invoiceLinePrice(line, catalogPrice),
-    unitLabel: line.unitLabel ?? (line.sellBy === "unit" ? PIECE_LABEL : undefined),
+    unitLabel:
+      line.unitLabel ?? (line.sellBy === "unit" ? (line.pieceLabel ?? PIECE_LABEL) : undefined),
   };
 }
 
@@ -199,7 +225,7 @@ export function saleItemDto(
     const d = decideTrayPrice({
       typed: line.unitPrice ?? null,
       base: unitPriceBase(line, ctx.catalogPrice),
-      listPrice: ctx.listPrice,
+      listPrice: line.unitListPrice ?? ctx.listPrice,
       isSpecial: ctx.isSpecial,
       reason: line.overrideReason,
     });
@@ -244,19 +270,21 @@ const PACK_OPTION: UnitOption = {
 };
 
 /**
- * After the server says a unit is no longer offered: every unit-sold line goes back to ONE Box (its
- * per-unit price and count mean nothing against the pack). Lines with no unitLabel, including
- * Piece-as-pack lines, are returned as the SAME object.
+ * After the server says a unit is no longer offered: ONLY the unit-sold lines whose label the
+ * refreshed ladder no longer offers (`offered` false) go back to ONE Box; the others and lines with no
+ * unitLabel (including Piece-as-pack) are returned as the SAME object.
  */
 export function dropStaleUnitLines<T extends InvoiceLineState>(
   items: Record<string, T>,
+  offered: (productId: string, unitLabel: string) => boolean,
   unitsPerBox: (productId: string) => Upb,
 ): Record<string, T> {
   const next: Record<string, T> = {};
   for (const [id, line] of Object.entries(items)) {
-    next[id] = isUnitLine(line)
-      ? (chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox(id)) as T)
-      : line;
+    next[id] =
+      isUnitLine(line) && !offered(id, line.unitLabel as string)
+        ? (chooseInvoiceUnit(line, PACK_OPTION, unitsPerBox(id)) as T)
+        : line;
   }
   return next;
 }
@@ -290,7 +318,7 @@ export function normalizeInvoiceUnitLines<T extends InvoiceLineState>(
     if (!(upb > 1)) continue;
     const piece = chooseInvoiceUnit(
       line,
-      { ...PACK_OPTION, value: PIECE_LABEL, kind: "piece" },
+      { ...PACK_OPTION, value: line.unitLabel as string, kind: "piece" },
       upb,
     );
     const count = Math.max(1, Math.trunc(line.qty ?? 1));

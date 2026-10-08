@@ -1212,19 +1212,33 @@ function InvoiceComposer({
    * The server dropped a unit from a product's ladder after it was picked: say so, refresh the
    * ladders (staleTime 0, so the picker stops offering it) and put those lines back on one Box.
    */
-  const onUnitNotOffered = (title: string) => {
+  const onUnitNotOffered = async (title: string) => {
     alertInfo(title, UNIT_NOT_OFFERED_MESSAGE);
-    for (const [id, l] of Object.entries(itemsRef.current)) {
-      if (!l.unitLabel) continue;
-      void qc
-        .fetchQuery({
-          queryKey: productUnitsKey(id),
-          queryFn: () => fetchProductUnits(id),
-          staleTime: 0,
-        })
-        .catch(() => undefined);
-    }
-    setItems((cur) => dropStaleUnitLines(cur, (id) => productById.get(id)?.unitsPerBox));
+    const ids = Object.entries(itemsRef.current)
+      .filter(([, l]) => l.unitLabel)
+      .map(([id]) => id);
+    const offered: Record<string, string[]> = {};
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const units = await qc.fetchQuery({
+            queryKey: productUnitsKey(id),
+            queryFn: () => fetchProductUnits(id),
+            staleTime: 0,
+          });
+          offered[id] = units.map((u) => u.label.trim().toLowerCase());
+        } catch {
+          // ladder unreachable: that product's lines are left alone (the next save re-checks)
+        }
+      }),
+    );
+    setItems((cur) =>
+      dropStaleUnitLines(
+        cur,
+        (id, label) => !(id in offered) || offered[id]!.includes(label.trim().toLowerCase()),
+        (id) => productById.get(id)?.unitsPerBox,
+      ),
+    );
   };
 
   /**
@@ -1342,7 +1356,7 @@ function InvoiceComposer({
             showToast("Sale recorded — open the invoice from the Invoices tab.");
           },
           onError: (err: any) => {
-            if (unitNotOfferedCode(err)) return onUnitNotOffered("Couldn't record the sale");
+            if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't record the sale");
             alertInfo(
               "Couldn't record the sale",
               err?.response?.data?.message ?? err?.message ?? "Try again.",
@@ -1411,7 +1425,7 @@ function InvoiceComposer({
           onSaved(inv.id, inv.invoiceNumber);
         },
         onError: (err: any) => {
-          if (unitNotOfferedCode(err)) return onUnitNotOffered("Couldn't create invoice");
+          if (unitNotOfferedCode(err)) return void onUnitNotOffered("Couldn't create invoice");
           alertInfo(
             "Couldn't create invoice",
             err?.response?.data?.message ?? err?.message ?? "Try again.",
