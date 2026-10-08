@@ -37,6 +37,8 @@ describeDb("tenant unit backfill (U-6)", () => {
   let tenantB = "";
   const slugC = assertTestTenant(`qa-u6-${RUN}-c`, "backfill-tenant-units.db.spec.ts");
   let tenantC = "";
+  const slugD = assertTestTenant(`qa-u6-${RUN}-d`, "backfill-tenant-units.db.spec.ts");
+  let tenantD = "";
 
   const cli = (slug: string, apply: boolean) =>
     spawnSync(process.execPath, [CLI, "--tenant", slug, ...(apply ? ["--apply"] : [])], {
@@ -72,6 +74,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     tenantA = (await prisma.tenant.create({ data: { slug: slugA, name: `u6 ${slugA}` } })).id;
     tenantB = (await prisma.tenant.create({ data: { slug: slugB, name: `u6 ${slugB}` } })).id;
     tenantC = (await prisma.tenant.create({ data: { slug: slugC, name: `u6 ${slugC}` } })).id;
+    tenantD = (await prisma.tenant.create({ data: { slug: slugD, name: `u6 ${slugD}` } })).id;
 
     // Tenant A: levels Case x2 (casing "Case" wins 2:1), Pack, a synonym, a too-long word;
     // legacy words Case / Tray / "" and a product that already has a packLabel.
@@ -87,7 +90,7 @@ describeDb("tenant unit backfill (U-6)", () => {
   });
 
   afterAll(async () => {
-    const ids = [tenantA, tenantB, tenantC].filter(Boolean);
+    const ids = [tenantA, tenantB, tenantC, tenantD].filter(Boolean);
     await prisma?.productUnit.deleteMany({ where: { tenantId: { in: ids } } });
     await prisma?.product.deleteMany({ where: { tenantId: { in: ids } } });
     await prisma?.tenantUnit.deleteMany({ where: { tenantId: { in: ids } } });
@@ -222,5 +225,29 @@ describeDb("tenant unit backfill (U-6)", () => {
     expect(after.products.every((p) => p.packLabel === "Bin" && p.unit === "Bin")).toBe(true);
     expect(after.productUnits.every((u) => u.tenantUnitId)).toBe(true);
     expect(await run()).toMatchObject({ batches: 0, linked: 0, filled: 0 });
+  });
+
+  it("links to an ARCHIVED unit (no second unit) and reports it, in dry-run and apply", async () => {
+    const archived = await prisma.tenantUnit.create({
+      data: { tenantId: tenantD, name: "Bin", nameKey: "bin", archivedAt: new Date() },
+    });
+    await product(tenantD, "d1", "Bin", ["bin", "BIN"]);
+    const line = 'linked to archived unit "Bin" \u2014 restore in Settings: 2 product level(s)';
+
+    const dry = cli(slugD, false);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain("tenantUnits created=0 existing=1");
+    expect(dry.stdout).toContain(line);
+    expect(dry.stdout).not.toContain(slugD);
+    expect(dry.stdout).not.toContain(archived.id);
+
+    const applied = cli(slugD, true);
+    expect(applied.status).toBe(0);
+    expect(applied.stdout).toContain(line);
+    expect(await prisma.tenantUnit.count({ where: { tenantId: tenantD } })).toBe(1);
+    const levels = await prisma.productUnit.findMany({ where: { tenantId: tenantD } });
+    expect(levels.every((l) => l.tenantUnitId === archived.id)).toBe(true);
+    const unit = await prisma.tenantUnit.findUnique({ where: { id: archived.id } });
+    expect(unit?.archivedAt).not.toBeNull(); // still archived: restoring is the operator's call
   });
 });

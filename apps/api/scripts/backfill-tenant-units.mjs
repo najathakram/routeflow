@@ -5,7 +5,8 @@
 //   (b) one TenantUnit per distinct nameKey (= lower(trim(name))), named by the most common
 //       casing; > 30 chars are reported and skipped; Piece synonyms (piece/pieces/each/unit/pcs)
 //       get no TenantUnit;
-//   (c) ProductUnit.tenantUnitId linked by nameKey where NULL;
+//   (c) ProductUnit.tenantUnitId linked by nameKey where NULL (archived units included: never a
+//       second unit for a key; links to an archived unit are reported so it can be restored);
 //   (d) Product.packLabel filled where NULL/blank with the tenant's canonical unit name for the
 //       legacy `unit` word (never a Piece synonym; Product.unit itself is NEVER written);
 //   (e) Product.baseUnitLabel is left NULL (null = "Piece").
@@ -34,7 +35,7 @@ import { pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { localConnectionConfig } = require("./lib/local-db-target.cjs");
-const { planTenantUnits } = require("./lib/tenant-units-plan.cjs");
+const { planTenantUnits, archivedLinkLines } = require("./lib/tenant-units-plan.cjs");
 const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-units-apply.cjs");
 
 export function parseArgs(argv) {
@@ -105,7 +106,7 @@ async function main() {
       }),
       prisma.tenantUnit.findMany({
         where: { tenantId },
-        select: { id: true, nameKey: true, name: true },
+        select: { id: true, nameKey: true, name: true, archivedAt: true },
       }),
     ]);
     const plan = planTenantUnits({ productUnits: productUnitRows, products, existingUnits });
@@ -135,6 +136,7 @@ async function main() {
       };
     }
     console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(counts)}`);
+    for (const line of archivedLinkLines(plan.archivedLinks)) console.log(line);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
   } finally {
     await prisma.$disconnect();

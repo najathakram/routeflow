@@ -2,7 +2,11 @@
  * Units U-6: the pure planner behind scripts/backfill-tenant-units.mjs. No DB, no Prisma.
  */
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { planTenantUnits, nameKeyOf } = require("../../scripts/lib/tenant-units-plan.cjs");
+const {
+  planTenantUnits,
+  nameKeyOf,
+  archivedLinkLines,
+} = require("../../scripts/lib/tenant-units-plan.cjs");
 
 type PU = { id: string; label: string | null; tenantUnitId: string | null };
 type P = { id: string; unit: string | null; packLabel: string | null };
@@ -178,6 +182,92 @@ describe("planTenantUnits (U-6)", () => {
       { productId: "p1", packLabel: "Each Case", unit: "Each Case" },
       { productId: "p2", packLabel: "Unit Pack", unit: "Unit Pack" },
     ]);
+  });
+
+  describe("archived units", () => {
+    const archived = (nameKey: string, name: string) => ({
+      nameKey,
+      name,
+      archivedAt: new Date("2026-01-01"),
+    });
+
+    it("matches an archived unit by key (never a second unit), links to it, keeps its name", () => {
+      const r = planTenantUnits({
+        // "case" is the majority casing, but the existing unit's name is canonical
+        productUnits: [pu("a", "case"), pu("b", "case"), pu("c", "Case")],
+        products: [prod("p1", "CASE")],
+        existingUnits: [archived("case", "Case")],
+      });
+      expect(r.toCreate).toEqual([]);
+      expect(r.links.map((l: { productUnitId: string }) => l.productUnitId)).toEqual([
+        "a",
+        "b",
+        "c",
+      ]);
+      expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Case", unit: "CASE" }]);
+      expect(r.archivedLinks).toEqual([{ name: "Case", levels: 3 }]);
+    });
+
+    it("reports nothing for a live unit, and one entry per archived unit, sorted by name", () => {
+      const r = planTenantUnits({
+        productUnits: [pu("a", "tray"), pu("b", "pack"), pu("c", "Crate"), pu("d", "pack")],
+        products: [],
+        existingUnits: [
+          { nameKey: "tray", name: "Tray" },
+          archived("pack", "Pack"),
+          archived("crate", "Crate"),
+        ],
+      });
+      expect(r.archivedLinks).toEqual([
+        { name: "Crate", levels: 1 },
+        { name: "Pack", levels: 2 },
+      ]);
+    });
+
+    it("does not count a level that is already linked", () => {
+      const r = planTenantUnits({
+        productUnits: [pu("a", "Case", "u1")],
+        products: [],
+        existingUnits: [archived("case", "Case")],
+      });
+      expect(r.archivedLinks).toEqual([]);
+    });
+
+    it("prints counts-only lines naming the unit, none when there is nothing archived", () => {
+      expect(archivedLinkLines([])).toEqual([]);
+      expect(archivedLinkLines([{ name: "Case", levels: 3 }])).toEqual([
+        'linked to archived unit "Case" \u2014 restore in Settings: 3 product level(s)',
+      ]);
+    });
+  });
+
+  describe("NFC normalisation", () => {
+    const composed = "Caf\u00e9";
+    const decomposed = "Cafe\u0301";
+
+    it("nameKeyOf folds NFC, trim and case in that order", () => {
+      expect(nameKeyOf(decomposed)).toBe(nameKeyOf(composed));
+      expect(nameKeyOf(` ${decomposed.toUpperCase()}\u00a0`)).toBe("caf\u00e9");
+    });
+
+    it("composed and decomposed spellings are ONE unit with one canonical NFC name", () => {
+      const r = plan([pu("a", composed), pu("b", decomposed)], [prod("p1", decomposed)]);
+      expect(r.toCreate).toHaveLength(1);
+      expect(r.toCreate[0].nameKey).toBe("caf\u00e9");
+      expect(r.toCreate[0].name).toBe(composed);
+      expect(r.links).toHaveLength(2);
+      expect(r.packFills).toEqual([{ productId: "p1", packLabel: composed, unit: decomposed }]);
+    });
+
+    it("a synonym with a trailing NBSP or odd case is still excluded", () => {
+      const r = plan(
+        [pu("a", "Each\u00a0")],
+        [prod("p1", "Each\u00a0"), prod("p2", " EACH "), prod("p3", "pcs\u00a0")],
+      );
+      expect(r.toCreate).toEqual([]);
+      expect(r.links).toEqual([]);
+      expect(r.packFills).toEqual([]);
+    });
   });
 
   it("is idempotent: an already-backfilled tenant plans zero changes", () => {

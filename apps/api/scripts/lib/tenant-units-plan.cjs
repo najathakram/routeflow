@@ -30,21 +30,28 @@ function byCasingPreference(a, b) {
   );
 }
 
+/** NFC first (so "Cafe" + U+0301 and "Caf\u00e9" are one word), then trim (NBSP included). */
+const cleanName = (name) =>
+  String(name ?? "")
+    .normalize("NFC")
+    .trim();
+
+// A copy of the shared unit-name normaliser (`unitNameKey` in packages/types, added by the U-1
+// branch); a parity spec pinning the two follows the merge. NFC, then trim, then case-fold.
 function nameKeyOf(name) {
-  return String(name ?? "")
-    .trim()
-    .toLowerCase();
+  return cleanName(name).toLowerCase();
 }
 
 /**
  * @param {{
  *   productUnits: Array<{ id: string, label: string|null, tenantUnitId: string|null }>,
  *   products: Array<{ id: string, unit: string|null, packLabel: string|null }>,
- *   existingUnits: Array<{ nameKey: string, name?: string }>,
+ *   existingUnits: Array<{ nameKey: string, name?: string, archivedAt?: Date|null }>,  // archived included
  * }} input
  */
 function planTenantUnits({ productUnits, products, existingUnits }) {
   const existingKeys = new Set(existingUnits.map((u) => u.nameKey));
+  const archivedKeys = new Set(existingUnits.filter((u) => u.archivedAt).map((u) => u.nameKey));
   const existingNameByKey = new Map(
     existingUnits.filter((u) => u.name).map((u) => [u.nameKey, u.name]),
   );
@@ -52,7 +59,7 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   // nameKey -> Map(trimmed original casing -> occurrences)
   const casings = new Map();
   const note = (raw) => {
-    const name = String(raw ?? "").trim();
+    const name = cleanName(raw);
     const key = nameKeyOf(name);
     if (!key) return null;
     let m = casings.get(key);
@@ -93,10 +100,17 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   }
 
   const links = [];
+  // Archived unit name -> levels linked to it. An archived unit still owns its key (never a second
+  // unit), so the link is made, and reported so the operator can restore the unit in Settings.
+  const archivedCounts = new Map();
   for (const pu of productUnits) {
     if (pu.tenantUnitId) continue;
     const key = labelKeyByUnit.get(pu.id);
     if (key && usable.has(key)) {
+      if (archivedKeys.has(key)) {
+        const name = canonicalByKey.get(key);
+        archivedCounts.set(name, (archivedCounts.get(name) ?? 0) + 1);
+      }
       // `label` is the raw value the plan was built from: the write guard re-checks it.
       links.push({ productUnitId: pu.id, nameKey: key, label: pu.label });
     }
@@ -109,7 +123,7 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     // label is somebody's value (or a typo), not ours to overwrite, and planning it would re-plan
     // on every run because the guard can never match it.
     if (p.packLabel != null && p.packLabel !== "") continue;
-    const word = String(p.unit ?? "").trim();
+    const word = cleanName(p.unit);
     if (!word) continue;
     const key = nameKeyOf(word);
     // A Piece synonym is the base word, never a pack: leave packLabel NULL (legacy unit text applies).
@@ -129,6 +143,9 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
     toCreate,
     links,
     packFills,
+    archivedLinks: [...archivedCounts.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([name, levels]) => ({ name, levels })),
     counts: {
       tenantUnitsCreated: toCreate.length,
       tenantUnitsExisting: existing,
@@ -140,4 +157,12 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   };
 }
 
-module.exports = { planTenantUnits, nameKeyOf, PIECE_SYNONYMS, MAX_NAME_LENGTH };
+/** Counts-only report lines (unit names are fine to print; never tenant names, slugs or ids). */
+function archivedLinkLines(archivedLinks) {
+  return archivedLinks.map(
+    (a) =>
+      `linked to archived unit "${a.name}" \u2014 restore in Settings: ${a.levels} product level(s)`,
+  );
+}
+
+module.exports = { planTenantUnits, nameKeyOf, archivedLinkLines, PIECE_SYNONYMS, MAX_NAME_LENGTH };
