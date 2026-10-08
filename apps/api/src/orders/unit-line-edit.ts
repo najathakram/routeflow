@@ -118,7 +118,7 @@ export async function normalizeDerivedBaseItems(
     customerPrice: { findMany(a: any): Promise<any[]> };
   },
   order: { customerId?: string | null },
-  items: ReadonlyArray<any>,
+  dto: { items?: ReadonlyArray<any> },
   ctx: UnitEditContext,
   user: { role?: string } | undefined,
 ): Promise<void> {
@@ -131,7 +131,7 @@ export async function normalizeDerivedBaseItems(
     const l = norm(i.unitLabel ?? "");
     return !!p && l !== "" && (l === norm(baseLabelOf(p)) || l === norm(PIECE_LABEL));
   };
-  const candidates = items.filter(named);
+  const candidates = (dto.items ?? []).filter(named);
   if (candidates.length === 0) return;
   const atCustomerTier = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   let defaultTier = 1;
@@ -227,6 +227,8 @@ export interface UnitWriteContext {
   ladders: Map<string, LadderUnit[]>;
   tenantId: string | null | undefined;
   tier: (productId: string) => number;
+  /** Units P0b: the locked existing lines by id — a rewrite re-resolves a vanished unit from its own snapshot. */
+  held?: { get(id: string): UnitSnapshotLine | undefined };
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
 }
@@ -246,7 +248,6 @@ export async function createUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   position: number,
-  existing?: UnitSnapshotLine | null,
 ): Promise<void> {
   // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
   // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
@@ -262,7 +263,7 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
-    existing,
+    existing: item.id ? ctx.held?.get(item.id) : undefined,
   });
   await ctx.tx.orderItem.create({ data: { orderId, ...built } });
 }
@@ -289,7 +290,6 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
-  existing?: UnitSnapshotLine | null,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -310,7 +310,7 @@ export async function updateUnitLine(
     position: 0,
     tenantId: ctx.tenantId,
     // a SUBSTITUTE is a different product: the old line's snapshot says nothing about it
-    existing: isSubstitute ? undefined : existing,
+    existing: isSubstitute ? undefined : ctx.held?.get(lineId),
   });
   const data = isSubstitute
     ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }

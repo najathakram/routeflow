@@ -20,7 +20,12 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import { assertUnitLineSplit } from "./unit-line-split";
-import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
+import {
+  asLadderProduct,
+  lineUnitsPerBoxSnapshot,
+  normalizeDerivedBaseLine,
+  type ResolvedLineUnits,
+} from "../products/line-units";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -444,5 +449,26 @@ export function buildUnitLine(input: {
       tenantId: input.tenantId,
     },
     "buildUnitLine",
+  );
+}
+
+/**
+ * SA-728 / units P0b: `OrdersService.create()` — a derived Piece from an old client becomes the pack
+ * line's pieces (see `normalizeDerivedBaseLine`); every other item comes back as the SAME object.
+ */
+export function derivedBaseAsPack<T extends { productId?: string | null }>(
+  item: T,
+  products: ReadonlyMap<string, any>,
+  ladders: ReadonlyMap<string, LadderUnit[]>,
+  tierOverrides: ReadonlyMap<string, number | null>,
+  defaultTier: number,
+): T {
+  const p = item.productId ? products.get(item.productId) : undefined;
+  if (!p) return item;
+  return normalizeDerivedBaseLine(
+    item as T & Parameters<typeof normalizeDerivedBaseLine>[0],
+    asLadderProduct(p),
+    ladders.get(p.id) ?? [],
+    tierOverrides.get(p.id) ?? defaultTier,
   );
 }

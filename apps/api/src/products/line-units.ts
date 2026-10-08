@@ -155,13 +155,14 @@ export function lineUnitsPerBoxSnapshot(
 
 /** A Prisma product row (Decimal prices) as the pricing ladder's product. */
 export function asLadderProduct(p: Record<string, any>): LadderProduct {
-  const str = (v: unknown) => (v == null ? null : String(v));
+  const str = (v: string | number | { toString(): string } | null | undefined) =>
+    v == null ? null : v.toString();
   return {
     unit: p.unit,
     baseUnitLabel: p.baseUnitLabel,
     packLabel: p.packLabel,
     unitsPerBox: p.unitsPerBox,
-    pricePerUnit: String(p.pricePerUnit ?? 0),
+    pricePerUnit: (p.pricePerUnit ?? 0).toString(),
     priceTier2: str(p.priceTier2),
     priceTier3: str(p.priceTier3),
     priceTier4: str(p.priceTier4),

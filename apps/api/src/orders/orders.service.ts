@@ -196,11 +196,7 @@ import {
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
-import {
-  asLadderProduct,
-  normalizeDerivedBaseLine,
-  resolveLineUnits,
-} from "../products/line-units";
+import { resolveLineUnits } from "../products/line-units";
 import * as unitLines from "./unit-line-build";
 import * as unitEdit from "./unit-line-edit";
 import { loadCategoryMapForProducts } from "./category-map";
@@ -1697,16 +1693,13 @@ export class OrdersService implements OnApplicationBootstrap {
 
     let subtotal = 0;
     const lineItemsData = items.map((rawItem, index) => {
-      // SA-728 / units P0b: a derived Piece from an old client bills as the pack's pieces.
-      const rawProduct = rawItem.productId ? productMap.get(rawItem.productId) : undefined;
-      const item = rawProduct
-        ? normalizeDerivedBaseLine(
-            rawItem,
-            asLadderProduct(rawProduct),
-            unitsByProduct.get(rawProduct.id) ?? [],
-            cpMap.get(rawProduct.id) ?? defaultTier,
-          )
-        : rawItem;
+      const item = unitLines.derivedBaseAsPack(
+        rawItem,
+        productMap,
+        unitsByProduct,
+        cpMap,
+        defaultTier,
+      );
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
       // free-text name + unitPrice; we store it as a MANUAL-priced line with no
       // stock impact and no boxed proration.
@@ -2953,14 +2946,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // this pre-lock pass is only what a REFUSAL must see before any commit happens.
     const unitCtx = await unitEdit.prepareUnitEditContext(this, order, dto, user);
     const unitRows = new Map<object, ReturnType<typeof resolveLineUnits>>();
-    // SA-728 / units P0b: a derived Piece from an old client becomes the pack line's pieces (before any refusal reads it).
-    await unitEdit.normalizeDerivedBaseItems(
-      this.prisma.forTenant(),
-      order,
-      dto.items ?? [],
-      unitCtx,
-      user,
-    );
+    await unitEdit.normalizeDerivedBaseItems(this.prisma.forTenant(), order, dto, unitCtx, user);
     for (const item of dto.items ?? []) {
       const li = item.id ? unitCtx.existingById.get(item.id) : undefined;
       unitEdit.assertUnitLabelNamed(li, item);
@@ -3155,7 +3141,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
         const heldOrSnapshot = (id: string): any =>
           heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
-        await unitEdit.normalizeDerivedBaseItems(tx, order, dto.items ?? [], unitCtx, user);
+        await unitEdit.normalizeDerivedBaseItems(tx, order, dto, unitCtx, user);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3466,6 +3452,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tenantId: this.prisma.getTenantId(),
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
+            held: { get: heldOrSnapshot }, // units P0b: the locked line (else the pre-tx one)
           };
 
           if (replaceAll) {
@@ -3558,15 +3545,7 @@ export class OrdersService implements OnApplicationBootstrap {
               if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
               const unitRow = unitRows.get(item);
               if (unitRow && unitLines.isUnitAware(unitRow)) {
-                await unitEdit.createUnitLine(
-                  uctx,
-                  orderId,
-                  product,
-                  unitRow,
-                  item,
-                  pos++,
-                  item.id ? heldById.get(item.id) : undefined,
-                );
+                await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++);
                 continue;
               }
 
@@ -3968,7 +3947,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
                   const p = unitCtx.products.get(li.productId!)!;
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
-                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li);
+                  await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
                 }
                 // A zero boxes+pieces payload is "not using box entry", not "zero
