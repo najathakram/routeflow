@@ -7,7 +7,15 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
 import { ProductsService } from "./products.service";
-import { assertValidParent, type ParentDb } from "./product-parent";
+import {
+  assertParentUsable,
+  assertValidParent,
+  PRODUCT_PARENT_REASONS,
+  type ParentDb,
+} from "./product-parent";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -34,14 +42,35 @@ function fakeDb(parent: ParentRow, children = 0) {
   return { db: { product: { findFirst, count } } as ParentDb, findFirst, count };
 }
 
+/** The coded 400 body every parent refusal carries: PRODUCT_PARENT_INVALID plus the rule it failed (`reason`). */
+async function refusal(p: Promise<unknown>) {
+  const err = await p.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(BadRequestException);
+  return (err as BadRequestException).getResponse() as {
+    statusCode: number;
+    code: string;
+    reason: string;
+    message: string;
+  };
+}
+
 describe("assertValidParent (the one parent check)", () => {
   const family = { id: "fam", isActive: true, kind: "FAMILY", parentProductId: null };
 
   it("a parent that is not in this tenant is 'not found' (the lookup carries the tenant id) and nothing else runs", async () => {
     const { db, findFirst, count } = fakeDb(null);
-    await expect(
+    const body = await refusal(
       assertValidParent(db, { tenantId: TENANT, id: "p1", parentId: "elsewhere" }),
-    ).rejects.toThrow(new BadRequestException("Parent product not found"));
+    );
+    expect(body).toMatchObject({
+      statusCode: 400,
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+      message: "Parent product not found",
+    });
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "elsewhere", tenantId: TENANT } }),
     );
@@ -50,9 +79,14 @@ describe("assertValidParent (the one parent check)", () => {
 
   it("a product cannot be its own parent, and the lookup is not even made", async () => {
     const { db, findFirst } = fakeDb(family);
-    await expect(
+    const body = await refusal(
       assertValidParent(db, { tenantId: TENANT, id: "fam", parentId: "fam" }),
-    ).rejects.toThrow(/own parent/);
+    );
+    expect(body).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.SELF,
+    });
+    expect(body.message).toMatch(/own parent/);
     expect(findFirst).not.toHaveBeenCalled();
   });
 
@@ -61,23 +95,38 @@ describe("assertValidParent (the one parent check)", () => {
     ["a parent of kind VARIANT", { ...family, kind: "VARIANT" }],
   ])("refuses %s (a variant of a variant)", async (_n, parent) => {
     const { db } = fakeDb(parent);
-    await expect(
+    const body = await refusal(
       assertValidParent(db, { tenantId: TENANT, id: "p1", parentId: "fam" }),
-    ).rejects.toThrow("Parent must be a standalone product, not a variant");
+    );
+    expect(body).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.VARIANT_PARENT,
+      message: "Parent must be a standalone product, not a variant",
+    });
   });
 
   it("refuses an inactive parent", async () => {
     const { db } = fakeDb({ ...family, isActive: false });
-    await expect(
+    const body = await refusal(
       assertValidParent(db, { tenantId: TENANT, id: "p1", parentId: "fam" }),
-    ).rejects.toThrow("The parent product is inactive");
+    );
+    expect(body).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.INACTIVE,
+      message: "The parent product is inactive",
+    });
   });
 
   it("refuses to move a product that has variants of its own (counted in this tenant)", async () => {
     const { db, count } = fakeDb(family, 2);
-    await expect(
+    const body = await refusal(
       assertValidParent(db, { tenantId: TENANT, id: "p1", parentId: "fam" }),
-    ).rejects.toThrow(/variants of its own/);
+    );
+    expect(body).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.HAS_VARIANTS,
+    });
+    expect(body.message).toMatch(/variants of its own/);
     expect(count).toHaveBeenCalledWith({ where: { parentProductId: "p1", tenantId: TENANT } });
   });
 
@@ -87,6 +136,36 @@ describe("assertValidParent (the one parent check)", () => {
       assertValidParent(db, { tenantId: TENANT, id: null, parentId: "fam" }),
     ).resolves.toEqual({ parentKind: "FAMILY" });
     expect(count).not.toHaveBeenCalled();
+  });
+
+  it("every reason is a distinct registered value, and no refusal is a plain-text throw", () => {
+    expect(Object.values(PRODUCT_PARENT_REASONS).sort()).toEqual(
+      ["HAS_VARIANTS", "INACTIVE", "NOT_FOUND", "SELF", "VARIANT_PARENT"].sort(),
+    );
+    const src = readFileSync(join(__dirname, "product-parent.ts"), "utf8");
+    expect(src).not.toMatch(/new BadRequestException\(\s*["'`]/);
+  });
+});
+
+describe("assertParentUsable (the judgement on a parent row the caller already loaded)", () => {
+  it("accepts a standalone active row and returns its kind", () => {
+    const row = { id: "p", isActive: true, kind: "FAMILY", parentProductId: null };
+    expect(assertParentUsable(row)).toEqual({ parentKind: "FAMILY" });
+  });
+
+  it("refuses a variant row and an inactive row with the coded body", () => {
+    for (const [row, reason] of [
+      [{ id: "p", isActive: true, kind: "VARIANT", parentProductId: "x" }, "VARIANT_PARENT"],
+      [{ id: "p", isActive: false, kind: "STANDARD", parentProductId: null }, "INACTIVE"],
+    ] as const) {
+      let body: { code?: string; reason?: string } = {};
+      try {
+        assertParentUsable(row);
+      } catch (e) {
+        body = (e as BadRequestException).getResponse() as typeof body;
+      }
+      expect(body).toMatchObject({ code: API_ERROR_CODES.PRODUCT_PARENT_INVALID, reason });
+    }
   });
 });
 
@@ -162,41 +241,41 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
   describe("update()", () => {
     it("a parent id that is not in this tenant is refused and NOTHING is written", async () => {
       seed({}); // the lookup (tenant-scoped) finds nothing
-      await expect(
+      const body = await refusal(
         service.update("prod-1", { parentProductId: "other-tenant-product" } as never),
-      ).rejects.toThrow("Parent product not found");
+      );
+      expect(body).toMatchObject({
+        code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+        reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+      });
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("itself as parent: 400, nothing written", async () => {
       seed({ "prod-1": { ...FAMILY, id: "prod-1" } });
-      await expect(
-        service.update("prod-1", { parentProductId: "prod-1" } as never),
-      ).rejects.toThrow(/own parent/);
+      const body = await refusal(service.update("prod-1", { parentProductId: "prod-1" } as never));
+      expect(body.reason).toBe(PRODUCT_PARENT_REASONS.SELF);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a parent that is a variant: 400, nothing written", async () => {
       seed({ child: { ...FAMILY, id: "child", kind: "VARIANT", parentProductId: "fam" } });
-      await expect(service.update("prod-1", { parentProductId: "child" } as never)).rejects.toThrow(
-        "Parent must be a standalone product, not a variant",
-      );
+      const body = await refusal(service.update("prod-1", { parentProductId: "child" } as never));
+      expect(body.reason).toBe(PRODUCT_PARENT_REASONS.VARIANT_PARENT);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("an inactive parent: 400, nothing written", async () => {
       seed({ fam: { ...FAMILY, isActive: false } });
-      await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
-        "The parent product is inactive",
-      );
+      const body = await refusal(service.update("prod-1", { parentProductId: "fam" } as never));
+      expect(body.reason).toBe(PRODUCT_PARENT_REASONS.INACTIVE);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
     it("a product that has variants of its own cannot become a variant", async () => {
       seed({ fam: FAMILY }, 3);
-      await expect(service.update("prod-1", { parentProductId: "fam" } as never)).rejects.toThrow(
-        /variants of its own/,
-      );
+      const body = await refusal(service.update("prod-1", { parentProductId: "fam" } as never));
+      expect(body.reason).toBe(PRODUCT_PARENT_REASONS.HAS_VARIANTS);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
@@ -257,24 +336,29 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
     it("a parent from another tenant: 400 before any row moves", async () => {
       seed({});
       const update = jest.spyOn(service, "update");
-      await expect(
+      const body = await refusal(
         service.bulkAssignParent({
           parentProductId: "other-tenant-product",
           assignments: [{ id: "prod-1", variantName: "A" }],
         } as never),
-      ).rejects.toThrow("Parent product not found");
+      );
+      expect(body).toMatchObject({
+        code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+        reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+      });
       expect(update).not.toHaveBeenCalled();
     });
 
     it("an inactive parent: 400 before any row moves", async () => {
       seed({ fam: { ...FAMILY, isActive: false } });
       const update = jest.spyOn(service, "update");
-      await expect(
+      const body = await refusal(
         service.bulkAssignParent({
           parentProductId: "fam",
           assignments: [{ id: "prod-1", variantName: "A" }],
         } as never),
-      ).rejects.toThrow("The parent product is inactive");
+      );
+      expect(body.reason).toBe(PRODUCT_PARENT_REASONS.INACTIVE);
       expect(update).not.toHaveBeenCalled();
     });
 

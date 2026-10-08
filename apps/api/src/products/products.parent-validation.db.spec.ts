@@ -14,6 +14,8 @@ import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { ProductsService } from "./products.service";
+import { PRODUCT_PARENT_REASONS } from "./product-parent";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StorageService } from "../storage/storage.service";
@@ -116,10 +118,17 @@ describeDb("B1211 product parent check: real Postgres", () => {
       }),
     );
   const fresh = (id: string) => prisma.product.findUniqueOrThrow({ where: { id } });
+  /** A refused parent is the coded 400: PRODUCT_PARENT_INVALID plus the `reason` of the rule it failed. */
   const badRequest = async (p: Promise<unknown>) => {
     const err = await p.catch((e) => e);
     expect(err).toBeInstanceOf(BadRequestException);
-    return (err as BadRequestException).message;
+    const body = (err as BadRequestException).getResponse() as {
+      code: string;
+      reason: string;
+      message: string;
+    };
+    expect(body.code).toBe(API_ERROR_CODES.PRODUCT_PARENT_INVALID);
+    return body;
   };
 
   it("another tenant's REAL product id is refused as a parent on update, create and bulk group; nothing is written", async () => {
@@ -132,7 +141,10 @@ describeDb("B1211 product parent check: real Postgres", () => {
       await badRequest(
         inTenant(mine, () => service.update(product.id, { parentProductId: foreign.id } as never)),
       ),
-    ).toBe("Parent product not found");
+    ).toMatchObject({
+      reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+      message: "Parent product not found",
+    });
     expect((await fresh(product.id)).parentProductId).toBeNull();
 
     await badRequest(mk(mine, "Mine Variant", { parentProductId: foreign.id, variantName: "V" }));
@@ -162,19 +174,17 @@ describeDb("B1211 product parent check: real Postgres", () => {
     await inTenant(t, () => service.update(inactive.id, { isActive: false } as never));
     const loner = await mk(t, "Loner");
 
-    await badRequest(
-      inTenant(t, () => service.update(loner.id, { parentProductId: loner.id } as never)),
-    );
-    await badRequest(
-      inTenant(t, () => service.update(loner.id, { parentProductId: variant.id } as never)),
-    );
-    await badRequest(
-      inTenant(t, () => service.update(loner.id, { parentProductId: inactive.id } as never)),
-    );
+    const reasonOf = async (id: string, parentId: string) => {
+      const body = await badRequest(
+        inTenant(t, () => service.update(id, { parentProductId: parentId } as never)),
+      );
+      return body.reason;
+    };
+    expect(await reasonOf(loner.id, loner.id)).toBe(PRODUCT_PARENT_REASONS.SELF);
+    expect(await reasonOf(loner.id, variant.id)).toBe(PRODUCT_PARENT_REASONS.VARIANT_PARENT);
+    expect(await reasonOf(loner.id, inactive.id)).toBe(PRODUCT_PARENT_REASONS.INACTIVE);
     // `family` has a variant of its own, so it cannot itself become a variant of `loner`.
-    await badRequest(
-      inTenant(t, () => service.update(family.id, { parentProductId: loner.id } as never)),
-    );
+    expect(await reasonOf(family.id, loner.id)).toBe(PRODUCT_PARENT_REASONS.HAS_VARIANTS);
     expect((await fresh(loner.id)).parentProductId).toBeNull();
     expect((await fresh(family.id)).parentProductId).toBeNull();
   });
