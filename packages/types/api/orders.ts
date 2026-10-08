@@ -147,3 +147,10 @@ export interface PackingSlipsResult {
   included: string[];
   skipped: { orderId: string; outcome: BatchShipOutcome }[];
 }
+
+/**
+ * B1201/B1205: the fixed sentence shown (web toast, mobile toast/alert) when an order was SAVED but
+ * its credit notes were not applied. The server's own text is never shown. Shared by web and mobile.
+ */
+export const CREDITS_PENDING_COPY =
+  "The order was saved, but the credit notes weren't applied. Apply them on the order.";

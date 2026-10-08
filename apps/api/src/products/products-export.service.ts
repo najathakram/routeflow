@@ -9,6 +9,7 @@ import {
 import { CSV_BOM, csvRow } from "../common/csv";
 import { roundQty } from "../common/invoiced-sales";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantSafeParent } from "./product-parent";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { buildProductListWhere } from "./product-list-where";
@@ -59,7 +60,8 @@ const SELECT = {
   currentStock: true,
   isActive: true,
   isTobacco: true,
-  parent: { select: { name: true } },
+  // tenantId only for the cross-tenant check (B1211); it is never written to the file.
+  parent: { select: { name: true, tenantId: true } },
 } as const;
 
 /**
@@ -187,7 +189,7 @@ export class ProductsExportService {
               roundQty(Number(r.currentStock ?? 0)),
               yesNo(r.isActive),
               yesNo(r.isTobacco),
-              r.parent?.name ?? null,
+              tenantSafeParent(r.parent, tenantId)?.name ?? null,
               roundQty(s?.pieces ?? 0),
               roundMoney((s?.gross ?? 0) - (credits.get(r.id) ?? 0)),
               s?.lastSold ? s.lastSold.toISOString().slice(0, 10) : null,

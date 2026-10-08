@@ -17,6 +17,8 @@ export function isStaffSessionPayload(payload: unknown): boolean {
 
 export const STAFF_ACCESS_AUDIENCE = "staff-access";
 export const BUYER_ACCESS_AUDIENCE = "buyer-access";
+export const STAFF_REFRESH_AUDIENCE = "staff-refresh";
+export const BUYER_REFRESH_AUDIENCE = "buyer-refresh";
 
 /**
  * True when the token names an audience and that audience is not `realm`. A token with no `aud`
@@ -24,7 +26,11 @@ export const BUYER_ACCESS_AUDIENCE = "buyer-access";
  */
 export function hasForeignAudience(
   payload: unknown,
-  realm: typeof STAFF_ACCESS_AUDIENCE | typeof BUYER_ACCESS_AUDIENCE,
+  realm:
+    | typeof STAFF_ACCESS_AUDIENCE
+    | typeof BUYER_ACCESS_AUDIENCE
+    | typeof STAFF_REFRESH_AUDIENCE
+    | typeof BUYER_REFRESH_AUDIENCE,
 ): boolean {
   if (!payload || typeof payload !== "object") return false;
   const aud = (payload as { aud?: unknown }).aud;

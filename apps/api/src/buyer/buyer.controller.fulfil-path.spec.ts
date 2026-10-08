@@ -148,6 +148,19 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
       expect.objectContaining({ mergeAs: { audience: "buyer" } }),
     );
   });
+
+  it("getActiveOrder: a valid path scopes the read exactly like create's merge search", async () => {
+    await controller.getActiveOrder(MOCK_CTX as any, "SHIP");
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(MOCK_CTX.customerId, {
+      forMerge: true,
+      mergeAs: { audience: "buyer", explicit: "SHIP" },
+    });
+  });
+
+  it.each([undefined, "", "TELEPORT"])("getActiveOrder(%j): today's unscoped read", async (p) => {
+    await controller.getActiveOrder(MOCK_CTX as any, p as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(MOCK_CTX.customerId);
+  });
 });
 
 describe("BuyerCreateOrderDto.fulfillPath", () => {

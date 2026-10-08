@@ -156,6 +156,11 @@ export const API_ERROR_CODES = {
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
+  FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
+  FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
+  FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",
+  FULFILMENT_CARRIER_IN_TRANSIT: "FULFILMENT_CARRIER_IN_TRANSIT",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
@@ -248,6 +253,8 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
+  /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
+  COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
@@ -325,6 +332,13 @@ export const API_ERROR_CODES = {
    * tenant into a trial. 409; suspend or change the plan instead.
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /**
+   * 400 from POST /products, PATCH /products/:id, the bulk group-as-variants action and the variant split: the
+   * parent named for a product cannot be used. `reason`: NOT_FOUND (no such product in this tenant) | SELF |
+   * VARIANT_PARENT (the parent is itself a variant) | INACTIVE | HAS_VARIANTS (the product being moved has
+   * variants of its own). Nothing was written.
+   */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

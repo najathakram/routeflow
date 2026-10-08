@@ -41,6 +41,8 @@
 //   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
 //                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
+//   PRODUCT_PARENT_INVALID — `body.code` of the 400 when the parent named for a product cannot be used; `body.reason` is
+//                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -327,6 +329,13 @@ export const API_ERROR_CODES = {
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  // Settings -> Fulfillment (tenant admin toggle): 400 body {field} / 403 flag off / 409 stale (body = a fresh
+  // GET /settings/fulfilment) / 409 carrier orders in transit (body {count}).
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
+  FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
+  FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
+  FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",
+  FULFILMENT_CARRIER_IN_TRANSIT: "FULFILMENT_CARRIER_IN_TRANSIT",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
@@ -419,6 +428,8 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
+  /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
+  COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
@@ -493,6 +504,8 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
