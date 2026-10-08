@@ -489,6 +489,9 @@ describe("ProductsService", () => {
     // Numbers stand in for Prisma Decimals — the service only calls .toString().
     const MOCK_PARENT = {
       id: "parent-1",
+      isActive: true,
+      kind: "STANDARD",
+      parentProductId: null,
       priceTier2: 24,
       priceTier3: 23,
       priceTier4: 22,
@@ -646,7 +649,12 @@ describe("ProductsService", () => {
     });
 
     it("isolates per-item failures — surfaces validation messages, masks raw errors (F8-003)", async () => {
-      prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "parent-1",
+        isActive: true,
+        kind: "FAMILY",
+        parentProductId: null,
+      });
       const update = jest
         .spyOn(service, "update")
         .mockResolvedValueOnce({} as any)
@@ -1160,6 +1168,9 @@ describe("ProductsService", () => {
       // product.findFirst serves both the name/sku conflict checks (no where.id)
       // and the converted parent load (where.id === parentProductId).
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1339,6 +1350,9 @@ describe("ProductsService", () => {
 
     it("a variant inherits the parent's regulatory trio when the DTO omits the section", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1382,6 +1396,9 @@ describe("ProductsService", () => {
 
     it("an explicit DTO value on one field beats inheritance while the others still inherit", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1840,6 +1857,9 @@ describe("ProductsService", () => {
 
     it("a variant inheriting the parent's regulated pair also gets the synced category name", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,

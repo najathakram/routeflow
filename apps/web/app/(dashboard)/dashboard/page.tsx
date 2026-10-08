@@ -28,6 +28,9 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { useShipSlotReserve } from "@/lib/ship-caps-hint";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
@@ -191,10 +194,10 @@ const LOW_STOCK_MIN_H = "min-h-[127px]";
 const ROUTE_RUNS_MIN_H = "min-h-[455px]";
 const DRIVER_STATUS_MIN_H = "min-h-[116px]";
 
-function StatSkeleton() {
+function StatSkeleton({ testId = "stat-skeleton" }: { testId?: string }) {
   return (
     <div
-      data-testid="stat-skeleton"
+      data-testid={testId}
       className={cn(
         "animate-pulse rounded-card border border-line bg-paper p-4 shadow-card",
         STAT_CARD_MIN_H,
@@ -563,9 +566,12 @@ function ModeSwitcher({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMo
 
 export default function DashboardPage() {
   const router = useRouter();
-  const counterGate = useCounterSaleGate();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  // The SAME staff-only predicate as the shell (layout.tsx) and the command palette.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -590,8 +596,16 @@ export default function DashboardPage() {
   // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
   // route / driver ones. Any other account, including an unset one, is untouched.
   const fulfilmentCaps = useFulfilmentCaps();
+  // Answer in flight: reserve the three shipping slots only if this tenant LAST resolved to SHIP (ship-caps-hint).
+  const caps = useTenantFeatures();
+  const capsLoading = caps.isLoading === true;
   const shippingAccount =
     !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
+  const reserveShipSlots = useShipSlotReserve(
+    getTenantCookie(),
+    capsLoading,
+    caps.data === undefined ? null : shippingAccount,
+  );
 
   const baseIsOperator =
     !user?.role ||
@@ -901,14 +915,21 @@ export default function DashboardPage() {
             />
           </Link>
         )}
-        {isOperator && shippingAccount && (
+        {isOperator && reserveShipSlots && (
+          <>
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+            <StatSkeleton testId="ship-stat-skeleton" />
+          </>
+        )}
+        {isOperator && !capsLoading && shippingAccount && (
           <>
             <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
               <StatCard
                 label="Ready to ship"
                 value={shipCount(readyToShipQ)}
                 icon={<Package className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
             <Link
@@ -919,7 +940,7 @@ export default function DashboardPage() {
                 label="Shipped, no tracking"
                 value={shipCount(noTrackingQ)}
                 icon={<AlertTriangle className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
             <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
@@ -927,7 +948,7 @@ export default function DashboardPage() {
                 label="Shipped this week"
                 value={weekStart ? shipCount(shippedWeekQ) : "—"}
                 icon={<Truck className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
             </Link>
           </>
