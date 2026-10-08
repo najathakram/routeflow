@@ -506,6 +506,8 @@ export const API_ERROR_CODES = {
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
+  /** A tenant time zone write named something that is not an IANA zone (400, SA-738). Nothing was written. */
+  INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

@@ -26,6 +26,10 @@ import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { FALLBACK_ZONE, TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-timezone.writer";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -59,9 +63,10 @@ export class SettingsController {
     let state = all["settings.state"] ?? "";
     let zip = all["settings.zip"] ?? "";
     let phone = all["settings.phone"] ?? "";
-    // The business's own IANA zone (TenantConfig.timezone, default America/New_York): the web uses it
-    // to place "this week" (Sunday 00:00 local) for the shipping cards and the orders week view.
-    let timezone = "America/New_York";
+    // The business's own IANA zone: the web uses it to place "this week" (Sunday 00:00 local) for the
+    // shipping cards and the orders week view. SA-738: the RESOLVED zone (the one resolver), so it is
+    // always valid and always the same zone the counter windows use; UTC when there is no usable zone.
+    let timezone: string = FALLBACK_ZONE;
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -77,10 +82,10 @@ export class SettingsController {
           phone: true,
           invoiceNotes: true,
           invoiceTerms: true,
-          timezone: true,
+          ...TENANT_ZONE_SELECT,
         },
       });
-      if (config?.timezone) timezone = config.timezone;
+      timezone = zoneFromConfig(config, tenantId).zone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
@@ -124,7 +129,7 @@ export class SettingsController {
   }
 
   @Patch()
-  async updateSettings(@Body() dto: Record<string, unknown>) {
+  async updateSettings(@Body() dto: Record<string, unknown>, @CurrentUser() user?: JwtPayload) {
     // B1188: these two used to be accepted here and silently dropped (neither is stored by this
     // endpoint). Refuse them loudly, before ANY write, naming where each really lives.
     if (dto.invoicePrefix !== undefined) {
@@ -147,6 +152,11 @@ export class SettingsController {
       }
     }
 
+    // SA-738 R16-4: `timezone` is TENANT_ADMIN only (403) and must be an IANA zone (400), checked
+    // before ANY field is written.
+    const newZone =
+      dto.timezone !== undefined ? prepareTenantTimeZoneChange(user, dto.timezone) : undefined;
+
     // businessName and email are NOT editable by tenant admin (set by super admin).
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
     const allowed = ["taxRate", "logoUrl"];
@@ -159,6 +169,8 @@ export class SettingsController {
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
     if (tenantId) {
+      if (newZone !== undefined)
+        await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone });
       const configUpdate: Record<string, unknown> = {};
       if (dto.ownerName !== undefined)
         configUpdate.ownerName = typeof dto.ownerName === "string" ? dto.ownerName : "";

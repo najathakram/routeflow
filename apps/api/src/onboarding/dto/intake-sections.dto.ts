@@ -10,6 +10,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsTimeZone,
   Matches,
   Max,
   MaxLength,
@@ -81,7 +82,7 @@ export class IntakeAccountDto {
   @IsOptional() @IsEmail() @MaxLength(254) replyToEmail?: string;
   @IsOptional() @IsString() @MaxLength(S) website?: string;
   @IsString()
-  @Matches(/^[A-Za-z]+\/[A-Za-z_+\-/]+$/, { message: "timeZone must be an IANA zone" })
+  @IsTimeZone({ message: "timeZone must be an IANA zone" })
   timeZone!: string;
 }
 

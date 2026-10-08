@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -2251,6 +2251,54 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(emailServiceMock.send).toHaveBeenCalledWith(
         expect.objectContaining({ senderClass: "platform" }),
       );
+    });
+  });
+
+  // SA-738 R16-4: the super admin sets the tenant's IANA zone at creation.
+  describe("createTenant — time zone (SA-738)", () => {
+    const dto = {
+      slug: "acme-wholesale",
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+    });
+
+    it("writes the supplied zone into the new TenantConfig row", async () => {
+      await service.createTenant({ ...dto, timezone: "America/Chicago" });
+      expect(prisma.tenantConfig.create).toHaveBeenCalledWith({
+        data: { tenantId: TENANT_ID, businessName: "Acme Wholesale", timezone: "America/Chicago" },
+      });
+    });
+
+    it("leaves the column default alone when no zone is supplied", async () => {
+      await service.createTenant(dto);
+      const data = prisma.tenantConfig.create.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("timezone");
+    });
+
+    it("an invalid zone is a 400 INVALID_TIME_ZONE before any write", async () => {
+      const err = await service
+        .createTenant({ ...dto, timezone: "Mars/Phobos" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: "INVALID_TIME_ZONE",
+      });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+      expect(prisma.tenantConfig.create).not.toHaveBeenCalled();
     });
   });
 

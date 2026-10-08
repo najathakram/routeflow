@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsIn,
   IsInt,
+  IsTimeZone,
   Min,
   Max,
 } from "class-validator";
@@ -79,4 +80,15 @@ export class CreateTenantDto {
   @IsOptional()
   @IsIn(TENANT_CLASS_VALUES)
   class?: (typeof TENANT_CLASS_VALUES)[number];
+
+  @ApiPropertyOptional({
+    description:
+      "The business's IANA time zone (e.g. America/Chicago), written into the new TenantConfig " +
+      "row. It sets the tenant's day boundary for sales, invoices and reports. Omitted = the " +
+      "column default; an invalid zone is a 400 (SA-738, R16-4).",
+  })
+  @IsOptional()
+  @IsString()
+  @IsTimeZone()
+  timezone?: string;
 }
