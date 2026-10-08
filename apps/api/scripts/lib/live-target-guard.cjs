@@ -67,7 +67,7 @@ function assertWritableTenant(tenant, sub, slugs, { allowProtected } = {}) {
   const valid =
     allowProtected &&
     ((allowProtected[OVERRIDE_BRAND] === true && allowProtected.tenantId === tenant.id) ||
-      allowProtected[ADDITIVE_BRAND] === true);
+      (allowProtected[ADDITIVE_BRAND] === true && allowProtected.tenantIds.has(tenant.id)));
   if (valid) return arm;
   throw new ProtectedTenantError(
     `tenant ${tenant.id} is protected (${arm}): refused. An operator override needs ` +
@@ -82,6 +82,20 @@ function refuseRetiredFlags(argv) {
     throw new ProtectedTenantError(
       `unknown argument: ${hit} (retired — use --allow-protected <tenantId> --backup-taken)`,
     );
+}
+
+/**
+ * The backup attestation is `--backup-taken` everywhere. A script's older flag (`backupFlag`, e.g.
+ * --i-have-a-fresh-backup, --backup-attested) is still accepted as an ALIAS and prints a deprecation
+ * line, so no runbook breaks.
+ */
+function hasBackupAttestation(argv, backupFlag, log = console.error) {
+  if (argv.includes("--backup-taken")) return true;
+  if (backupFlag && backupFlag !== "--backup-taken" && argv.includes(backupFlag)) {
+    log(`deprecated: ${backupFlag} — use --backup-taken (the old flag still works for now).`);
+    return true;
+  }
+  return false;
 }
 
 function readline_ask(stdin, stdout, question) {
@@ -114,7 +128,7 @@ async function confirmProtectedOverride({
   // The flag may repeat (one per protected tenant): any occurrence naming THIS tenant counts.
   if (!argv.some((a, i) => a === "--allow-protected" && argv[i + 1] === tenantId))
     throw refuse("--allow-protected must name this tenant's id");
-  if (!argv.includes(backupFlag)) throw refuse(`${backupFlag} is required`);
+  if (!hasBackupAttestation(argv, backupFlag)) throw refuse("--backup-taken is required");
   if (!(stdin && stdin.isTTY && stdout && stdout.isTTY))
     throw refuse("the confirmation needs a real terminal (stdin and stdout)");
   const phrase = `ALLOW PROTECTED ${tenantId}`;
@@ -132,9 +146,12 @@ async function confirmProtectedOverride({
  * "ALLOW PROTECTED ADDITIVE <count>". Returns a token assertWritableTenant accepts for any tenant of
  * this run, or null when nothing in the run is protected. Never use it for a destructive script.
  * @param counts { paying, "stripe-linked", "env-listed" } protected tenants the run would touch
+ * @param tenantIds every tenant id this run will write: the token is valid for THOSE tenants only, so
+ *   it cannot be replayed for a tenant the operator never saw counted.
  */
 async function confirmProtectedAdditive({
   counts,
+  tenantIds,
   argv,
   stdin = process.stdin,
   stdout = process.stdout,
@@ -144,6 +161,8 @@ async function confirmProtectedAdditive({
 }) {
   const total = ARMS.reduce((n, a) => n + (counts[a] ?? 0), 0);
   if (total === 0) return null;
+  if (!Array.isArray(tenantIds) && !(tenantIds instanceof Set))
+    throw new TypeError("confirmProtectedAdditive needs the run's tenantIds");
   const refuse = (why) =>
     new ProtectedTenantError(`${total} protected tenant(s) in this run: refused — ${why}.`);
   log(
@@ -151,7 +170,7 @@ async function confirmProtectedAdditive({
       `(${ARMS.map((a) => `${a} ${counts[a] ?? 0}`).join(" · ")})`,
   );
   refuseRetiredFlags(argv);
-  if (!argv.includes(backupFlag)) throw refuse(`${backupFlag} is required`);
+  if (!hasBackupAttestation(argv, backupFlag)) throw refuse("--backup-taken is required");
   if (!(stdin && stdin.isTTY && stdout && stdout.isTTY))
     throw refuse("the confirmation needs a real terminal (stdin and stdout)");
   const phrase = `ALLOW PROTECTED ADDITIVE ${total}`;
@@ -159,7 +178,7 @@ async function confirmProtectedAdditive({
     `Type "${phrase}" to continue: `,
   );
   if (String(typed).trim() !== phrase) throw refuse("the typed confirmation did not match");
-  return Object.freeze({ [ADDITIVE_BRAND]: true, count: total });
+  return Object.freeze({ [ADDITIVE_BRAND]: true, count: total, tenantIds: new Set(tenantIds) });
 }
 
 const PROTECTION_SQL = `
@@ -255,6 +274,7 @@ module.exports = {
   assertWritableTenant,
   confirmProtectedOverride,
   confirmProtectedAdditive,
+  hasBackupAttestation,
   refuseRetiredFlags,
   protectedTenantIds,
   assertNoLiveProtectedTenants,

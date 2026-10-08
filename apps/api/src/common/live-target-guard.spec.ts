@@ -169,6 +169,7 @@ describe("confirmProtectedAdditive", () => {
   const counts = { paying: 2, "stripe-linked": 1, "env-listed": 1 };
   const base = (over = {}) => ({
     counts,
+    tenantIds: ["t-trial", "t-other"],
     argv: ["--backup-taken"],
     stdin: tty,
     stdout: tty,
@@ -196,6 +197,46 @@ describe("confirmProtectedAdditive", () => {
     expect(
       guard.assertWritableTenant(trial({ id: "t-other" }), null, LISTED, { allowProtected: token }),
     ).toBe("env-listed");
+  });
+
+  it("the token is bound to the run's tenant set: a tenant outside it is refused", async () => {
+    const token = await guard.confirmProtectedAdditive(base());
+    expect(() =>
+      guard.assertWritableTenant(trial({ id: "t-never-counted" }), null, LISTED, {
+        allowProtected: token,
+      }),
+    ).toThrow(/protected/);
+    await expect(guard.confirmProtectedAdditive(base({ tenantIds: undefined }))).rejects.toThrow(
+      /tenantIds/,
+    );
+  });
+
+  it("an old backup flag still works as an alias, with a deprecation line; --backup-taken does not warn", async () => {
+    const logs: string[] = [];
+    const spy = jest.spyOn(console, "error").mockImplementation((l: string) => void logs.push(l));
+    try {
+      await guard.confirmProtectedAdditive(
+        base({ argv: ["--backup-attested"], backupFlag: "--backup-attested" }),
+      );
+      expect(logs.join("\n")).toMatch(/deprecated: --backup-attested — use --backup-taken/);
+      logs.length = 0;
+      await guard.confirmProtectedAdditive(
+        base({ argv: ["--backup-taken"], backupFlag: "--backup-attested" }),
+      );
+      expect(logs).toEqual([]);
+      const token = await guard.confirmProtectedOverride({
+        tenantId: "t-trial",
+        argv: ["--allow-protected", "t-trial", "--i-have-a-fresh-backup"],
+        stdin: tty,
+        stdout: tty,
+        ask: async () => PHRASE,
+        backupFlag: "--i-have-a-fresh-backup",
+      });
+      expect(token.tenantId).toBe("t-trial");
+      expect(logs.join("\n")).toMatch(/deprecated: --i-have-a-fresh-backup/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("refuses without --backup-taken, on a non-TTY, and on a wrong count", async () => {

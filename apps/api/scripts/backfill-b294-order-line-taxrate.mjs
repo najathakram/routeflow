@@ -129,8 +129,13 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
 
 const { protectedArm } = payingTenant;
 const { loadProtectedSlugs } = protectedSlugsLib;
-const { assertWritableTenant, confirmProtectedOverride, refuseRetiredFlags, ProtectedTenantError } =
-  liveTargetGuard;
+const {
+  assertWritableTenant,
+  confirmProtectedOverride,
+  hasBackupAttestation,
+  refuseRetiredFlags,
+  ProtectedTenantError,
+} = liveTargetGuard;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
 const PROTECTION_SQL = `
@@ -359,9 +364,14 @@ async function apply() {
   const planFile = argOf("--plan");
   const confirmPlan = argOf("--confirm-plan");
   const guardSha = argOf("--guard-sha");
-  if (!planFile || !confirmPlan || !guardSha || !process.argv.includes("--i-have-a-fresh-backup")) {
+  if (
+    !planFile ||
+    !confirmPlan ||
+    !guardSha ||
+    !hasBackupAttestation(process.argv.slice(2), "--i-have-a-fresh-backup")
+  ) {
     console.error(
-      `${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --i-have-a-fresh-backup`,
+      `${TAG}: --apply needs --plan, --confirm-plan, --guard-sha and --backup-taken (the old --i-have-a-fresh-backup still works)`,
     );
     return 1;
   }

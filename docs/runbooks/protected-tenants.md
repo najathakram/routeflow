@@ -52,6 +52,8 @@ matches no tenant (a typo protects nothing).
   takes ONE confirmation for the whole run: it prints the number of protected tenants per arm
   (never a slug), then needs `--backup-attested` and the typed phrase
   `ALLOW PROTECTED ADDITIVE <count>`. A non-terminal run refuses.
+- The backup attestation is `--backup-taken` everywhere. The older flags (`--i-have-a-fresh-backup`,
+  `--backup-attested`) still work as aliases and print a deprecation line.
 - `--allow-paying-tenant` and `--confirm-paying` are retired and are unknown arguments.
 - Destructive local-only scripts (the nuke / reset / cleanup / merge family) trust a host allow-list
   a tunnel can fake, so they ALSO refuse to run when the database holds a protected non-test

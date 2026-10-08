@@ -989,7 +989,11 @@ async function runApply() {
     }
     const allowProtected = await confirmProtectedAdditive({
       counts,
-      argv: process.argv.slice(2),
+      tenantIds: live.map((t) => t.id),
+      // `--backup-attested=<text>` is a single argv entry; present it as the flag the guard looks for.
+      argv: opts.backupAttested
+        ? [...process.argv.slice(2), "--backup-attested"]
+        : process.argv.slice(2),
       backupFlag: "--backup-attested",
       log: say,
     });
