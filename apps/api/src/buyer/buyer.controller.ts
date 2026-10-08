@@ -496,7 +496,8 @@ export class BuyerController {
     const hit = await findScanMatches(
       this.prisma.forTenant(),
       candidates,
-      buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+      // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
+      buyerVisibleProductWhere({ ...NO_BUYER_RESTRICTIONS, tenantId: ctx.tenantId }),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
