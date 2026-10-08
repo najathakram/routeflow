@@ -63,7 +63,7 @@ export class ProductUnitsService {
     });
   }
 
-  create(productId: string, dto: CreateProductUnitDto) {
+  create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
       const label = this.cleanLabel(dto.label, dto.factorToBase);
@@ -86,14 +86,19 @@ export class ProductUnitsService {
           priceTier5: dto.priceTier5 ?? null,
           isDefaultSelling: makeDefault,
           sortOrder: dto.sortOrder ?? 0,
-          tenantUnitId: await this.tenantUnitIdFor(tx, label),
+          tenantUnitId: await this.tenantUnitIdFor(tx, label, actorId),
         },
         select: UNIT_SELECT,
       });
     });
   }
 
-  update(productId: string, unitId: string, dto: UpdateProductUnitDto) {
+  update(
+    productId: string,
+    unitId: string,
+    dto: UpdateProductUnitDto,
+    actorId: string | null = null,
+  ) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
       const row = await tx.productUnit.findFirst({ where: { id: unitId, productId } });
@@ -114,7 +119,7 @@ export class ProductUnitsService {
           ...(isDefaultSelling !== undefined ? { isDefaultSelling } : {}),
           // The link follows the NAME: a retyped label must leave the old unit's rename behind.
           ...(dto.label !== undefined
-            ? { tenantUnitId: await this.tenantUnitIdFor(tx, label) }
+            ? { tenantUnitId: await this.tenantUnitIdFor(tx, label, actorId) }
             : {}),
         },
         select: UNIT_SELECT,
@@ -170,7 +175,11 @@ export class ProductUnitsService {
    * Piece and its synonyms, and any name past the unit-name limit, are never units: unlinked (null).
    * An ARCHIVED unit still links (it hides from pickers; the level keeps its meaning).
    */
-  private async tenantUnitIdFor(tx: any, label: string): Promise<string | null> {
+  private async tenantUnitIdFor(
+    tx: any,
+    label: string,
+    actorId: string | null,
+  ): Promise<string | null> {
     const name = label.normalize("NFC").trim();
     if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) return null;
     const tenantId = this.prisma.getTenantId();
@@ -179,8 +188,24 @@ export class ProductUnitsService {
       tx.tenantUnit.findFirst({ where: { tenantId, nameKey }, select: { id: true } });
     let unit = await find();
     if (!unit) {
-      await tx.tenantUnit.createMany({ data: [{ tenantId, name, nameKey }], skipDuplicates: true });
+      const { count } = await tx.tenantUnit.createMany({
+        data: [{ tenantId, name, nameKey }],
+        skipDuplicates: true,
+      });
       unit = await find();
+      // Only the creator audits: a skipDuplicates loser (count 0) re-read the winner's row.
+      if (count === 1 && unit) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: actorId,
+            action: "tenant_unit.created",
+            entityType: "TenantUnit",
+            entityId: unit.id,
+            meta: { name, via: "level" },
+          },
+        });
+      }
     }
     return unit?.id ?? null;
   }

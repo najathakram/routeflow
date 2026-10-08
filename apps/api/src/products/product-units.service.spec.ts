@@ -32,6 +32,7 @@ function build(opts: {
       findFirst: jest.fn().mockResolvedValue({ id: "tu-1" }),
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     product: { findFirst: jest.fn().mockResolvedValue(product) },
     productUnit: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
@@ -226,6 +227,38 @@ describe("ProductUnitsService: levels are linked to the tenant's unit by name (t
       skipDuplicates: true,
     });
     expect(tx.productUnit.create.mock.calls[0][0].data.tenantUnitId).toBe("tu-new");
+  });
+
+  it("a unit added implicitly by a level write is audited by its creator (tenant_unit.created, in the tx)", async () => {
+    const { service, db, prisma } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-new" });
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: "t1",
+        userId: "user-7",
+        action: "tenant_unit.created",
+        entityType: "TenantUnit",
+        entityId: "tu-new",
+        meta: { name: "Case", via: "level" },
+      },
+    });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("the skipDuplicates LOSER of a racing add (createMany count 0) writes no audit row", async () => {
+    const { service, db } = build({});
+    db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "tu-won" });
+    db.tenantUnit.createMany.mockResolvedValue({ count: 0 });
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("linking to an EXISTING unit writes no audit row", async () => {
+    const { service, db } = build({});
+    await service.create("p1", { label: "Case", factorToBase: 288 }, "user-7");
+    expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
   it.each([
