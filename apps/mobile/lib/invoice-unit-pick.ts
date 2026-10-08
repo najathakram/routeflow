@@ -21,7 +21,7 @@ import type { UnitPickerLine } from "../components/UnitPickerRow";
  *   - Piece: ALSO a pack line (sellBy "unit", pieces counted, prorated off the BOX price). It never
  *     carries a unitLabel: routing a boxed Piece through applyUnitOption would bill a ladder Piece
  *     price that differs from the pack proration by cents (the D1 drift the brief forbids).
- *   - level (factor > 1: Case, Pallet...): `unitLabel` + a whole count + a per-unit price; no boxes/pieces.
+ *   - level (factor above 1: Case, Pallet...): `unitLabel` + a whole count + a per-unit price; no boxes/pieces.
  */
 
 /** The New-invoice line: Create Order's cart line plus the invoice-only exception fields. */
@@ -68,7 +68,7 @@ function packPriceFields(prev: InvoiceLineState) {
 
 /**
  * The ONE writer of a picker choice on an invoice line.
- *   - level (factor > 1): applyUnitOption, unchanged. qty 1, unitLabel, unitBasePrice = the option's tier
+ *   - level (factor above 1): applyUnitOption, unchanged. qty 1, unitLabel, unitBasePrice = the option's tier
  *     price, unitFactor; `unitPrice` stays UNSET (the option's price is a lookup, never a typed price).
  *   - Box: one whole box (boxes 1, qty = pack size), sold by "case"; no unit fields.
  *   - Piece on a boxed pack: one loose piece, sold by "unit"; no unit fields, the BOX price untouched.
