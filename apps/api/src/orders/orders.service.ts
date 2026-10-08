@@ -125,6 +125,7 @@ import {
   lockedOrderStatus,
   lockOrderForCancel,
 } from "./order-cancel-impact";
+import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
@@ -2570,6 +2571,7 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
               // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
               const lockedStatus = await lockedOrderStatus(tx, id);
               carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5

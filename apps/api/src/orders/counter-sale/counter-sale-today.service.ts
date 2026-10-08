@@ -15,6 +15,7 @@ import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
   TODAYS_SALES_DEFAULT_LIMIT,
   counterSalesWhere,
+  creditNotesInWindowWhere,
   foldSummary,
   liveCounterSalesWhere,
   pageQuery,
@@ -45,8 +46,9 @@ const badDay = (message: string) =>
  * calendar-date helpers (DST-safe), never by this class.
  *
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
- * four whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
- * `invoicePayment.aggregate` (paid on the day's own sales) and `return.findMany` (a day's few returns). No per-row call.
+ * five whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
+ * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window) and
+ * `return.findMany` (a day's few returns). No per-row call.
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -96,17 +98,18 @@ export class CounterSaleTodayService {
   }
 
   /**
-   * The whole day, four queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
+   * The whole day, five queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
    * money that CAME IN in the window by method (groupBy on `paidAt`, sales of any day), what is paid on the day's own
-   * sales (aggregate, for `onAccount`), and the returns counted in the window (a day's few returns are read whole so
-   * the per-return amount rule applies; a grouped sum cannot).
+   * sales (aggregate, for `onAccount`), the ids of the credit notes created in the window, and then the returns counted
+   * in the window (a day's few returns are read whole so the per-return amount rule applies; a grouped sum cannot).
+   * The credit-note ids come first because a store-credit return is dated by its credit note, which has no relation.
    */
   private async summary(
     db: ReturnType<PrismaService["forTenant"]>,
     tenantId: string,
     window: { start: Date; end: Date },
   ) {
-    const [sales, payments, paidOnSales, returns] = await Promise.all([
+    const [sales, payments, paidOnSales, creditNotes] = await Promise.all([
       db.order.aggregate({
         where: liveCounterSalesWhere(tenantId, window),
         _count: { _all: true },
@@ -121,17 +124,25 @@ export class CounterSaleTodayService {
         where: paidOnDaysSalesWhere(tenantId, window),
         _sum: { amount: true },
       }),
-      db.return.findMany({
-        where: windowReturnsWhere(tenantId, window),
-        select: {
-          refundMethod: true,
-          refundAmount: true,
-          creditSubtotal: true,
-          creditTax: true,
-          creditCategoryTax: true,
-        },
+      db.creditNote.findMany({
+        where: creditNotesInWindowWhere(tenantId, window),
+        select: { id: true },
       }),
     ]);
+    const returns = await db.return.findMany({
+      where: windowReturnsWhere(
+        tenantId,
+        window,
+        creditNotes.map((c) => c.id),
+      ),
+      select: {
+        refundMethod: true,
+        refundAmount: true,
+        creditSubtotal: true,
+        creditTax: true,
+        creditCategoryTax: true,
+      },
+    });
     return foldSummary({ sales, payments, paidOnSales, returns });
   }
 }

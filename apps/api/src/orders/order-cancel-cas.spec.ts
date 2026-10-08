@@ -306,6 +306,52 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     expect(invoicesService.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "s1", "ord-1");
   });
 
+  // Money safety: a cash refund (EXTERNAL_REFUND, refundedAt set) left the till, so voiding the order's invoices would pay
+  // it out twice. The guard (invoice-cash-refund-guard.ts) runs right after the Order -> Invoice locks, before ANY write.
+  it("a cash-refunded return on the order's invoices ⇒ 409 INVOICE_HAS_CASH_REFUND with the ORDER wording and NOTHING is written", async () => {
+    arrange(1);
+    prisma.return.findFirst.mockResolvedValue({ id: "ret-1" });
+    const settle = jest.spyOn(service as any, "settleStockForEdit").mockResolvedValue(undefined);
+    const err = await service
+      .changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getStatus()).toBe(409);
+    expect((err as ConflictException).getResponse()).toEqual({
+      code: "INVOICE_HAS_CASH_REFUND",
+      message:
+        "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
+    });
+    // No status claim, no stock credit, no credit release, no wallet release, no void, no item write.
+    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+    expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();
+    expect(invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();
+    expect(invoicesService.voidInvoiceInTx).not.toHaveBeenCalled();
+    expect(prisma.orderItem.updateMany).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("the cash-refund guard reads ONCE, before the status claim, the stock credit, the credit release, the wallet release and the void", async () => {
+    arrange(1);
+    const settle = jest.spyOn(service as any, "settleStockForEdit").mockResolvedValue(undefined);
+    await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
+    const guardRead = prisma.return.findFirst.mock.invocationCallOrder;
+    expect(guardRead).toHaveLength(1);
+    const writes: Array<jest.MockInstance<any, any>> = [
+      prisma.order.updateMany,
+      settle,
+      creditNotesService.releaseOrderCreditsInTx,
+      invoicesService.releaseWalletPaymentsInTx,
+      invoicesService.voidInvoiceInTx,
+    ];
+    for (const write of writes) {
+      expect(write).toHaveBeenCalled();
+      expect(guardRead[0]).toBeLessThan(write.mock.invocationCallOrder[0]);
+    }
+  });
+
   // #2472 (2): whether the cancel returns stock is decided from the order's status UNDER the cancel
   // lock, never the unlocked pre-read — a DRAFT (which never reserved stock) must not be credited.
   it("#2472: pre-read CONFIRMED but DRAFT under the lock ⇒ no stock credit, no line marking", async () => {
