@@ -555,8 +555,14 @@ export class OrderTemplatesService {
               err instanceof Error ? err.stack : String(err),
             );
           } finally {
+            // A replay means today's order exists (a manual run placed it; that path sends no ban
+            // notice), so the customer is told it went ahead, not that it was held.
             if (ctx.ban)
-              await this.notifyBanSkipped(template, ctx.ban, ctx.placed ? "ordered" : "held");
+              await this.notifyBanSkipped(
+                template,
+                ctx.ban,
+                ctx.placed || ctx.replayed ? "ordered" : "held",
+              );
           }
         }
       });
