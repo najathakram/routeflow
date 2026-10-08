@@ -339,6 +339,16 @@ export const API_ERROR_CODES = {
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /**
+   * 403 body `code` when an operator lacks every feature group the endpoint needs; `groups` lists the groups
+   * that would have opened it. Nothing was written.
+   */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /**
+   * 409 from PUT /users/:id/permissions: the operator's permissions changed since the caller loaded them
+   * (`expectedVersion` is stale). Nothing was written; reload and retry.
+   */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
+  /**
    * 400 from POST /products, PATCH /products/:id, the bulk group-as-variants action and the variant split: the
    * parent named for a product cannot be used. `reason`: NOT_FOUND (no such product in this tenant) | SELF |
    * VARIANT_PARENT (the parent is itself a variant) | INACTIVE | HAS_VARIANTS (the product being moved has
