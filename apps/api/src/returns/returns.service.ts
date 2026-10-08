@@ -44,6 +44,7 @@ import {
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { EXTERNAL_REFUND_METHOD, isRefundPending } from "./inline-return-refund";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
@@ -82,6 +83,9 @@ export interface FindAllReturnsOptions {
   /** #2406: STANDARD (default, unchanged list) | INLINE | ALL (no kind filter). Validated by
    * the controller's whitelist before it ever reaches here. */
   kind?: "STANDARD" | "INLINE" | "ALL";
+  /** SA-727b: only INLINE returns captured for a REFUND whose refund is not recorded yet (RECEIVED, EXTERNAL_REFUND stored,
+   * refundedAt null, no credit note). Overrides `kind` and `status`. */
+  pendingRefund?: boolean;
   page?: number;
   limit?: number;
 }
@@ -416,6 +420,7 @@ export class ReturnsService {
       reason,
       search,
       kind = "STANDARD",
+      pendingRefund = false,
       page = 1,
       limit = 20,
     } = options;
@@ -434,6 +439,14 @@ export class ReturnsService {
     // correct: it was never on any driver's route.
     if (driverId) where.order = { routeRun: { driverId } };
     if (status) where.status = status;
+    if (pendingRefund) {
+      // SA-727b: the "Pending refunds" list (one definition: `isRefundPending`, inline-return-refund.ts)
+      where.kind = "INLINE";
+      where.status = "RECEIVED";
+      where.refundMethod = EXTERNAL_REFUND_METHOD;
+      where.refundedAt = null;
+      where.creditNoteId = null;
+    }
     if (reason) where.reason = reason;
     if (search) {
       where.OR = [
@@ -509,6 +522,8 @@ export class ReturnsService {
           order: strippedOrder,
           refundEstimate: null,
           refundEstimateReason: "INLINE",
+          // SA-727b: a return captured for a refund that is not recorded yet (the POS "pending" state)
+          refundPending: isRefundPending(ret),
         };
       }
       // Pure, DB-free pricing: the read path must never issue a per-row query (the

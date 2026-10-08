@@ -542,7 +542,7 @@ describe("OrdersService", () => {
           unitSku: true,
           variantName: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          parent: { select: { name: true, tenantId: true } },
         }),
       );
     });

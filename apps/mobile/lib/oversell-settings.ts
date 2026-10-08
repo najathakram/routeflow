@@ -36,9 +36,17 @@ export function visibilityMode(raw: unknown): "show" | "hide" {
   return raw === "hide" ? "hide" : "show";
 }
 
-/** May the Show / Hide choice be changed right now? Admin only, and only while backorders are on. */
-export function canEditVisibility(role: string | null | undefined, oversellOn: boolean): boolean {
-  return canEditOversell(role) && oversellOn;
+/**
+ * May the Show / Hide choice be changed right now? Admin only, and only while backorders are on for
+ * someone: the tenant switch, or customers that have their own setting (the server accepts the
+ * choice either way; it is tenant-wide, so those customers need it editable while the switch is off).
+ */
+export function canEditVisibility(
+  role: string | null | undefined,
+  oversellOn: boolean,
+  customerOverrides: number | null | undefined = 0,
+): boolean {
+  return canEditOversell(role) && (oversellOn || (customerOverrides ?? 0) > 0);
 }
 
 export function oversellIsOn(mode: unknown): boolean {

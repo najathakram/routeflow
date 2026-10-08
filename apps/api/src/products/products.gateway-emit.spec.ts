@@ -191,9 +191,14 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
   });
 
   it("REG-PROD-EMIT-8 bulkAssignParent() over two assignments emits ONE coalesced 'bulk' event, not one per update()", async () => {
-    prisma.product.findFirst
-      .mockResolvedValueOnce({ id: "parent-1", parentProductId: null } as any) // parent lookup
-      .mockResolvedValue(null); // per-row name-uniqueness checks inside update()
+    // The parent is looked up up front AND again inside each row's update() (the one parent check), so
+    // answer by id; every other read (the per-row name-uniqueness checks) finds nothing.
+    prisma.product.findFirst.mockImplementation(((args: { where?: { id?: string } }) =>
+      Promise.resolve(
+        args?.where?.id === "parent-1"
+          ? { id: "parent-1", isActive: true, kind: "FAMILY", parentProductId: null }
+          : null,
+      )) as any);
     prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT as any);
     prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT } as any);
 
@@ -217,7 +222,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
   });
 
   it("REG-PROD-EMIT-9 bulkAssignParent() with every assignment failing emits NOTHING", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null } as any);
+    prisma.product.findFirst.mockResolvedValue({
+      id: "parent-1",
+      isActive: true,
+      kind: "FAMILY",
+      parentProductId: null,
+    } as any);
     prisma.product.findUnique.mockRejectedValue(new Error("not found"));
 
     const result = await service.bulkAssignParent({

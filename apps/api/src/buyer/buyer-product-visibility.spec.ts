@@ -49,6 +49,16 @@ describe("buyerVisibleProductWhere", () => {
     expect(w.AND[3]).toEqual({ portalVisible: false, isActive: false });
   });
 
+  it("B1211: with a tenant id the parent-visibility filter also requires the parent to be in that tenant; without one it is unchanged", () => {
+    const scoped = buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" }) as {
+      AND: unknown[];
+    };
+    expect(scoped.AND[2]).toEqual({
+      OR: [{ parentProductId: null }, { parent: { portalVisible: true, tenantId: "t-1" } }],
+    });
+    expect(buyerVisibleProductWhere({ restrictedIds: new Set() })).toEqual({ AND: BASE });
+  });
+
   it("id helper is the builder with { id }", () => {
     expect(buyerVisibleProductByIdWhere(NO_BUYER_RESTRICTIONS, "p1")).toEqual(
       buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: "p1" }),
