@@ -8,7 +8,8 @@
  * Proves, against real rows: another tenant's REAL product id is refused as a parent (400, nothing written) on
  * update, create and bulk group; the product itself, a variant and an inactive product are refused; a product with
  * variants of its own cannot become a variant; a FAMILY parent marks the child VARIANT; un-parenting resets it; and
- * `findOne` never returns a foreign parent.
+ * `findOne` never returns a foreign parent, and a RAW cross-tenant link (written around the service) is never
+ * followed by `findOne`, the list or the scan lookup.
  */
 import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -201,5 +202,59 @@ describeDb("B1211 product parent check: real Postgres", () => {
     expect(await fresh(other.id)).toMatchObject({ parentProductId: parent.id, kind: "VARIANT" });
     await inTenant(t, () => service.update(other.id, { parentProductId: null } as never));
     expect(await fresh(other.id)).toMatchObject({ parentProductId: null, kind: "STANDARD" });
+  });
+
+  it("a RAW cross-tenant link (written around the service) is never followed: findOne, the list and the scan lookup return nothing foreign", async () => {
+    const mine = await seedTenant("rawmine");
+    const theirs = await seedTenant("rawtheirs");
+    const code = RUN_SUFFIX.toUpperCase();
+    const theirParent = await mk(theirs, "Their Family", { sku: `RAWP${code}` });
+    const myChild = await mk(mine, "My Child", { sku: `RAWC${code}` });
+    const myParent = await mk(mine, "My Family", { sku: `RAWM${code}` });
+    const theirStray = await mk(theirs, "Their Stray", { sku: `RAWS${code}` });
+    // The links are written with the unscoped client, bypassing every service check: one product of
+    // this tenant under a parent of the other, and one product of the other under a parent of this one.
+    await prisma.product.update({
+      where: { id: myChild.id },
+      data: { parentProductId: theirParent.id },
+    });
+    await prisma.product.update({
+      where: { id: theirStray.id },
+      data: { parentProductId: myParent.id },
+    });
+
+    try {
+      // findOne: no foreign parent on the child, no foreign variant on the parent
+      const child = await inTenant(mine, () => service.findOne(myChild.id));
+      expect(child.parent).toBeNull();
+      expect(JSON.stringify(child)).not.toContain("Their Family");
+      const parent = await inTenant(mine, () => service.findOne(myParent.id));
+      expect(parent.variants.map((v) => v.id)).not.toContain(theirStray.id);
+
+      // the list (with variants)
+      const list = await inTenant(mine, () =>
+        service.findAll({ includeVariants: true, page: 1, limit: 100 } as never),
+      );
+      const listedChild = list.data.find((r) => r.id === myChild.id);
+      const listedParent = list.data.find((r) => r.id === myParent.id);
+      expect(listedChild?.parent).toBeNull();
+      const listedVariants = (listedParent as { variants?: { id: string }[] } | undefined)
+        ?.variants;
+      expect((listedVariants ?? []).map((v) => v.id)).not.toContain(theirStray.id);
+      expect(JSON.stringify(list)).not.toContain("Their Family");
+      expect(JSON.stringify(list)).not.toContain("Their Stray");
+
+      // the scan lookup
+      const scannedChild = await inTenant(mine, () => service.findByBarcode(`RAWC${code}`));
+      expect(scannedChild.parent).toBeNull();
+      const scannedParent = await inTenant(mine, () => service.findByBarcode(`RAWM${code}`));
+      expect(scannedParent.variants.map((v) => v.id)).not.toContain(theirStray.id);
+    } finally {
+      // Undo the raw links so tenant cleanup does not trip over a row that points into the other tenant.
+      await prisma.product.updateMany({
+        where: { id: { in: [myChild.id, theirStray.id] } },
+        data: { parentProductId: null },
+      });
+    }
   });
 });

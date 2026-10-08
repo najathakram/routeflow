@@ -11,6 +11,8 @@ import {
   assertParentUsable,
   assertValidParent,
   PRODUCT_PARENT_REASONS,
+  tenantSafeParent,
+  tenantSafeParentView,
   type ParentDb,
 } from "./product-parent";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -166,6 +168,32 @@ describe("assertParentUsable (the judgement on a parent row the caller already l
       }
       expect(body).toMatchObject({ code: API_ERROR_CODES.PRODUCT_PARENT_INVALID, reason });
     }
+  });
+});
+
+describe("tenantSafeParent / tenantSafeParentView (read side of the parent rule)", () => {
+  const own = { id: "fam", name: "Family", tenantId: TENANT };
+
+  it("keeps a parent of this tenant, drops one of another tenant, and fails closed when the row carries no tenantId", () => {
+    expect(tenantSafeParent(own, TENANT)).toBe(own);
+    expect(tenantSafeParent({ ...own, tenantId: "other-tenant" }, TENANT)).toBeNull();
+    expect(tenantSafeParent({ id: "fam", name: "Family" }, TENANT)).toBeNull();
+    expect(tenantSafeParent(null, TENANT)).toBeNull();
+    expect(tenantSafeParent(undefined, TENANT)).toBeNull();
+  });
+
+  it("with no tenant context there is nothing to compare against, so the row passes through", () => {
+    expect(tenantSafeParent(own, null)).toBe(own);
+    expect(tenantSafeParent({ ...own, tenantId: "other-tenant" }, undefined)).toEqual({
+      ...own,
+      tenantId: "other-tenant",
+    });
+  });
+
+  it("the view form removes tenantId from what it returns (and returns null for a foreign parent)", () => {
+    expect(tenantSafeParentView(own, TENANT)).toEqual({ id: "fam", name: "Family" });
+    expect(tenantSafeParentView({ ...own, tenantId: "other-tenant" }, TENANT)).toBeNull();
+    expect(own.tenantId).toBe(TENANT); // the input row is not mutated
   });
 });
 
@@ -372,6 +400,49 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       expect(result.succeeded).toEqual([]);
       expect(result.failed[0]).toMatchObject({ id: "fam" });
       expect(result.failed[0].reason).toMatch(/own parent/);
+    });
+  });
+
+  describe("reads never follow a link into another tenant (defence in depth for a pre-existing link)", () => {
+    const FOREIGN_PARENT = { id: "foreign", name: "Other Tenant Family", tenantId: "other-tenant" };
+    const OWN_PARENT = { id: "fam", name: "Own Family", portalVisible: true, tenantId: TENANT };
+
+    it("findOne: a parent of another tenant comes back null, an own parent is kept, and the variants include is tenant-scoped", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, parent: FOREIGN_PARENT });
+      const foreign = await service.findOne("prod-1");
+      expect(foreign.parent).toBeNull();
+      expect(JSON.stringify(foreign)).not.toContain("Other Tenant Family");
+      const include = prisma.product.findUnique.mock.calls[0][0].include;
+      expect(include.variants.where).toEqual({ tenantId: TENANT });
+
+      prisma.product.findUnique.mockResolvedValue({ ...PRODUCT, parent: OWN_PARENT });
+      const own = await service.findOne("prod-1");
+      expect(own.parent).toEqual(OWN_PARENT);
+    });
+
+    it("findAll: the parent summary of another tenant is null, an own one keeps its shape WITHOUT tenantId, and the variants include is tenant-scoped", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...PRODUCT, id: "a", parent: FOREIGN_PARENT },
+        { ...PRODUCT, id: "b", parent: OWN_PARENT },
+      ]);
+      prisma.product.count.mockResolvedValue(2);
+      const result = await service.findAll({ includeVariants: true, page: 1, limit: 20 } as never);
+      expect(result.data[0].parent).toBeNull();
+      expect(result.data[1].parent).toEqual({ id: "fam", name: "Own Family", portalVisible: true });
+      const include = prisma.product.findMany.mock.calls[0][0].include;
+      expect(include.parent.select).toMatchObject({ tenantId: true });
+      expect(include.variants.where).toEqual({ isActive: true, tenantId: TENANT });
+    });
+
+    it("the scan lookup: a parent of another tenant comes back null and the variants include is tenant-scoped", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...PRODUCT, barcode: "BC-1", barcodes: [], parent: FOREIGN_PARENT },
+      ]);
+      const result = await service.findByBarcode("BC-1");
+      expect(result.parent).toBeNull();
+      expect(JSON.stringify(result)).not.toContain("Other Tenant Family");
+      const include = prisma.product.findMany.mock.calls[0][0].include;
+      expect(include.variants.where).toEqual({ isActive: true, tenantId: TENANT });
     });
   });
 });
