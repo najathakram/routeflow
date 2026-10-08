@@ -38,15 +38,26 @@ matches no tenant (a typo protects nothing).
 ## What the guard does
 
 - Multi-tenant writers skip protected tenants and print a count per arm.
-- Single-target writers (the fresh-start wipe, the b294 apply, the subscription reconciliation)
-  refuse a protected tenant in every mode. An owner-approved override needs all of:
-  `--allow-protected <tenantId>`, `--backup-taken`, a real terminal on **both** stdin and stdout,
-  and the typed phrase `ALLOW PROTECTED <tenantId>`. The phrase has no argv or environment form.
+- Single-target writers (the fresh-start wipe, the b294 apply, the subscription reconciliation,
+  the Stripe test-id purge) refuse a protected tenant in every mode. An owner-approved override
+  needs all of: `--allow-protected <tenantId>`, `--backup-taken`, a real terminal on **both**
+  stdin and stdout, and the typed phrase `ALLOW PROTECTED <tenantId>`. The phrase has no argv or
+  environment form. The flag is per tenant and repeatable; there is no bulk form.
+- `publish-and-repin.mjs --apply --live` only ADDS grants across every production tenant, so it
+  takes ONE confirmation for the whole run: it prints the number of protected tenants per arm
+  (never a slug), then needs `--backup-attested` and the typed phrase
+  `ALLOW PROTECTED ADDITIVE <count>`. A non-terminal run refuses.
 - `--allow-paying-tenant` and `--confirm-paying` are retired and are unknown arguments.
+- `scripts/repair-integrity.mjs` is retired: it refuses to connect (only `--list` still runs).
+- Approved test tenants (`test`, `qa-*`, `e2e-*`, `ux-audit-*`, the approved demo/e2e tenants) never
+  need an override.
 - `apps/api/src/common/scripts-live-target-guard.spec.ts` fails the build when a script that
   opens a database connection neither calls the guard nor is on its exempt list with a reason.
 
 ## Reserved slugs
 
-Self-signup and platform-admin create answer 400 for the test-tenant slug patterns, so a real
-tenant can never be created on a slug the test allow-lists key on.
+Public self-signup (`/public/tenants/register`) answers 400 for the test-tenant slug patterns
+(`test`, `qa-*`, `e2e-*`, `ux-audit-*` and the approved test tenants), so a real tenant can never be
+created on a slug the test allow-lists key on, and the availability check reports them taken.
+Platform-admin create still allows them (a super admin may create a test tenant on purpose); the
+create form and the API response flag them: "This will be a TEST tenant".
