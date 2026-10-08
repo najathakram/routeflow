@@ -764,8 +764,8 @@ export function ProductCreateModal({
                 {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
                   form.unitsPerBox === String(initialUnitsPerBox) && (
                     <p className="mt-0.5 text-[11px] text-navy/70">
-                      Suggested from the invoice line ({initialUnitsPerBox} per box) — verify before
-                      saving.
+                      Suggested from the invoice line ({initialUnitsPerBox} per {w.pack.lower}) —
+                      verify before saving.
                     </p>
                   )}
               </div>

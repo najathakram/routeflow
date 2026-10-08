@@ -43,7 +43,12 @@ function displayLiterals(src: string): string[] {
   for (const m of code.matchAll(/`((?:[^`\\]|\\.)*)`/g)) {
     for (const part of m[1].split(/\$\{[^}]*\}/)) add(part);
   }
-  for (const m of code.matchAll(/>([^<>{}=]+)</g)) add(m[1]);
+  // JSX text runs, including runs that hold `{…}` expressions: scan the literal segments between
+  // the tags and the braces ("{n} per box" must be caught). `=>` arrows are not tag closers.
+  for (const m of code.matchAll(/(?<!=)>([^<>]*)</g)) {
+    const text = m[1].replace(/\{[^{}]*\}/g, "\u0000").replace(/\{[^{}]*\}/g, "\u0000");
+    for (const part of text.split("\u0000")) if (!/[=;]/.test(part)) add(part);
+  }
   return out;
 }
 
@@ -176,7 +181,16 @@ const KEEP: Array<{ file: string; mustContain: string[] }> = [
     mustContain: ['(["case", "unit"] as const)'],
   },
   { file: `${D}orders/[id]/page.tsx`, mustContain: ['"case"'] },
-  { file: `${W}components/PriceHistory.tsx`, mustContain: ['"case"'] },
+  {
+    file: `${W}components/PriceHistory.tsx`,
+    mustContain: ['"case"', 'v === "box" || v === "cases" || v === "boxes" ? "case" : v'],
+  },
+  {
+    file: `${D}products/[id]/ProductUnitsCard.tsx`,
+    mustContain: ['placeholder="e.g. Case"', "Add a Case or Pallet"],
+  },
+  { file: `${D}products/[id]/page.tsx`, mustContain: ['label="Case unit of measure"'] },
+  { file: `${W}components/ProductCreateModal.tsx`, mustContain: ["Case unit of measure"] },
   {
     file: `${D}invoices/new/page.tsx`,
     mustContain: ['"case" | "unit"', 'aria-label="Unit price"'],

@@ -76,7 +76,7 @@ export function PriceEditor({
   // #2696 (d): the loose-units field is opt-in ("+ units"); shown whenever pieces > 0 regardless.
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
-  const w = unitWords(li);
+  const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   const boxed = !!li.unitsPerBox;
   // The row labels the price "{Pack} price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
@@ -362,7 +362,9 @@ export function PriceEditor({
               ${lineTotal.toFixed(2)}
             </p>
             {perPiece != null && (
-              <p className="text-[11px] text-navy/50">${perPiece.toFixed(2)} / piece</p>
+              <p className="text-[11px] text-navy/50">
+                ${perPiece.toFixed(2)} / {w.base.lower}
+              </p>
             )}
           </div>
           <Button type="button" onClick={onClose}>

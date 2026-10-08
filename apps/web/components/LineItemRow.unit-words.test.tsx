@@ -84,7 +84,7 @@ describe("LineItemRow unit words: T-V1 ladder line", () => {
 
 describe("LineItemRow unit words: tenant words", () => {
   it("flows a custom pack and base word through every label", () => {
-    renderRow({ packLabel: "Crate", baseUnitLabel: "Bottle", boxes: 2, pieces: 3, qty: 27 });
+    renderRow({ packLabel: "Crate", baseLabel: "Bottle", boxes: 2, pieces: 3, qty: 27 });
     expect(screen.getByText("Crate price:")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Crate" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bottle" })).toBeInTheDocument();

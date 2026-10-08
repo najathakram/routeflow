@@ -56,7 +56,7 @@ describe("PriceEditor unit words", () => {
   });
 
   it("a long tenant word shows 11 characters plus a dot in the pill, full word in aria-label", () => {
-    setup(boxed({ packLabel: "Shrinkwrapped tray", baseUnitLabel: "Sachet" }));
+    setup(boxed({ packLabel: "Shrinkwrapped tray", baseLabel: "Sachet" }));
     const pill = screen.getByRole("button", { name: "Shrinkwrapped tray" });
     expect(pill).toHaveTextContent("Shrinkwrapp.");
     expect(pill).toHaveAttribute("title", "Shrinkwrapped tray");

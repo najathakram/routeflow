@@ -30,7 +30,7 @@ export interface LineItemRowItem {
   unit: string;
   /** U-3a: the tenant's own pack / loose-item words; null/absent = Box / Piece. */
   packLabel?: string | null;
-  baseUnitLabel?: string | null;
+  baseLabel?: string | null;
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
@@ -207,7 +207,7 @@ export function LineItemRow({
 }: LineItemRowProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
-  const w = unitWords(li);
+  const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   const historyButton = customerPriceHistory && !li.isUnlisted && (
     <PriceHistoryButton
       customerId={customerPriceHistory.customerId}
@@ -350,7 +350,7 @@ export function LineItemRow({
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
-              ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
+              ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / {w.base.lower}
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
