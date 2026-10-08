@@ -1,9 +1,11 @@
+import { unitNameKey } from "@routeflow/pricing";
+
 /**
- * The unit-name comparison key: NFC, then trim, then case-fold. The ONE normaliser for the unit API and
- * everything that compares a unit name to a pack word or level label. Literal copy of
- * `unitNameKey` in `packages/types/piece-synonyms.ts`, pinned equal by the parity spec.
+ * The unit-name comparison key (NFC, then trim, then case-fold) is `unitNameKey` from
+ * `@routeflow/pricing`, the ONE implementation (the API imports pricing at runtime; it cannot import
+ * `@routeflow/types`). Re-exported here so every unit module reaches it from one place.
  */
-export const unitNameKey = (name: string): string => name.normalize("NFC").trim().toLowerCase();
+export { unitNameKey };
 
 /**
  * The words that name the smallest unit ("Piece" is always there), so no tenant unit may carry one.

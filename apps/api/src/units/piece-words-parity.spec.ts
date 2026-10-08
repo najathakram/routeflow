@@ -4,7 +4,7 @@ import {
   unitNameKey as sharedUnitNameKey,
 } from "../../../../packages/types/piece-synonyms";
 import { PIECE_SYNONYMS, isPieceSynonym, unitNameKey } from "./piece-words";
-import { PIECE_LABEL } from "@routeflow/pricing";
+import { PIECE_LABEL, unitNameKey as pricingUnitNameKey } from "@routeflow/pricing";
 
 describe("piece words: the API copy equals the shared list", () => {
   it("lists the same words in the same order", () => {
@@ -51,7 +51,10 @@ describe("piece words: the API copy equals the shared list", () => {
       ["", ""],
       ["   ", ""],
     ];
-    it.each(TABLE)("%j -> %j in the API copy AND the shared helper", (input, key) => {
+    it("the API uses pricing's implementation itself (one helper, no second copy)", () => {
+      expect(unitNameKey).toBe(pricingUnitNameKey);
+    });
+    it.each(TABLE)("%j -> %j in pricing's helper AND the types copy", (input, key) => {
       expect(unitNameKey(input)).toBe(key);
       expect(sharedUnitNameKey(input)).toBe(key);
     });
