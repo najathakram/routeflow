@@ -497,6 +497,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── Settings search (settings-search.spec.ts): carrier / low stock / clear at 1440 and 390. READ-ONLY.
+    {
+      name: "settings-search",
+      testMatch: /settings-search\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
