@@ -32,6 +32,7 @@ import { ReturnsModule } from "../returns/returns.module";
 // WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
 import { PolicyModule } from "../policy/policy.module";
 import { PolicyOversellReader } from "./policy-oversell-reader";
+import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 // SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
@@ -80,6 +81,7 @@ import { StorageModule } from "../storage/storage.module";
     OrdersService,
     ChangeRequestsService,
     PolicyOversellReader,
+    BuyerBackorderViewResolver,
     CounterSaleService,
     PickupCompleteService,
     WalkInCustomerService,
@@ -87,6 +89,6 @@ import { StorageModule } from "../storage/storage.module";
     OrderBatchShipService,
     PackingSlipService,
   ],
-  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
+  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader, BuyerBackorderViewResolver],
 })
 export class OrdersModule {}

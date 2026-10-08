@@ -22,8 +22,23 @@ export function assertNotWalkIn(customer: { isWalkIn?: boolean | null } | null |
  * so the filter is the explicit null-or-false (Prisma's `not: true` drops NULL rows) and rides in `AND`,
  * because `OR` is already the search clause's key. Mutates and returns `where`.
  */
-export function excludeWalkIn<T extends { AND?: unknown }>(where: T): T {
-  const and = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : [];
-  where.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
+export function excludeWalkIn<T extends object>(where: T): T {
+  const w = where as { AND?: unknown };
+  const and = Array.isArray(w.AND) ? w.AND : w.AND ? [w.AND] : [];
+  w.AND = [...and, { OR: [{ isWalkIn: null }, { isWalkIn: false }] }];
   return where;
+}
+
+/**
+ * The walk-in customer's sign-in email is fixed: update() refuses a CHANGED `email` (the only login-related
+ * field UpdateCustomerDto carries) before any write. An unchanged value resent by the edit form passes.
+ * Other fields stay editable.
+ */
+export function assertWalkInLoginUntouched(
+  existing: { isWalkIn?: boolean | null; email?: string | null },
+  dto: { email?: string | null },
+): void {
+  if (existing.isWalkIn !== true || dto.email === undefined) return;
+  const norm = (e: string | null | undefined) => (e ?? "").trim().toLowerCase();
+  if (norm(dto.email) !== norm(existing.email)) assertNotWalkIn(existing);
 }

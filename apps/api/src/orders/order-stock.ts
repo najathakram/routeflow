@@ -4,6 +4,13 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
 import { linePieceQty } from "./line-piece-qty";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { saleMarkers } from "./backorder-marker";
+import {
+  applyCarriedMarkers,
+  applyEditMarkers,
+  resetMarkers,
+  writeSaleMarkers,
+} from "./backorder-marker-writes";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -30,6 +37,14 @@ export interface OrderStockEvent {
 
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
 
+/**
+ * OOS PR2 (SA-714 R4): what a CUSTOMER is told when an order is refused for stock. Fixed copy, no
+ * product names and NO stock numbers (the old message leaked "available: N" to a buyer). Staff and
+ * drivers keep the numbers.
+ */
+export const CUSTOMER_INSUFFICIENT_STOCK_MESSAGE =
+  "Some items aren't available in the amount you asked for. Lower the quantity or remove them, then try again.";
+
 /** A stock helper's parameters after `deps`: what OrdersService's thin delegators take. */
 export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
 
@@ -46,13 +61,31 @@ export interface StockLineUnits {
   unitsPerBox?: unknown;
   unitLabel?: unknown;
 }
-export type StockLine = StockLineUnits & { productId: string; qty: any };
+/**
+ * `id` (a row that already exists: promotion, template cron, reopen) and `position` feed the SA-714
+ * backorder marker only; they never touch the stock arithmetic.
+ */
+export type StockLine = StockLineUnits & {
+  productId: string;
+  qty: any;
+  id?: string;
+  position?: number | null;
+};
 /** Spread into an `orderItem.findMany` select so a settle caller hands over the unit fields. */
 export const STOCK_LINE_UNIT_SELECT = {
   boxes: true,
   pieces: true,
   unitsPerBox: true,
   unitLabel: true,
+} as const;
+/** A sale line that already has a row (promotion, reopen): its units plus `id`/`position` for the marker. */
+export const STOCK_SALE_LINE_SELECT = {
+  id: true,
+  productId: true,
+  qty: true,
+  deliveredQty: true,
+  position: true,
+  ...STOCK_LINE_UNIT_SELECT,
 } as const;
 /** The held-line select a cancel/demote settle reads: the line, its delivery, and its unit fields. */
 export const STOCK_SETTLE_SELECT = {
@@ -94,9 +127,10 @@ export async function decrementStockForSale(
   tx: any,
   stockLines: StockLine[],
   allowOversell: boolean,
-  event: OrderStockEvent,
-): Promise<void> {
-  if (stockLines.length === 0) return;
+  // `customerFacing`: the caller is a buyer, so a refusal carries the fixed copy and no numbers.
+  event: OrderStockEvent & { customerFacing?: boolean },
+): Promise<Map<StockLine, number>> {
+  if (stockLines.length === 0) return new Map();
   const productIds = stockLines.map((li) => li.productId);
   // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
   await tx.$executeRaw`
@@ -133,9 +167,29 @@ export async function decrementStockForSale(
     if (allowOversell) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
-      throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+      throw new ConflictException({
+        code: API_ERROR_CODES.INSUFFICIENT_STOCK,
+        message: event.customerFacing
+          ? CUSTOMER_INSUFFICIENT_STOCK_MESSAGE
+          : `Insufficient stock: ${oosItems.join("; ")}`,
+      });
     }
   }
+
+  // SA-714 R1 / SA-716: SET each line's backorder marker from THIS decrement's own result, from the
+  // pre-decrement locked stock, in this tx. A line with a row is written now; a new line's value is
+  // returned for the caller's nested create (informational only, nothing else reads it).
+  const pending = await writeSaleMarkers(
+    tx,
+    saleMarkers({
+      lines: stockLines,
+      packByProduct: new Map(lockedProducts.map((lp: any) => [lp.id, lp.unitsPerBox])),
+      availableByProduct: new Map(
+        lockedProducts.map((lp: any) => [lp.id, Number(lp.currentStock)]),
+      ),
+      allowOversell,
+    }),
+  );
 
   // Decrement stock atomically while the lock is held. For operator-initiated
   // overselling, this lets currentStock go negative — the inventory page can
@@ -184,6 +238,7 @@ export async function decrementStockForSale(
       performedById: event.performedById,
     });
   }
+  return pending;
 }
 
 /** SA-696: the coded 409 for ANY non-zero delta of an order with the carrier (a reduction wins a mix). */
@@ -447,7 +502,15 @@ export async function settleStockForEdit(
    * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
-  opts?: { allowOversell?: boolean; blockCredits?: boolean; lineIdentity?: LineIdentity },
+  opts?: {
+    allowOversell?: boolean;
+    blockCredits?: boolean;
+    lineIdentity?: LineIdentity;
+    /** SA-716: "set" for a re-decrement (reopen); the default edit ADJUSTS the backorder marker. */
+    markerMode?: "adjust" | "set";
+    /** SA-716 M2: held markers captured before a recreate-mode create-merge fold (product + pack group). */
+    markerCarry?: ReadonlyMap<string, number>;
+  },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -533,7 +596,20 @@ export async function settleStockForEdit(
     return d == null || round3(d.fixed) !== 0 || round3(d.perPack) !== 0;
   });
   const touched = opts?.blockCredits ? [...new Set([...rawTouched, ...effTouched])] : effTouched;
+  // SA-716 M2: the create-merge fold recreated every line; its carried markers must survive a zero delta.
+  const carryOnly = () =>
+    opts?.markerCarry
+      ? applyCarriedMarkers(db, {
+          carry: opts.markerCarry,
+          allowOversell: false,
+          products: [],
+          deltas: new Map(),
+          finalLines,
+          piecesOf: toPieces,
+        })
+      : undefined;
   if (touched.length === 0) {
+    await carryOnly();
     if (unlistedDeltas.length > 0) carrierLineSetRefusal(unlistedDeltas);
     return;
   }
@@ -575,8 +651,10 @@ export async function settleStockForEdit(
   // from the RAW deltas + the unlisted lines', BEFORE the effective delta can short-circuit (SA-703 M5).
   if (opts?.blockCredits && rawDeltas.length + unlistedDeltas.length > 0)
     carrierLineSetRefusal([...rawDeltas, ...unlistedDeltas]);
-  if (deltas.size === 0) return;
+  if (deltas.size === 0) return carryOnly();
 
+  const mayOversell =
+    opts?.allowOversell ?? (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER);
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
     .map(([productId, delta]) => ({
@@ -606,8 +684,6 @@ export async function settleStockForEdit(
       }
     }
     if (violations.length > 0) {
-      const mayOversell =
-        opts?.allowOversell ?? (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER);
       if (mayOversell) {
         // Operators/admins may oversell — matches create()'s warn-only path.
         // Unlike the old validate-only guard, this does NOT return: the
@@ -621,6 +697,13 @@ export async function settleStockForEdit(
         );
       } else {
         const first = violations[0];
+        // A buyer gets the fixed copy and no numbers; staff and drivers keep them.
+        if (user?.role === UserRole.CUSTOMER) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.INSUFFICIENT_STOCK,
+            message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+          });
+        }
         throw new ConflictException({
           code: API_ERROR_CODES.INSUFFICIENT_STOCK,
           message:
@@ -633,6 +716,29 @@ export async function settleStockForEdit(
       }
     }
   }
+
+  // SA-714 R1 / SA-716: the backorder marker, from the stock this edit saw (locked, pre-write). A
+  // recreate-mode edit has no matching line ids, so it writes none (B1167: the marker is lost).
+  if (opts?.lineIdentity === "recreated") {
+    if (opts.markerCarry)
+      await applyCarriedMarkers(db, {
+        carry: opts.markerCarry,
+        allowOversell: mayOversell,
+        products,
+        deltas,
+        finalLines,
+        piecesOf: toPieces,
+      });
+  } else
+    await applyEditMarkers(db, {
+      mode: opts?.markerMode ?? "adjust",
+      allowOversell: mayOversell,
+      products,
+      deltas,
+      heldLines,
+      finalLines,
+      piecesOf: toPieces,
+    });
 
   // Apply the BOOKED delta (B1050): a rise decrements currentStock by it; a fall increments back what
   // the per-line `max(qty, deliveredQty)` floor frees. Delivered goods never come back through an edit —
@@ -681,21 +787,26 @@ export async function restoreStockForReopen(
   tx: any,
   orderId: string,
   cancelledLines: Array<
-    StockLineUnits & { productId: string | null; qty: any; deliveredQty?: any }
+    StockLineUnits & { id?: string; productId: string | null; qty: any; deliveredQty?: any }
   >,
 ): Promise<void> {
   if (cancelledLines.length === 0) return;
-  // B1050: held and requested are the SAME lines, matched by index (the cancelled rows carry no
-  // usable id here), so each books max(qty, delivered) against the delivered floor it already holds.
+  // B1050: held and requested are the SAME lines, matched by id (index when the caller read none), so each books max(qty, delivered) against the delivered floor it already holds.
   const held = cancelledLines.map((li, i) => {
     const delivered = Number(li.deliveredQty ?? 0);
-    return { ...li, id: `reopen:${i}`, qty: delivered, deliveredQty: delivered, status: "PENDING" };
+    const id = li.id ?? `reopen:${i}`;
+    return { ...li, id, qty: delivered, deliveredQty: delivered, status: "PENDING" };
   });
   const requested = cancelledLines.map((li, i) => ({
     ...li,
-    id: `reopen:${i}`,
+    id: li.id ?? `reopen:${i}`,
     qty: Number(li.qty),
   }));
+  // SA-716: a reopen SETS every re-taken line, including a product whose stock delta is 0.
+  await resetMarkers(
+    tx,
+    cancelledLines.flatMap((li) => (li.id ? [li.id] : [])),
+  );
   await settleStockForEdit(
     deps,
     tx,
@@ -704,5 +815,6 @@ export async function restoreStockForReopen(
     requested,
     undefined,
     { notes: "UNCANCEL" },
+    { markerMode: "set" }, // SA-716: a reopen is a fresh sale of the re-taken lines — its own value
   );
 }

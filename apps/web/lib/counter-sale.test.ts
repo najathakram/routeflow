@@ -30,6 +30,7 @@ import {
   quickTenderOptions,
   readAutoPrint,
   heldAttemptKey,
+  clearHeldAttempt,
   readHeldAttempt,
   writeHeldAttempt,
   validatePayment,
@@ -464,6 +465,13 @@ describe("counterSaleErrorCopy: 409 first-attempt codes say what to do", () => {
       }),
     ).toBe("That sale reference was already used. Ring the sale again.");
   });
+  it("B1209: 400 COUNTER_TENDER_SHORT is fixed copy and a DEFINITIVE refusal (nothing was written, the key is released)", () => {
+    const err = {
+      response: { status: 400, data: { code: "COUNTER_TENDER_SHORT", message: "raw server text" } },
+    };
+    expect(counterSaleErrorCopy(err)).toBe("A walk-in customer must pay the full balance.");
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(true);
+  });
 });
 
 describe("held attempt: minimal customer, validated read", () => {
@@ -524,10 +532,14 @@ describe("held attempt: minimal customer, validated read", () => {
       "missing key",
       () => window.sessionStorage.setItem(SK, JSON.stringify(snap({ key: undefined }))),
     ],
-  ])("%s -> corrupt, and the entry is removed", (_n, seed) => {
+  ])("%s -> corrupt, payload dropped, an unknown marker kept", (_n, seed) => {
     seed();
     expect(readHeldAttempt(SK)).toBe("corrupt");
-    expect(window.sessionStorage.getItem(SK)).toBeNull();
+    expect(JSON.parse(window.sessionStorage.getItem(SK) as string)).toEqual({ state: "unknown" });
+    // a second read still says corrupt (stays locked) until the cashier discards
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+    clearHeldAttempt(SK);
+    expect(readHeldAttempt(SK)).toBeNull();
   });
 
   it("heldAttemptKey is unchanged", () => {

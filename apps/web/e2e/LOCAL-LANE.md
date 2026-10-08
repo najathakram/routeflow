@@ -87,6 +87,9 @@ Every check is appended to `local-assets/proof-stack.jsonl`.
 | `cancelled-edit-banner`          | `27-cancelled-edit-banner.spec.ts`          | Edit-window UX truth (REG-B10) — this spec is its only proof, no jest half.                                                                                                                                                                                              |
 | `lite-locked-route-ux`           | `48-lite-locked-route-ux.spec.ts`           | Locked-route UX truth (B449) — a LITE tenant never mounts a gated page and gets exactly one correctly-worded notice. Fixture (`qa-lite`) is standing infra seeded by `e2e-seed.js`, so — unlike `lite-plan-gate` (spec 47) — this project does NOT self-skip. Read-only. |
 | `shell-skip-link-motion`         | `66-shell-skip-link-motion.spec.ts`         | Dashboard shell (PKG-6): skip link leaves no hash/history entry, the rail aside's reduced-motion pin, operator nav, collapse persistence, mobile drawer, g-prefix shortcuts. Read-only.                                                                                  |
+| `customers-list-ux`              | `65-customers-list-ux.spec.ts`              | Customers list at 390/1440 (PKG-1: name link, `$0.00`, hidden-below-sm columns + secondary line, empty-state fit). Layout proof RTL cannot give; response decorated in flight, read-only.                                                                                |
+| `dashboard-cls`                  | `69-dashboard-cls.spec.ts`                  | /dashboard CLS < 0.1 at 1440 and 390 with every read delayed 2 s (PKG-8), on two tenants: e2e-routeflow (routes ON) and qa-lite (no routes); no empty-state copy while loading. Read-only.                                                                               |
+| `scan-did-you-mean`              | `70-scan-did-you-mean.spec.ts`              | B1219: a single fuzzy scan match asks "Did you mean ...?" in Create Order (no line until Add; Cancel adds nothing) at 1440/768/390. Read-only: nothing submitted.                                                                                                        |
 | `create-order-customer-keyboard` | `68-create-order-customer-keyboard.spec.ts` | Create Order (PKG-4): keyboard-only customer pick, Tab parity, Escape closes only the list, Change customer + Undo; 1440 + 390. Read-only (never dismisses a started order).                                                                                             |
 
 Projects needing `PLAYWRIGHT_SA_*` (`super-admin`, `impersonation-signout`) are excluded from
@@ -204,3 +207,28 @@ needed, and `e2e-routeflow` holds exactly one `ACTIVE` `TENANT_ADMIN` again.
 If your local compose Postgres still has an `e2e_impersonated_admin` row from an earlier seed
 run (before this revert), it's harmless but stale — `npm run local:reset` wipes the volumes and
 drops it along with the rest of the DB (not run here; do so if you want a clean slate).
+
+## Spec 71 (`counter-ship-handoff`): local lane only, and why
+
+`71-counter-ship-handoff.spec.ts` is on the `local:e2e` allow-list but is **never** part of the post-deploy / nightly / CI
+runs. It changes the tenant's fulfilment config: its `beforeAll` applies the `in_store_shipping_retailer` business profile as
+the local super-admin and its `afterAll` (also after a failure) writes the tenant's `TenantFeatureConfig` +
+`TenantFeatureOverride` rows back exactly as read. Because those workflows run `npx playwright test` with no project
+filter, `playwright.config.ts` registers the project only when `PLAYWRIGHT_BASE_URL` is local and `GITHUB_ACTIONS` is not
+`true`; the spec also calls `assertLocalFulfilmentTarget` (localhost web + API, provably local DB, approved test tenant)
+before any write and throws otherwise. It needs the local super-admin: run `npm run local:sa` once after `local:up`
+(credentials stay in the gitignored `local-assets/local-sa.env`, never in a committed file).
+
+Ordering and teardown: the project is registered **last** in `playwright.config.ts` and listed **last** in `local:e2e`, so
+nothing else runs against the tenant while its fulfilment config is changed. The teardown restores the DB rows, then polls
+the operator's `GET /tenants/me/features` (not the DB) for up to 60 s until the API reads the pre-run modes and capability
+back (the API caches modes briefly), and fails with the observed and expected values if it never does.
+
+## Spec 72 (`counter-pos-stack`): same lane, same rules as 71
+
+`72-counter-pos-stack.spec.ts` (the POS counter smoke: typed quantity, note, remove + Undo, tier re-price, 390 / 768 / 1440
+layout, Complete & show receipt) is on the `local:e2e` allow-list right after 71 and is registered under the same local-only
+condition. It reuses 71's helper to turn the counter on and restores the tenant's fulfilment config in `afterAll`; it needs
+`npm run local:sa` for the same reason. It creates a throwaway tier-2 customer and a throwaway product (tier-2 price differs)
+on the approved test tenant through the operator API and deletes both again, so the "Prices updated for ... (<tier>)" note
+is always asserted, never skipped. It rings one real counter sale on that tenant.

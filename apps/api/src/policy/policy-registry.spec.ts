@@ -12,6 +12,7 @@ import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { FLAG_KEYS } from "../billing/plan-catalog.constants";
 import {
   POLICY_PILOT_PENDING_ALLOWLIST,
+  BUYER_BACKORDER_VISIBILITY_MODES,
   BUYER_OVERSELL_MODES,
   POLICY_REGISTRY,
   policyJsonSchema,
@@ -148,6 +149,37 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
     expect(flagged.filter((k) => !POLICY_PILOT_PENDING_ALLOWLIST.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PHASE1_PILOTS.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !flagged.includes(k))).toEqual([]);
+  });
+});
+
+describe("orders.buyerBackorderVisibility (OOS PR2)", () => {
+  const e = ENTRIES.find((x) => x.key === "orders.buyerBackorderVisibility");
+
+  it('is registered as an internal enum defaulting to "show" (today\'s truthful behaviour)', () => {
+    expect(e).toBeDefined();
+    expect(e?.area).toBe("orders");
+    expect(e?.kind).toBe("enum");
+    expect(e?.default).toBe("show");
+    expect(BUYER_BACKORDER_VISIBILITY_MODES).toEqual(["show", "hide"]);
+  });
+
+  it("allows the TENANT scope only (a CUSTOMER or CATEGORY write is refused)", () => {
+    expect([...(e?.scopes ?? [])]).toEqual(["TENANT"]);
+  });
+
+  it("is server-side only: clientVisible is false so it never reaches `modes`", () => {
+    expect(e?.clientVisible).toBe(false);
+  });
+
+  it("accepts show/hide and rejects everything else", () => {
+    for (const ok of ["show", "hide"]) expect(e?.schema.safeParse(ok).success).toBe(true);
+    for (const bad of ["Show", "HIDE", "yes", "on", null, 1, true, undefined, ""])
+      expect(e?.schema.safeParse(bad).success).toBe(false);
+  });
+
+  it("is not pilotPending (the buyer catalog reads it)", () => {
+    expect(e?.pilotPending).toBeUndefined();
+    expect(POLICY_PILOT_PENDING_ALLOWLIST).not.toContain("orders.buyerBackorderVisibility");
   });
 });
 

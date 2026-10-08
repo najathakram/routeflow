@@ -106,6 +106,7 @@ import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable } from "./sale-replay-guard";
 import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   otherOrderConflict,
@@ -160,13 +161,14 @@ import {
   decrementStockForSale,
   restoreStockForReopen,
   settleStockForEdit,
-  STOCK_LINE_UNIT_SELECT,
+  STOCK_SALE_LINE_SELECT,
   STOCK_SETTLE_SELECT,
   type StockArgs,
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -175,6 +177,7 @@ import {
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
+import { captureMarkerCarry } from "./backorder-marker-writes";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
@@ -387,8 +390,6 @@ export class OrdersService implements OnApplicationBootstrap {
       urgent,
       page = 1,
       limit = 20,
-      deliveryDateFrom,
-      deliveryDateTo,
       fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
@@ -432,12 +433,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
     // key at all (every existing order stays visible either way).
     if (fulfillPath) where.fulfillPath = fulfillPath;
-    if (deliveryDateFrom || deliveryDateTo) {
-      where.requestedDeliveryDate = {
-        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
-        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
-      };
-    }
+    Object.assign(where, dateAndShipmentFilters(query));
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().order.findMany({
@@ -853,6 +849,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -1101,6 +1098,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -1554,7 +1552,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
         assertReplaySameCart(existing, dto);
         options.onReplay?.(existing);
-        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
 
@@ -1970,6 +1969,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
+    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -2044,11 +2044,14 @@ export class OrdersService implements OnApplicationBootstrap {
               // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
               // as a non-draft create(), so it calls the identical helper (no
               // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, allowOversell, {
+              const markers = await this.decrementStockForSale(tx, stockLines, allowOversell, {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
+                customerFacing: user.role === UserRole.CUSTOMER,
               });
+              for (const li of stockLines)
+                Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 });
             }
 
             const created = await tx.order.create({
@@ -2131,7 +2134,8 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing) {
               assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
               options.onReplay?.(existing);
-              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
@@ -2188,13 +2192,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
-    // Credit-note intents: store the operator's selection against the FINAL order
-    // id, then settle (a harmless no-op until an invoice exists — settle bails
-    // early when the order has no invoices yet). Short, dedicated Serializable tx
-    // — NOT inside the stock/create transaction above.
-    if (appliedCreditNotes !== undefined) {
-      await this.syncAndSettleOrderCredits(order.id, customerId, appliedCreditNotes);
-    }
+    // Credit-note intents: store the selection against the FINAL order id, then settle (a no-op
+    // until an invoice exists). Short Serializable tx - NOT inside the create transaction above.
+    await this.syncCreateCredits(order.id, customerId, appliedCreditNotes);
 
     return order;
   }
@@ -2472,7 +2472,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const activeItems: Array<StockLineUnits & { productId: string | null; qty: any }> =
               await tx.orderItem.findMany({
                 where: { orderId: id, status: { not: "CANCELLED" } },
-                select: { productId: true, qty: true, ...STOCK_LINE_UNIT_SELECT },
+                select: STOCK_SALE_LINE_SELECT,
               });
             // The Lane R check ran outside this tx: a product added since (a concurrent draft
             // edit) was never judged — roll back (the claim above included) and promote again.
@@ -2486,6 +2486,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId: id,
               notes: "PROMOTE",
               performedById: user.sub,
+              customerFacing: user.role === UserRole.CUSTOMER,
             });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
@@ -2835,7 +2836,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // re-decrements nothing — era consistency, not a regression).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: { productId: true, qty: true, deliveredQty: true, ...STOCK_LINE_UNIT_SELECT },
+          select: STOCK_SALE_LINE_SELECT,
         });
 
         // Revert cancelled line items back to PENDING
@@ -3095,6 +3096,7 @@ export class OrdersService implements OnApplicationBootstrap {
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
+        let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
@@ -3500,6 +3502,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
             lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
@@ -4199,6 +4202,7 @@ export class OrdersService implements OnApplicationBootstrap {
             allowOversell,
             blockCredits: carrierLocked,
             lineIdentity,
+            markerCarry,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -4383,6 +4387,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
+  }
+
+  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
+    if (n === undefined) return;
+    await savedCreditsPending(id, () => this.syncAndSettleOrderCredits(id, cId, n));
   }
 
   /**

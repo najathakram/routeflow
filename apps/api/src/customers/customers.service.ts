@@ -1,4 +1,4 @@
-import { assertNotWalkIn, excludeWalkIn } from "./walk-in-protected";
+import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
@@ -806,11 +806,11 @@ export class CustomersService {
 
   async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
-    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
-    // rather than silently editing a customer nobody can see in the list.
+    // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
     assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
     assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
     assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
@@ -894,7 +894,7 @@ export class CustomersService {
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
     // Customer-facing fields only for the customer themself (common/staff-only-fields.ts).
-    const rows = user.role === UserRole.CUSTOMER ? data.map(toCustomerOrder) : data;
+    const rows = user.role === UserRole.CUSTOMER ? data.map((o) => toCustomerOrder(o)) : data;
     return { data: rows, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
 
@@ -3044,15 +3044,18 @@ export class CustomersService {
   }
 
   async approveBuyerRequest(customerId: string, tenantId: string) {
-    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    const link = await this.prisma.customerLink.findFirst({
+      where: { customerId, tenantId },
+      include: { customer: true },
+    });
     if (!link) throw new NotFoundException("No pending buyer request found");
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
+    assertNotWalkIn(link.customer);
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      // Approving consumes the customer's single link slot — any invite token the pending
-      // row inherited from an INVITED invite is spent and must not outlive the approval.
+      // Approving consumes the link slot: an inherited INVITED invite token is spent with it.
       data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
     });
     return { message: "Buyer connection approved" };
@@ -3064,11 +3067,8 @@ export class CustomersService {
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
-    // A row that still carries a LIVE invite token was an INVITED link a buyer requested
-    // against (the request preserves inviteToken/inviteExpiresAt so the true invitee's
-    // emailed link keeps working). Deleting it would destroy an invite the seller already
-    // sent — revert it to INVITED and drop the requester instead. An expired token is
-    // worthless, so those rows fall through to the delete and free the slot.
+    // A row with a LIVE invite token was an INVITED link a buyer requested against (the request keeps the token
+    // so the invitee's emailed link works): revert it to INVITED and drop the requester. An expired token falls through to the delete.
     const inviteStillLive =
       !!link.inviteToken && (!link.inviteExpiresAt || link.inviteExpiresAt > new Date());
     if (inviteStillLive) {
@@ -3078,11 +3078,8 @@ export class CustomersService {
       });
       return { declined: true };
     }
-    // customerId is @unique on CustomerLink — one link row per customer, ever. A declined
-    // stranger must not permanently occupy that one slot (it would block a future legitimate
-    // invite), so decline DELETES the row rather than marking it DISCONNECTED. DISCONNECTED
-    // stays reserved for severing a previously ACTIVE link. A re-request simply creates a
-    // fresh pending row the seller can decline again.
+    // customerId is @unique on CustomerLink: a declined stranger must not occupy that one slot, so decline DELETES
+    // the row (DISCONNECTED stays reserved for severing an ACTIVE link); a re-request creates a fresh pending row.
     await this.prisma.customerLink.delete({ where: { id: link.id } });
     return { declined: true };
   }

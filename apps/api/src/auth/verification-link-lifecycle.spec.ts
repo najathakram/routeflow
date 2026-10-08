@@ -13,7 +13,7 @@ import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const JWT_CONFIG = {
-  secret: "test-secret",
+  secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
   refreshExpiresIn: "7d",
@@ -74,7 +74,11 @@ describe("verification link lifecycle", () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn((k: string) =>
-              k === "jwt" ? JWT_CONFIG : k === "jwt.secret" ? "test-secret" : "https://app.test",
+              k === "jwt"
+                ? JWT_CONFIG
+                : k === "jwt.secret"
+                  ? "test-jwt-secret-0123456789-abcdefghijklmnop"
+                  : "https://app.test",
             ),
           },
         },
