@@ -37,6 +37,7 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-29-early.md](mobile/landing-2026-09-29-early.md) | Landing 2026-09-29 early (mobile+web): price suffix, buyer bell seller switch, qty width, PO pack labels, applied credits |
 | [mobile/landing-2026-09-29-midday.md](mobile/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday (mobile): OTA runtime 1.2.0, ADD_ITEM retry drop (B795), shared PaymentMethod |
 | [mobile/landing-2026-09-29-late.md](mobile/landing-2026-09-29-late.md) | Landing 2026-09-29 late (mobile): iOS scan-tray price modal sequencing (B901) |
+| [mobile/landing-2026-10-08-w21a.md](mobile/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a (mobile): credits-pending saved order (B1205), neutral scan prompt, oversell visibility |
 | [mobile/landing-2026-10-06-w4-w10.md](mobile/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (mobile): buyer submit key (B1094), types mock mirrors, B1117 gap |
 | [mobile/landing-2026-10-01-w12-w27.md](mobile/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 (mobile): scan level by code, aim box + Hold to scan, credit-note edit UI, `defaultUnitValue` |
 | [mobile/landing-2026-09-30-w9-w11.md](mobile/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (mobile): PO receive stored pack (#2781), socket bulk invalidation pins, M3 sub-lines |
