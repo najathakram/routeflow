@@ -303,14 +303,25 @@ export class UnitsService {
         where: { tenantId, tenantUnitId: id },
         data: { label: newName },
       });
-      const write = async (ids: string[], data: Prisma.ProductUpdateManyMutationInput) => {
-        for (const part of chunks(ids)) {
-          await tx.product.updateMany({ where: { tenantId, id: { in: part } }, data });
-        }
-      };
-      await write(baseIds, { baseUnitLabel: newName });
-      await write(packIds, { packLabel: newName });
-      await write(unitIds, { unit: newName });
+      // Literal `data` on purpose: the Product-write tripwires reject variable or spread data.
+      for (const part of chunks(baseIds)) {
+        await tx.product.updateMany({
+          where: { tenantId, id: { in: part } },
+          data: { baseUnitLabel: newName },
+        });
+      }
+      for (const part of chunks(packIds)) {
+        await tx.product.updateMany({
+          where: { tenantId, id: { in: part } },
+          data: { packLabel: newName },
+        });
+      }
+      for (const part of chunks(unitIds)) {
+        await tx.product.updateMany({
+          where: { tenantId, id: { in: part } },
+          data: { unit: newName },
+        });
+      }
 
       const distinct = new Set<string>([...levelProductIds, ...baseIds, ...packIds, ...unitIds]);
       return { before: unit.name as string, updated, productsUpdated: distinct.size };

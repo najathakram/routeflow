@@ -66,11 +66,7 @@ export function unitErrorMessage(err: unknown, name: string): string {
       ? `Can't rename to ${name}. ${text} already have a ${name}. Change those first.`
       : `Can't rename to ${name}. ${text} already has a ${name}. Change that first.`;
   }
-  if (res?.status === 400) {
-    const m = data.message;
-    const text = Array.isArray(m) ? m[0] : m;
-    if (typeof text === "string" && text) return text;
-  }
+  // A 400 (empty / too long) is caught client-side first; the server text is never shown (B986).
   return SAVE_FAILED;
 }
 

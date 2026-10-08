@@ -64,12 +64,10 @@ describe("unitErrorMessage", () => {
       "Can't rename to Case. Gift Box, Mini Gift Box, Mug and 2 more already have a Case. Change those first.",
     );
   });
-  it("a 400 shows the server's sentence", () => {
-    expect(unitErrorMessage(http(400, { message: "Enter a name." }), "")).toBe("Enter a name.");
-  });
   it("anything else is the fixed save-failed sentence", () => {
     const fixed = "Couldn't save. Your change is still here. Try again.";
     expect(unitErrorMessage(http(500), "Case")).toBe(fixed);
+    expect(unitErrorMessage(http(400, { message: "raw server text" }), "Case")).toBe(fixed);
     expect(unitErrorMessage(new Error("boom"), "Case")).toBe(fixed);
   });
 });
