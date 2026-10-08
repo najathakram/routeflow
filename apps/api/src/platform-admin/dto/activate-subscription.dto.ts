@@ -1,11 +1,19 @@
 import { IsIn, IsInt, IsOptional, IsString, Min } from "class-validator";
 import { TenantPlan } from "@prisma/client";
-import { EXTERNAL_PAYMENT_METHOD_VALUES, type ExternalPaymentMethod } from "@routeflow/types";
 import { SELECTABLE_TENANT_PLANS } from "../../billing/plan-catalog.constants";
 
-// One source with the web forms: packages/types/api/external-payment.ts. Re-exported under the names the api uses.
-export const EXTERNAL_PAYMENT_METHODS = EXTERNAL_PAYMENT_METHOD_VALUES;
-export type { ExternalPaymentMethod };
+// The api never value-imports @routeflow/types (L-072): this literal is pinned set-equal to the web's shared
+// EXTERNAL_PAYMENT_METHOD_VALUES (packages/types/api/external-payment.ts) by activate-subscription.parity.spec.ts.
+export const EXTERNAL_PAYMENT_METHODS = [
+  "ZELLE",
+  "BANK_TRANSFER",
+  "CHECK",
+  "CASH",
+  "WIRE",
+  "OTHER",
+] as const;
+
+export type ExternalPaymentMethod = (typeof EXTERNAL_PAYMENT_METHODS)[number];
 
 export class ActivateSubscriptionDto {
   // GROWTH/SCALE are selectable here as of Phase 0 Task 10 — see SELECTABLE_TENANT_PLANS in
