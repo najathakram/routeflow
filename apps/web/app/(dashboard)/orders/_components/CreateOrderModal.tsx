@@ -884,16 +884,58 @@ export function CreateOrderModal({
   // key, so a wedge scan + Enter still takes handleProductSearchEnter (barcode path).
   const productListOpen =
     !!productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0);
-  const productNav = useListboxNav<any>({
-    items: filteredProducts,
+  // One flat, ordered row list for the listbox: each product, its variants while expanded, then the
+  // trailing "Create new product" row — so every visible option has an id and an Arrow stop.
+  type ProductNavRow =
+    { kind: "product"; p: any } | { kind: "variant"; v: any } | { kind: "create" };
+  const productNavRows: ProductNavRow[] = [];
+  const productRowIndex = new Map<string, number>();
+  const variantRowIndex = new Map<string, number>();
+  for (const p of filteredProducts as any[]) {
+    productRowIndex.set(p.id, productNavRows.length);
+    productNavRows.push({ kind: "product", p });
+    if (p.variants?.length > 0 && expandedParentId === p.id) {
+      for (const v of p.variants) {
+        variantRowIndex.set(v.id, productNavRows.length);
+        productNavRows.push({ kind: "variant", v });
+      }
+    }
+  }
+  const createProductRowIndex = productNavRows.length;
+  productNavRows.push({ kind: "create" });
+  const openCreateProduct = () => {
+    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
+    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
+    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    setCreateProductOpen(true);
+    setProductSearch("");
+    setDebouncedProductSearch("");
+  };
+  /** Expanding/collapsing a parent changes the row count (which resets the highlight): put it back. */
+  const keepHighlightOnRow = React.useRef<number | null>(null);
+  const productNav = useListboxNav<ProductNavRow>({
+    items: productNavRows,
     open: productListOpen,
-    onPick: (p) =>
-      p.variants?.length > 0
-        ? setExpandedParentId(expandedParentId === p.id ? null : p.id)
-        : addPicked(p),
+    onPick: (row) => {
+      if (row.kind === "variant") return addPicked(row.v);
+      if (row.kind === "create") return openCreateProduct();
+      if (row.p.variants?.length > 0) {
+        keepHighlightOnRow.current = productRowIndex.get(row.p.id) ?? null;
+        setExpandedParentId(expandedParentId === row.p.id ? null : row.p.id);
+      } else {
+        addPicked(row.p);
+      }
+    },
     resetKey: productSearch,
     idPrefix: "product-search",
   });
+  const productNavSetHighlight = productNav.setHighlight;
+  React.useEffect(() => {
+    if (keepHighlightOnRow.current !== null) {
+      productNavSetHighlight(keepHighlightOnRow.current);
+      keepHighlightOnRow.current = null;
+    }
+  }, [expandedParentId, productNavSetHighlight]);
 
   const removeLineItem = (tempId: string) => {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
@@ -2011,16 +2053,20 @@ export function CreateOrderModal({
                           {hasVariants &&
                             isExpanded &&
                             p.variants.map((v: any) => {
+                              const vi = variantRowIndex.get(v.id) ?? -1;
                               const variantAdded = lineItems.some((li) => li.productId === v.id);
                               return (
                                 <li key={v.id} role="presentation" className="bg-surface-raised/50">
                                   <button
                                     type="button"
                                     role="option"
-                                    aria-selected={false}
+                                    id={productNav.optionId(vi)}
+                                    aria-selected={vi === productNav.highlight}
+                                    onMouseEnter={() => productNav.setHighlight(vi)}
                                     onClick={() => addPicked(v)}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
+                                      vi === productNav.highlight && "bg-surface-raised",
                                       variantAdded && "opacity-40",
                                     )}
                                   >
@@ -2051,18 +2097,14 @@ export function CreateOrderModal({
                       <button
                         type="button"
                         role="option"
-                        aria-selected={false}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
-                        onClick={() => {
-                          const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-                          setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-                          setCreateProductInitialSku(
-                            looksLikeSku ? debouncedProductSearch.trim() : "",
-                          );
-                          setCreateProductOpen(true);
-                          setProductSearch("");
-                          setDebouncedProductSearch("");
-                        }}
+                        id={productNav.optionId(createProductRowIndex)}
+                        aria-selected={createProductRowIndex === productNav.highlight}
+                        onMouseEnter={() => productNav.setHighlight(createProductRowIndex)}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium",
+                          createProductRowIndex === productNav.highlight && "bg-surface-raised",
+                        )}
+                        onClick={openCreateProduct}
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Create new product

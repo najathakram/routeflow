@@ -31,6 +31,34 @@ const PLAIN = {
   isActive: true,
 };
 
+const PARENT = {
+  id: "p-parent",
+  name: "Sample Juice",
+  sku: "JUICE",
+  unit: "each",
+  pricePerUnit: "0",
+  isActive: true,
+  variants: [
+    {
+      id: "v-1",
+      name: "Sample Juice 1L",
+      variantName: "1L",
+      sku: "J1",
+      unit: "each",
+      pricePerUnit: "3.00",
+    },
+    {
+      id: "v-2",
+      name: "Sample Juice 2L",
+      variantName: "2L",
+      sku: "J2",
+      unit: "each",
+      pricePerUnit: "5.00",
+    },
+  ],
+};
+let mockProducts: unknown[] = [PLAIN];
+
 const CUSTOMERS = [
   {
     id: "c1",
@@ -48,7 +76,7 @@ jest.mock("@/lib/api/customers", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
-  useProducts: () => ({ data: { data: [PLAIN] } }),
+  useProducts: () => ({ data: { data: mockProducts } }),
   useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
 const mockCreateMutate = jest.fn();
@@ -133,6 +161,7 @@ const listbox = () => screen.queryByRole("listbox", { name: "Customers" });
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockProducts = [PLAIN];
   mockCreateError = null;
   mockResolveProductByCode.mockResolvedValue({ notFound: true, archived: false, product: null });
 });
@@ -250,6 +279,43 @@ describe("PKG-4 product search keyboard + Tab parity (F09/F10, K4, wedge guard)"
     await user.tab();
     expect(document.activeElement).toHaveAttribute("role", "option");
     expect(document.activeElement).toHaveTextContent("Sample Cola");
+  });
+});
+
+describe("PKG-4 product search keyboard reaches variants and Create new product", () => {
+  const options = () => screen.getAllByRole("option");
+  const active = () => document.getElementById(prod().getAttribute("aria-activedescendant") ?? "");
+
+  it("ArrowDown walks parent, its expanded variants, then Create new product; each option has an id and only the highlighted one is aria-selected", async () => {
+    mockProducts = [PARENT];
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.type(prod(), "juice");
+    await rowBtn(/Sample Juice/);
+    await user.keyboard("{ArrowDown}{Enter}"); // expands the parent, highlight stays on it
+    await rowBtn(/1L/);
+    expect(active()).toHaveTextContent("Sample Juice");
+    for (const o of options()) expect(o.id).not.toBe("");
+    await user.keyboard("{ArrowDown}");
+    expect(active()).toHaveTextContent("1L");
+    await user.keyboard("{ArrowDown}");
+    expect(active()).toHaveTextContent("2L");
+    await user.keyboard("{ArrowDown}");
+    expect(active()).toHaveTextContent("Create new product");
+    expect(options().filter((o) => o.getAttribute("aria-selected") === "true")).toHaveLength(1);
+    await user.keyboard("{ArrowUp}{ArrowUp}{Enter}");
+    expect(await screen.findAllByTitle("Remove")).toHaveLength(1); // the 1L variant was added
+  });
+
+  it("Enter on the highlighted Create new product row opens the create-product dialog", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.type(prod(), "cola");
+    await rowBtn(/Sample Cola/);
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(active()).toHaveTextContent("Create new product");
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("option", { name: /Create new product/ })).toBeNull();
   });
 });
 
