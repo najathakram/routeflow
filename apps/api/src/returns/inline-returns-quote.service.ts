@@ -290,15 +290,11 @@ export class InlineReturnsQuoteService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
-    const matchingSet = await this.fetchMatchingSet(
-      db,
-      dto.customerId,
-      productIds,
-      productUpbMap,
-      undefined,
-      opts.excludeInvoiceIds,
+    const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap, {
+      excludeInvoiceIds: opts.excludeInvoiceIds,
       sourceOrderId,
-    );
+      withPriorCredits: true, // B905: the pricing set telescopes over what each line already had credited
+    });
 
     const tierByProduct = new Map(
       customerPrices
@@ -368,14 +364,10 @@ export class InlineReturnsQuoteService {
       const cached = lifetimeCache.get(productId);
       if (cached !== undefined) return cached;
       // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
-      const lifeSet = await this.fetchMatchingSet(
-        db,
-        dto.customerId,
-        [productId],
-        productUpbMap,
-        null,
-        opts.excludeInvoiceIds,
-      );
+      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
+        soldWindowDays: null,
+        excludeInvoiceIds: opts.excludeInvoiceIds,
+      });
       const lines = lifeSet.filter((l) => l.productId === productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
       let exhausted = false;
@@ -660,12 +652,20 @@ export class InlineReturnsQuoteService {
     customerId: string,
     productIds: string[],
     productUpbMap: Map<string, number | null>,
-    // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
-    soldWindowDays: number | null = DEFAULT_SOLD_WINDOW_DAYS,
-    excludeInvoiceIds: readonly string[] = [],
-    // SA-740: pin the matching set to ONE source sale (the walk-in rule, or a named customer who named one)
-    sourceOrderId: string | null = null,
+    o: {
+      // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
+      soldWindowDays?: number | null;
+      excludeInvoiceIds?: readonly string[];
+      // SA-740: pin the matching set to ONE source sale (the walk-in rule, or a named customer who named one)
+      sourceOrderId?: string | null;
+      // B905: also read the pieces each line already had credited by live INLINE returns (one constant read)
+      withPriorCredits?: boolean;
+    } = {},
   ): Promise<CandidateInvoiceLine[]> {
+    const soldWindowDays =
+      o.soldWindowDays === undefined ? DEFAULT_SOLD_WINDOW_DAYS : o.soldWindowDays;
+    const excludeInvoiceIds = o.excludeInvoiceIds ?? [];
+    const sourceOrderId = o.sourceOrderId ?? null;
     const since = new Date();
     since.setDate(since.getDate() - (soldWindowDays ?? 0));
 
@@ -761,6 +761,29 @@ export class InlineReturnsQuoteService {
         });
       }
     }
+    if (o.withPriorCredits && lines.length > 0) await this.attachPriorCredits(db, lines);
     return lines;
+  }
+
+  /**
+   * B905: sets `priorPieces` on each line to the pieces earlier live INLINE returns already credited against it (their
+   * `ReturnItem.sourceInvoiceItemId`; `ReturnItem.qty` of an inline row is in pieces). ONE read however many lines. A STANDARD
+   * return carries no line link, so it cannot be attributed to a line and does not count here (the first-slice price stands).
+   */
+  private async attachPriorCredits(db: any, lines: CandidateInvoiceLine[]): Promise<void> {
+    const rows: Array<{ sourceInvoiceItemId: string | null; qty: unknown }> =
+      (await db.returnItem.findMany({
+        where: {
+          sourceInvoiceItemId: { in: lines.map((l) => l.sourceInvoiceItemId) },
+          return: { kind: "INLINE", status: { notIn: ["REJECTED", "CANCELLED"] } },
+        },
+        select: { sourceInvoiceItemId: true, qty: true },
+      })) ?? [];
+    const byLine = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.sourceInvoiceItemId) continue;
+      byLine.set(r.sourceInvoiceItemId, (byLine.get(r.sourceInvoiceItemId) ?? 0) + Number(r.qty));
+    }
+    for (const l of lines) l.priorPieces = byLine.get(l.sourceInvoiceItemId) ?? 0;
   }
 }

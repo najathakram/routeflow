@@ -54,6 +54,10 @@ export interface CandidateInvoiceLine {
   invoiceDiscount: number;
   /** sourceInvoice.taxAmount — 0 means the invoice charged no tax at all (m-7 guard). */
   invoiceTaxAmount: number;
+  /** B905: PIECES of THIS line already credited by earlier live INLINE returns (their `ReturnItem.sourceInvoiceItemId` = this
+   * line). The chunk is priced as credit(prior + now) - credit(prior), so the slices of a line sum to its billed amount
+   * exactly. Absent / 0 = a first slice. STANDARD returns carry no line link, so they never count here. */
+  priorPieces?: number;
 }
 
 /** A caller-resolved "how much of (sourceOrderId, productId) is still uncredited" map —
@@ -270,34 +274,49 @@ export function priceMatchedChunk(
 ): PricedChunk {
   const boxSplit = line.boxes != null;
   const upb = Number(line.unitsPerBox ?? 0);
-  const chunkInLineAxis = boxSplit ? chunkPieces : upb > 1 ? chunkPieces / upb : chunkPieces;
+  const inLineAxis = (pieces: number) => (boxSplit ? pieces : upb > 1 ? pieces / upb : pieces);
+  const priorPieces = Math.max(0, Number(line.priorPieces ?? 0));
+  const chunkInLineAxis = inLineAxis(chunkPieces);
   // B894 (SA-576): a credit prices a SLICE of the already-billed line from scratch, so it is LINEAR
   // (additive: the slices of one line credit at most its stored subtotal). The invoice's floored
   // free-unit telescope (prorateLineSubtotal) is non-monotone and over-credits per slice.
-  const prorated = creditedThrough(line.subtotal, chunkInLineAxis, line.qty);
+  // B905: and TELESCOPED over the pieces the line already had credited: every figure below is the cumulative credit through
+  // (prior + now) minus the cumulative credit through (prior), each cumulative rounded once, so the slices sum to the whole.
+  const through = (pieces: number) => creditedThrough(line.subtotal, inLineAxis(pieces), line.qty);
+  const prorated = roundMoney(through(priorPieces + chunkPieces) - through(priorPieces));
 
-  // Discount share: the SAME fraction of the line's stored subtotal that `prorated`
+  // Discount share: the SAME fraction of the line's stored subtotal that the credited slice
   // represents, applied to this line's own share of the invoice's total discount.
-  const chunkShare = line.subtotal > 0 ? prorated / line.subtotal : 0;
   const lineDiscountShare =
     line.invoiceSubtotal > 0
       ? roundMoney((line.invoiceDiscount * line.subtotal) / line.invoiceSubtotal)
       : 0;
-  const discountForChunk = roundMoney(lineDiscountShare * chunkShare);
-
-  const subtotal = roundMoney(prorated - discountForChunk);
+  const netThrough = (pieces: number) => {
+    const gross = through(pieces);
+    const share = line.subtotal > 0 ? gross / line.subtotal : 0;
+    return roundMoney(gross - roundMoney(lineDiscountShare * share));
+  };
+  const subtotal = roundMoney(netThrough(priorPieces + chunkPieces) - netThrough(priorPieces));
   // m-7: no tax when the invoice itself charged none, or the customer is exempt — the
   // LINE's snapshot taxRate is otherwise used verbatim, never the tenant's current rate.
   const taxExempt = line.invoiceTaxAmount === 0 || customerIsTaxExempt;
-  const taxAmount = taxExempt ? 0 : roundMoney(prorated * line.taxRate);
+  const taxAmount = taxExempt
+    ? 0
+    : roundMoney(
+        roundMoney(through(priorPieces + chunkPieces) * line.taxRate) -
+          roundMoney(through(priorPieces) * line.taxRate),
+      );
 
   // Category (excise) tax: pro-rated from the line's own snapshot, capped at what was
   // actually booked to the regulated ledger for this line — never invented. A line with
   // no categoryTax snapshot (non-regulated product) or no known ledger cap credits $0.
-  const categoryTaxShare =
+  const categoryTaxThrough = (pieces: number) =>
     line.categoryTax != null && line.qty > 0
-      ? roundMoney((line.categoryTax * chunkInLineAxis) / line.qty)
+      ? roundMoney((line.categoryTax * Math.min(inLineAxis(pieces), line.qty)) / line.qty)
       : 0;
+  const categoryTaxShare = roundMoney(
+    categoryTaxThrough(priorPieces + chunkPieces) - categoryTaxThrough(priorPieces),
+  );
 
   return {
     sourceOrderId: line.sourceOrderId,
