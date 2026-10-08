@@ -1,5 +1,9 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
+import type {
+  CounterSalePaymentMethod,
+  CounterSaleResponse,
+  TodaysSaleMethod,
+} from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
 
 /**
@@ -221,7 +225,8 @@ export interface ReprintSaleFacts {
   timezone?: string;
 }
 
-export type ReprintTender = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
+/** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
+export type ReprintTender = TodaysSaleMethod;
 
 const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
   CASH: "Cash",
