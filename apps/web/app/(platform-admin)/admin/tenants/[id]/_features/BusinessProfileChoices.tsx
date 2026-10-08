@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { BusinessProfileKey, BusinessProfileSummary } from "@routeflow/types";
-import { profilePlainCopy } from "./profile-plain-copy";
+import { profileBullets, profilePlainCopy } from "./profile-plain-copy";
 
 /**
  * The four business profiles as one radio group, each with a plain name and one line (profile-plain-copy.ts; the
@@ -19,6 +19,7 @@ export function BusinessProfileChoices({
   disabled,
   noneOption,
   currentKey,
+  expandSelected,
 }: {
   profiles: BusinessProfileSummary[];
   value: BusinessProfileKey | "";
@@ -31,21 +32,27 @@ export function BusinessProfileChoices({
   noneOption?: { label: string; description: string };
   /** The tenant's applied profile, when it could be determined; no marker otherwise. */
   currentKey?: BusinessProfileKey | null;
+  /**
+   * SA-2 (create page): only the SELECTED profile expands its three "what this business will see" bullets and a
+   * muted profile id, and the none option is listed last (it is the default there). Off for the Setup tab.
+   */
+  expandSelected?: boolean;
 }) {
+  const none = noneOption && (
+    <ChoiceRow
+      id={`${name}-none`}
+      name={name}
+      value=""
+      checked={value === ""}
+      onSelect={() => onChange("")}
+      label={noneOption.label}
+      description={noneOption.description}
+    />
+  );
   return (
     <fieldset className="flex flex-col gap-2" disabled={disabled}>
       <legend className="mb-1 text-sm font-medium text-slate-300">{legend}</legend>
-      {noneOption && (
-        <ChoiceRow
-          id={`${name}-none`}
-          name={name}
-          value=""
-          checked={value === ""}
-          onSelect={() => onChange("")}
-          label={noneOption.label}
-          description={noneOption.description}
-        />
-      )}
+      {!expandSelected && none}
       {profiles.map((p) => {
         const copy = profilePlainCopy(p.key, p.label, p.description);
         return (
@@ -61,9 +68,19 @@ export function BusinessProfileChoices({
             label={copy.name}
             description={copy.line}
             secondary={copy.secondary}
+            expanded={
+              expandSelected && value === p.key
+                ? {
+                    heading: "What this business will see",
+                    bullets: profileBullets(p.key),
+                    id: p.key,
+                  }
+                : undefined
+            }
           />
         );
       })}
+      {expandSelected && none}
     </fieldset>
   );
 }
@@ -79,6 +96,7 @@ function ChoiceRow({
   label,
   description,
   secondary,
+  expanded,
 }: {
   id: string;
   name: string;
@@ -90,11 +108,13 @@ function ChoiceRow({
   label: string;
   description: string;
   secondary?: string | null;
+  expanded?: { heading: string; bullets: string[]; id: string };
 }) {
+  const summaryId = expanded ? `${id}-summary` : undefined;
   return (
     <label
       htmlFor={id}
-      className={`flex items-start gap-3 rounded-lg p-3 ring-1 ${
+      className={`flex min-h-[56px] items-start gap-3 rounded-lg p-3 ring-1 ${
         checked ? "bg-indigo-900/30 ring-indigo-500/60" : "bg-slate-900/40 ring-white/10"
       } ${unavailable ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:ring-slate-500"}`}
     >
@@ -106,6 +126,7 @@ function ChoiceRow({
         checked={checked}
         disabled={unavailable}
         onChange={onSelect}
+        aria-describedby={summaryId}
         className="mt-1"
       />
       <span className="flex flex-col gap-0.5">
@@ -122,6 +143,21 @@ function ChoiceRow({
         </span>
         <span className="text-xs text-slate-400">{description}</span>
         {secondary && <span className="text-[11px] text-slate-400">{secondary}</span>}
+        {expanded && (
+          <span id={summaryId} className="mt-1 flex flex-col gap-1">
+            {expanded.bullets.length > 0 && (
+              <>
+                <span className="text-xs font-medium text-slate-200">{expanded.heading}</span>
+                <ul className="list-disc pl-4 text-xs text-slate-300">
+                  {expanded.bullets.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <span className="text-[11px] text-slate-400">Profile ID: {expanded.id}</span>
+          </span>
+        )}
       </span>
     </label>
   );

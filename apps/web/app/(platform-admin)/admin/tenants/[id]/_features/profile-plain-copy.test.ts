@@ -1,5 +1,5 @@
 import { BUSINESS_PROFILE_KEYS } from "@routeflow/types";
-import { profilePlainCopy } from "./profile-plain-copy";
+import { profileBullets, profilePlainCopy } from "./profile-plain-copy";
 
 describe("SA-1: profile plain copy", () => {
   it("has plain copy for every profile key the contract lists", () => {
@@ -29,5 +29,15 @@ describe("SA-1: profile plain copy", () => {
       line: "Server text",
       secondary: null,
     });
+  });
+
+  it("SA-2: each profile has exactly three 'what the business will see' bullets; unknown keys have none", () => {
+    for (const key of BUSINESS_PROFILE_KEYS) expect(profileBullets(key)).toHaveLength(3);
+    expect(profileBullets("in_store_retailer")).toEqual([
+      "Counter in the menu",
+      "Orders are in-store pickup only",
+      "No routes, delivery or driver payments",
+    ]);
+    expect(profileBullets("future")).toEqual([]);
   });
 });

@@ -29,6 +29,13 @@ jest.mock("@/lib/api/platform-pricing", () => ({
   fetchPlanCatalog: () => mockFetchPlanCatalog(),
 }));
 
+// SA-2: the form's Create opens the review sheet; only the sheet's Create sends the request.
+async function submitViaSheet() {
+  fireEvent.click(screen.getByRole("button", { name: /^create tenant$/i }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+}
+
 function planEntry(planKey: string, sortOrder: number) {
   return {
     planKey,
@@ -186,7 +193,7 @@ describe("#2439 create-tenant success panel", () => {
       target: { value: "o@acme.example" },
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
-    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+    await submitViaSheet();
     return screen.findByTestId("welcome-email-status");
   }
 
@@ -293,7 +300,7 @@ describe("B956 create-tenant refused business name", () => {
       target: { value: "o@acme.example" },
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
-    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+    await submitViaSheet();
 
     expect(
       await screen.findByText("Business name can't start with =, +, -, @ or a tab/line break."),
@@ -321,8 +328,8 @@ describe("create-tenant business profile", () => {
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
   }
-  function submit() {
-    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+  async function submit() {
+    await submitViaSheet();
   }
   async function createWithProfile() {
     (superAdminClient.post as jest.Mock).mockResolvedValueOnce({
@@ -331,17 +338,17 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
-    submit();
+    await submit();
   }
 
-  it("offers the four profiles (in-store ones disabled) plus 'set up later', defaulting to none", async () => {
+  it("offers the four profiles (in-store ones disabled) plus Custom, defaulting to none", async () => {
     render(<AdminCreateTenantPage />);
     expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /Shipping wholesaler/ })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
     expect(screen.getByRole("radio", { name: /In-store \+ shipping retailer/ })).toBeDisabled();
     expect(screen.queryByText("Available when counter sales launch")).toBeNull();
-    expect(screen.getByRole("radio", { name: /Set up later/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Custom: I'll choose/ })).toBeChecked();
   });
 
   it("SA-1: after the profile applies, an interim line lists what was set (from the apply response)", async () => {
@@ -379,7 +386,7 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     await screen.findByRole("radio", { name: /Delivery distributor/ });
     fillForm();
-    submit();
+    await submit();
     expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
     const [, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
     expect(payload).not.toHaveProperty("profile");
@@ -393,7 +400,7 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
-    submit();
+    await submit();
     expect(await screen.findByText("Business profile applied: Shipping only.")).toBeInTheDocument();
     const [url, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
     expect(url).toBe("/platform-admin/tenants");
@@ -413,7 +420,7 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
-    submit();
+    await submit();
     await screen.findByText("Failed to create tenant");
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
@@ -436,19 +443,17 @@ describe("create-tenant business profile", () => {
     render(<AdminCreateTenantPage />);
     fireEvent.click(await screen.findByRole("radio", { name: /Delivery distributor/ }));
     fillForm();
-    submit();
-    expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
+    await submit();
     const alert = await screen.findByTestId("profile-apply-failed");
-    expect(alert).toHaveAttribute("role", "alert");
+    expect(screen.getByTestId("create-banner")).toHaveAttribute("role", "alert");
     expect(alert).toHaveTextContent(
-      "The account was created, but its business profile was not applied.",
+      "Created Acme, but the profile didn't apply. Open Setup to finish it.",
     );
     expect(alert).toHaveTextContent("This business profile isn't available for this tenant.");
-    expect(alert).toHaveTextContent("Apply it from the tenant's Setup tab.");
     expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
-    expect(screen.getByRole("link", { name: "View tenant" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
       "href",
-      "/admin/tenants/t9",
+      "/admin/tenants/t9?tab=setup",
     );
   });
 
@@ -463,9 +468,9 @@ describe("create-tenant business profile", () => {
         "Business profiles could not be loaded. You can set one later from the tenant's Setup tab.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Shipping only/ })).not.toBeInTheDocument();
     fillForm();
-    submit();
+    await submit();
     expect(await screen.findByText("Tenant created successfully!")).toBeInTheDocument();
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
@@ -506,7 +511,7 @@ describe("create-tenant business profile", () => {
     mockPreviewProfile.mockRejectedValueOnce(new Error("Network Error"));
     await createWithProfile();
     expect(await screen.findByTestId("profile-apply-failed")).toHaveTextContent(
-      "The account was created, but its business profile was not applied.",
+      "Created Acme, but the profile didn't apply. Open Setup to finish it.",
     );
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
