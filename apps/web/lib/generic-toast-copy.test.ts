@@ -96,6 +96,14 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it("UNITS_RENAME_IN_PROGRESS says a rename is running and to retry (never the raw 409 text)", () => {
+    expect(
+      genericToastCopy(
+        err(409, { code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS, message: "raw" }),
+      ),
+    ).toBe("A unit rename is in progress. Try again in a moment.");
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,

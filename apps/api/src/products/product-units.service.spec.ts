@@ -1,3 +1,4 @@
+import { lockCalls } from "../testing/lock-calls";
 import "reflect-metadata";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
@@ -482,20 +483,16 @@ describe("concurrency + isolation (Opus review of step 2a)", () => {
     await service.update("p1", "u-case", { price: 1 });
     await service.remove("p1", "u-case");
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
-    expect(db.$executeRaw).toHaveBeenCalledTimes(6);
+    const locks = lockCalls(db.$executeRaw);
+    expect(locks.calls).toHaveLength(6);
     // A unit rename holds the EXCLUSIVE tenant lock: a level write must wait for it, never interleave.
     for (const i of [0, 2, 4]) {
-      const [strings, ...values] = db.$executeRaw.mock.calls[i] as [
-        TemplateStringsArray,
-        ...string[],
-      ];
+      const [strings, ...values] = locks.calls[i];
       expect(strings.join("?")).toContain("pg_advisory_xact_lock_shared(");
       expect(values).toEqual(["tenant-units", "t1"]);
     }
-    expect(db.$executeRaw.mock.calls[1][0].join("?")).toContain("product-units");
-    expect(db.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
-      db.product.findFirst.mock.invocationCallOrder[0],
-    );
+    expect(locks.calls[1][0].join("?")).toContain("product-units");
+    expect(locks.order[1]).toBeLessThan(db.product.findFirst.mock.invocationCallOrder[0]);
   });
 
   it("reads the pack with findFirst({where:{id}}) so a foreign tenant product 404s", async () => {

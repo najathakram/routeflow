@@ -50,6 +50,9 @@
 //                    linked to the unit), LINES_AT_OTHER_SIZE (orders or invoices already carry the new name at another
 //                    size) or MIXED; `products` lists up to 10 `{id, name}` and `total` counts them all.
 //                    Nothing was changed.
+//   UNITS_RENAME_IN_PROGRESS — `body.code` of the 409 when a pack edit, level write or import confirmation could not get the
+//                    tenant units lock within 3 s because a unit rename is running (or a rename could not get it within 5 s
+//                    because writers hold it). Nothing was changed; retry.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -207,6 +210,7 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   UNIT_NAME_TAKEN: "UNIT_NAME_TAKEN",
   UNIT_RENAME_COLLISION: "UNIT_RENAME_COLLISION",
+  UNITS_RENAME_IN_PROGRESS: "UNITS_RENAME_IN_PROGRESS",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",

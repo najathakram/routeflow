@@ -45,6 +45,8 @@ const CODE_COPY: Record<string, string> = {
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
+  [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]:
+    "A unit rename is in progress. Try again in a moment.",
   [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   [API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW]:

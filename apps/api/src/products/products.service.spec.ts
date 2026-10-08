@@ -1,3 +1,4 @@
+import { lockCalls } from "../testing/lock-calls";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -744,16 +745,15 @@ describe("ProductsService", () => {
           }),
         );
         await service.update("prod-1", { unitsPerBox: 12 } as any);
-        expect(exec).toHaveBeenCalled();
-        const [strings, ...values] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
+        const locks = lockCalls(exec);
+        expect(locks.calls.length).toBeGreaterThan(0);
+        const [strings, ...values] = locks.calls[0];
         expect(strings.join("?")).toContain("pg_advisory_xact_lock_shared(");
         expect(values).toEqual(["tenant-units", "test-tenant"]);
-        expect(exec.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(locks.order[0]).toBeLessThan(
           prisma.productUnit.findMany.mock.invocationCallOrder[0],
         );
-        expect(exec.mock.invocationCallOrder[0]).toBeLessThan(
-          prisma.product.update.mock.invocationCallOrder[0],
-        );
+        expect(locks.order[0]).toBeLessThan(prisma.product.update.mock.invocationCallOrder[0]);
       });
 
       const lockingTx = (exec: jest.Mock) =>
@@ -769,15 +769,16 @@ describe("ProductsService", () => {
         const exec = jest.fn().mockResolvedValue(0);
         lockingTx(exec);
         await service.update("prod-1", { unitsPerBox: 12 } as any);
-        const [s0, ...v0] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
-        const [s1, ...v1] = exec.mock.calls[1] as [TemplateStringsArray, ...string[]];
+        const locks = lockCalls(exec);
+        const [s0, ...v0] = locks.calls[0];
+        const [s1, ...v1] = locks.calls[1];
         expect(s0.join("?")).toContain("pg_advisory_xact_lock_shared(");
         expect(v0).toEqual(["tenant-units", "test-tenant"]);
         // The SAME key ProductUnitsService.locked takes: a level write and a pack edit of one product serialize.
         expect(s1.join("?")).toContain("pg_advisory_xact_lock(hashtext('product-units')");
         expect(s1.join("?")).not.toContain("_shared");
         expect(v1).toEqual(["prod-1"]);
-        const at = (c: number) => exec.mock.invocationCallOrder[c];
+        const at = (c: number) => locks.order[c];
         const freshRead = prisma.product.findUnique.mock.invocationCallOrder[1];
         expect(at(0)).toBeLessThan(at(1));
         expect(at(1)).toBeLessThan(freshRead);
@@ -798,7 +799,7 @@ describe("ProductsService", () => {
         await expect(service.update("prod-1", { unit: "Case" } as any)).rejects.toThrow(
           ConflictException,
         );
-        expect(exec).toHaveBeenCalledTimes(2);
+        expect(lockCalls(exec).calls).toHaveLength(2);
         expect(prisma.product.update).not.toHaveBeenCalled();
       });
 
@@ -806,7 +807,7 @@ describe("ProductsService", () => {
         const exec = jest.fn().mockResolvedValue(0);
         lockingTx(exec);
         await service.update("prod-1", { unit: "Box", unitsPerBox: 24 } as any);
-        expect(exec).toHaveBeenCalledTimes(2);
+        expect(lockCalls(exec).calls).toHaveLength(2);
         expect(prisma.product.update).toHaveBeenCalled();
       });
 
@@ -820,7 +821,9 @@ describe("ProductsService", () => {
           }),
         );
         await service.update("prod-1", { name: "Renamed" } as any);
-        const tenantUnitsLocks = exec.mock.calls.filter(([, ...v]) => v[0] === "tenant-units");
+        const tenantUnitsLocks = lockCalls(exec).calls.filter(
+          ([, ...v]) => v[0] === "tenant-units",
+        );
         expect(tenantUnitsLocks).toEqual([]);
       });
 

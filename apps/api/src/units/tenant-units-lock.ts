@@ -1,3 +1,6 @@
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+
 /**
  * The tenant-wide "units" advisory lock: ONE key per tenant that keeps a unit RENAME and every write
  * that changes what a rename checks from interleaving.
@@ -24,16 +27,65 @@ interface RawExecutor {
   $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): PromiseLike<unknown>;
 }
 
+/** SQLSTATE 55P03 (lock_not_available), as pg, Prisma raw queries and the driver adapter report it. */
+function isLockTimeout(e: unknown): boolean {
+  const x = e as {
+    code?: string;
+    message?: string;
+    meta?: { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } };
+  } | null;
+  return (
+    x?.code === "55P03" ||
+    x?.meta?.code === "55P03" ||
+    x?.meta?.driverAdapterError?.cause?.originalCode === "55P03" ||
+    /lock timeout/i.test(x?.message ?? "")
+  );
+}
+
+/**
+ * Run `acquire` under a bounded wait: `SET LOCAL lock_timeout` before it, back to the default right
+ * after it, so the bound covers ONLY these locks and not later row or barcode locks of the same
+ * transaction. A rename holds the tenant lock exclusive for up to 60 s; without a bound every product
+ * save, level write and import confirmation of the tenant would queue behind it until Prisma's 5 s
+ * transaction timeout turned them into 500s (and pinned pool connections). A timeout is a clean 409
+ * the caller can retry. The two literals are separate statements because SET takes no bind value.
+ */
+async function bounded(
+  tx: RawExecutor,
+  wait: "3s" | "5s",
+  acquire: () => Promise<unknown>,
+): Promise<void> {
+  if (wait === "5s") await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+  else await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+  try {
+    await acquire();
+  } catch (e) {
+    if (isLockTimeout(e)) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS,
+        message: "A unit rename is in progress. Try again in a moment.",
+      });
+    }
+    throw e;
+  }
+  await tx.$executeRaw`SET LOCAL lock_timeout TO DEFAULT`;
+}
+
+const takeTenantLock = (tx: RawExecutor, tenantId: string, mode: "shared" | "exclusive") =>
+  mode === "exclusive"
+    ? tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TENANT_UNITS_LOCK_FAMILY}), hashtext(${tenantId}))`
+    : tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${TENANT_UNITS_LOCK_FAMILY}), hashtext(${tenantId}))`;
+
+/**
+ * The shared lock waits at most 3 s for a rename (a 409 if it is still running); the rename's
+ * exclusive lock waits at most 5 s for in-flight writers (each holds it for milliseconds).
+ */
 export async function lockTenantUnits(
   tx: RawExecutor,
   tenantId: string,
   mode: "shared" | "exclusive",
 ): Promise<void> {
-  if (mode === "exclusive") {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TENANT_UNITS_LOCK_FAMILY}), hashtext(${tenantId}))`;
-  } else {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${TENANT_UNITS_LOCK_FAMILY}), hashtext(${tenantId}))`;
-  }
+  await bounded(tx, mode === "exclusive" ? "5s" : "3s", () => takeTenantLock(tx, tenantId, mode));
 }
 
 /**
@@ -49,6 +101,8 @@ export async function lockProductPack(
   tenantId: string,
   productId: string,
 ): Promise<void> {
-  await lockTenantUnits(tx, tenantId, "shared");
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+  await bounded(tx, "3s", async () => {
+    await takeTenantLock(tx, tenantId, "shared");
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
+  });
 }

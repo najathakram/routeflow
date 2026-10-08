@@ -1,3 +1,4 @@
+import { lockCalls } from "../testing/lock-calls";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { UnitsService } from "./units.service";
@@ -425,18 +426,18 @@ describe("UnitsService", () => {
       const h = make();
       seedRename(h, { products: [], levels: [] });
       await h.service.update("u1", { name: "Carton" }, user);
-      expect(h.db.$executeRaw).toHaveBeenCalledTimes(1);
-      const [strings, ...values] = h.db.$executeRaw.mock.calls[0] as [
-        TemplateStringsArray,
-        ...string[],
-      ];
+      const locks = lockCalls(h.db.$executeRaw);
+      expect(locks.calls).toHaveLength(1);
+      const [strings, ...values] = locks.calls[0];
       const sql = strings.join("?");
       expect(sql).toContain("pg_advisory_xact_lock(");
       expect(sql).not.toContain("_shared");
       expect(values).toEqual(["tenant-units", T]);
-      expect(h.db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        h.db.tenantUnit.findFirst.mock.invocationCallOrder[0],
+      // the wait is bounded (5 s) and the bound is set BEFORE the lock
+      expect((h.db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?")).toBe(
+        "SET LOCAL lock_timeout = '5s'",
       );
+      expect(locks.order[0]).toBeLessThan(h.db.tenantUnit.findFirst.mock.invocationCallOrder[0]);
     });
 
     it("an archive or an add takes no units lock (only a rename relabels products)", async () => {

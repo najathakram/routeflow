@@ -1,3 +1,4 @@
+import { lockCalls } from "../testing/lock-calls";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -199,15 +200,14 @@ describe("VariantResolutionService", () => {
         const exec = jest.fn().mockResolvedValue(0);
         lockingTx(exec);
         await service.completeSetup("n1", { unit: "Case" });
-        const [s0, ...v0] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
-        const [s1, ...v1] = exec.mock.calls[1] as [TemplateStringsArray, ...string[]];
+        const locks = lockCalls(exec);
+        const [s0, ...v0] = locks.calls[0];
+        const [s1, ...v1] = locks.calls[1];
         expect(s0.join("?")).toContain("pg_advisory_xact_lock_shared(");
         expect(v0).toEqual(["tenant-units", "test-tenant"]);
         expect(s1.join("?")).toContain("hashtext('product-units')");
         expect(v1).toEqual(["n1"]);
-        expect(exec.mock.invocationCallOrder[1]).toBeLessThan(
-          prisma.product.findUnique.mock.invocationCallOrder[0],
-        );
+        expect(locks.order[1]).toBeLessThan(prisma.product.findUnique.mock.invocationCallOrder[0]);
         expect(prisma.product.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
           prisma.productUnit.findMany.mock.invocationCallOrder[0],
         );
@@ -222,7 +222,7 @@ describe("VariantResolutionService", () => {
         const exec = jest.fn().mockResolvedValue(0);
         lockingTx(exec);
         await service.completeSetup("n1", { pricePerUnit: 5 });
-        expect(exec.mock.calls.filter(([, ...v]) => v[0] === "tenant-units")).toEqual([]);
+        expect(lockCalls(exec).calls.filter(([, ...v]) => v[0] === "tenant-units")).toEqual([]);
         expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
       });
     });
