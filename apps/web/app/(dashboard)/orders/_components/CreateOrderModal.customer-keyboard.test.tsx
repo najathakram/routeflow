@@ -307,6 +307,55 @@ describe("PKG-4 product search keyboard reaches variants and Create new product"
     expect(await screen.findAllByTitle("Remove")).toHaveLength(1); // the 1L variant was added
   });
 
+  it("two parents, the first expanded: hover or arrow to the SECOND product + Enter adds THAT product; ids are unique", async () => {
+    const PARENT_B = {
+      ...PARENT,
+      id: "p-parent-b",
+      name: "Sample Soda",
+      sku: "SODA",
+      variants: [],
+    };
+    mockProducts = [PARENT, PARENT_B];
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.type(prod(), "sample");
+    await rowBtn(/Sample Soda/);
+    await user.keyboard("{ArrowDown}{Enter}"); // expand the first parent (v-1, v-2 appear)
+    await rowBtn(/1L/);
+    const ids = options().map((o) => o.id);
+    expect(ids.every((i) => i !== "")).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}"); // 1L, 2L, then Sample Soda
+    expect(active()).toHaveTextContent("Sample Soda");
+    expect(options().filter((o) => o.getAttribute("aria-selected") === "true")).toHaveLength(1);
+    await user.keyboard("{Enter}");
+    expect(await screen.findAllByTitle("Remove")).toHaveLength(1);
+    expect(screen.queryByText("Sample Juice 1L")).toBeNull();
+    expect(screen.getByText(/Sample Soda/, { selector: "span, p, div" })).toBeInTheDocument();
+  });
+
+  it("hovering the second product highlights it and Enter adds it, not a variant", async () => {
+    const PARENT_B = {
+      ...PARENT,
+      id: "p-parent-b",
+      name: "Sample Soda",
+      sku: "SODA",
+      variants: [],
+    };
+    mockProducts = [PARENT, PARENT_B];
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.type(prod(), "sample");
+    await rowBtn(/Sample Soda/);
+    await user.keyboard("{ArrowDown}{Enter}");
+    await rowBtn(/1L/);
+    await user.hover(await rowBtn(/Sample Soda/));
+    expect(active()).toHaveTextContent("Sample Soda");
+    await user.keyboard("{Enter}");
+    expect(await screen.findAllByTitle("Remove")).toHaveLength(1);
+    expect(screen.queryByText("Sample Juice 1L")).toBeNull();
+  });
+
   it("Enter on the highlighted Create new product row opens the create-product dialog", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);

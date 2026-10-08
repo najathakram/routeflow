@@ -1986,7 +1986,8 @@ export function CreateOrderModal({
                         No products found.
                       </li>
                     )}
-                    {filteredProducts.map((p: any, pi: number) => {
+                    {filteredProducts.map((p: any) => {
+                      const pi = productRowIndex.get(p.id) ?? -1; // the flat nav index, shared with variant rows
                       const hasVariants = p.variants?.length > 0;
                       const isExpanded = expandedParentId === p.id;
                       const alreadyAdded = lineItems.some((li) => li.productId === p.id);
