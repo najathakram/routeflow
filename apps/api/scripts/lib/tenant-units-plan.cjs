@@ -15,6 +15,21 @@ const MAX_NAME_LENGTH = 30;
 /** Piece synonyms: base words, never a TenantUnit (null baseUnitLabel already means "Piece"). */
 const PIECE_SYNONYMS = new Set(["piece", "pieces", "each", "unit", "pcs"]);
 
+const isMixedCase = (w) => w !== w.toUpperCase() && w !== w.toLowerCase();
+
+/**
+ * Sort order for [casing, count] pairs: most common first; on a tie a mixed-case spelling ("Case")
+ * beats ALL-CAPS and all-lowercase (UTF-16 order alone would crown "CASE"); then lexicographic so
+ * the plan stays deterministic.
+ */
+function byCasingPreference(a, b) {
+  return (
+    b[1] - a[1] ||
+    Number(isMixedCase(b[0])) - Number(isMixedCase(a[0])) ||
+    (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  );
+}
+
 function nameKeyOf(name) {
   return String(name ?? "")
     .trim()
@@ -64,13 +79,11 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
 
   const toCreate = [];
   // nameKey -> the tenant's canonical display name: an existing TenantUnit's own name, else the most
-  // common original casing (ties break lexicographically so the plan is deterministic).
+  // common original casing (see byCasingPreference for the tie rule).
   const canonicalByKey = new Map();
   let existing = 0;
   for (const key of [...usable].sort()) {
-    const best = [...casings.get(key).entries()].sort(
-      (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1),
-    )[0][0];
+    const best = [...casings.get(key).entries()].sort(byCasingPreference)[0][0];
     canonicalByKey.set(key, existingNameByKey.get(key) ?? best);
     if (existingKeys.has(key)) {
       existing += 1;
@@ -83,24 +96,33 @@ function planTenantUnits({ productUnits, products, existingUnits }) {
   for (const pu of productUnits) {
     if (pu.tenantUnitId) continue;
     const key = labelKeyByUnit.get(pu.id);
-    if (key && usable.has(key)) links.push({ productUnitId: pu.id, nameKey: key });
+    if (key && usable.has(key)) {
+      // `label` is the raw value the plan was built from: the write guard re-checks it.
+      links.push({ productUnitId: pu.id, nameKey: key, label: pu.label });
+    }
   }
 
   const packFills = [];
   let packTooLong = 0;
   for (const p of products) {
-    if (p.packLabel && p.packLabel.trim() !== "") continue;
+    // Fill only a NULL or empty packLabel: exactly what the write guard matches. A whitespace-only
+    // label is somebody's value (or a typo), not ours to overwrite, and planning it would re-plan
+    // on every run because the guard can never match it.
+    if (p.packLabel != null && p.packLabel !== "") continue;
     const word = String(p.unit ?? "").trim();
     if (!word) continue;
+    const key = nameKeyOf(word);
     // A Piece synonym is the base word, never a pack: leave packLabel NULL (legacy unit text applies).
-    if (PIECE_SYNONYMS.has(nameKeyOf(word))) continue;
-    if (word.length > MAX_NAME_LENGTH) {
+    if (PIECE_SYNONYMS.has(key)) continue;
+    // Same measure as the TenantUnit rule (the lowercased key): no unit is created, so no fill.
+    if (tooLongKeys.has(key)) {
       packTooLong += 1;
       continue;
     }
-    // The canonical casing, never the product's own. Only packLabel is planned: Product.unit is
-    // legacy text that older documents and the live pack word still read, so it is never rewritten.
-    packFills.push({ productId: p.id, packLabel: canonicalByKey.get(nameKeyOf(word)) ?? word });
+    // The canonical casing, never the product's own. Only packLabel is data: Product.unit is legacy
+    // text that older documents and the live pack word still read, so it is never rewritten. `unit`
+    // is carried only as the write guard's source (a row edited since planning is left alone).
+    packFills.push({ productId: p.id, packLabel: canonicalByKey.get(key) ?? word, unit: p.unit });
   }
 
   return {

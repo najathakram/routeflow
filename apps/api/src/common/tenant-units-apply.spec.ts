@@ -26,7 +26,27 @@ type State = {
   products: Array<{ id: string; tenantId: string; unit: string; packLabel: string | null }>;
 };
 
-function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
+/**
+ * Evaluates a Prisma `where` against a row the way Prisma does for the shapes used here: every key
+ * must match (null matches NULL), `OR` matches when any branch does, and an `undefined` key is
+ * DROPPED (that is how Prisma widens a where, so the fake must widen too).
+ */
+function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    if (v === undefined) return true;
+    if (k === "OR") return (v as Array<Record<string, unknown>>).some((sub) => matches(row, sub));
+    return row[k] === v;
+  });
+}
+
+function fake(
+  state: State,
+  opts: {
+    failProductUpdateAt?: number;
+    /** Runs at the start of the nth transaction: an operator edit landing mid-run. */
+    beforeTx?: (n: number, state: State) => void;
+  } = {},
+) {
   let seq = 0;
   let productUpdates = 0;
   const productWriteKeys = new Set<string>();
@@ -48,14 +68,12 @@ function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
     },
     productUnit: {
       updateMany: async ({ where, data }: any) => {
-        const row = state.productUnits.find(
-          (r) => r.id === where.id && r.tenantId === where.tenantId && r.tenantUnitId === null,
-        );
-        if (row) {
+        const rows = state.productUnits.filter((r) => matches(r, where));
+        for (const row of rows) {
           row.tenantUnitId = data.tenantUnitId;
           touched?.add(row.productId);
         }
-        return { count: row ? 1 : 0 };
+        return { count: rows.length };
       },
     },
     product: {
@@ -63,18 +81,17 @@ function fake(state: State, opts: { failProductUpdateAt?: number } = {}) {
         productUpdates += 1;
         for (const k of Object.keys(data)) productWriteKeys.add(k);
         if (opts.failProductUpdateAt === productUpdates) throw new Error("boom");
-        const row = state.products.find(
-          (p) => p.id === where.id && p.tenantId === where.tenantId && !p.packLabel,
-        );
-        if (row) {
+        const rows = state.products.filter((p) => matches(p, where));
+        for (const row of rows) {
           row.packLabel = data.packLabel;
           touched?.add(row.id);
         }
-        return { count: row ? 1 : 0 };
+        return { count: rows.length };
       },
     },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
       stats.transactions += 1;
+      opts.beforeTx?.(stats.transactions, state);
       const snap = JSON.parse(JSON.stringify(state));
       touched = new Set();
       try {
@@ -135,6 +152,22 @@ async function runOnce(state: State, f: ReturnType<typeof fake>, batchSize?: num
 }
 
 describe("batched backfill apply (U-6)", () => {
+  it("batches at the boundary: 0 / 200 / 201 products are 0 / 1 / 2 batches", () => {
+    const fills = (n: number) => ({
+      links: [],
+      packFills: Array.from({ length: n }, (_, i) => ({
+        productId: `p${String(i).padStart(4, "0")}`,
+        packLabel: "Tray",
+        unit: "Tray",
+      })),
+    });
+    expect(BACKFILL_BATCH_SIZE).toBe(200);
+    expect(batchWrites(fills(0), new Map())).toHaveLength(0);
+    expect(batchWrites(fills(200), new Map())).toHaveLength(1);
+    const two = batchWrites(fills(201), new Map());
+    expect(two.map((b: { packFills: unknown[] }) => b.packFills.length)).toEqual([200, 1]);
+  });
+
   it("names a default batch size", () => {
     expect(Number.isInteger(BACKFILL_BATCH_SIZE)).toBe(true);
     expect(BACKFILL_BATCH_SIZE).toBeGreaterThan(0);
@@ -222,5 +255,43 @@ describe("batched backfill apply (U-6)", () => {
     expect(state.productUnits.every((u) => u.tenantUnitId)).toBe(true);
     // resume only did the remaining 2 batches (no unit-create transaction needed)
     expect(f2.stats.transactions).toBe(2);
+  });
+
+  it("a row edited between plan and apply is never overwritten, and is reported as changed", async () => {
+    const state = seed(6);
+    // tx 1 = unit upserts; tx 2 = p0,p1; tx 3 = p2,p3 (edited just before it opens); tx 4 = p4,p5
+    const f = fake(state, {
+      beforeTx: (n, st) => {
+        if (n !== 3) return;
+        st.products[2].unit = "Other"; // unit edited: the Tray fill is stale
+        st.products[3].packLabel = "Carton"; // someone set a label
+        st.productUnits[2].label = "Renamed"; // level renamed: the Case link is stale
+        st.productUnits[3].tenantUnitId = "manual"; // someone linked it
+      },
+    });
+    const r = await runOnce(state, f, 2);
+    expect(state.products[2]).toMatchObject({ unit: "Other", packLabel: null });
+    expect(state.products[3].packLabel).toBe("Carton");
+    expect(state.productUnits[2]).toMatchObject({ label: "Renamed", tenantUnitId: null });
+    expect(state.productUnits[3].tenantUnitId).toBe("manual");
+    // everything outside the edited batch was applied
+    for (const i of [0, 1, 4, 5]) {
+      expect(state.products[i].packLabel).toBe("Tray");
+      expect(state.productUnits[i].tenantUnitId).toBeTruthy();
+    }
+    // counts are what was ACTUALLY written, not what was planned
+    expect(r).toMatchObject({ linked: 4, filled: 4, linksChanged: 2, fillsChanged: 2 });
+  });
+
+  it("a whitespace-only packLabel is left alone and never re-planned", async () => {
+    const state = seed(2);
+    state.products[0].packLabel = "  ";
+    const r = await runOnce(state, fake(state), 5);
+    expect(state.products[0].packLabel).toBe("  ");
+    expect(r.filled).toBe(1);
+    const f2 = fake(state);
+    const again = await runOnce(state, f2, 5);
+    expect(again).toMatchObject({ batches: 0, filled: 0 });
+    expect(f2.stats.transactions).toBe(0);
   });
 });

@@ -19,6 +19,10 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { planTenantUnits } = require("../../scripts/lib/tenant-units-plan.cjs");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { applyTenantUnitsPlan } = require("../../scripts/lib/tenant-units-apply.cjs");
 
 const CLI = path.resolve(__dirname, "../../scripts/backfill-tenant-units.mjs");
 const RUN = randomUUID().slice(0, 8);
@@ -31,6 +35,8 @@ describeDb("tenant unit backfill (U-6)", () => {
   const slugB = assertTestTenant(`qa-u6-${RUN}-b`, "backfill-tenant-units.db.spec.ts");
   let tenantA = "";
   let tenantB = "";
+  const slugC = assertTestTenant(`qa-u6-${RUN}-c`, "backfill-tenant-units.db.spec.ts");
+  let tenantC = "";
 
   const cli = (slug: string, apply: boolean) =>
     spawnSync(process.execPath, [CLI, "--tenant", slug, ...(apply ? ["--apply"] : [])], {
@@ -65,6 +71,7 @@ describeDb("tenant unit backfill (U-6)", () => {
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
     tenantA = (await prisma.tenant.create({ data: { slug: slugA, name: `u6 ${slugA}` } })).id;
     tenantB = (await prisma.tenant.create({ data: { slug: slugB, name: `u6 ${slugB}` } })).id;
+    tenantC = (await prisma.tenant.create({ data: { slug: slugC, name: `u6 ${slugC}` } })).id;
 
     // Tenant A: levels Case x2 (casing "Case" wins 2:1), Pack, a synonym, a too-long word;
     // legacy words Case / Tray / "" and a product that already has a packLabel.
@@ -73,12 +80,14 @@ describeDb("tenant unit backfill (U-6)", () => {
     await product(tenantA, "3", "Tray", ["x".repeat(31)]);
     const keep = await product(tenantA, "4", "Crate", []);
     await prisma.product.update({ where: { id: keep }, data: { packLabel: "Carton" } });
+    // A synonym-only legacy word (padded): it must get NO packLabel and keep its exact unit text.
+    await product(tenantA, "5", " Each ", []);
     // Tenant B is an untouched control with a legacy word of its own.
     await product(tenantB, "b", "Bundle", ["Bundle"]);
   });
 
   afterAll(async () => {
-    const ids = [tenantA, tenantB].filter(Boolean);
+    const ids = [tenantA, tenantB, tenantC].filter(Boolean);
     await prisma?.productUnit.deleteMany({ where: { tenantId: { in: ids } } });
     await prisma?.product.deleteMany({ where: { tenantId: { in: ids } } });
     await prisma?.tenantUnit.deleteMany({ where: { tenantId: { in: ids } } });
@@ -110,13 +119,13 @@ describeDb("tenant unit backfill (U-6)", () => {
     const r = cli(slugA, true);
     expect(r.status).toBe(0);
     // Distinct usable keys: case, pack, tray, crate (crate is a legacy pack word only)
-    // => case, pack, tray, crate = 4 created. Too long: 1 level key. Synonyms: piece = 1.
+    // => case, pack, tray, crate = 4 created. Too long: 1 level key. Synonyms: piece + each = 2.
     // Levels linked: Case, Pack, Case, (piece skipped), (too-long skipped) = 3.
     // packLabel filled: p1 Case, p2 case (written as the canonical "Case"), p3 Tray = 3 (p4 already has Carton).
     expect(r.stdout).toContain("tenantUnits created=4 existing=0");
     expect(r.stdout).toContain("productUnits linked=3");
     expect(r.stdout).toContain("products packLabel filled=3");
-    expect(r.stdout).toContain("skipped tooLong=1 synonyms=1");
+    expect(r.stdout).toContain("skipped tooLong=1 synonyms=2");
     expect(r.stdout).not.toMatch(/Tray|Crate|Carton|[0-9a-f]{8}-[0-9a-f]{4}/);
 
     const units = await prisma.tenantUnit.findMany({ where: { tenantId: tenantA } });
@@ -139,9 +148,12 @@ describeDb("tenant unit backfill (U-6)", () => {
     const packs = await prisma.product.findMany({
       where: { tenantId: tenantA },
       orderBy: { name: "asc" },
-      select: { packLabel: true, baseUnitLabel: true },
+      select: { unit: true, packLabel: true, baseUnitLabel: true },
     });
-    expect(packs.map((p) => p.packLabel)).toEqual(["Case", "Case", "Tray", "Carton"]);
+    // packLabel gets the canonical "Case" for "case" (product 2); the Piece synonym gets nothing.
+    expect(packs.map((p) => p.packLabel)).toEqual(["Case", "Case", "Tray", "Carton", null]);
+    // Product.unit is legacy text that documents still read: byte-identical to the seed.
+    expect(packs.map((p) => p.unit)).toEqual(["Case", "case", "Tray", "Crate", " Each "]);
     expect(packs.every((p) => p.baseUnitLabel === null)).toBe(true);
 
     expect(await snapshotB()).toBe(bBefore);
@@ -170,5 +182,45 @@ describeDb("tenant unit backfill (U-6)", () => {
       await prisma.product.findMany({ where: { tenantId: tenantA }, orderBy: { id: "asc" } }),
     ]);
     expect(after).toBe(before);
+  });
+
+  it("applies across several batches (batchSize 2) and a re-plan then writes nothing", async () => {
+    for (let i = 0; i < 5; i++) {
+      await product(tenantC, `c${i}`, "Bin", i < 2 ? ["Bin"] : []);
+    }
+    const read = async () => {
+      const [productUnits, products, existingUnits] = await Promise.all([
+        prisma.productUnit.findMany({ where: { tenantId: tenantC } }),
+        prisma.product.findMany({ where: { tenantId: tenantC } }),
+        prisma.tenantUnit.findMany({ where: { tenantId: tenantC } }),
+      ]);
+      return { productUnits, products, existingUnits };
+    };
+    const run = async () => {
+      const { productUnits, products, existingUnits } = await read();
+      const plan = planTenantUnits({ productUnits, products, existingUnits });
+      return applyTenantUnitsPlan({
+        prisma,
+        tenantId: tenantC,
+        plan,
+        existingUnits,
+        productIdByUnit: new Map(
+          productUnits.map((u: { id: string; productId: string }) => [u.id, u.productId]),
+        ),
+        batchSize: 2,
+      });
+    };
+    const first = await run();
+    expect(first).toMatchObject({
+      batches: 3,
+      linked: 2,
+      filled: 5,
+      linksChanged: 0,
+      fillsChanged: 0,
+    });
+    const after = await read();
+    expect(after.products.every((p) => p.packLabel === "Bin" && p.unit === "Bin")).toBe(true);
+    expect(after.productUnits.every((u) => u.tenantUnitId)).toBe(true);
+    expect(await run()).toMatchObject({ batches: 0, linked: 0, filled: 0 });
   });
 });

@@ -71,7 +71,9 @@ function batchWrites(plan, productIdByUnit, size = BACKFILL_BATCH_SIZE) {
  *           productIdByUnit: Map<string, string>,
  *           batchSize?: number,
  *           onBatch?: (done: number, total: number) => void }} args
- * @returns {Promise<{ batches: number }>}
+ * @returns {Promise<{ batches: number, linked: number, filled: number, linksChanged: number, fillsChanged: number }>}
+ *   linked/filled are rows ACTUALLY written (summed updateMany counts); linksChanged/fillsChanged
+ *   are planned writes that matched 0 rows because the row changed since planning.
  */
 async function applyTenantUnitsPlan({
   prisma,
@@ -99,8 +101,15 @@ async function applyTenantUnitsPlan({
     }, TX_OPTIONS);
   }
 
+  const totals = { linked: 0, filled: 0, linksChanged: 0, fillsChanged: 0 };
   let done = 0;
   for (const batch of batches) {
+    // Counted per batch and added to the totals only once the batch has committed.
+    const got = { linked: 0, filled: 0, linksChanged: 0, fillsChanged: 0 };
+    const count = (res, hit, miss) => {
+      if (res.count > 0) got[hit] += res.count;
+      else got[miss] += 1;
+    };
     await prisma.$transaction(async (db) => {
       for (const l of batch.links) {
         const tenantUnitId = idByKey.get(l.nameKey);
@@ -108,23 +117,35 @@ async function applyTenantUnitsPlan({
           // A link whose unit was neither created nor pre-existing is a planner bug: fail the batch.
           throw new Error("internal: link target missing; rolling back");
         }
-        await db.productUnit.updateMany({
-          where: { id: l.productUnitId, tenantId, tenantUnitId: null },
+        const res = await db.productUnit.updateMany({
+          // `label` pins the value the plan was built from: a level renamed since planning updates
+          // 0 rows and is counted as changed, never linked on a stale view.
+          where: { id: l.productUnitId, tenantId, tenantUnitId: null, label: l.label },
           data: { tenantUnitId },
         });
+        count(res, "linked", "linksChanged");
       }
       for (const f of batch.packFills) {
         // Fill only a still-NULL/blank packLabel; never overwrite.
-        await db.product.updateMany({
-          where: { id: f.productId, tenantId, OR: [{ packLabel: null }, { packLabel: "" }] },
+        const res = await db.product.updateMany({
+          // `unit` pins the word the plan was built from: a product whose unit changed since
+          // planning updates 0 rows and is counted as changed, never filled on a stale view.
+          where: {
+            id: f.productId,
+            tenantId,
+            unit: f.unit,
+            OR: [{ packLabel: null }, { packLabel: "" }],
+          },
           data: { packLabel: f.packLabel },
         });
+        count(res, "filled", "fillsChanged");
       }
     }, TX_OPTIONS);
+    for (const k of Object.keys(totals)) totals[k] += got[k];
     done += 1;
     if (onBatch) onBatch(done, batches.length);
   }
-  return { batches: batches.length };
+  return { batches: batches.length, ...totals };
 }
 
 module.exports = { applyTenantUnitsPlan, batchWrites, BACKFILL_BATCH_SIZE };

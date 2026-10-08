@@ -110,8 +110,10 @@ async function main() {
     ]);
     const plan = planTenantUnits({ productUnits: productUnitRows, products, existingUnits });
 
+    // Dry-run reports the plan; --apply reports what the writes actually changed.
+    let counts = plan.counts;
     if (args.apply) {
-      const { batches } = await applyTenantUnitsPlan({
+      const result = await applyTenantUnitsPlan({
         prisma,
         tenantId,
         plan,
@@ -119,9 +121,20 @@ async function main() {
         productIdByUnit: new Map(productUnitRows.map((u) => [u.id, u.productId])),
         batchSize: BACKFILL_BATCH_SIZE,
       });
-      console.log(`Batches: ${batches} (up to ${BACKFILL_BATCH_SIZE} products each)`);
+      console.log(`Batches: ${result.batches} (up to ${BACKFILL_BATCH_SIZE} products each)`);
+      if (result.linksChanged + result.fillsChanged > 0) {
+        console.log(
+          `Changed since planning (skipped, not overwritten): productUnits=${result.linksChanged} ` +
+            `products=${result.fillsChanged}; re-run to pick them up.`,
+        );
+      }
+      counts = {
+        ...plan.counts,
+        productUnitsLinked: result.linked,
+        productsPackLabelFilled: result.filled,
+      };
     }
-    console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(plan.counts)}`);
+    console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(counts)}`);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
   } finally {
     await prisma.$disconnect();

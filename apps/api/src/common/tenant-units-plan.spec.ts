@@ -56,7 +56,7 @@ describe("planTenantUnits (U-6)", () => {
     const ok = "y".repeat(30);
     const r = plan([pu("a", long), pu("b", ok)], [prod("p1", long)]);
     expect(r.toCreate.map((c: { nameKey: string }) => c.nameKey)).toEqual([ok]);
-    expect(r.links).toEqual([{ productUnitId: "b", nameKey: ok }]);
+    expect(r.links).toEqual([{ productUnitId: "b", nameKey: ok, label: ok }]);
     // 1 distinct too-long level/unit key + 0 pack fills (the long unit is counted once as a key,
     // and again as a skipped pack fill)
     expect(r.counts.skippedTooLong).toBe(2);
@@ -66,7 +66,7 @@ describe("planTenantUnits (U-6)", () => {
   it("links only NULL tenantUnitId levels, including to a pre-existing unit", () => {
     const r = plan([pu("a", "Case"), pu("b", "Case", "already")], [], ["case"]);
     expect(r.toCreate).toEqual([]);
-    expect(r.links).toEqual([{ productUnitId: "a", nameKey: "case" }]);
+    expect(r.links).toEqual([{ productUnitId: "a", nameKey: "case", label: "Case" }]);
     expect(r.counts.tenantUnitsExisting).toBe(1);
   });
 
@@ -76,8 +76,8 @@ describe("planTenantUnits (U-6)", () => {
       [prod("p1", " Case "), prod("p2", "Box", "Carton"), prod("p3", ""), prod("p4", "Tray", "")],
     );
     expect(r.packFills).toEqual([
-      { productId: "p1", packLabel: "Case" },
-      { productId: "p4", packLabel: "Tray" },
+      { productId: "p1", packLabel: "Case", unit: " Case " },
+      { productId: "p4", packLabel: "Tray", unit: "Tray" },
     ]);
   });
 
@@ -87,9 +87,9 @@ describe("planTenantUnits (U-6)", () => {
       [prod("p1", "CASE"), prod("p2", "case"), prod("p3", "Case")],
     );
     expect(r.packFills).toEqual([
-      { productId: "p1", packLabel: "Case" },
-      { productId: "p2", packLabel: "Case" },
-      { productId: "p3", packLabel: "Case" },
+      { productId: "p1", packLabel: "Case", unit: "CASE" },
+      { productId: "p2", packLabel: "Case", unit: "case" },
+      { productId: "p3", packLabel: "Case", unit: "Case" },
     ]);
   });
 
@@ -117,11 +117,9 @@ describe("planTenantUnits (U-6)", () => {
     expect(r.counts.productsPackLabelFilled).toBe(0);
   });
 
-  it("a fill carries only productId and packLabel: Product.unit is never written (c)", () => {
-    const r = plan([], [prod("p1", "CASE")]);
-    expect(r.packFills.map((f: object) => Object.keys(f).sort())).toEqual([
-      ["packLabel", "productId"],
-    ]);
+  it("a fill's data is packLabel only; unit rides along solely as the write guard's source (c)", () => {
+    const r = plan([pu("a", "Case")], [prod("p1", "CASE")]);
+    expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Case", unit: "CASE" }]);
   });
 
   it("a second plan after the fill writes nothing (d)", () => {
@@ -133,6 +131,53 @@ describe("planTenantUnits (U-6)", () => {
     expect(second.packFills).toEqual([]);
     expect(second.links).toEqual([]);
     expect(second.toCreate).toEqual([]);
+  });
+
+  it("carries the raw source value of every link and fill, for the write guards", () => {
+    const r = plan([pu("a", " Case ")], [prod("p1", " Tray ")]);
+    expect(r.links).toEqual([{ productUnitId: "a", nameKey: "case", label: " Case " }]);
+    expect(r.packFills).toEqual([{ productId: "p1", packLabel: "Tray", unit: " Tray " }]);
+  });
+
+  it("never plans a fill over a whitespace-only packLabel (the write guard matches NULL or empty)", () => {
+    const r = plan(
+      [],
+      [prod("p1", "Tray", "   "), prod("p2", "Tray", ""), prod("p3", "Tray", null)],
+    );
+    expect(r.packFills.map((f: { productId: string }) => f.productId)).toEqual(["p2", "p3"]);
+    expect(r.counts.productsPackLabelFilled).toBe(2);
+  });
+
+  it("a casing tie prefers a mixed-case spelling over ALL-CAPS and all-lowercase", () => {
+    for (const levels of [
+      [pu("a", "CASE"), pu("b", "Case")],
+      [pu("a", "Case"), pu("b", "CASE")],
+      [pu("a", "case"), pu("b", "CASE"), pu("c", "Case")],
+    ]) {
+      expect(plan(levels, []).toCreate[0].name).toBe("Case");
+    }
+    // a real majority still wins, and with no mixed candidate the old order applies
+    expect(plan([pu("a", "CASE"), pu("b", "CASE"), pu("c", "Case")], []).toCreate[0].name).toBe(
+      "CASE",
+    );
+    expect(plan([pu("a", "case"), pu("b", "CASE")], []).toCreate[0].name).toBe("CASE");
+  });
+
+  it("skips the fill when the unit's KEY is too long, even if the word itself is not", () => {
+    // 16 x U+0130 is 16 UTF-16 units, but lowercases to 32: no TenantUnit, so no fill either.
+    const word = "\u0130".repeat(16);
+    expect(word.length).toBeLessThanOrEqual(30);
+    const r = plan([], [prod("p1", word)]);
+    expect(r.toCreate).toEqual([]);
+    expect(r.packFills).toEqual([]);
+  });
+
+  it("fills a unit that merely CONTAINS a synonym word (Each Case is a pack)", () => {
+    const r = plan([], [prod("p1", "Each Case"), prod("p2", "Unit Pack")]);
+    expect(r.packFills).toEqual([
+      { productId: "p1", packLabel: "Each Case", unit: "Each Case" },
+      { productId: "p2", packLabel: "Unit Pack", unit: "Unit Pack" },
+    ]);
   });
 
   it("is idempotent: an already-backfilled tenant plans zero changes", () => {
