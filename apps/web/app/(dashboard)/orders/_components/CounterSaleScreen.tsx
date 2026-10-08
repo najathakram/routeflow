@@ -197,8 +197,13 @@ export function CounterSaleScreen() {
       setLines(snap.lines as SaleLine[]);
       setCustomer((snap.customer as PickedCustomer | null) ?? null);
       setMethod(snap.method as CounterSalePaymentMethod);
-      setTendered(snap.tendered);
+      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
       setReference(snap.reference);
+    },
+    onClearedElsewhere: () => {
+      setLines([]);
+      setCustomer(null);
+      setReference("");
     },
   });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
@@ -429,6 +434,7 @@ export function CounterSaleScreen() {
     setEnteredTender(null);
     attemptRef.current = null;
     clearHeldAttempt(heldKey);
+    liveCart.endSend();
     setOutcomeUnknown(false);
     setHeldCorrupt(false);
     setLookupFailed(false);
@@ -448,6 +454,7 @@ export function CounterSaleScreen() {
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
+    liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
@@ -462,11 +469,13 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
+        liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+        liveCart.endSend();
       } else {
         attempt.unknown = true;
         writeHeldAttempt(heldKey, {
@@ -853,18 +862,26 @@ export function CounterSaleScreen() {
             </div>
           ) : null}
 
-          {liveCart.restored ? (
+          {liveCart.notice ? (
             <div
               role="status"
               className="flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm"
-              data-testid="counter-cart-restored"
+              data-testid={
+                liveCart.notice === "restored"
+                  ? "counter-cart-restored"
+                  : liveCart.notice === "other-tab"
+                    ? "counter-cart-other-tab"
+                    : "counter-cart-cleared-elsewhere"
+              }
             >
-              <span>We put back your unfinished sale.</span>
-              <Button
-                className="min-h-[44px]"
-                variant="secondary"
-                onClick={liveCart.dismissRestored}
-              >
+              <span>
+                {liveCart.notice === "restored"
+                  ? "We put back your unfinished sale."
+                  : liveCart.notice === "other-tab"
+                    ? "Another tab has an unfinished sale. This tab's cart won't survive a refresh."
+                    : "That sale was finished in another tab."}
+              </span>
+              <Button className="min-h-[44px]" variant="secondary" onClick={liveCart.dismissNotice}>
                 OK
               </Button>
             </div>
