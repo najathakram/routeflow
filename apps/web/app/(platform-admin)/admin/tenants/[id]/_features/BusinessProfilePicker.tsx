@@ -15,6 +15,7 @@ import {
 import { AdminCard } from "../../../../_components/AdminCard";
 import { BusinessProfileChoices } from "./BusinessProfileChoices";
 import { BusinessProfilePreviewModal } from "./BusinessProfilePreviewModal";
+import { profilePlainCopy } from "./profile-plain-copy";
 import { profileErrorCopy, profilePartlyApplied, profilePlanChanged } from "./profile-errors";
 
 /**
@@ -32,6 +33,11 @@ export function matchAppliedProfile(
     return entries.length > 0 && entries.every(([key, mode]) => stored[key] === mode);
   });
   return matches.length === 1 ? matches[0]!.key : null;
+}
+
+/** The name the radios show for this profile, so every other mention of it matches. */
+function plainName(p: BusinessProfileSummary): string {
+  return profilePlainCopy(p.key, p.label, p.description).name;
 }
 
 type Pending = { profile: BusinessProfileSummary; response: BusinessProfilePreviewResponse };
@@ -126,7 +132,7 @@ export function BusinessProfilePicker({
     setApplyError(null);
     try {
       await applyBusinessProfile(tenantId, pending.profile.key, pending.response.planFingerprint);
-      setAppliedLabel(pending.profile.label);
+      setAppliedLabel(plainName(pending.profile));
       setPending(null);
       setSelected("");
       if (profiles) loadCurrent(profiles);
@@ -207,7 +213,7 @@ export function BusinessProfilePicker({
 
       <BusinessProfilePreviewModal
         open={pending !== null}
-        profileLabel={pending?.profile.label ?? ""}
+        profileLabel={pending ? plainName(pending.profile) : ""}
         response={pending?.response ?? null}
         confirming={applying}
         refreshing={refreshing}

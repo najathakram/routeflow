@@ -17,6 +17,7 @@ import {
 } from "@/lib/platform-admin/business-profiles";
 import { BusinessProfileChoices } from "../[id]/_features/BusinessProfileChoices";
 import { profileErrorCopy } from "../[id]/_features/profile-errors";
+import { profilePlainCopy } from "../[id]/_features/profile-plain-copy";
 import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePreviewModal";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
@@ -150,7 +151,11 @@ export default function AdminCreateTenantPage() {
       if (profile && res.data?.id) {
         try {
           // confirm needs the plan it applies (#3199): preview the new tenant, confirm that plan
-          const label = profiles?.find((p) => p.key === profile)?.label ?? "";
+          const chosenProfile = profiles?.find((p) => p.key === profile);
+          const label = chosenProfile
+            ? profilePlainCopy(chosenProfile.key, chosenProfile.label, chosenProfile.description)
+                .name
+            : "";
           const preview = await previewBusinessProfile(res.data.id, profile);
           if ((preview.plan?.billing?.length ?? 0) > 0) {
             // stopping billing is never silent: show the preview and let the admin confirm (#3220)

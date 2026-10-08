@@ -356,7 +356,7 @@ describe("create-tenant business profile", () => {
       within(list).getByText("Where orders go: Not configured → Ship by carrier"),
     ).toBeInTheDocument();
     expect(within(list).getByText("Recurring routes: off")).toBeInTheDocument();
-    expect(screen.getByText("Business profile applied: Shipping wholesaler.")).toBeInTheDocument();
+    expect(screen.getByText("Business profile applied: Shipping only.")).toBeInTheDocument();
   });
 
   it("SA-1: an apply that changed nothing says so instead of showing an empty list", async () => {
@@ -394,9 +394,7 @@ describe("create-tenant business profile", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
     submit();
-    expect(
-      await screen.findByText("Business profile applied: Shipping wholesaler."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Business profile applied: Shipping only.")).toBeInTheDocument();
     const [url, payload] = (superAdminClient.post as jest.Mock).mock.calls[0];
     expect(url).toBe("/platform-admin/tenants");
     expect(payload).not.toHaveProperty("profile");
@@ -445,9 +443,7 @@ describe("create-tenant business profile", () => {
     expect(alert).toHaveTextContent(
       "The account was created, but its business profile was not applied.",
     );
-    expect(alert).toHaveTextContent(
-      "That business profile is not available yet. In-store profiles open when counter sales launch.",
-    );
+    expect(alert).toHaveTextContent("This business profile isn't available for this tenant.");
     expect(alert).toHaveTextContent("Apply it from the tenant's Setup tab.");
     expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
     expect(screen.getByRole("link", { name: "View tenant" })).toHaveAttribute(
@@ -490,7 +486,10 @@ describe("create-tenant business profile", () => {
       changed: [],
     });
     await createWithProfile();
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    const reviewDialog = await screen.findByRole("dialog");
+    // SA-1: the review modal uses the same plain name as the radios.
+    expect(within(reviewDialog).getByText("Shipping only")).toBeInTheDocument();
+    expect(within(reviewDialog).queryByText("Shipping wholesaler")).toBeNull();
     expect(screen.getByText("Billing stops as soon as you confirm.")).toBeInTheDocument();
     expect(mockApplyProfile).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));

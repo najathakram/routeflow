@@ -224,9 +224,7 @@ describe("BusinessProfilePicker — preview", () => {
     await choose(/Shipping wholesaler/);
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(
-      "That business profile is not available yet. In-store profiles open when counter sales launch.",
-    );
+    expect(alert).toHaveTextContent("This business profile isn't available for this tenant.");
     expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -253,7 +251,7 @@ describe("BusinessProfilePicker — confirm", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onApplied).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Business profile applied: Shipping wholesaler.",
+      "Business profile applied: Shipping only.",
     );
   });
 
@@ -496,5 +494,14 @@ describe("SA-1: the applied profile is marked 'Current'", () => {
       ).not.toBeNull(),
     );
     expect(await current()).toHaveLength(1);
+  });
+});
+
+describe("SA-1: the preview modal names the profile like the radios do", () => {
+  it("shows the plain name, not the server label", async () => {
+    await renderPicker();
+    const dialog = await openPreview(/Shipping wholesaler/);
+    expect(within(dialog).getByText("Shipping only")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Shipping wholesaler")).toBeNull();
   });
 });
