@@ -397,6 +397,9 @@ export class OrderTemplatesService {
   // ALREADY-RESOLVED oversell boolean (resolveOversellAllowed ran in the caller, before this
   // transaction); the two are independent (a buyer backorder run is still a BUYER_PORTAL run), and an
   // absent value falls back to `isStaffRole`, today's value.
+  // B1054: a repeat within GENERATE_NOW_REPLAY_WINDOW_MS is answered with the order the first run
+  // placed. Accepted limit: if that order lost a pending-order merge in the window, the retry places
+  // a new one (see generate-replay.ts); the merge is not touched to carry a marker.
   async generateOrder(templateId: string, isStaffRole = true, allowOversell?: boolean) {
     const replaySince = replayCutoff(new Date()); // B1054: measured from the START of this request
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
@@ -523,14 +526,28 @@ export class OrderTemplatesService {
 
           // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
           // committed, so a throw past it must not lose the one notice for good).
-          const ctx: { ban: { count: number; names: string } | null; placed?: boolean } = {
-            ban: null,
-          };
+          const ctx: {
+            ban: { count: number; names: string } | null;
+            placed?: boolean;
+            replayed?: boolean;
+          } = { ban: null };
           try {
             // Unattended cron run — same warn-and-oversell posture as an operator.
-            const order = await this.createOrderFromTemplate(template, true, true, ctx);
+            // B1054: the unlocked check above cannot see a manual "Generate now" that is still in
+            // flight, so the run also passes the start of today (UTC) as `replaySince`: the order
+            // transaction then takes the template's row lock first and re-reads, exactly like the
+            // manual path, and a twin that committed meanwhile is answered instead of doubled.
+            const order = await this.createOrderFromTemplate(
+              template,
+              true,
+              true,
+              ctx,
+              undefined,
+              startOfUtcDay(today),
+            );
             // null = all lines were license-gated + skipped → nothing created.
-            if (order) totalCreated++;
+            // ctx.replayed = a concurrent manual run placed today's order first → nothing created here.
+            if (order && !ctx.replayed) totalCreated++;
             else totalSkipped++;
           } catch (err) {
             this.logger.error(
@@ -569,10 +586,10 @@ export class OrderTemplatesService {
     isStaffRole: boolean,
     unattended = false,
     /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
-    ctx?: { ban: { count: number; names: string } | null; placed?: boolean },
+    ctx?: { ban: { count: number; names: string } | null; placed?: boolean; replayed?: boolean },
     /** WS9: the caller's resolved boolean for a manual run (default = isStaffRole, today's value). */
     allowOversellArg?: boolean,
-    /** B1054: a MANUAL run only. An order this template placed at/after it is returned instead of a second one. */
+    /** B1054: an order this template placed at/after it is returned instead of a second one (manual: now - 30 s; cron: UTC day start). */
     replaySince?: Date,
   ) {
     assertPositiveTemplateQty(template.items); // a stored or bypassed quantity never reaches an order or stock
@@ -889,6 +906,7 @@ export class OrderTemplatesService {
         const prior = await lockTemplateThenFindReplay(tx, template.id, replaySince);
         if (prior) {
           replayed = true;
+          if (ctx) ctx.replayed = true;
           return prior;
         }
       }

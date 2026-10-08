@@ -5,6 +5,16 @@ import { OrderStatus, Prisma } from "@prisma/client";
  * placed. A double click, a retried request or a Reorder pressed twice lands well inside it; a run
  * minutes later is a deliberate new order and is never swallowed. Measured back from the START of
  * the later request, so a call that waited on the lock behind a slow first one still replays it.
+ *
+ * ACCEPTED LIMIT (B1054 review): the replay is keyed on a live order carrying this template's id.
+ * If that order LOSES a pending-order merge (the customer's other pending orders fold into a newer
+ * winner and the loser row is deleted) inside the window, a retry finds no order and places a new
+ * one. The merge winner cannot safely carry the marker: its `templateId` belongs to the winner's own
+ * template, and re-pointing it would break that template's replay and its provenance. Carrying a
+ * marker would also mean touching the merge inside the customer-keyed advisory lock
+ * (`withAdvisoryLock`), and no second lock or transaction may be threaded in there. The window is
+ * 30 s and the retry is a deliberate repeat, so this stays as is; pinned by
+ * `order-templates.generate-replay.spec.ts` and the generate-race DB spec.
  */
 export const GENERATE_NOW_REPLAY_WINDOW_MS = 30_000;
 
