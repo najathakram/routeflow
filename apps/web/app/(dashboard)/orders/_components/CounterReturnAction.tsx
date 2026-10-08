@@ -65,6 +65,8 @@ export function CounterReturnAction({
         customerId={order.customerId}
         customerName={order.customer?.businessName}
         orderId={order.id}
+        // SA-740: a counter return is from THIS sale; the walk-in is one shared customer, so the server pins the match to it
+        sourceOrderId={order.id}
         allowRefund
         onRecorded={(_ret, info) => {
           setRecorded(info ?? { resolution: "STORE_CREDIT" });

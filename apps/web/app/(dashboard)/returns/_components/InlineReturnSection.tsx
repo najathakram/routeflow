@@ -84,6 +84,9 @@ export interface InlineReturnSectionProps {
    *  "opened from an order" hydration) — used by the dialog and the order-edit host. Omit for
    *  a customer with no carrying order yet (CreateOrderModal — the order doesn't exist yet). */
   entryOrderId?: string;
+  /** SA-740: the sale this return is from, sent on the quote and the excess re-quote (REQUIRED for a walk-in; the host
+   *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
+  sourceOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -115,6 +118,7 @@ export interface InlineReturnSectionProps {
 export function InlineReturnSection({
   customerId,
   entryOrderId,
+  sourceOrderId,
   resetToken,
   getQuoteEnabled = true,
   onStateChange,
@@ -253,7 +257,7 @@ export function InlineReturnSection({
 
   function handleGetQuote() {
     setQuoteError("");
-    quoteMutation.mutate(buildQuoteRequest(customerId, lines), {
+    quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // A new quote from the lines step credits its excess at current price by default —
@@ -279,7 +283,7 @@ export function InlineReturnSection({
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines), {
+    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a

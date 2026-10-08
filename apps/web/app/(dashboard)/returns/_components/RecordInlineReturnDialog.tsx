@@ -68,6 +68,10 @@ export interface RecordInlineReturnDialogProps {
    *  used as the carrying order (capture's `orderId`) with no extra picker. Omit when
    *  opening from customer detail (the order picker below is then required). */
   orderId?: string;
+  /** SA-740: the sale the goods are from, sent on every quote and the capture. A counter return passes its sale (REQUIRED
+   *  for a walk-in, whose one shared customer row would otherwise match another receipt); omit for a named customer,
+   *  whose return may spill across orders. */
+  sourceOrderId?: string;
   /** POS-4b: offer "Store credit or Refund" on the quote step (counter receipt + order detail only).
    *  Off (customer detail) = today's dialog, no choice block. */
   allowRefund?: boolean;
@@ -108,6 +112,7 @@ export function RecordInlineReturnDialog({
   customerId,
   customerName,
   orderId,
+  sourceOrderId,
   allowRefund = false,
   onRecorded,
 }: RecordInlineReturnDialogProps) {
@@ -288,14 +293,17 @@ export function RecordInlineReturnDialog({
         if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
           setRequoting(true);
-          requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
-            onSuccess: (fresh) => {
-              setRequoting(false);
-              setRequoteOverride(fresh);
+          requoteMutation.mutate(
+            buildQuoteRequest(customerId, sectionState.lines, undefined, sourceOrderId),
+            {
+              onSuccess: (fresh) => {
+                setRequoting(false);
+                setRequoteOverride(fresh);
+              },
+              // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
+              onError: () => setRefundError("failed"),
             },
-            // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
-            onError: () => setRefundError("failed"),
-          });
+          );
         }
       },
     );
@@ -324,6 +332,7 @@ export function RecordInlineReturnDialog({
           lines: sectionState.lines,
           returnKey: returnKeyRef.current,
           reason: sectionState.captureReason,
+          sourceOrderId,
         }),
         ...(showChoice ? { resolution: effResolution } : {}),
       },
@@ -398,6 +407,7 @@ export function RecordInlineReturnDialog({
         hidden={phase !== "capture"}
         customerId={customerId}
         entryOrderId={orderId}
+        sourceOrderId={sourceOrderId}
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
