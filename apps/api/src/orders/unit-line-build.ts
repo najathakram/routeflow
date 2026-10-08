@@ -11,6 +11,7 @@ import {
   computeLineSubtotalStrict,
   normalizeBoxesPieces,
   resolveUnitPrice,
+  unitNameKey,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
   type LadderProduct,
@@ -185,7 +186,7 @@ export function replayLineKey(
   },
   stored: boolean,
 ): string {
-  const unit = (r.unitLabel ?? "").trim().toLowerCase();
+  const unit = unitNameKey(r.unitLabel ?? "");
   let count: unknown = stored && unit ? (r.boxes ?? r.qty) : r.qty;
   // A boxes/pieces-only request line has no qty: derive the piece count the writer stores (same
   // normalizeBoxesPieces) instead of keying NaN, which can never match a stored line. Without a pack size
