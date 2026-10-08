@@ -75,6 +75,17 @@ export interface RecordInlineReturnDialogProps {
   onRecorded?: (result: InlineReturnRecord, info?: RecordedInfo) => void;
 }
 
+/** Refund refusals after a saved capture where the goods are in and nothing was paid out. */
+const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
+  "failed",
+  "changed",
+  "forbidden",
+  "needsPaid",
+  "notRefundable",
+]);
+/** Refusals where the saved return can still be given as store credit (not a 403). */
+const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set(["needsPaid", "notRefundable"]);
+
 export interface RecordedInfo {
   resolution: InlineReturnResolution;
   tender?: InlineReturnRefundTender;
@@ -145,6 +156,7 @@ export function RecordInlineReturnDialog({
   const retriedRef = React.useRef(false);
   const pendingReportedRef = React.useRef(false);
   const [crediting, setCrediting] = React.useState(false);
+  const [requoting, setRequoting] = React.useState(false);
 
   // Fresh attempt every time the dialog opens — bumps `openSeq`, which InlineReturnSection
   // takes as its own reset signal (clearing lines/quote/reason and re-seeding from the entry
@@ -166,6 +178,7 @@ export function RecordInlineReturnDialog({
     setRefundDone(null);
     setRequoteOverride(null);
     setCrediting(false);
+    setRequoting(false);
     retriedRef.current = false;
     pendingReportedRef.current = false;
     busyRef.current = false;
@@ -230,7 +243,8 @@ export function RecordInlineReturnDialog({
 
   /** Closing with a saved return whose refund never went through reports it as pending, once. */
   function handleClose() {
-    const unresolved = !refundError || refundError === "failed" || refundError === "changed";
+    // Goods received, nothing paid out: everything except "already resolved another way".
+    const unresolved = !refundError || PENDING_ON_CLOSE.has(refundError);
     if (saved && !refundDone && phase === "capture" && unresolved && !pendingReportedRef.current) {
       pendingReportedRef.current = true;
       onRecorded?.(saved, {
@@ -265,8 +279,14 @@ export function RecordInlineReturnDialog({
         setRefundError(kind);
         if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          setRequoting(true);
           requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
-            onSuccess: (fresh) => setRequoteOverride(fresh),
+            onSuccess: (fresh) => {
+              setRequoting(false);
+              setRequoteOverride(fresh);
+            },
+            // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
+            onError: () => setRefundError("failed"),
           });
         }
       },
@@ -393,7 +413,7 @@ export function RecordInlineReturnDialog({
         renderQuoteActions={() =>
           showChoice &&
           (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
-            refundError === "failed" && saved ? (
+            saved && (refundError === "failed" || CREDIT_INSTEAD.has(refundError)) ? (
               <>
                 <Button
                   variant="secondary"
@@ -403,13 +423,17 @@ export function RecordInlineReturnDialog({
                 >
                   Give store credit instead
                 </Button>
-                <Button
-                  loading={refunding}
-                  disabled={crediting}
-                  onClick={() => saved && doRetry(saved)}
-                >
-                  Retry refund
-                </Button>
+                {refundError === "failed" ? (
+                  <Button
+                    loading={refunding}
+                    disabled={crediting}
+                    onClick={() => saved && doRetry(saved)}
+                  >
+                    Retry refund
+                  </Button>
+                ) : (
+                  <Button onClick={handleClose}>Close</Button>
+                )}
               </>
             ) : (
               <Button onClick={handleClose}>Close</Button>
@@ -418,6 +442,7 @@ export function RecordInlineReturnDialog({
             <Button
               disabled={
                 refunding ||
+                requoting ||
                 requoteMutation.isPending ||
                 !sectionState.captureReason ||
                 // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)

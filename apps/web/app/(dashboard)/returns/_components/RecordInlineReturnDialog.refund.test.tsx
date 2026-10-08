@@ -557,4 +557,62 @@ describe("refund flow", () => {
       pending: true,
     });
   });
+
+  it.each([
+    ["403", apiErr(403, "REFUND_NOT_ALLOWED")],
+    ["REFUND_NEEDS_PAID_INVOICE", apiErr(409, "REFUND_NEEDS_PAID_INVOICE")],
+    ["RETURN_NOT_REFUNDABLE", apiErr(409, "RETURN_NOT_REFUNDABLE")],
+  ])(
+    "saved return + refund refused (%s): closing reports the refund as pending",
+    async (_k, err) => {
+      refundReturn.mockRejectedValue(err);
+      const onClose = jest.fn();
+      const { onRecorded } = await toQuote(quote({ paidMethods: ["CARD"] }), { onClose });
+      fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+      fireEvent.click(confirmBtn(/^return & refund/i));
+      await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+      captureOk();
+      await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+      const footerClose = await screen.findAllByRole("button", { name: "Close" });
+      fireEvent.click(footerClose.find((b) => b.textContent === "Close") as HTMLElement);
+      expect(onRecorded).toHaveBeenCalledWith(expect.objectContaining({ id: "ret-1" }), {
+        resolution: "REFUND",
+        tender: "CARD",
+        amount: 12.4,
+        pending: true,
+      });
+    },
+  );
+
+  it.each([
+    ["REFUND_NEEDS_PAID_INVOICE", true],
+    ["RETURN_NOT_REFUNDABLE", true],
+    ["403", false],
+  ])("after %s the saved return offers store credit instead: %s", async (code, offered) => {
+    refundReturn.mockRejectedValue(code === "403" ? apiErr(403) : apiErr(409, code));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(1));
+    await screen.findAllByRole("button", { name: "Close" });
+    expect(!!screen.queryByRole("button", { name: "Give store credit instead" })).toBe(offered);
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+  });
+
+  it("a failed re-quote after REFUND_AMOUNT_CHANGED shows the failed copy and never re-enables confirm on the old amount", async () => {
+    refundReturn.mockRejectedValue(apiErr(409, "REFUND_AMOUNT_CHANGED"));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    // while the re-quote is in flight the confirm stays disabled
+    expect(confirmBtn(/^return & refund/i)).toBeDisabled();
+    act(() => lastCall(quoteMutate)[1].onError?.(new Error("network")));
+    await screen.findByText("Return saved. Refund didn't go through. Try again.");
+    const confirm = screen.queryByRole("button", { name: /^return & refund/i });
+    expect(confirm === null || (confirm as HTMLButtonElement).disabled).toBe(true);
+    expect(refundReturn).toHaveBeenCalledTimes(1);
+  });
 });
