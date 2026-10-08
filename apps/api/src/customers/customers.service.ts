@@ -90,7 +90,7 @@ import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
-import { assertNoFamilyProducts } from "../products/sellable-lines";
+import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1406,12 +1406,7 @@ export class CustomersService {
       return null;
     }
 
-    // B1216: a FAMILY container is never priced (its variants are). Clearing an existing row stays possible above.
-    const target = await this.prisma.forTenant().product.findFirst({
-      where: { id: dto.productId },
-      select: { id: true, name: true, kind: true },
-    });
-    if (target) assertNoFamilyProducts([target], "customer price");
+    await assertProductIdNotFamily(this.prisma.forTenant(), dto.productId, "customer price"); // B1216
 
     return this.prisma.forTenant().customerPrice.upsert({
       where: {

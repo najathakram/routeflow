@@ -46,3 +46,26 @@ export function assertNoFamilyProducts(
     productIds: families.map((p) => p.id),
   });
 }
+
+/**
+ * B1216: the by-id form of `assertNoFamilyProducts` for a writer that holds only a product id (the customer
+ * price upsert). An id that resolves to nothing is left to the caller's own not-found handling.
+ */
+export async function assertProductIdNotFamily(
+  db: {
+    product: {
+      findFirst(args: {
+        where: { id: string };
+        select: { id: true; name: true; kind: true };
+      }): PromiseLike<{ id: string; name: string | null; kind: string | null } | null>;
+    };
+  },
+  productId: string,
+  subject: "customer price" | "promotion",
+): Promise<void> {
+  const target = await db.product.findFirst({
+    where: { id: productId },
+    select: { id: true, name: true, kind: true },
+  });
+  if (target) assertNoFamilyProducts([target], subject);
+}
