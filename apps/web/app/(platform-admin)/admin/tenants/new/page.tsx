@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import {
+  API_ERROR_CODES,
   PLAN_KEYS,
   type BusinessProfileKey,
   type BusinessProfilePreviewResponse,
@@ -116,7 +117,10 @@ function fieldErrorsOf(
   if (typeof field === "string" && (FIELD_ORDER as string[]).includes(field)) {
     out[field as FieldKey] = safeTextErrorCopy(err) ?? FIELD_COPY[field as FieldKey];
   }
-  if (res?.status === 409) out.slug = "That slug is taken.";
+  if (res?.status === 400 && res.data?.code === API_ERROR_CODES.ACCOUNT_IDENTIFIER_IN_USE) {
+    out.adminEmail = "That email or username is already in use.";
+  }
+  if (res?.status === 409) out.slug = "That slug isn't available. Try another.";
   if (res?.status === 400 && !Object.keys(out).length) {
     for (const f of invalidFields(form)) out[f] = FIELD_COPY[f];
   }

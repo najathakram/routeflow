@@ -2329,6 +2329,16 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
 
+    it("an email or username already in use is a 400 with the ACCOUNT_IDENTIFIER_IN_USE code (message kept)", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "someone" } as any);
+      const err: any = await service.createTenant(validCreateDto).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "ACCOUNT_IDENTIFIER_IN_USE",
+        message: "Email or username already in use",
+      });
+    });
+
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
       const result = await service.createTenant(validCreateDto);
 

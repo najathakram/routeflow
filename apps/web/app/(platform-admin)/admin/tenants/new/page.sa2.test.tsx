@@ -470,7 +470,7 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     await renderPage();
     fillForm();
     await createThroughSheet();
-    expect(await screen.findByText("That slug is taken.")).toBeInTheDocument();
+    expect(await screen.findByText("That slug isn't available. Try another.")).toBeInTheDocument();
     const slug = screen.getByLabelText(/slug/i);
     await waitFor(() => expect(slug).toHaveFocus());
     expect(scrollIntoView.mock.instances).toContain(slug);
@@ -478,6 +478,27 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     expect(slug).toHaveValue("acme");
     expect(document.body.textContent).not.toContain("is already taken");
     expect(document.body.textContent).not.toContain('Slug "acme"');
+  });
+
+  it("an email or username already in use is named by its code, inline on the email field", async () => {
+    setPost({
+      "/platform-admin/tenants": () =>
+        httpError(400, {
+          statusCode: 400,
+          code: "ACCOUNT_IDENTIFIER_IN_USE",
+          message: "Email or username already in use",
+        }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    expect(
+      await screen.findByText("That email or username is already in use."),
+    ).toBeInTheDocument();
+    const email = screen.getByLabelText(/admin email/i);
+    await waitFor(() => expect(email).toHaveFocus());
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(document.body.textContent).not.toContain("Email or username already in use");
   });
 
   it("an invalid email focuses the email field first (named by the DTO's rules, not the server text)", async () => {

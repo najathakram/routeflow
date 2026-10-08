@@ -390,7 +390,13 @@ export class PlatformAdminService {
       const existingUser = await tx.user.findFirst({
         where: { tenantId: tenant.id, OR: [{ email: adminEmail }, { username: adminUsername }] },
       });
-      if (existingUser) throw new BadRequestException("Email or username already in use");
+      if (existingUser) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.ACCOUNT_IDENTIFIER_IN_USE,
+          message: "Email or username already in use",
+        });
+      }
 
       const user = await tx.user.create({
         data: {
