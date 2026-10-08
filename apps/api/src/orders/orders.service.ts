@@ -1850,9 +1850,7 @@ export class OrdersService implements OnApplicationBootstrap {
           ? decideTierOverride(product, tierForProduct, Number(overridePrice), item.overrideReason)
           : null;
       if (staff?.overridden) {
-        // POS-5: the counter sale tells create() whether its caller may change prices (`canEditPrices`). Judged
-        // here, against the SERVER-resolved tier price (never a client number), before any lock or write.
-        // Absent (every other caller) = unchanged.
+        // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
         if (options.priceEditAllowed === false) {
           throw new ForbiddenException({
             code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
