@@ -129,6 +129,33 @@ describe("useReactivateFlow", () => {
     expect(screen.getByText(/The SKU "NEW-1" is now used by/)).toBeInTheDocument();
   });
 
+  it("a 400 'SKU already exists' on a new-code submit keeps the dialog open, input kept, inline message, no toast", async () => {
+    patch.mockRejectedValueOnce(conflict()).mockRejectedValueOnce({
+      response: { status: 400, data: { message: "SKU already exists" } },
+    });
+    renderWithProviders(<Harness />);
+    fireEvent.click(screen.getByText("go"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use a new code instead" }));
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "TAKEN-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate with new code" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByText("That code is already used by another product."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("New SKU")).toHaveValue("TAKEN-1");
+    expect(screen.getByRole("button", { name: "Reactivate with new code" })).toBeDisabled();
+    expect(toast).not.toHaveBeenCalled();
+    // a different code goes through
+    patch.mockResolvedValueOnce({ data: {} });
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "FREE-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate with new code" }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenLastCalledWith("/products/p1", { isActive: true, sku: "FREE-1" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("a double click sends one request", async () => {
     patch.mockResolvedValue({ data: {} });
     renderWithProviders(<Harness />);

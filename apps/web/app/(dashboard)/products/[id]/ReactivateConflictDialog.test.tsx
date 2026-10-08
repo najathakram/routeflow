@@ -212,6 +212,68 @@ describe("ReactivateConflictDialog", () => {
     expect(checkCodeAvailable).toHaveBeenCalledWith("COLA-7");
   });
 
+  it("a code the check says is taken by another product disables submit, inline message", async () => {
+    const { onResolveWithCodes } = setup(holders());
+    fireEvent.click(screen.getByRole("button", { name: "Use a new code instead" }));
+    const input = screen.getByLabelText("New SKU");
+    checkCodeAvailable.mockResolvedValue({
+      available: false,
+      takenBy: { productId: "other", field: "sku" },
+    });
+    fireEvent.change(input, { target: { value: "COLA-7" } });
+    const submit = screen.getByRole("button", { name: "Reactivate with new code" });
+    expect(submit).toBeEnabled();
+    fireEvent.blur(input);
+    expect(
+      await screen.findByText("COLA-7 is already used by another product."),
+    ).toBeInTheDocument();
+    expect(submit).toBeDisabled();
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    expect(onResolveWithCodes).not.toHaveBeenCalled();
+    // editing to another code re-enables it
+    fireEvent.change(input, { target: { value: "COLA-8" } });
+    expect(submit).toBeEnabled();
+  });
+
+  it("typing the product's own clashing code shows an inline message, not a silent disabled button", () => {
+    setup(holders());
+    fireEvent.click(screen.getByRole("button", { name: "Use a new code instead" }));
+    const input = screen.getByLabelText("New SKU");
+    fireEvent.change(input, { target: { value: "cola-6" } });
+    expect(screen.getByRole("button", { name: "Reactivate with new code" })).toBeDisabled();
+    expect(screen.getByTestId("reactivate-code-message-sku")).toHaveTextContent(
+      "That is this product's current code; choose a different one.",
+    );
+    fireEvent.change(input, { target: { value: "NEW-1" } });
+    expect(screen.queryByTestId("reactivate-code-message-sku")).toBeNull();
+  });
+
+  it("a code the server refused (rejectedCodes) is flagged inline and blocks submit until edited", () => {
+    const refusal = holders();
+    const props = {
+      productName: "Cola 12pk",
+      onClose: jest.fn(),
+      onResolve: jest.fn(),
+      onResolveWithCodes: jest.fn(),
+      onRetry: jest.fn(),
+    };
+    const { rerender } = render(<ReactivateConflictDialog refusal={refusal} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Use a new code instead" }));
+    const input = screen.getByLabelText("New SKU");
+    fireEvent.change(input, { target: { value: "TAKEN-1" } });
+    expect(screen.getByRole("button", { name: "Reactivate with new code" })).toBeEnabled();
+    rerender(
+      <ReactivateConflictDialog refusal={refusal} rejectedCodes={{ sku: "TAKEN-1" }} {...props} />,
+    );
+    expect(screen.getByTestId("reactivate-code-message-sku")).toHaveTextContent(
+      "That code is already used by another product.",
+    );
+    expect(screen.getByRole("button", { name: "Reactivate with new code" })).toBeDisabled();
+    expect(screen.getByLabelText("New SKU")).toHaveValue("TAKEN-1");
+    fireEvent.change(screen.getByLabelText("New SKU"), { target: { value: "FREE-1" } });
+    expect(screen.getByRole("button", { name: "Reactivate with new code" })).toBeEnabled();
+  });
+
   it("cancel/close does not resolve", () => {
     const { onClose, onResolve } = setup(holders());
     fireEvent.click(screen.getByText("Close"));
