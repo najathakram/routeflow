@@ -457,6 +457,26 @@ export const API_ERROR_CODES = {
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
   /**
+   * SA-727 (counter refund). POST /returns/inline/:id/refund: the return was already resolved (store credit, or a refund
+   * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
+   */
+  RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
+  REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
+  /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
+  REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /**
+   * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
+   * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
+   */
+  REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
+  /** SA-727: a return that was refunded in cash/card/check cannot be cancelled (the money already left). 409. */
+  RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
+  /** SA-727: the return is not in a state a refund can resolve (not captured, on hold, rejected, cancelled, or worth $0). 409. */
+  RETURN_NOT_REFUNDABLE: "RETURN_NOT_REFUNDABLE",
+  /** SA-727: the service-level refund gate (office roles only); also guards the REFUND capture and the store-credit conversion. 403. */
+  REFUND_NOT_ALLOWED: "REFUND_NOT_ALLOWED",
+  /**
    * Manual invoices due (platform-admin /rf-invoices). 409s: ALREADY_PAID / IS_VOID / NOT_PAID carry the
    * current `row`; NOTHING_TO_ISSUE, INVOICING_OFF (RF_INVOICING_MODE=off), NOT_MANUAL and NO_PRICE come from
    * POST tenants/:id/rf-invoices/issue. 400s: a missing or card-like payment reference, and a `paidAt` that
