@@ -534,12 +534,12 @@ export const LadderEditor = React.forwardRef<LadderEditorHandle, LadderEditorPro
                   <div className="w-full">
                     {err && (
                       <p id={errId} role="alert" className="mt-1 text-xs text-red-600">
-                        {err.message}
+                        {err.text}
                       </p>
                     )}
                     {srv && (
                       <div className="mt-1 text-xs text-red-600">
-                        <p role="alert">{srv.message}</p>
+                        <p role="alert">{srv.text}</p>
                         {srv.offerNewUnit && (
                           <Button
                             size="sm"
@@ -576,7 +576,7 @@ export const LadderEditor = React.forwardRef<LadderEditorHandle, LadderEditorPro
                       idPrefix={`${idPrefix}-${row.key}`}
                       serverError={
                         srv && (srv.field === "sku" || srv.field === "barcode")
-                          ? { field: srv.field, message: srv.message }
+                          ? { field: srv.field, text: srv.text }
                           : null
                       }
                       onChange={(patch) => patchRow(row.key, patch)}

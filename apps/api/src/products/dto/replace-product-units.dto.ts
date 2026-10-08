@@ -54,12 +54,11 @@ export class LadderLevelDto {
   @IsOptional() @IsString() sku?: string | null;
 }
 
-/** The base unit's own price row and unit code (stored as the legacy Piece row / Product.unitSku). */
+/** The base unit's own price row (stored as the legacy Piece row). Its SKU / barcode stay with the product editor. */
 export class LadderBaseDto {
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_PRICE) price?: number | null;
   @IsOptional() @IsTierList() tiers?: Array<number | null>;
   @IsOptional() @IsBoolean() isDefaultSelling?: boolean;
-  @IsOptional() @IsString() sku?: string | null;
 }
 
 /** PUT /products/:id/units: replace the whole ladder in ONE transaction. */

@@ -25,3 +25,39 @@ describe("UnitCombobox - tenant units first", () => {
     expect(list).toEqual([...list].sort());
   });
 });
+
+describe("UnitCombobox - keyboard", () => {
+  const open = () => {
+    render(<Box tenantUnits={["Crate", "Case"]} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.focus(input);
+    return input;
+  };
+
+  it("ArrowDown/ArrowUp move through the options and Enter picks the highlighted one", () => {
+    const input = open();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getAllByRole("button")[1]).toHaveAttribute("data-active", "true");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(screen.getAllByRole("button")[0]).toHaveAttribute("data-active", "true");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue("Case");
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("Escape closes the list and every option has an accessible name", () => {
+    const input = open();
+    for (const b of screen.getAllByRole("button")) expect(b).toHaveAccessibleName();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("ArrowDown reopens a closed list", () => {
+    const input = open();
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getAllByRole("button")[0]).toHaveAttribute("data-active", "true");
+  });
+});

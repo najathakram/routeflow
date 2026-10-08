@@ -30,7 +30,7 @@ const draft = (rows: LadderRow[], over: Partial<LadderDraft> = {}): LadderDraft 
   rows,
   ...over,
 });
-const errOf = (d: LadderDraft, i: number) => resolveDraft(d).errors.get(d.rows[i].key)?.message;
+const errOf = (d: LadderDraft, i: number) => resolveDraft(d).errors.get(d.rows[i].key)?.text;
 
 describe("resolveDraft", () => {
   it("6 Bottle = 1 Pack, 4 Pack = 1 Case -> Case holds 24 Bottles", () => {
@@ -74,7 +74,7 @@ describe("resolveDraft", () => {
 
   it("the pack named like the smallest unit is refused", () => {
     const d = draft([row("Case", "6", "Bottle")], { packLevel: "Case" });
-    expect(resolveDraft(d, { packWord: "bottle" }).errors.get(d.rows[0].key)?.message).toBe(
+    expect(resolveDraft(d, { packWord: "bottle" }).errors.get(d.rows[0].key)?.text).toBe(
       "The pack can't have the same name as the smallest unit.",
     );
   });
@@ -103,6 +103,26 @@ describe("draftFromServer", () => {
       "50",
       "Piece",
       "Case",
+    ]);
+  });
+
+  it("a legacy level with no recorded parent sits under the largest level that divides it ('4 Inner = 1 Case')", () => {
+    const d = draftFromServer({ unit: "Box", unitsPerBox: null }, [
+      lvl({ id: "i", label: "Inner", factorToBase: 6, perParent: 6 }),
+      lvl({ id: "c", label: "Case", factorToBase: 24 }),
+      lvl({ id: "x", label: "Odd", factorToBase: 50 }),
+    ]);
+    const byLabel = Object.fromEntries(d.rows.map((r) => [r.label, r]));
+    expect([byLabel.Case.perParent, byLabel.Case.parentLabel]).toEqual(["4", "Inner"]);
+    expect([byLabel.Odd.perParent, byLabel.Odd.parentLabel]).toEqual(["50", "Piece"]);
+    // round trip: saving it back keeps the flat sizes
+    const res = resolveDraft(d);
+    expect(d.rows.map((r) => res.factors.get(r.key))).toEqual([6, 24, 50]);
+    const body = toPutBody(d, { sendBase: false, sendCodes: false });
+    expect(body.levels.map((l) => [l.label, l.perParent, l.parentLabel])).toEqual([
+      ["Inner", 6, null],
+      ["Case", 4, "Inner"],
+      ["Odd", 50, null],
     ]);
   });
 
@@ -201,10 +221,10 @@ describe("mapLadderError", () => {
   it("maps the used-size 409 by status + exact text and offers a new unit", () => {
     const text =
       '"Pack" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.';
-    expect(mapLadderError(err(409, { message: text }))).toEqual({
+    expect(mapLadderError(err(409, { code: "UNIT_SIZE_IN_USE", level: "Pack" }))).toEqual({
       rowLabel: "Pack",
       field: "perParent",
-      message: text,
+      text,
       offerNewUnit: true,
     });
   });
@@ -217,18 +237,18 @@ describe("mapLadderError", () => {
           level: "Pack",
           productName: "Gift Box",
         }),
-      ).message,
+      ).text,
     ).toBe(
       "That barcode is already on Gift Box. One barcode can only belong to one product. Use a different one, or change Gift Box first.",
     );
     expect(
       mapLadderError(
         err(409, { code: "CODE_TAKEN", field: "sku", productName: "Gift Box", inactive: true }),
-      ).message,
+      ).text,
     ).toBe(
       "That SKU is on Gift Box, which is turned off. Turn it back on to change it, or use a different SKU.",
     );
-    expect(mapLadderError(err(503, {})).message).toBe(
+    expect(mapLadderError(err(503, {})).text).toBe(
       "Couldn't check that code right now. Your entry is still here. Try again.",
     );
   });

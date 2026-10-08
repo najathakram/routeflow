@@ -77,9 +77,15 @@ export function planBarcodeRows(input: {
  * code. #2717 M1.
  */
 export function printableUnitBarcode(
-  rows: Array<{ code: string; level: string; primaryFor: string | null }>,
+  rows: Array<{
+    code: string;
+    level: string;
+    primaryFor: string | null;
+    productUnitId?: string | null;
+  }>,
 ): string | null {
-  const row = rows.find((r) => r.level === "UNIT" && r.primaryFor === "UNIT");
+  // A ladder level's own barcode (productUnitId set) is never the printable UNIT barcode.
+  const row = rows.find((r) => !r.productUnitId && r.level === "UNIT" && r.primaryFor === "UNIT");
   return row ? row.code : null;
 }
 
@@ -116,6 +122,7 @@ export function barcodeRowsToView(
         origin: BarcodeOrigin;
         copiedFromLevel: PackagingLevel | null;
         primaryFor: PackagingLevel | null;
+        productUnitId?: string | null;
       }>,
 ): ProductBarcodeView[] {
   return rows.map((row) => ({
@@ -125,6 +132,7 @@ export function barcodeRowsToView(
     origin: row.origin,
     copiedFromLevel: row.copiedFromLevel,
     primaryFor: row.primaryFor,
+    ...("productUnitId" in row ? { productUnitId: row.productUnitId ?? null } : {}),
   }));
 }
 

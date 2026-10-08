@@ -12,6 +12,8 @@ export interface ProductBarcodeView {
   origin: BarcodeOrigin | "LEGACY";
   copiedFromLevel: PackagingLevel | null;
   primaryFor: PackagingLevel | null;
+  /** Units rebuild: set when the code belongs to a ladder level (not the product's own UNIT/BOX rows). */
+  productUnitId?: string | null;
 }
 
 /** #2717 M4a-1: which code a scan hit and the packaging levels that code has on the resolved product

@@ -37,7 +37,11 @@ export function useProductUnits(productId: string, enabled: boolean) {
 
 function useInvalidate(productId: string) {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: key(productId) });
+  // The same two queries the ladder editor's PUT refreshes (the ladder, and the product it hangs off).
+  return () => {
+    qc.invalidateQueries({ queryKey: key(productId) });
+    qc.invalidateQueries({ queryKey: ["products", productId] });
+  };
 }
 
 export function useCreateProductUnit(productId: string) {

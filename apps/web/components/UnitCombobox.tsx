@@ -48,6 +48,8 @@ export function UnitCombobox({
     return out;
   }, [extraUnits, tenantUnits]);
 
+  const [active, setActive] = React.useState(-1);
+
   const filtered = value.trim()
     ? allUnits.filter((u) => u.toLowerCase().includes(value.toLowerCase()))
     : allUnits;
@@ -75,14 +77,36 @@ export function UnitCombobox({
         autoComplete="off"
         onChange={(e) => {
           onChange(e.target.value);
+          setActive(-1);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Escape") {
+            setOpen(false);
+            setActive(-1);
+          }
+          if ((e.key === "ArrowDown" || e.key === "ArrowUp") && filtered.length > 0) {
+            e.preventDefault();
+            setOpen(true);
+            const step = e.key === "ArrowDown" ? 1 : -1;
+            setActive((i) =>
+              i < 0
+                ? step === 1
+                  ? 0
+                  : filtered.length - 1
+                : (i + step + filtered.length) % filtered.length,
+            );
+          }
           if (e.key === "Enter" && open) {
-            // If exactly one match, select it; otherwise keep typed value
-            if (filtered.length === 1) {
+            if (active >= 0 && active < filtered.length) {
+              // An option the arrows moved to wins.
+              onChange(filtered[active]);
+              setOpen(false);
+              setActive(-1);
+              e.preventDefault();
+            } else if (filtered.length === 1) {
+              // If exactly one match, select it; otherwise keep typed value
               onChange(filtered[0]);
               setOpen(false);
               e.preventDefault();
@@ -99,10 +123,14 @@ export function UnitCombobox({
       {open && (
         <ul className="absolute left-0 top-full z-50 mt-0.5 max-h-48 w-full overflow-y-auto rounded-lg border border-surface-border bg-white py-1 shadow-dropdown">
           {filtered.length > 0 ? (
-            filtered.map((u) => (
+            filtered.map((u, idx) => (
               <li key={u}>
                 <button
                   type="button"
+                  data-active={idx === active ? "true" : undefined}
+                  ref={(el) => {
+                    if (idx === active) el?.scrollIntoView?.({ block: "nearest" });
+                  }}
                   onMouseDown={() => {
                     onChange(u);
                     setOpen(false);
@@ -110,6 +138,7 @@ export function UnitCombobox({
                   className={cn(
                     "w-full px-3 py-1.5 text-left text-sm text-navy hover:bg-surface-raised transition-colors",
                     value === u && "bg-brand-500/10 font-medium text-brand-600",
+                    idx === active && "bg-surface-raised ring-1 ring-inset ring-brand-500",
                   )}
                 >
                   {u}

@@ -75,7 +75,7 @@ export function blankRow(label: string, parentLabel: string): LadderRow {
 
 export interface RowError {
   field: "perParent" | "label" | "parent" | "size" | "pack";
-  message: string;
+  text: string;
 }
 
 export interface Resolved {
@@ -96,18 +96,18 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
   for (const row of draft.rows) {
     const label = row.label.trim();
     if (!label) {
-      setErr(row, { field: "label", message: "Pick a unit." });
+      setErr(row, { field: "label", text: "Pick a unit." });
       continue;
     }
     if (norm(label) === norm(base)) {
-      setErr(row, { field: "label", message: `Pick a bigger unit than ${base}.` });
+      setErr(row, { field: "label", text: `Pick a bigger unit than ${base}.` });
       continue;
     }
     const first = byKey.get(norm(label));
     if (first) {
       setErr(row, {
         field: "label",
-        message: `${first.label.trim()} is already in this ladder. Use each unit once.`,
+        text: `${first.label.trim()} is already in this ladder. Use each unit once.`,
       });
       continue;
     }
@@ -121,7 +121,7 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
     if (errors.get(row.key)?.field === "label") return null;
     const n = Number(row.perParent);
     if (!row.perParent.trim() || !Number.isInteger(n) || n < 2) {
-      setErr(row, { field: "perParent", message: "Enter a whole number, 2 or more." });
+      setErr(row, { field: "perParent", text: "Enter a whole number, 2 or more." });
       return null;
     }
     let parentFactor = 1;
@@ -131,7 +131,7 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
       if (!parent || parent === row || visiting.has(row.key)) {
         setErr(row, {
           field: "parent",
-          message: `Pick a unit from this ladder to build ${row.label.trim()} on.`,
+          text: `Pick a unit from this ladder to build ${row.label.trim()} on.`,
         });
         return null;
       }
@@ -145,7 +145,7 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
     if (f > MAX_FACTOR) {
       setErr(row, {
         field: "perParent",
-        message: `That's more than 1,000,000 ${plural(base)} in one ${row.label.trim()}. Check the numbers.`,
+        text: `That's more than 1,000,000 ${plural(base)} in one ${row.label.trim()}. Check the numbers.`,
       });
       return null;
     }
@@ -162,7 +162,7 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
     if (prior) {
       setErr(row, {
         field: "size",
-        message: `${prior.label.trim()} and ${row.label.trim()} would both hold ${fmtInt(f)} ${plural(base)}. Change one.`,
+        text: `${prior.label.trim()} and ${row.label.trim()} would both hold ${fmtInt(f)} ${plural(base)}. Change one.`,
       });
     } else seen.set(f, row);
   }
@@ -171,7 +171,7 @@ export function resolveDraft(draft: LadderDraft, opts: { packWord?: string } = {
     if (row)
       setErr(row, {
         field: "pack",
-        message: "The pack can't have the same name as the smallest unit.",
+        text: "The pack can't have the same name as the smallest unit.",
       });
   }
   return { factors, errors };
@@ -289,6 +289,16 @@ export type LadderUnitRecord = ProductUnitLevel & {
 const s = (v: string | number | null | undefined) => (v == null ? "" : String(Number(v)));
 
 /**
+ * The ONE parent rule for a size whose parent was never recorded (the pack, a legacy level): the LARGEST other size
+ * that divides it exactly, else the base (1). Same derivation as the SA-729a backfill.
+ */
+export function largestDividingParent(factor: number, sizes: readonly number[]): number {
+  let best = 1;
+  for (const f of sizes) if (f > best && f < factor && factor % f === 0) best = f;
+  return best;
+}
+
+/**
  * Rebuild the editor's chain from what the server holds. A legacy level (no perParent) loads as
  * "[factor] [Piece] = 1 [Level]". The pack becomes a row of its own (the server never stores it as one).
  */
@@ -311,14 +321,18 @@ export function draftFromServer(
   if (packFactor) labelAt.set(packFactor, packWord);
   levels.forEach((u) => labelAt.set(u.factorToBase, u.label));
 
+  const allSizes = [...labelAt.keys()];
   const rows: LadderRow[] = levels.map((u) => {
-    const per = u.perParent && u.perParent >= 2 ? u.perParent : null;
-    const parentFactor = per ? u.factorToBase / per : 1;
+    const recorded = u.perParent && u.perParent >= 2 ? u.perParent : null;
+    const parentFactor = recorded
+      ? u.factorToBase / recorded
+      : largestDividingParent(u.factorToBase, allSizes);
+    const per = recorded ?? u.factorToBase / parentFactor;
     return {
       key: newKey(),
       id: u.id,
       label: u.label,
-      perParent: String(per ?? u.factorToBase),
+      perParent: String(per),
       parentLabel: labelAt.get(Number.isInteger(parentFactor) ? parentFactor : 1) ?? base,
       price: s(u.price),
       tiers: [s(u.priceTier2), s(u.priceTier3), s(u.priceTier4), s(u.priceTier5)],
@@ -329,8 +343,7 @@ export function draftFromServer(
   });
   if (packFactor && !levels.some((u) => u.factorToBase === packFactor)) {
     // The pack's parent: the largest lower size that divides it (a legacy pack sits on the base).
-    const lower = [...labelAt.keys()].filter((f) => f < packFactor && packFactor % f === 0);
-    const parentFactor = lower.length ? Math.max(...lower) : 1;
+    const parentFactor = largestDividingParent(packFactor, allSizes);
     rows.push({
       ...blankRow(packWord, labelAt.get(parentFactor) ?? base),
       perParent: String(packFactor / parentFactor),
@@ -461,16 +474,19 @@ export function derivedLevelPrice<U extends Parameters<typeof resolveUnitPrice>[
 
 // ─── server errors ──────────────────────────────────────────────────────────
 
-export const USED_SIZE_SUFFIX =
-  "is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.";
+/** The used-size sentence, rendered from our own copy (the server text is never read). */
+export const usedSizeCopy = (label: string) =>
+  `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`;
 export const COULDNT_CHECK =
   "Couldn't check that code right now. Your entry is still here. Try again.";
+export const COULDNT_SAVE = "Couldn't save the units. Try again.";
 
 export interface MappedLadderError {
-  /** Row label the message belongs under; undefined = form-level. */
+  /** Row label the text belongs under; undefined = form-level. */
   rowLabel?: string;
   field?: "perParent" | "label" | "size" | "sku" | "barcode" | "pack" | "parent";
-  message: string;
+  /** Fixed copy chosen by status + code; never server text. */
+  text: string;
   /** Show "Add a new unit instead" under the row. */
   offerNewUnit?: boolean;
 }
@@ -479,7 +495,6 @@ type ApiErr = {
   response?: {
     status?: number;
     data?: {
-      message?: unknown;
       code?: string;
       field?: string;
       level?: string;
@@ -489,20 +504,26 @@ type ApiErr = {
   };
 };
 
-/** Map a PUT failure to the inline message it belongs under (by status + code + the used-size text). */
+const FIELD_COPY: Record<string, string> = {
+  perParent: "Enter a whole number, 2 or more.",
+  label: "Pick a unit for this row.",
+  parent: "Pick a unit from this ladder to build this on.",
+  size: "Two units can't hold the same amount. Change one.",
+  pack: "Pick the pack from the units in this ladder.",
+};
+
+/** Map a PUT failure to fixed copy by status + code (+ the row/field the body names). */
 export function mapLadderError(err: unknown): MappedLadderError {
   const r = (err as ApiErr)?.response;
   const status = r?.status;
   const data = r?.data ?? {};
-  const raw =
-    typeof data.message === "string"
-      ? data.message
-      : Array.isArray(data.message)
-        ? String(data.message[0])
-        : "";
-  if (status === 409 && raw.includes(USED_SIZE_SUFFIX)) {
-    const label = raw.match(/^"(.*)" is already used/)?.[1];
-    return { rowLabel: label, field: "perParent", message: raw, offerNewUnit: true };
+  if (status === 409 && data.code === API_ERROR_CODES.UNIT_SIZE_IN_USE) {
+    return {
+      rowLabel: data.level,
+      field: "perParent",
+      text: usedSizeCopy(data.level ?? "This unit"),
+      offerNewUnit: true,
+    };
   }
   if (
     status === 409 &&
@@ -513,18 +534,28 @@ export function mapLadderError(err: unknown): MappedLadderError {
     return {
       rowLabel: data.level,
       field: data.field === "barcode" ? "barcode" : "sku",
-      message: data.inactive
+      text: data.inactive
         ? `That ${kind} is on ${holder}, which is turned off. Turn it back on to change it, or use a different ${kind}.`
         : `That ${kind} is already on ${holder}. One ${kind} can only belong to one product. Use a different one, or change ${holder} first.`,
     };
   }
-  if (status === 503) return { message: COULDNT_CHECK };
-  if (data.level || data.field) {
+  if (status === 503) return { text: COULDNT_CHECK };
+  if (data.code === API_ERROR_CODES.UNIT_ARCHIVED) {
     return {
       rowLabel: data.level,
-      field: (data.field as MappedLadderError["field"]) ?? undefined,
-      message: raw || "Couldn't save the units.",
+      field: "label",
+      text: "That unit is archived. Restore it in Settings, or pick another unit.",
     };
   }
-  return { message: raw || "Couldn't save the units." };
+  if (status === 409 && (data.field === "perParent" || data.field === "size")) {
+    return { rowLabel: data.level, field: data.field, text: FIELD_COPY[data.field] };
+  }
+  if (status === 400 && data.field && FIELD_COPY[data.field]) {
+    return {
+      rowLabel: data.level,
+      field: data.field as MappedLadderError["field"],
+      text: FIELD_COPY[data.field],
+    };
+  }
+  return { text: COULDNT_SAVE };
 }

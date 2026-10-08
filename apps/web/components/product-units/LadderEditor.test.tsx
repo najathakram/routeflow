@@ -264,7 +264,7 @@ describe("LadderEditor", () => {
             serverError={{
               rowLabel: "Pack",
               field: "perParent",
-              message: text,
+              text,
               offerNewUnit: true,
             }}
             onDismissServerError={onDismiss}
@@ -278,7 +278,7 @@ describe("LadderEditor", () => {
     it("clearing the name keeps the row and its number", () => {
       render(
         <Harness
-          serverError={{ rowLabel: "Pack", message: text, offerNewUnit: true }}
+          serverError={{ rowLabel: "Pack", text, offerNewUnit: true }}
           initial={{ ...emptyDraft(), baseLabel: "Bottle", rows: [row("Pack", "8", "Bottle")] }}
         />,
       );

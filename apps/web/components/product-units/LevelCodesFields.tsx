@@ -38,7 +38,7 @@ export function LevelCodesFields({
   fallbackName: string;
   /** Set when the pack is a different unit than the fallback: "Use Pack's instead". */
   packName?: string;
-  serverError?: { field?: "sku" | "barcode"; message: string } | null;
+  serverError?: { field?: "sku" | "barcode"; text: string } | null;
   onChange: (patch: Partial<Pick<LadderRow, "barcode" | "sku">>) => void;
   idPrefix: string;
 }) {
@@ -99,7 +99,7 @@ export function LevelCodesFields({
                 onChange={(e) => onChange({ barcode: e.target.value })}
               />
               {(bErr || serverError?.field === "barcode") && (
-                <p className="mt-1 text-xs text-red-600">{bErr ?? serverError?.message}</p>
+                <p className="mt-1 text-xs text-red-600">{bErr ?? serverError?.text}</p>
               )}
             </div>
             <div>
@@ -114,7 +114,7 @@ export function LevelCodesFields({
                 onChange={(e) => onChange({ sku: e.target.value })}
               />
               {(sErr || serverError?.field === "sku") && (
-                <p className="mt-1 text-xs text-red-600">{sErr ?? serverError?.message}</p>
+                <p className="mt-1 text-xs text-red-600">{sErr ?? serverError?.text}</p>
               )}
             </div>
           </div>

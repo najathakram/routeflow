@@ -43,6 +43,7 @@ function build(opts: {
       update: jest.fn().mockImplementation(async ({ where, data }) => ({ id: where.id, ...data })),
       delete: jest.fn().mockResolvedValue({}),
     },
+    productBarcode: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     // Parents only: the immutability check must read lines through the order/invoice relation
     // (a top-level orderItem/invoiceItem read would miss a NULL-tenant line).
     order: {

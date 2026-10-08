@@ -260,6 +260,7 @@ describe("PUT /products/:id/units - used sizes never change", () => {
     await expect(service.replace("p1", body([lv("Pack", 8)]))).rejects.toMatchObject({
       status: 409,
       message: USED_TEXT,
+      response: expect.objectContaining({ code: "UNIT_SIZE_IN_USE", level: "Pack" }),
     });
     expect(unitRows(state)).toEqual([["Pack", 6, 6]]);
   });
@@ -563,33 +564,6 @@ describe("PUT /products/:id/units - per-level codes", () => {
     });
   });
 
-  it("the pack's Product.sku clashes with another product's ProductUnit.sku", async () => {
-    const { service } = setup({
-      products: [product(), other("p2")],
-      units: [
-        { id: "x1", productId: "p2", tenantId: TENANT, label: "Z", factorToBase: 3, sku: "DUP-9" },
-      ],
-    });
-    const err: any = await service
-      .replace(
-        "p1",
-        body([lv("Case", 6, null, { sku: "DUP-9" })], { packLevel: "Case", packLabel: "Case" }),
-      )
-      .catch((e): any => e);
-    expect(err.getResponse()).toMatchObject({ field: "sku", productId: "p2" });
-  });
-
-  it("the base unit code (unitSku) clashes with another product's ProductBarcode.code", async () => {
-    const { service } = setup({
-      products: [product(), other("p2")],
-      barcodes: [{ id: "b1", productId: "p2", tenantId: TENANT, level: "UNIT", code: "DUP-9" }],
-    });
-    const err: any = await service
-      .replace("p1", { ...body([lv("Pack", 6)]), base: { sku: "DUP-9" } })
-      .catch((e): any => e);
-    expect(err).toBeInstanceOf(ConflictException);
-  });
-
   it("a deactivated holder that still holds the code answers inactive: true", async () => {
     const { service } = setup({
       products: [product(), other("p2", { isActive: false, sku: "DUP-9" })],
@@ -618,17 +592,58 @@ describe("PUT /products/:id/units - per-level codes", () => {
     expect(state.productUnit[0].sku).toBe("DUP-9");
   });
 
-  it("base and pack codes write the existing Product fields", async () => {
-    const { service, state } = setup();
+  it("never writes Product.sku / unitSku / barcode (single writer): pack and base codes in the body are ignored", async () => {
+    const { service, state } = setup({
+      products: [product({ sku: "KEEP-1", unitSku: "KEEP-2", barcode: null })],
+    });
     await service.replace("p1", {
-      ...body([lv("Case", 6, null, { sku: "CASE-1", barcode: "999" })], {
+      ...body([lv("Case", 6, null, { sku: "CASE-9", barcode: "999" })], {
         packLevel: "Case",
         packLabel: "Case",
       }),
-      base: { sku: "UNIT-1" },
+      base: { price: 1 },
     });
-    expect(state.product[0]).toMatchObject({ sku: "CASE-1", unitSku: "UNIT-1", barcode: "999" });
-    expect(state.productUnit.some((u: any) => u.label === "Case")).toBe(false);
+    expect(state.product[0]).toMatchObject({ sku: "KEEP-1", unitSku: "KEEP-2", barcode: null });
+    expect(state.productBarcode).toHaveLength(0);
+    expect(state.productUnit.some((u: any) => u.sku === "CASE-9")).toBe(false);
+  });
+
+  it('a level called "Piece" above a custom base is refused (Piece is always the factor-1 unit)', async () => {
+    const { service } = setup();
+    await expect(service.replace("p1", body([lv("Piece", 6)]))).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("a 5th coded level is a 409 with the same-code-or-none copy", async () => {
+    const { service, state } = setup();
+    const levels = [2, 3, 5, 7, 11].map((n, i) => lv(`L${n}`, n, null, { barcode: `BC-${i}` }));
+    const err: any = await service.replace("p1", body(levels)).catch((e): any => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.message).toBe("Give it the same code as another level, or no code.");
+    expect(state.productUnit).toHaveLength(0);
+    // four coded levels are fine
+    await service.replace("p1", body(levels.slice(0, 4)));
+    expect(state.productBarcode).toHaveLength(4);
+  });
+
+  it("dropping a level in a PUT removes its barcode rows in the same transaction", async () => {
+    const { service, state } = setup();
+    await service.replace(
+      "p1",
+      body([lv("Pack", 6, null, { barcode: "111" }), lv("Tray", 4, null, { barcode: "222" })]),
+    );
+    await service.replace("p1", body([lv("Tray", 4, null, { barcode: "222" })]));
+    expect(state.productBarcode.map((b: any) => b.code)).toEqual(["222"]);
+  });
+
+  it("deleting a ProductUnit through the single-level route removes its own barcode rows", async () => {
+    const { service, state } = setup();
+    await service.replace("p1", body([lv("Pack", 6, null, { barcode: "111" })]));
+    const unitId = state.productUnit[0].id;
+    await service.remove("p1", unitId);
+    expect(state.productUnit).toHaveLength(0);
+    expect(state.productBarcode).toHaveLength(0);
   });
 
   it("two concurrent writers of ONE new code: one succeeds, one gets a 409", async () => {
@@ -654,16 +669,6 @@ describe("PUT /products/:id/units - per-level codes", () => {
       ).rejects.toThrow(BadRequestException);
       await service.replace("p1", body([lv("Pack", 6, null, { sku: "  PK-7  " })]));
       expect(state.productUnit[0].sku).toBe("PK-7");
-    });
-
-    it("a stored legacy Product.sku over 64 chars re-saves unchanged", async () => {
-      const long = "L".repeat(80);
-      const { service, state } = setup({ products: [product({ sku: long })] });
-      await service.replace(
-        "p1",
-        body([lv("Case", 6, null, { sku: long })], { packLevel: "Case", packLabel: "Case" }),
-      );
-      expect(state.product[0].sku).toBe(long);
     });
   });
 });

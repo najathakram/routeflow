@@ -161,6 +161,8 @@ export class ProductUnitsService {
         select: { id: true },
       });
       if (!row) throw new NotFoundException("Unit not found");
+      // The level's own barcode rows go with it (the FK would only orphan them as legacy-looking rows).
+      await tx.productBarcode.deleteMany({ where: { productUnitId: unitId } });
       await tx.productUnit.delete({ where: { id: unitId } });
       return { deleted: true };
     });
@@ -294,6 +296,8 @@ export class ProductUnitsService {
       }
     }
     const persisted = flat.filter((l) => l !== packFlat);
+    // The same naming rule as the one-level routes: "Piece" is always exactly the factor-1 unit.
+    for (const l of persisted) this.cleanLabel(l.label, l.factorToBase);
 
     // ── tenant unit names ──
     const tenantUnitIds = await this.upsertTenantUnits(tx, tenantId, {
@@ -319,16 +323,9 @@ export class ProductUnitsService {
     }
 
     // ── codes: validate, then lock, then check ──
-    const baseSkuNew =
-      dto.base && dto.base.sku !== undefined
-        ? this.code(dto.base.sku, "sku", undefined, product.unitSku)
-        : null;
-    const baseSku = baseSkuNew ?? product.unitSku ?? product.sku ?? null;
-    const packDto = packFlat ? dtoByLabel.get(norm(packFlat.label)) : undefined;
-    const packSkuNew = packDto ? this.code(packDto.sku, "sku", packFlat?.label, product.sku) : null;
-    const packBarcodeNew = packDto
-      ? this.code(packDto.barcode, "barcode", packFlat?.label, product.barcode)
-      : null;
+    // Single writer (SA-729g 5): the base / pack SKUs (Product.unitSku / Product.sku) and their barcodes belong to
+    // the product editor. This save writes only ProductUnit.sku and ladder-row barcodes.
+    const baseSku = product.unitSku ?? product.sku ?? null;
     const levelCodes = persisted.map((l) => {
       const d = dtoByLabel.get(norm(l.label)) as NonNullable<ReturnType<typeof dtoByLabel.get>>;
       const was = existingByLabel.get(norm(l.label));
@@ -357,9 +354,6 @@ export class ProductUnitsService {
         claims.push({ kind, value, level });
       }
     };
-    claim("sku", baseSkuNew);
-    claim("sku", packSkuNew, packFlat?.label);
-    claim("barcode", packBarcodeNew, packFlat?.label);
     for (const c of levelCodes) {
       claim("sku", c.sku, c.l.label);
       claim("barcode", c.barcode, c.l.label);
@@ -371,9 +365,10 @@ export class ProductUnitsService {
       }
     }
     if (levelCodes.filter((c) => c.barcode).length > LEVEL_BARCODE_SLOTS.length) {
-      throw new BadRequestException(
-        `Barcodes can be set on up to ${LEVEL_BARCODE_SLOTS.length} units of one product.`,
-      );
+      throw new ConflictException({
+        message: "Give it the same code as another level, or no code.",
+        field: "barcode",
+      });
     }
 
     // ── writes ──
@@ -459,27 +454,18 @@ export class ProductUnitsService {
         ? null
         : packFactor
       : undefined;
-    const unitSkuNew = baseSkuNew && baseSkuNew !== product.unitSku ? baseSkuNew : undefined;
-    const skuNew = packSkuNew && packSkuNew !== product.sku ? packSkuNew : undefined;
-    const barcodeNew =
-      packBarcodeNew && packBarcodeNew !== product.barcode ? packBarcodeNew : undefined;
     await tx.product.update({
       where: { id: productId },
       data: {
         baseUnitLabel: baseClean,
         packLabel: packLabelNew,
         unitsPerBox: unitsPerBoxNew,
-        unitSku: unitSkuNew,
-        sku: skuNew,
-        barcode: barcodeNew,
       },
     });
     const upbAfter = unitsPerBoxNew === undefined ? product.unitsPerBox : unitsPerBoxNew;
-    const barcodeAfter = barcodeNew ?? product.barcode;
-    if (
-      barcodeNew !== undefined ||
-      (barcodeAfter && unitsPerBoxNew !== undefined && upbAfter !== product.unitsPerBox)
-    ) {
+    const barcodeAfter = product.barcode;
+    // The BOX/UNIT mirror rows depend on unitsPerBox, so a changed pack re-syncs them (ladder rows are left alone).
+    if (barcodeAfter && unitsPerBoxNew !== undefined && upbAfter !== product.unitsPerBox) {
       await syncProductBarcodesFromLegacy(tx, {
         tenantId,
         productId,
@@ -774,9 +760,11 @@ export class ProductUnitsService {
       db.invoice.findFirst({ where: { items: { some: lineWhere } }, select: { id: true } }),
     ]);
     if (order || invoice) {
-      throw new ConflictException(
-        `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
-      );
+      throw new ConflictException({
+        code: API_ERROR_CODES.UNIT_SIZE_IN_USE,
+        message: `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`,
+        level: label,
+      });
     }
   }
 }

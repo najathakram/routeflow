@@ -367,7 +367,7 @@ export function ProductUnitsCard({ product }: { product: UnitsCardProduct }) {
               />
               {serverError && !serverError.rowLabel && (
                 <p role="alert" className="text-sm text-red-600">
-                  {serverError.message}
+                  {serverError.text}
                 </p>
               )}
               <div className="flex justify-end gap-2">

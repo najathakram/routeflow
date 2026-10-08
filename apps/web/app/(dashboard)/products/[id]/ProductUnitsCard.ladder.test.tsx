@@ -6,6 +6,7 @@ import { createTestQueryClient } from "@/test-utils/render";
 import { ProductUnitsCard, type UnitsCardProduct } from "./ProductUnitsCard";
 
 const replaceMutate = jest.fn();
+const createMutate = jest.fn();
 let mockUnits: unknown[] = [];
 
 jest.mock("@/lib/api/product-units", () => ({
@@ -16,7 +17,7 @@ jest.mock("@/lib/api/product-units", () => ({
     isError: false,
     refetch: jest.fn(),
   }),
-  useCreateProductUnit: () => ({ mutate: jest.fn(), isPending: false }),
+  useCreateProductUnit: () => ({ mutate: createMutate, isPending: false }),
   useUpdateProductUnit: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
   useDeleteProductUnit: () => ({ mutate: jest.fn(), isPending: false }),
 }));
@@ -48,14 +49,14 @@ const lvl = (o: Record<string, unknown>) => ({
 });
 
 const queryClient = createTestQueryClient();
-const renderCard = (product: UnitsCardProduct) =>
-  render(
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <ProductUnitsCard product={product} />
-      </ToastProvider>
-    </QueryClientProvider>,
-  );
+const tree = (product: UnitsCardProduct) => (
+  <QueryClientProvider client={queryClient}>
+    <ToastProvider>
+      <ProductUnitsCard product={product} />
+    </ToastProvider>
+  </QueryClientProvider>
+);
+const renderCard = (product: UnitsCardProduct) => render(tree(product));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -147,7 +148,12 @@ describe("ProductUnitsCard - the ladder editor", () => {
     const text =
       '"Pack" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.';
     replaceMutate.mockImplementation((_b, o) =>
-      o.onError({ response: { status: 409, data: { message: text } } }),
+      o.onError({
+        response: {
+          status: 409,
+          data: { code: "UNIT_SIZE_IN_USE", level: "Pack", message: "ignored" },
+        },
+      }),
     );
     renderCard(plain);
     fillChain();
@@ -168,5 +174,53 @@ describe("ProductUnitsCard - the ladder editor", () => {
       screen.getByText("Couldn't check that code right now. Your entry is still here. Try again."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("How many Bottles in one Pack")).toHaveValue("6");
+  });
+});
+
+describe("ProductUnitsCard - the two ways to add a unit agree", () => {
+  it("while the editor is OPEN the old form and the row-level fields are not shown at all", () => {
+    mockUnits = [lvl({ id: "a", label: "Case", factorToBase: 12 })];
+    renderCard(plain);
+    expect(screen.getAllByTestId("unit-row")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Edit units" }));
+    expect(screen.queryByTestId("unit-row")).toBeNull();
+    expect(screen.queryByLabelText("New unit")).toBeNull();
+    expect(screen.queryByLabelText("Pieces per new unit")).toBeNull();
+    expect(screen.queryByLabelText("Pieces per Case")).toBeNull();
+    expect(screen.getByRole("group", { name: "How is this sold?" })).toBeInTheDocument();
+  });
+
+  it("a unit added in the old form shows up when the editor is opened", () => {
+    createMutate.mockImplementation((body, o) => {
+      mockUnits = [lvl({ id: "t", label: body.label, factorToBase: body.factorToBase })];
+      o.onSuccess();
+    });
+    const { rerender } = renderCard(plain);
+    fireEvent.change(screen.getByLabelText("New unit"), { target: { value: "Tray" } });
+    fireEvent.change(screen.getByLabelText("Pieces per new unit"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    rerender(tree(plain));
+    fireEvent.click(screen.getByRole("button", { name: "Edit units" }));
+    const row = screen.getByRole("group", { name: "Level 1" });
+    expect(within(row).getByLabelText("Level 1 unit")).toHaveValue("Tray");
+    expect(within(row).getByLabelText("How many Pieces in one Tray")).toHaveValue("12");
+  });
+
+  it("a ladder saved in the editor shows up as rows in the closed view", () => {
+    replaceMutate.mockImplementation((_body, o) => {
+      mockUnits = [lvl({ id: "p", label: "Pack", factorToBase: 6, perParent: 6 })];
+      o.onSuccess();
+    });
+    const { rerender } = renderCard(plain);
+    fireEvent.click(screen.getByRole("button", { name: "Set up units" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a bigger unit" }));
+    fireEvent.change(screen.getByLabelText("Level 1 unit"), { target: { value: "Pack" } });
+    fireEvent.change(screen.getByLabelText("How many Pieces in one Pack"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save units" }));
+    rerender(tree(plain));
+    expect(screen.getAllByTestId("unit-row")).toHaveLength(1);
+    expect(screen.getByLabelText("Pieces per Pack")).toHaveValue("6");
   });
 });

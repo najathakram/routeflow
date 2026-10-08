@@ -15,12 +15,7 @@ import { join, relative } from "path";
  */
 const SRC_ROOT = join(__dirname, "..", "..", "src");
 
-const ALLOW_LIST = new Set([
-  "products/products.service.ts",
-  "import/import.service.ts",
-  // Units U-2: PUT /products/:id/units writes the pack + the pack/base codes and calls the sync helper.
-  "products/product-units.service.ts",
-]);
+const ALLOW_LIST = new Set(["products/products.service.ts", "import/import.service.ts"]);
 
 const WRITE_METHODS = ["create", "update", "upsert", "createMany", "updateMany"];
 
