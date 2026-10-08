@@ -2,14 +2,13 @@
 --   - "Order"."registerKey" (nullable TEXT, no default) and "Order"."soldById" (nullable TEXT, FK to "User" ON DELETE SET NULL).
 --   - the new table "CounterParkedCart" (a counter cart set aside, resumable until "expiresAt"): three btree indexes and
 --     three foreign keys ("Tenant" ON DELETE CASCADE; "createdById" and "resumedById" to "User" ON DELETE SET NULL).
---   - btree "Order" ("tenantId", "counterSale", "createdAt").
+--   (the two "Order" indexes for these seams are in the NEXT folder, 20261010090650_order_counter_seams_indexes, so their
+--   SHARE-lock builds do not run under this file's ACCESS EXCLUSIVE lock.)
 -- LOCKS ON A POPULATED TABLE: the ALTER TABLE "Order" takes ACCESS EXCLUSIVE and holds it until COMMIT. "soldById" is added
 -- WITH its foreign key INLINE (`ADD COLUMN ... CONSTRAINT "Order_soldById_fkey" REFERENCES`): Postgres does not scan the
 -- table for a new column without a default, so there is no validation scan (the constraint name is the one Prisma
--- generates, so no drift). The "Order" index build, however, runs inside the same transaction while that ACCESS EXCLUSIVE
--- lock is held, so it blocks READS AND WRITES of "Order" for the build. RUN OFF-PEAK. If "Order" is larger than ~500k rows
--- (the PR body carries the prod count), move the index into its own folder `20261010090650_order_counter_sale_index`
--- (a plain CREATE INDEX there takes only a SHARE lock: reads continue, writes wait) and apply it separately.
+-- generates, so no drift). With no index build in this file, the ACCESS EXCLUSIVE window is just the catalog changes.
+-- RUN OFF-PEAK anyway ("Order" is the hottest table).
 --
 -- LOCK PROFILE: `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that
 -- waits longer than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
@@ -18,7 +17,6 @@
 -- `schema-drift.mjs` exit 0, and ONLY THEN merge code that reads or writes these columns (none does yet).
 --
 -- Rollback (nothing reads or writes these yet):
---   DROP INDEX "Order_tenantId_counterSale_createdAt_idx";
 --   DROP TABLE "CounterParkedCart";
 --   ALTER TABLE "Order" DROP CONSTRAINT "Order_soldById_fkey";
 --   ALTER TABLE "Order" DROP COLUMN "soldById", DROP COLUMN "registerKey";
@@ -61,11 +59,6 @@ CREATE INDEX "CounterParkedCart_expiresAt_idx" ON "CounterParkedCart"("expiresAt
 -- reason: brand-new empty table
 -- squawk-ignore require-concurrent-index-creation
 CREATE INDEX "CounterParkedCart_resumedAt_idx" ON "CounterParkedCart"("resumedAt");
-
--- CreateIndex
--- reason: index on populated "Order" (counterSale, createdAt are existing columns): the build runs under the ALTER ACCESS EXCLUSIVE lock, blocking reads and writes of "Order"; the owner runs this sitting off-peak and the PR body carries the prod row count
--- squawk-ignore require-concurrent-index-creation
-CREATE INDEX "Order_tenantId_counterSale_createdAt_idx" ON "Order"("tenantId", "counterSale", "createdAt");
 
 -- AddForeignKey
 -- reason: brand-new empty table; adding the FK scans nothing

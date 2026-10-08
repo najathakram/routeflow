@@ -699,6 +699,7 @@ model Order {
   @@index([orderDate])
   @@index([tenantId])
   @@index([tenantId, counterSale, createdAt])
+  @@index([soldById])
   @@index([tenantId, customerId, createdAt])
 }
 

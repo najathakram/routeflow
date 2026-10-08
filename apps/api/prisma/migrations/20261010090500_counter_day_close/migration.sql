@@ -3,6 +3,8 @@
 -- Brand-new empty table: a unique index ("tenantId", "registerKey", "windowStart"), a btree ("tenantId", "day") and three
 -- foreign keys ("Tenant" ON DELETE RESTRICT; "closedById" and "reopenedById" to "User" ON DELETE SET NULL). Adding an FK
 -- takes SHARE ROW EXCLUSIVE on the referenced table ("Tenant", "User") for the instant it checks the empty table.
+-- NOTE for tenant purge/wipe scripts: "tenantId" is ON DELETE RESTRICT, so once rows exist a purge must delete the
+-- tenant's "CounterDayClose" rows FIRST (before deleting the tenant).
 --
 -- LOCK PROFILE: `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that
 -- waits longer than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
