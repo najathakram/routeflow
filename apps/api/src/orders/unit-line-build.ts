@@ -10,6 +10,7 @@ import {
   computeCategoryTax,
   computeLineSubtotalStrict,
   normalizeBoxesPieces,
+  resolveLadderLevel,
   resolveUnitPrice,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
@@ -53,6 +54,19 @@ export interface UnitLineRequest {
   unitLabel?: string | null;
   notes?: string | null;
   itemNote?: string | null;
+}
+
+/**
+ * An EXISTING line's own snapshot (units P0b). When its `unitLabel` no longer names a level of the
+ * live ladder, a rewrite re-resolves from this — factor = `unitsPerBox`, price = `unitPrice` — and
+ * never throws `UnknownUnitError`. A NEW line has none, and still gets the 400.
+ */
+export interface UnitSnapshotLine {
+  unitLabel?: string | null;
+  unitsPerBox?: number | null;
+  unitPrice?: unknown;
+  originalPrice?: unknown;
+  priceType?: PriceType | null;
 }
 
 /** A Prisma `Decimal` (or number/string) — coerced once by `toLadderProduct`. */
@@ -263,6 +277,17 @@ export interface UnitLineData {
   tenantId: string | null | undefined;
 }
 
+/** Does the live ladder still name `label`? (the pack, the base, or a level row) */
+function ladderNames(product: LadderProduct, units: readonly LadderUnit[], label: string): boolean {
+  try {
+    resolveLadderLevel(product, units, label);
+    return true;
+  } catch (e) {
+    if (e instanceof UnknownUnitError) return false;
+    throw e;
+  }
+}
+
 export function buildUnitLine(input: {
   product: UnitLineProduct;
   units: readonly LadderUnit[];
@@ -283,6 +308,8 @@ export function buildUnitLine(input: {
   /** Set on every line by the caller's tenancy: a nested create bypasses `forTenant()`. */
   position: number;
   tenantId: string | null | undefined;
+  /** The line being rewritten, when one exists (see {@link UnitSnapshotLine}). */
+  existing?: UnitSnapshotLine | null;
 }): UnitLineData {
   const { product, units, resolved, item, tier, taxFor } = input;
   const ladderProduct = toLadderProduct(product);
@@ -321,11 +348,23 @@ export function buildUnitLine(input: {
     );
   }
 
+  // Units P0b: a rewrite of a line HELD on a unit the ladder no longer names keeps its own snapshot.
+  const held = input.existing;
+  const gone =
+    held != null &&
+    (held.unitLabel ?? "").trim().toLowerCase() === label.trim().toLowerCase() &&
+    Number(held.unitPrice) >= 0 &&
+    !ladderNames(ladderProduct, units, label);
   let listPrice: number;
   let tierPrice: number;
   try {
-    listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
-    tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
+    if (gone) {
+      tierPrice = roundMoney(Number(held.unitPrice));
+      listPrice = roundMoney(Number(held.originalPrice ?? held.unitPrice));
+    } else {
+      listPrice = resolveUnitPrice(ladderProduct, units, label, 1);
+      tierPrice = resolveUnitPrice(ladderProduct, units, label, tier);
+    }
   } catch (e) {
     if (e instanceof InvalidTierError) {
       throw new BadRequestException(
@@ -347,6 +386,11 @@ export function buildUnitLine(input: {
   let unitPrice = tierPrice;
   let priceType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
   let originalPrice: number | null = isSpecialTier(tier) ? listPrice : null;
+  if (gone) {
+    // the snapshot IS the price: keep how it was classified, never re-derive it from a ladder that lost the level
+    priceType = held.priceType ?? PriceType.STANDARD;
+    originalPrice = held.originalPrice == null ? null : roundMoney(Number(held.originalPrice));
+  }
   if (typed != null && typed < listPrice) {
     unitPrice = typed;
     priceType = PriceType.DISCOUNTED;

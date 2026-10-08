@@ -1,14 +1,25 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
-import type { LadderUnit, TrackedCategoryRow } from "@routeflow/pricing";
+import {
+  PIECE_LABEL,
+  baseLabelOf,
+  type LadderUnit,
+  type TrackedCategoryRow,
+} from "@routeflow/pricing";
 import {
   assertMayUseUnits,
   buildUnitLine,
+  type UnitSnapshotLine,
   categoryTaxForLine,
   loadUnitLadders,
   requestsUnit,
   type UnitLineProduct,
 } from "./unit-line-build";
-import type { ResolvedLineUnits } from "../products/line-units";
+import {
+  asLadderProduct,
+  normalizeDerivedBaseLine,
+  type ResolvedLineUnits,
+} from "../products/line-units";
+import { norm } from "./unit-label-norm";
 import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
@@ -96,6 +107,65 @@ export async function prepareUnitEditContext(
 }
 
 /**
+ * SA-728 / units P0b: an OLD client names the base ("Piece" / the tenant's base label) for a DERIVED
+ * base unit. Rewrites that dto item IN PLACE into the pack line's pieces (no unitLabel, boxes/pieces
+ * via normalizeBoxesPieces, no echoed per-piece price) so computeLineSubtotal prorates it. Reads the
+ * customer's tier ONLY when an item actually names the base; otherwise nothing is read.
+ */
+export async function normalizeDerivedBaseItems(
+  db: {
+    customer: { findFirst(a: any): Promise<any> };
+    customerPrice: { findMany(a: any): Promise<any[]> };
+  },
+  order: { customerId?: string | null },
+  items: ReadonlyArray<any>,
+  ctx: UnitEditContext,
+  user: { role?: string } | undefined,
+): Promise<void> {
+  const productOf = (i: any): any => {
+    const pid = i.substituteProductId ?? i.productId ?? ctx.existingById.get(i.id)?.productId;
+    return pid ? ctx.products.get(pid) : undefined;
+  };
+  const named = (i: any) => {
+    const p = productOf(i);
+    const l = norm(i.unitLabel ?? "");
+    return !!p && l !== "" && (l === norm(baseLabelOf(p)) || l === norm(PIECE_LABEL));
+  };
+  const candidates = items.filter(named);
+  if (candidates.length === 0) return;
+  const atCustomerTier = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  let defaultTier = 1;
+  const overrides = new Map<string, number | null>();
+  if (atCustomerTier && order.customerId) {
+    const c = await db.customer.findFirst({
+      where: { id: order.customerId },
+      select: { pricingTier: true },
+    });
+    defaultTier = c?.pricingTier ?? 1;
+    const rows = await db.customerPrice.findMany({
+      where: {
+        customerId: order.customerId,
+        productId: { in: candidates.map((i) => productOf(i).id) },
+      },
+    });
+    for (const r of rows) overrides.set(r.productId, r.pricingTier);
+  }
+  for (const item of candidates) {
+    const p = productOf(item);
+    const out = normalizeDerivedBaseLine(
+      item,
+      asLadderProduct(p),
+      ctx.ladders.get(p.id) ?? [],
+      atCustomerTier ? (overrides.get(p.id) ?? defaultTier) : 1,
+      { held: item.id ? ctx.existingById.get(item.id)?.unitLabel : null },
+    );
+    if (out === item) continue;
+    Object.assign(item, out);
+    if (!("unitPrice" in out)) delete item.unitPrice;
+  }
+}
+
+/**
  * The money seam: an edit that targets an existing unit-aware line (qty, price, or substitute —
  * never a bare CANCEL/DELETE/reason-only touch, which changes no money) MUST name that line's
  * unit; an item with no unitLabel aimed at one is REFUSED here, never silently interpreted against
@@ -176,6 +246,7 @@ export async function createUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   position: number,
+  existing?: UnitSnapshotLine | null,
 ): Promise<void> {
   // B297: price + stamp the trio at WRITE, like every other writer — a NULL/zero placeholder here
   // would become a PERMANENT $0 levy once PR 3's "keep the stored amount" rule reads it back.
@@ -191,6 +262,7 @@ export async function createUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position,
     tenantId: ctx.tenantId,
+    existing,
   });
   await ctx.tx.orderItem.create({ data: { orderId, ...built } });
 }
@@ -217,6 +289,7 @@ export async function updateUnitLine(
   resolved: ResolvedLineUnits,
   item: any,
   isSubstitute: boolean,
+  existing?: UnitSnapshotLine | null,
 ): Promise<void> {
   const category = product.trackedCategoryId
     ? ctx.categoryMap.get(product.trackedCategoryId)
@@ -236,6 +309,8 @@ export async function updateUnitLine(
     taxFor: (qty, sub) => categoryTaxForLine(category, qty, sub),
     position: 0,
     tenantId: ctx.tenantId,
+    // a SUBSTITUTE is a different product: the old line's snapshot says nothing about it
+    existing: isSubstitute ? undefined : existing,
   });
   const data = isSubstitute
     ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }

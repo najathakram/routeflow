@@ -173,7 +173,11 @@ import {
 } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
 import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
-import { resolveLineUnits } from "../products/line-units";
+import {
+  asLadderProduct,
+  normalizeDerivedBaseLine,
+  resolveLineUnits,
+} from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { standaloneAllocationTotals } from "./standalone-payment-totals";
@@ -404,6 +408,19 @@ export class InvoicesService {
     const { productMap, categoryMap, unitsByProduct } = await loadManualLineContext(dto.items, {
       prisma: this.prisma,
       entitlements: this.entitlements,
+    });
+    // SA-728 / units P0b: a derived Piece from an old client bills as the pack's pieces (typed price = the derived price).
+    dto.items = dto.items.map((it) => {
+      const p = productMap.get(it.productId ?? "");
+      return p
+        ? normalizeDerivedBaseLine(
+            it,
+            asLadderProduct(p),
+            unitsByProduct.get(it.productId ?? "") ?? [],
+            (customer as { pricingTier?: number | null }).pricingTier ?? 1,
+            { price: "pack" },
+          )
+        : it;
     });
     const resolved = dto.items.map((it) =>
       resolveLineUnits(
