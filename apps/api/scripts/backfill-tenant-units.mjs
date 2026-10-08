@@ -16,8 +16,10 @@
 //     live-tenant path in this script until the owner approves one.
 //   - DATABASE_URL only, and it must be PROVABLY local (localhost / 127.0.0.1 / ::1 / compose
 //     `postgres`). There is no override flag; Railway proxy variables are never read.
-//   - One transaction per tenant. Idempotent: TenantUnit upserts by (tenantId, nameKey); only NULL
-//     fields are filled; a re-run plans zero changes.
+//   - Writes go in small transactions: one for the TenantUnit upserts, then one per batch of
+//     BACKFILL_BATCH_SIZE products (lib/tenant-units-apply.cjs). Idempotent: TenantUnit upserts by
+//     (tenantId, nameKey); only NULL fields are filled; a re-run plans zero changes. A crash between
+//     batches keeps the finished batches; re-running resumes with what is still missing.
 //   - Output is COUNTS ONLY (no unit names, no ids).
 //
 // Sequencing: run this for a tenant BEFORE the Settings > Units UI / ladder editor is visible to it.
@@ -32,6 +34,7 @@ const require = createRequire(import.meta.url);
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { localConnectionConfig } = require("./lib/local-db-target.cjs");
 const { planTenantUnits } = require("./lib/tenant-units-plan.cjs");
+const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-units-apply.cjs");
 
 export function parseArgs(argv) {
   const apply = argv.includes("--apply");
@@ -90,55 +93,30 @@ async function main() {
     const tenantId = tenant.id;
     console.log(args.apply ? "MODE: APPLY (writes)" : "MODE: dry-run (no writes)");
 
-    const run = async (db) => {
-      const [productUnits, products, existingUnits] = await Promise.all([
-        db.productUnit.findMany({
-          where: { tenantId },
-          select: { id: true, label: true, tenantUnitId: true },
-        }),
-        db.product.findMany({
-          where: { tenantId },
-          select: { id: true, unit: true, packLabel: true },
-        }),
-        db.tenantUnit.findMany({ where: { tenantId }, select: { id: true, nameKey: true } }),
-      ]);
-      const plan = planTenantUnits({ productUnits, products, existingUnits });
-      if (!args.apply) return plan;
+    const [productUnitRows, products, existingUnits] = await Promise.all([
+      prisma.productUnit.findMany({
+        where: { tenantId },
+        select: { id: true, productId: true, label: true, tenantUnitId: true },
+      }),
+      prisma.product.findMany({
+        where: { tenantId },
+        select: { id: true, unit: true, packLabel: true },
+      }),
+      prisma.tenantUnit.findMany({ where: { tenantId }, select: { id: true, nameKey: true } }),
+    ]);
+    const plan = planTenantUnits({ productUnits: productUnitRows, products, existingUnits });
 
-      const idByKey = new Map(existingUnits.map((u) => [u.nameKey, u.id]));
-      for (const c of plan.toCreate) {
-        const row = await db.tenantUnit.upsert({
-          where: { tenantId_nameKey: { tenantId, nameKey: c.nameKey } },
-          create: { tenantId, name: c.name, nameKey: c.nameKey },
-          update: {},
-          select: { id: true },
-        });
-        idByKey.set(c.nameKey, row.id);
-      }
-      for (const l of plan.links) {
-        const tenantUnitId = idByKey.get(l.nameKey);
-        if (!tenantUnitId) {
-          // A link whose unit was neither created nor pre-existing is a planner bug: fail the whole tx.
-          throw new Error("internal: link target missing; rolling back");
-        }
-        await db.productUnit.updateMany({
-          where: { id: l.productUnitId, tenantId, tenantUnitId: null },
-          data: { tenantUnitId },
-        });
-      }
-      for (const f of plan.packFills) {
-        // Fill only a still-NULL/blank packLabel; never overwrite.
-        await db.product.updateMany({
-          where: { id: f.productId, tenantId, OR: [{ packLabel: null }, { packLabel: "" }] },
-          data: { packLabel: f.packLabel },
-        });
-      }
-      return plan;
-    };
-
-    const plan = args.apply
-      ? await prisma.$transaction(run, { timeout: 120000, maxWait: 10000 })
-      : await run(prisma);
+    if (args.apply) {
+      const { batches } = await applyTenantUnitsPlan({
+        prisma,
+        tenantId,
+        plan,
+        existingUnits,
+        productIdByUnit: new Map(productUnitRows.map((u) => [u.id, u.productId])),
+        batchSize: BACKFILL_BATCH_SIZE,
+      });
+      console.log(`Batches: ${batches} (up to ${BACKFILL_BATCH_SIZE} products each)`);
+    }
     console.log(`${args.apply ? "Applied" : "Would apply"}: ${fmt(plan.counts)}`);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
   } finally {
