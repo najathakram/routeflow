@@ -482,8 +482,14 @@ export class InlineReturnsQuoteService {
       // line names the widest-known rate, else the tenant's CURRENT rate (deferred PR-1b
       // item / §3.2 cases 2/3 — never a hand-rolled 0, which silently zero-taxed every
       // unreferenced chunk on a product with no candidate invoice line at all).
-      const fallbackTaxRate =
-        matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
+      // B463: when that candidate's invoice charged NO tax (m-7), the over-return is untaxed too: never credit a tax the sale
+      // did not charge. A product on no candidate invoice at all takes the tenant's current rate.
+      const candidateLine = matchingSet.find((l) => l.productId === item.productId);
+      const fallbackTaxRate = candidateLine
+        ? candidateLine.invoiceTaxAmount === 0
+          ? 0
+          : candidateLine.taxRate
+        : tenantTaxRate;
 
       const override = overrides.get(item);
       // B961 (SA-071h): flag = unreferenced AND (the in-window lines carry prior returns/credits OR lifetime exhaustion). The 90-day
