@@ -12,6 +12,8 @@ import { isSellableProduct, sellableProductWhere } from "../products/sellable-pr
  * optional argument a call site can forget. A missing tenant fails CLOSED (a variant is not sellable / the builder
  * refuses to build), never open (an unscoped parent link followed).
  */
+type LoadedParent = { portalVisible: boolean; isActive: boolean; tenantId: string | null };
+// `undefined` = a select that forgot the column (a runtime hazard the type forbids; cast to model it).
 const variant = (parentTenant: string | null | undefined) => ({
   id: "v1",
   isActive: true,
@@ -21,7 +23,7 @@ const variant = (parentTenant: string | null | undefined) => ({
     portalVisible: true,
     isActive: true,
     ...(parentTenant === undefined ? {} : { tenantId: parentTenant }),
-  },
+  } as LoadedParent,
 });
 const noTenant = undefined as unknown as string;
 

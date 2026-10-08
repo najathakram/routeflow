@@ -1,32 +1,38 @@
 import { isSellableProduct, sellableProductWhere } from "./sellable-product-where";
 
-const PARENT_LIVE = { OR: [{ parentProductId: null }, { parent: { isActive: true } }] };
+const PARENT_LIVE = {
+  OR: [{ parentProductId: null }, { parent: { isActive: true, tenantId: "t-1" } }],
+};
 
 describe("sellableProductWhere (WS6/WS8, B1213)", () => {
   it("is active AND not a FAMILY AND (standalone OR its parent family is active)", () => {
-    expect(sellableProductWhere()).toEqual({
+    expect(sellableProductWhere(undefined, "t-1")).toEqual({
       AND: [{ isActive: true }, { kind: { not: "FAMILY" } }, PARENT_LIVE],
     });
   });
 
   it("AND-merges extra as its own clause (narrows, never widens)", () => {
-    expect(sellableProductWhere({ kind: "FAMILY" })).toEqual({
+    expect(sellableProductWhere({ kind: "FAMILY" }, "t-1")).toEqual({
       AND: [{ isActive: true }, { kind: { not: "FAMILY" } }, PARENT_LIVE, { kind: "FAMILY" }],
     });
   });
 
   it("the in-memory twin agrees", () => {
     const p = { isActive: true, kind: "STANDARD", parent: null };
-    expect(isSellableProduct(p)).toBe(true);
-    expect(isSellableProduct({ ...p, kind: "VARIANT" })).toBe(true);
-    expect(isSellableProduct({ ...p, kind: "FAMILY" })).toBe(false);
-    expect(isSellableProduct({ ...p, isActive: false })).toBe(false);
+    expect(isSellableProduct(p, "t-1")).toBe(true);
+    expect(isSellableProduct({ ...p, kind: "VARIANT" }, "t-1")).toBe(true);
+    expect(isSellableProduct({ ...p, kind: "FAMILY" }, "t-1")).toBe(false);
+    expect(isSellableProduct({ ...p, isActive: false }, "t-1")).toBe(false);
   });
 
   it("a variant under an INACTIVE parent family is not sellable; under an active one it is", () => {
     const v = { isActive: true, kind: "VARIANT" };
-    expect(isSellableProduct({ ...v, parent: { isActive: true } })).toBe(true);
-    expect(isSellableProduct({ ...v, parent: { isActive: false } })).toBe(false);
+    expect(isSellableProduct({ ...v, parent: { isActive: true, tenantId: "t-1" } }, "t-1")).toBe(
+      true,
+    );
+    expect(isSellableProduct({ ...v, parent: { isActive: false, tenantId: "t-1" } }, "t-1")).toBe(
+      false,
+    );
   });
 
   it("the parent is REQUIRED: a select that forgets it is a compile error, never a silently sellable product", () => {
@@ -34,7 +40,7 @@ describe("sellableProductWhere (WS6/WS8, B1213)", () => {
     const compileOnly = () => {
       const noParent = { isActive: true, kind: "VARIANT" };
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      isSellableProduct(noParent);
+      isSellableProduct(noParent, "t-1");
     };
     expect(typeof compileOnly).toBe("function");
   });

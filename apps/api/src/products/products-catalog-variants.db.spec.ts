@@ -181,9 +181,10 @@ describeDb("families and variants: delete, sellability, barcodes — real Postgr
       const orphan = await row(tenantId, "Lime", { kind: "VARIANT", parentProductId: gone.id });
       const solo = await row(tenantId, "Solo");
       const ids = await inTenant(tenantId, () =>
-        prisma
-          .forTenant()
-          .product.findMany({ where: sellableProductWhere(), select: { id: true } }),
+        prisma.forTenant().product.findMany({
+          where: sellableProductWhere(undefined, tenantId),
+          select: { id: true },
+        }),
       );
       const got = ids.map((r) => r.id).sort();
       expect(got).toEqual([under.id, solo.id].sort());
