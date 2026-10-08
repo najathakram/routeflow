@@ -368,7 +368,7 @@ export class ProductUnitsService {
       throw new ConflictException({
         code: API_ERROR_CODES.LEVEL_CODES_FULL,
         message:
-          "Only 4 levels can have their own code. Leave this level\'s code blank and it will use the code of the level above, or remove a code from another level.",
+          "Only 4 levels can have their own code. Leave this level's code blank and it will use the code of the level above, or remove a code from another level.",
         field: "barcode",
       });
     }
