@@ -3,7 +3,9 @@
 // GET /orders/counter-sale/quick-keys?register=<key> answers the grid for one register; the pins and hides are stored in the
 // tenant settings (`SystemConfig` key `settings.quickKeys`, a JSON string) and written through PATCH /settings. The server
 // (OrdersModule counter-sale/ + SettingsController) and the web screen both import this one file; never keep a second copy.
-// The response carries NO prices (they vary by customer tier): the screen resolves the full product itself on render.
+// SA-747r: each key carries the SAME product object the counter scan lookup returns (`GET /products/barcode/:code`: the full
+// product row with its active variants and tenant-safe parent, without `scanMatch`), built for the whole grid in ONE query. The
+// GRID never decides a price: the screen adds it through the scan add path and `reprice.tierFor` sets the customer's price.
 
 /** The register a request names when it names none (or an unknown one). One register in v1. */
 export const COUNTER_DEFAULT_REGISTER = "main";
@@ -48,7 +50,7 @@ export interface QuickKeysSettings {
   counter: QuickKeysCounterSettings;
 }
 
-/** One key in the grid. No prices. */
+/** One key in the grid. */
 export interface QuickKey {
   productId: string;
   name: string;
@@ -58,6 +60,11 @@ export interface QuickKey {
   imageUrl?: string;
   /** true when the operator pinned it (shown first, in pin order) */
   pinned: boolean;
+  /**
+   * The product exactly as the scan lookup returns it (minus `scanMatch`): what `addScannedProduct` consumes. Built by the
+   * same read as the scan (same include), never a second product shape.
+   */
+  product: Record<string, unknown> & { id: string };
 }
 
 export interface QuickKeysResponse {
