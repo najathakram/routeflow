@@ -32,6 +32,8 @@ export interface ReceiptBusinessProfile {
   zip?: string | null;
   phone?: string | null;
   taxRate?: number;
+  /** IANA zone of the business (`GET /settings`): the live receipt reads the sale time in it */
+  timezone?: string | null;
 }
 
 export interface CounterReceiptLine {
@@ -169,7 +171,7 @@ export function buildCounterReceipt(input: {
     orderNumber: receipt.orderNumber,
     invoiceNumber: receipt.invoiceNumber,
     invoiceId: receipt.invoiceId,
-    dateLabel: now.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }),
+    dateLabel: formatSaleTime(now, profile?.timezone || undefined),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal,

@@ -122,4 +122,8 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   await expect(page.getByLabel("Scan or search items")).toBeHidden();
   await expect(page.getByTestId("counter-sale-screen")).toBeHidden();
   await expect(page.getByRole("heading", { name: "Reprint receipt" })).toBeHidden();
+  await expect(page.getByTestId("counter-cart-column")).toBeHidden();
+  await expect(page.getByTestId("counter-payment-column")).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Complete/ })).toHaveCount(0);
+  await expect(root).toBeVisible();
 });

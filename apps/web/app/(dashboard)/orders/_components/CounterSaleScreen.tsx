@@ -217,7 +217,7 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
-  const { data: settings } = useQuery<{ taxRate?: number }>({
+  const { data: settings } = useQuery<{ taxRate?: number; timezone?: string | null }>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
