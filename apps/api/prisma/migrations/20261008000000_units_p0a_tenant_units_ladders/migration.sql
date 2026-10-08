@@ -1,11 +1,15 @@
 -- Units rebuild P0a: tenant unit names and multi-level ladders. ADDITIVE ONLY: one new table
--- ("TenantUnit"), nullable columns with no default, indexes, and two nullable SET NULL foreign keys.
+-- ("TenantUnit"), nullable columns with no default, indexes, and three foreign keys (two nullable SET NULL, one RESTRICT on the new table).
 -- No data writes; the backfill is a separate later script.
 --
 -- LOCK PROFILE: ADD COLUMN of a nullable column without a default is metadata-only (no rewrite, no
--- scan). ACCESS EXCLUSIVE is held only for the catalog change; lock_timeout below bounds the wait
--- behind a long writer. The two FK adds on "ProductUnit"/"ProductBarcode" cover columns that are NULL
--- on every existing row, so the validation scan has nothing to check.
+-- scan), but each ALTER TABLE takes ACCESS EXCLUSIVE on its table and the lock is held until COMMIT
+-- (the whole file is one transaction). `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT: any
+-- single statement that waits longer than 5s for its lock fails and rolls the whole migration back.
+-- There are 3 foreign keys: ProductUnit.tenantUnitId and ProductBarcode.productUnitId (both ON DELETE
+-- SET NULL, columns NULL on every existing row, so validation finds nothing) and TenantUnit.tenantId
+-- to Tenant (ON DELETE RESTRICT, on a brand-new empty table). Adding an FK also takes a SHARE ROW
+-- EXCLUSIVE lock on the referenced table ("TenantUnit", "ProductUnit", "Tenant").
 --
 -- HARD DEPLOY ORDER (L-184): Prisma selects every scalar, so code that knows these columns merged
 -- BEFORE they exist breaks reads (P2022). Owner sitting -> `prod-migrate.mjs` (fresh backup first) ->
