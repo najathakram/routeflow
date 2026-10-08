@@ -175,7 +175,30 @@ describe("InventoryService.assignToVariants", () => {
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.VARIANT_PARENT,
+    });
     expect(prisma.product.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("B1211: a missing parent is the coded PRODUCT_PARENT_INVALID (reason NOT_FOUND), nothing written", async () => {
+    prisma.product.findUnique.mockResolvedValue(null);
+
+    const err = await service
+      .assignToVariants(
+        { parentProductId: "nope", assignments: [{ productId: "variant-1", qty: 1 }] } as any,
+        "user-1",
+      )
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
+      reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
+    });
+    expect(prisma.product.findFirst).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
   });
 
   it.each([

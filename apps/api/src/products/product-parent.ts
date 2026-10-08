@@ -36,7 +36,7 @@ export type ProductParentReason =
   (typeof PRODUCT_PARENT_REASONS)[keyof typeof PRODUCT_PARENT_REASONS];
 
 /** The 400 every refusal here throws: the registry code, a `reason`, and the user-facing sentence. */
-function parentInvalid(reason: ProductParentReason, message: string): BadRequestException {
+export function parentInvalid(reason: ProductParentReason, message: string): BadRequestException {
   return new BadRequestException({
     statusCode: 400,
     code: API_ERROR_CODES.PRODUCT_PARENT_INVALID,
