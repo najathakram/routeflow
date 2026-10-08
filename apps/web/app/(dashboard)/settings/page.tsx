@@ -94,6 +94,8 @@ import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
+import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import { isValidTimeZone } from "@/lib/timezones";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -108,6 +110,10 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
+  timezone: z
+    .string()
+    .optional()
+    .refine((v) => !v || isValidTimeZone(v), "Choose a time zone from the list"),
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -115,6 +121,8 @@ function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
+  // Only a tenant admin may change the time zone; everyone else sees it read-only.
+  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -124,7 +132,10 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    mutationFn: ({ timezone, ...rest }: ProfileFormValues) =>
+      apiClient
+        .patch("/settings", canEditTimeZone && timezone ? { ...rest, timezone } : rest)
+        .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -186,6 +197,7 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      timezone: "",
     },
   });
 
@@ -202,6 +214,7 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        timezone: savedSettings.timezone ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -260,6 +273,28 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          {canEditTimeZone ? (
+            <>
+              <Input
+                label="Time zone"
+                list="settings-timezone-zones"
+                autoComplete="off"
+                register={register("timezone")}
+                error={errors.timezone?.message}
+              />
+              <TimeZoneDatalist id="settings-timezone-zones" />
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-navy">Time zone</p>
+              <p className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</p>
+            </>
+          )}
+          <p className="mt-1 text-xs text-navy/70">
+            Applies to receipts and today&apos;s sales from now on
+          </p>
         </div>
       </Card>
 

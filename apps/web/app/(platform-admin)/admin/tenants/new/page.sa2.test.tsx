@@ -93,6 +93,9 @@ function fillForm() {
   fireEvent.change(screen.getByLabelText(/business name/i), { target: { value: "Acme" } });
   fireEvent.change(screen.getByLabelText(/admin email/i), { target: { value: "o@acme.example" } });
   fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Time zone"), {
+    target: { value: "America/New_York" },
+  });
 }
 const formCreate = () => screen.getByRole("button", { name: /^create tenant$/i });
 async function openSheet() {
