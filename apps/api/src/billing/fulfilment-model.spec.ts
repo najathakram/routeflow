@@ -15,6 +15,14 @@ import { plainToInstance } from "class-transformer";
 import { CreateOrderDto } from "../orders/dto/create-order.dto";
 import { FULFILMENT_MODE_VALUES, COUNTER_SALES_MODE_VALUES } from "@routeflow/types";
 
+// set() of the two fulfilment keys now runs under the per-tenant advisory lock; this spec has no database,
+// so the lock is the in-process double (the real lock is exercised by feature-config.fulfilment-lock.spec.ts).
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.requireActual("../settings-fulfilment/testing/lock-mock")
+    .fakeWithAdvisoryLock,
+}));
+
 /**
  * Business profiles 1A: `fulfilment_model` is a free configuration row ("how do orders reach
  * your customers?"), shaped like `routes_dispatch`. Unset = today's behaviour exactly.
