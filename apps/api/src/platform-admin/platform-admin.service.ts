@@ -291,10 +291,6 @@ export class PlatformAdminService {
     if (RESERVED_SLUGS.includes(slug.toLowerCase()))
       throw new ConflictException(`Slug "${slug}" is reserved and cannot be used`);
 
-    // Row 195: the test-tenant slug patterns are reserved at create too. Neutral message.
-    if (isApprovedTestTenantSlug(slug.toLowerCase()))
-      throw new BadRequestException(`Slug "${slug}" is not available`);
-
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
     if (slugTaken) throw new ConflictException(`Slug "${slug}" is already taken`);
 
@@ -438,6 +434,11 @@ export class PlatformAdminService {
       loginUrl,
       payUrl,
       welcomeEmail,
+      // Row 195: a test-pattern slug is allowed here (super-admin intent) but is flagged, because the
+      // tenant is classed TEST and every test-only script treats it as disposable.
+      ...(isApprovedTestTenantSlug(slug.toLowerCase())
+        ? { notice: "This will be a TEST tenant: its slug matches a test-tenant pattern." }
+        : {}),
     };
   }
 

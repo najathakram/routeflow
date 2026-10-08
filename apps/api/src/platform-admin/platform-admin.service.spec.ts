@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -2346,18 +2346,25 @@ describe("PlatformAdminService — audit provenance", () => {
       } as any);
     });
 
-    // Row 195: the test-tenant slug patterns are RESERVED at create (a real tenant can never land on
-    // one), so a TEST-class tenant is no longer creatable here; the message stays neutral.
-    it.each(["qa-smoke-1", "e2e-smoke-1", "ux-audit-1", "test", "e2e-routeflow", "QA-Foods"])(
-      "row 195 createTenant refuses the reserved test slug %s with a neutral 400 and writes nothing",
-      async (slug) => {
-        const err = await service.createTenant({ ...baseDto, slug }).catch((e) => e);
-        expect(err).toBeInstanceOf(BadRequestException);
-        expect(err.message).toMatch(/not available/);
-        expect(err.message).not.toMatch(/reserved|policy|test-tenant/i);
-        expect(prisma.tenant.create).not.toHaveBeenCalled();
-      },
-    );
+    it("REG-743-F7 createTenant writes class TEST for a qa-* slug", async () => {
+      await service.createTenant({ ...baseDto, slug: "qa-smoke-1" });
+
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ class: "TEST" }) }),
+      );
+    });
+
+    // Row 195 (lead ruling): platform-admin create KEEPS allowing the test patterns (super-admin
+    // intent) but flags them, so the console can say "this will be a TEST tenant".
+    it("row 195 createTenant flags a test-pattern slug with a TEST-tenant notice", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "qa-smoke-2" });
+      expect(r.notice).toMatch(/TEST tenant/);
+    });
+
+    it("row 195 createTenant adds no notice for an ordinary slug", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
+      expect(r).not.toHaveProperty("notice");
+    });
 
     it("REG-743-F7 createTenant writes class PRODUCTION for an ordinary slug", async () => {
       await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
@@ -2367,10 +2374,10 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
-    it("REG-743-F7 still rejects class PRODUCTION on a test-pattern slug (now by the reservation)", async () => {
+    it("REG-743-F7 rejects class PRODUCTION on an e2e-* slug", async () => {
       await expect(
         service.createTenant({ ...baseDto, slug: "e2e-smoke-1", class: "PRODUCTION" } as any),
-      ).rejects.toThrow(/not available/);
+      ).rejects.toThrow(/production/i);
 
       expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
