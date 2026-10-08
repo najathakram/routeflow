@@ -76,6 +76,28 @@ export const isRefundPending = (ret: {
   !ret.creditNoteId;
 
 /**
+ * A refund that is RECORDED, not merely captured: `refundMethod` EXTERNAL_REFUND with `refundedAt` set, on a return that is
+ * not CANCELLED. The mirror image of `isRefundPending` (same method, `refundedAt` still null). One definition of "cash left
+ * the till" for every reader that must not strand it (the invoice void guard); it is a Prisma `where` fragment.
+ */
+export const CASH_REFUNDED_RETURN_WHERE = {
+  refundMethod: EXTERNAL_REFUND_METHOD,
+  refundedAt: { not: null },
+  status: { not: "CANCELLED" },
+} as const;
+
+/**
+ * The reverse of `loadSourceInvoicesState`'s resolution (returned line -> `sourceInvoiceItemId` -> `InvoiceItem.invoiceId`):
+ * the ids of the lines that sit on `invoiceId`, i.e. the values an INLINE return's `sourceInvoiceItemId` must hold to be
+ * sourced from that invoice. Takes no lock; the caller already holds the invoice's.
+ */
+export async function sourceLineIdsOfInvoice(db: any, invoiceId: string): Promise<string[]> {
+  const lines: Array<{ id?: string | null }> =
+    (await db.invoiceItem.findMany({ where: { invoiceId }, select: { id: true } })) ?? [];
+  return lines.map((l) => l.id).filter((i): i is string => !!i);
+}
+
+/**
  * SA-727 (F4): the payment methods that are MONEY (a cash/card/check refund can hand it back). Everything else a confirmed
  * payment can carry (`CREDIT_NOTE`, `ADVANCE`) is store credit, which a refund must never turn into cash.
  */

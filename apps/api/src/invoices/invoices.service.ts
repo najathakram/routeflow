@@ -191,6 +191,7 @@ import {
   writeOffRefusal,
 } from "./invoice-send-guard";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
+import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
 
 const TERM_DAYS: Record<string, number> = {
@@ -3950,10 +3951,9 @@ export class InvoicesService {
     return { credits, advances };
   }
 
-  /** The void itself, inside a caller's tx: flip to VOID, release the billed qty
-   *  back to the order, and reverse the regulated ledger rows. No guards — the
-   *  caller owns those (see voidInvoice) — and no credit handling, so callers that
-   *  want the money back must call releaseWalletPaymentsInTx first.
+  /** The void itself, inside a caller's tx: flip to VOID, release the billed qty back to the order,
+   *  and reverse the regulated ledger rows. Only the cash-refund guard lives here; the caller owns the
+   *  rest (see voidInvoice), and no credit handling: call releaseWalletPaymentsInTx first for the money.
    *
    * F03/R6/T-B84: the flip is an ATOMIC CLAIM — `updateMany` on a status guard,
    * abort on count===0 — mirroring returns.service's receive() claim shape
@@ -3962,6 +3962,7 @@ export class InvoicesService {
    * voids both "succeed" and both release invoicedQty.
    */
   async voidInvoiceInTx(tx: any, id: string, orderId: string | null) {
+    await assertNoCashRefundOnInvoice(tx, id, orderId); // 409 on a cash refund
     const claimed = await tx.invoice.updateMany({
       where: { id, status: { not: InvoiceStatus.VOID } },
       data: { status: InvoiceStatus.VOID },
