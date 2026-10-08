@@ -425,7 +425,7 @@ describe("CASH_REFUNDED_RETURN_WHERE excludes the dead return statuses today's s
   });
 });
 
-describe("where the guards are wired (source pins; strict: one call site per path, before the first write)", () => {
+describe("where the guards are wired (source pins; strict: one call site per path (void, cancel, delete invoice, delete order), before the first write)", () => {
   const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
   const invoicesSource = read("invoices.service.ts");
   const ordersSource = read("../orders/orders.service.ts");
@@ -437,7 +437,7 @@ describe("where the guards are wired (source pins; strict: one call site per pat
   };
 
   it("invoice void: exactly one call, in voidInvoice, after lockInvoiceRow and before the wallet release and the void", () => {
-    expect(invoicesSource.match(/assertNoCashRefundOnInvoice\(/g)).toHaveLength(1);
+    expect(invoicesSource.match(/assertNoCashRefundOnInvoice\(/g)).toHaveLength(2); // void + delete
     const body = methodBody("voidInvoice");
     const guard = body.indexOf("await assertNoCashRefundOnInvoice(tx, id, inv.orderId);");
     expect(guard).toBeGreaterThan(-1);
@@ -453,7 +453,7 @@ describe("where the guards are wired (source pins; strict: one call site per pat
   });
 
   it("order cancel: exactly one call, right after lockOrderForCancel and before the claim, the stock credit and the invoice teardown", () => {
-    expect(ordersSource.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(1);
+    expect(ordersSource.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(2); // cancel + delete
     const lock = ordersSource.indexOf("await lockOrderForCancel(tx, id);");
     const guard = ordersSource.indexOf("await assertNoCashRefundOnOrder(tx, id);");
     expect(lock).toBeGreaterThan(-1);
@@ -464,6 +464,41 @@ describe("where the guards are wired (source pins; strict: one call site per pat
     expect(guard).toBeLessThan(lock + after.indexOf("this.settleStockForEdit("));
     expect(guard).toBeLessThan(lock + after.indexOf("releaseOrderCreditsInTx(tx, id)"));
     expect(guard).toBeLessThan(lock + after.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));
+  });
+});
+
+describe("the delete paths ask the same guards (a cash-refunded sale cannot be deleted away)", () => {
+  const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
+  const bodyOf = (source: string, name: string): string => {
+    const start = source.indexOf(`  async ${name}(`);
+    expect(start).toBeGreaterThan(-1);
+    const next = source.indexOf("\n  async ", start + 1);
+    return source.slice(start, next === -1 ? undefined : next);
+  };
+
+  it("deleteInvoice: one call, after the Order and Invoice locks and before the payments refusal and every write", () => {
+    const body = bodyOf(read("invoices.service.ts"), "deleteInvoice");
+    expect(body.match(/assertNoCashRefundOnInvoice\(/g)).toHaveLength(1);
+    const guard = body.indexOf("await assertNoCashRefundOnInvoice(tx, id, inv.orderId);");
+    expect(guard).toBeGreaterThan(body.indexOf('FROM "Invoice" WHERE id = ${id} FOR UPDATE'));
+    expect(guard).toBeLessThan(body.indexOf("inv.payments.length > 0"));
+    expect(guard).toBeLessThan(body.indexOf("adjustInvoicedQtyForInvoice(tx"));
+    expect(guard).toBeLessThan(body.indexOf("tx.invoiceItem.deleteMany"));
+    expect(guard).toBeLessThan(body.indexOf("tx.invoice.delete("));
+  });
+
+  it("deleteOrder: one call, first in its transaction, before the credit release, the wallet release and every delete", () => {
+    const body = bodyOf(read("../orders/orders.service.ts"), "deleteOrder");
+    expect(body.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(1);
+    const tx = body.indexOf("this.prisma.tenantTransaction(async (tx) => {");
+    const guard = body.indexOf("await assertNoCashRefundOnOrder(tx, id);");
+    expect(tx).toBeGreaterThan(-1);
+    expect(guard - tx).toBeLessThan(120); // adjacent: nothing sits between the transaction opening and the guard
+    expect(guard).toBeLessThan(body.indexOf("assertNoUnspentSourcedCredits("));
+    expect(guard).toBeLessThan(body.indexOf("releaseOrderCreditsInTx(tx, id)"));
+    expect(guard).toBeLessThan(body.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));
+    expect(guard).toBeLessThan(body.indexOf("tx.invoicePayment.deleteMany"));
+    expect(guard).toBeLessThan(body.indexOf("tx.invoice.delete("));
   });
 });
 
