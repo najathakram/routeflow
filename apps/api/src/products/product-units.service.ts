@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { PIECE_LABEL } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
+import { lockTenantUnits } from "../units/tenant-units-lock";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
 interface PackInfo {
@@ -134,15 +135,18 @@ export class ProductUnitsService {
 
   // ─── helpers ────────────────────────────────────────────────────────────────
 
-  /** One transaction + a per-product advisory xact lock; unique-index races become a 409. */
+  /** One transaction + the tenant units lock (shared) + a per-product advisory xact lock; unique-index races become a 409. */
   private async locked<T>(productId: string, fn: (tx: any) => Promise<T>): Promise<T> {
     // A write needs a tenant: without one `tenantTransaction` hands back the raw client and the
     // insert would carry no tenantId (a 500 on the NOT NULL column). SUPER_ADMIN must act inside a tenant.
-    if (!this.prisma.getTenantId()) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) {
       throw new BadRequestException("Select a tenant before editing a product's units.");
     }
     try {
       return await this.prisma.tenantTransaction(async (tx) => {
+        // A unit rename holds this EXCLUSIVE; level writes share it (tenant-units-lock.ts: taken first).
+        await lockTenantUnits(tx, tenantId, "shared");
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('product-units'), hashtext(${productId}))`;
         return fn(tx);
       });

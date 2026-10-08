@@ -12,6 +12,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { packWordKey } from "../products/unit-pack-rules";
 import { UNIT_NAME_EMPTY, UNIT_NAME_IS_PIECE, UNIT_NAME_TOO_LONG } from "./dto/create-unit.dto";
 import { isPieceSynonym } from "./piece-words";
+import { lockTenantUnits } from "./tenant-units-lock";
 
 export interface UnitDto {
   id: string;
@@ -217,6 +218,8 @@ export class UnitsService {
   ): Promise<UnitUpdateResult> {
     const newKey = unitNameKey(newName);
     const done = await this.prisma.tenantTransaction(async (tx) => {
+      // FIRST statement: nothing below may interleave with a pack edit or a level write.
+      await lockTenantUnits(tx, tenantId, "exclusive");
       const unit = await tx.tenantUnit.findFirst({ where: { id, tenantId } });
       if (!unit) throw new NotFoundException("Unit not found");
       const oldKey: string = unit.nameKey;

@@ -47,6 +47,7 @@ import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
 import { buildProductListWhere } from "./product-list-where";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
+import { lockTenantUnits } from "../units/tenant-units-lock";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -1026,17 +1027,6 @@ export class ProductsService {
       nextUnit !== existing.unit ||
       (nextUnitsPerBox ?? null) !== (existing.unitsPerBox ?? null) ||
       (sectionChanged && effectiveCategoryId != null);
-    if (packTouched) {
-      const levels = await this.prisma.forTenant().productUnit.findMany({
-        where: { productId: id },
-        select: { label: true, factorToBase: true },
-      });
-      assertPackKeepsLevelsValid(levels, {
-        unit: nextUnit,
-        unitsPerBox: nextUnitsPerBox,
-        regulated: effectiveCategoryId != null,
-      });
-    }
     // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
     // and validating it would 400 on "requires a regulated type" before the
     // auto-clear below ever runs.
@@ -1150,6 +1140,19 @@ export class ProductsService {
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+      // units_v1: a pack edit must not invalidate the levels on this product. FIRST in the tx, before
+      // any other lock: a unit rename holds this lock EXCLUSIVE, so the levels read below are the ones
+      // the rename left (units/tenant-units-lock.ts).
+      if (packTouched) {
+        await lockTenantUnits(tx, tenantId, "shared");
+        assertPackKeepsLevelsValid(
+          await tx.productUnit.findMany({
+            where: { productId: id },
+            select: { label: true, factorToBase: true },
+          }),
+          { unit: nextUnit, unitsPerBox: nextUnitsPerBox, regulated: effectiveCategoryId != null },
+        );
+      }
       // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
       // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
       const claims = codeClaims(dto, existing);

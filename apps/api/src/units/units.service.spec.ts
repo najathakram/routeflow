@@ -9,6 +9,7 @@ const T = "t1";
 function stubs() {
   const order: string[] = [];
   const db = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     tenantUnit: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
@@ -327,11 +328,41 @@ describe("UnitsService", () => {
       expect(out.unit).toEqual(expect.objectContaining({ id: "u1", name: "Carton" }));
     });
 
+    it("takes the tenant's EXCLUSIVE units lock before reading anything, so no pack edit or level write interleaves", async () => {
+      const h = make();
+      seedRename(h, { products: [], levels: [] });
+      await h.service.update("u1", { name: "Carton" }, user);
+      expect(h.db.$executeRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = h.db.$executeRaw.mock.calls[0] as [
+        TemplateStringsArray,
+        ...string[],
+      ];
+      const sql = strings.join("?");
+      expect(sql).toContain("pg_advisory_xact_lock(");
+      expect(sql).not.toContain("_shared");
+      expect(values).toEqual(["tenant-units", T]);
+      expect(h.db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        h.db.tenantUnit.findFirst.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("an archive or an add takes no units lock (only a rename relabels products)", async () => {
+      const h = make();
+      h.db.tenantUnit.findFirst.mockResolvedValue(row());
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await h.service.update("u1", { archived: true }, user);
+      expect(h.db.$executeRaw).not.toHaveBeenCalled();
+    });
+
     it("writes nothing to line snapshots: only TenantUnit, ProductUnit and Product are touched", async () => {
       const h = make();
       seedRename(h, { products: [], levels: [] });
       await h.service.update("u1", { name: "Carton" }, user);
-      expect(Object.keys(h.db).sort()).toEqual(["product", "productUnit", "tenantUnit"]);
+      expect(
+        Object.keys(h.db)
+          .filter((k) => !k.startsWith("$"))
+          .sort(),
+      ).toEqual(["product", "productUnit", "tenantUnit"]);
     });
 
     it("a collision inside one product refuses the WHOLE rename (409, names the products, nothing written)", async () => {

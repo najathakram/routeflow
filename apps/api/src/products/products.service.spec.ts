@@ -734,6 +734,42 @@ describe("ProductsService", () => {
         );
       });
 
+      it("a pack edit takes the tenant's SHARED units lock FIRST and re-reads the levels inside the transaction", async () => {
+        const exec = jest.fn().mockResolvedValue(0);
+        prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+          fn({
+            ...prisma.forTenant(),
+            $executeRaw: exec,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+        await service.update("prod-1", { unitsPerBox: 12 } as any);
+        expect(exec).toHaveBeenCalled();
+        const [strings, ...values] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
+        expect(strings.join("?")).toContain("pg_advisory_xact_lock_shared(");
+        expect(values).toEqual(["tenant-units", "test-tenant"]);
+        expect(exec.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.productUnit.findMany.mock.invocationCallOrder[0],
+        );
+        expect(exec.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.product.update.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("an edit that leaves the pack alone takes no units lock", async () => {
+        const exec = jest.fn().mockResolvedValue(0);
+        prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+          fn({
+            ...prisma.forTenant(),
+            $executeRaw: exec,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+        await service.update("prod-1", { name: "Renamed" } as any);
+        const tenantUnitsLocks = exec.mock.calls.filter(([, ...v]) => v[0] === "tenant-units");
+        expect(tenantUnitsLocks).toEqual([]);
+      });
+
       it("does not even look at the levels for an edit that leaves the pack alone", async () => {
         await service.update("prod-1", { name: "Renamed" } as any);
         expect(prisma.productUnit.findMany).not.toHaveBeenCalled();

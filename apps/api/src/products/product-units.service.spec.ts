@@ -360,14 +360,24 @@ describe("ProductUnitsController — gate wiring", () => {
 });
 
 describe("concurrency + isolation (Opus review of step 2a)", () => {
-  it("every mutation runs in ONE transaction that takes the per-product advisory lock first", async () => {
+  it("every mutation runs in ONE transaction that takes the tenant's SHARED units lock, then the per-product advisory lock, before any read", async () => {
     const { service, prisma, db } = build({ rows: [caseRow] });
     await service.create("p1", { label: "Pallet", factorToBase: 5760 });
     await service.update("p1", "u-case", { price: 1 });
     await service.remove("p1", "u-case");
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
-    expect(db.$executeRaw).toHaveBeenCalledTimes(3);
-    expect(db.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(db.$executeRaw).toHaveBeenCalledTimes(6);
+    // A unit rename holds the EXCLUSIVE tenant lock: a level write must wait for it, never interleave.
+    for (const i of [0, 2, 4]) {
+      const [strings, ...values] = db.$executeRaw.mock.calls[i] as [
+        TemplateStringsArray,
+        ...string[],
+      ];
+      expect(strings.join("?")).toContain("pg_advisory_xact_lock_shared(");
+      expect(values).toEqual(["tenant-units", "t1"]);
+    }
+    expect(db.$executeRaw.mock.calls[1][0].join("?")).toContain("product-units");
+    expect(db.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
       db.product.findFirst.mock.invocationCallOrder[0],
     );
   });
