@@ -96,7 +96,7 @@ export function CounterReceiptView({
                   className="block text-xs text-navy/70 print:text-black"
                   data-testid="receipt-line-discount"
                 >
-                  {l.priceChanged ? "Price changed" : `Discount -${money(l.discount)}`}
+                  Discount -{money(l.discount)}
                 </span>
               </span>
             ) : (
@@ -135,16 +135,16 @@ export function CounterReceiptView({
           <dt>Subtotal</dt>
           <dd>{money(m.subtotal)}</dd>
         </div>
-        {m.adjustment !== 0 ? (
-          <div className="flex justify-between" data-testid="receipt-adjustment">
-            <dt>Tax and adjustments</dt>
-            <dd>{money(m.adjustment)}</dd>
-          </div>
-        ) : null}
         {m.discounts > 0 ? (
           <div className="flex justify-between" data-testid="receipt-discounts">
             <dt>Discounts</dt>
             <dd>-{money(m.discounts)}</dd>
+          </div>
+        ) : null}
+        {m.adjustment !== 0 ? (
+          <div className="flex justify-between" data-testid="receipt-adjustment">
+            <dt>Tax and adjustments</dt>
+            <dd>{money(m.adjustment)}</dd>
           </div>
         ) : null}
         <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">

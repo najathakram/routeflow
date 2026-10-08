@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { buildCounterReceipt, type ReceiptLineInput } from "./counter-receipt";
 
 /**
@@ -49,22 +49,19 @@ const build = (lines: ReceiptLineInput[], total: number) =>
 describe("buildCounterReceipt: edited lines (POS-5)", () => {
   it("a plain line has no original, no discount and no Discounts", () => {
     const m = build([PLAIN], 5);
-    expect(m.lines[0]).toMatchObject({
-      total: 5,
-      original: null,
-      discount: 0,
-      priceChanged: false,
-    });
+    expect(m.lines[0]).toMatchObject({ total: 5, original: null, discount: 0 });
     expect(m.discounts).toBe(0);
   });
 
-  it("an edited line: original at the tier price, net total, the discount; subtotal is the NET sum", () => {
+  it("a lowered line: original at the tier price struck, net total, the discount; Subtotal is GROSS so the rows add up", () => {
     const m = build([PLAIN, EDITED], 23);
-    expect(m.lines[1]).toMatchObject({ total: 18, original: 20, discount: 2, priceChanged: false });
+    expect(m.lines[1]).toMatchObject({ total: 18, original: 20, discount: 2 });
     expect(m.lines[0].original).toBeNull();
-    expect(m.subtotal).toBe(23);
+    expect(m.subtotal).toBe(25); // 5 + 20 at the system price, before the discount
     expect(m.discounts).toBe(2);
     expect(m.adjustment).toBe(0); // the server total equals the net subtotal: nothing unexplained
+    // what the paper shows: Subtotal - Discounts + Tax and adjustments = Total
+    expect(roundMoney(m.subtotal - m.discounts + m.adjustment)).toBe(m.total);
   });
 
   it("a boxed edited line is prorated by computeLineSubtotal at both prices, never qty x price", () => {
@@ -78,16 +75,23 @@ describe("buildCounterReceipt: edited lines (POS-5)", () => {
     expect(m.discounts).toBe(5.4);
   });
 
-  it("a raised price is Price changed with no discount and nothing in Discounts", () => {
+  it("a raised price prints plain: the lower system price is never shown to the customer (no strike, no label)", () => {
     const raised: ReceiptLineInput = { ...EDITED, unitPrice: 12 };
     const m = build([raised], 24);
-    expect(m.lines[0]).toMatchObject({ total: 24, original: 20, discount: 0, priceChanged: true });
+    expect(m.lines[0]).toMatchObject({ total: 24, original: null, discount: 0 });
     expect(m.discounts).toBe(0);
+    expect(m.subtotal).toBe(24);
+  });
+
+  it("a price edited back to the system price prints plain", () => {
+    const same: ReceiptLineInput = { ...EDITED, unitPrice: 10 };
+    const m = build([same], 20);
+    expect(m.lines[0]).toMatchObject({ total: 20, original: null, discount: 0 });
   });
 
   it("an override without its tier price (a recovered line) shows no per-line rows", () => {
     const { tierPrice: _drop, ...noTier } = EDITED;
     const m = build([noTier], 18);
-    expect(m.lines[0]).toMatchObject({ original: null, discount: 0, priceChanged: false });
+    expect(m.lines[0]).toMatchObject({ original: null, discount: 0 });
   });
 });

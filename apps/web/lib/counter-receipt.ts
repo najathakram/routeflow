@@ -23,7 +23,7 @@ export interface ReceiptLineInput {
   note?: string | null;
   /**
    * POS-5: an edited line (`unitPrice` is then the NET price) carries the system price it was rung at; the receipt
-   * shows the struck original line total and the discount. Absent on every other line.
+   * shows the struck original line total and the discount only when the price was LOWERED. Absent on every other line.
    */
   tierPrice?: number;
   override?: object | null;
@@ -50,12 +50,13 @@ export interface CounterReceiptLine {
   /** trimmed per-line note, or null */
   note: string | null;
   total: number;
-  /** POS-5: the line total at the system price, only for an edited line (struck on the receipt); else null */
+  /**
+   * POS-5: the line total at the system price, only for a LOWERED line (struck on the receipt); else null. A raised or
+   * unchanged price prints plain: the customer never sees a system price below what they were charged.
+   */
   original: number | null;
-  /** POS-5: money taken off an edited line (0 for a raised price and for every plain line) */
+  /** POS-5: money taken off a lowered line (0 for every other line) */
   discount: number;
-  /** POS-5: an edited line priced at or above the system price (`Price changed`) */
-  priceChanged: boolean;
 }
 
 export interface CounterReceiptModel {
@@ -66,6 +67,7 @@ export interface CounterReceiptModel {
   dateLabel: string;
   lines: CounterReceiptLine[];
   cashier: string | null;
+  /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
   subtotal: number;
   /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
   discounts: number;
@@ -176,7 +178,10 @@ export function buildCounterReceipt(input: {
   const rows = lines.map((l) => {
     const total = lineTotal(l, l.unitPrice);
     const edited = !!l.override && l.tierPrice != null;
-    const original = edited ? lineTotal(l, l.tierPrice as number) : null;
+    const systemTotal = edited ? lineTotal(l, l.tierPrice as number) : null;
+    // Only a LOWERED price is shown against the system price; a raised one must not reveal the lower figure.
+    const original =
+      systemTotal != null && roundMoney(systemTotal - total) > 0 ? systemTotal : null;
     return {
       key: l.tempId,
       name: l.name,
@@ -184,11 +189,10 @@ export function buildCounterReceipt(input: {
       note: clean(l.note) || null,
       total,
       original,
-      discount: original == null ? 0 : Math.max(0, roundMoney(original - total)),
-      priceChanged: original != null && roundMoney(original - total) <= 0,
+      discount: original == null ? 0 : roundMoney(original - total),
     };
   });
-  const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
 
   return {
@@ -199,9 +203,9 @@ export function buildCounterReceipt(input: {
     dateLabel: formatSaleTime(now, profile?.timezone || undefined),
     lines: rows,
     cashier: clean(input.cashier) || null,
-    subtotal,
+    subtotal: roundMoney(netSubtotal + discounts),
     discounts,
-    adjustment: roundMoney(receipt.total - subtotal),
+    adjustment: roundMoney(receipt.total - netSubtotal),
     total: receipt.total,
     paid: receipt.paid,
     balanceDue: receipt.balanceDue,
@@ -315,7 +319,6 @@ export function receiptModelFromOrder(input: {
         // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
         original: null,
         discount: 0,
-        priceChanged: false,
         total: computeLineSubtotal({
           unitPrice: line.unitPrice,
           qty: line.qty,
