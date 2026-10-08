@@ -82,7 +82,7 @@ function m(rec: any, where: any): boolean {
     if (k === "OR") return v.some((w: any) => m(rec, w));
     const val = rec?.[k];
     if (v !== null && typeof v === "object" && !(v instanceof Date) && !Array.isArray(v)) {
-      const ops = ["gte", "lt", "not", "notIn", "some"];
+      const ops = ["gte", "lt", "not", "notIn", "some", "in"];
       const keys = Object.keys(v);
       if (keys.every((x) => ops.includes(x))) {
         return (
@@ -90,6 +90,7 @@ function m(rec: any, where: any): boolean {
           (v.lt === undefined || val < v.lt) &&
           (v.not === undefined || val !== v.not) &&
           (v.notIn === undefined || !v.notIn.includes(val)) &&
+          (v.in === undefined || v.in.includes(val)) &&
           (v.some === undefined || (val as any[]).some((r) => m(r, v.some)))
         );
       }
@@ -152,6 +153,18 @@ function setup(orders: OrderRow[]) {
   }));
   prisma.return.findMany.mockImplementation(async (args: any) =>
     returns.filter((r) => m(r, args.where)),
+  );
+  // a store-credit return's credit note is minted when the return is captured in these fixtures: it carries the return's createdAt
+  const notes = returns
+    .filter((r) => r.creditNoteId)
+    .map((r) => ({
+      id: r.creditNoteId as string,
+      tenantId: r.tenantId,
+      status: "ISSUED",
+      createdAt: r.createdAt,
+    }));
+  prisma.creditNote.findMany.mockImplementation(async (args: any) =>
+    notes.filter((n) => m(n, args.where)).map((n) => ({ id: n.id })),
   );
 
   const service = new CounterSaleTodayService(prisma as never);

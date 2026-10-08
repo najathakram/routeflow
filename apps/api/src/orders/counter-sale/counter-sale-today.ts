@@ -15,6 +15,7 @@ import type {
   TodaysSaleRow,
   TodaysSalesSummary,
 } from "@routeflow/types";
+import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf } from "./counter-sale-readback";
 
 /**
@@ -116,18 +117,40 @@ export function paidOnDaysSalesWhere(tenantId: string, w: DayWindow) {
 }
 
 /**
- * Returns on counter-sale orders of ANY day that count in THIS window: an external refund by the day it was
- * given (`refundedAt`), a store-credit return by the day it was captured (`createdAt`). A return that was
- * rejected or cancelled counts nowhere.
+ * The credit notes CREATED in the window (ids only): the instant a store-credit return was RESOLVED is when its credit
+ * note was minted (`returnNettingDate`, sales-facts), not when the return was captured: "Give store credit instead" on a
+ * pending refund mints the credit later than the capture. The same accrual predicate as net sales (a VOID note is no credit).
  */
-export function windowReturnsWhere(tenantId: string, w: DayWindow) {
+export function creditNotesInWindowWhere(tenantId: string, w: DayWindow) {
+  return { tenantId, ...ACCRUAL_CREDIT_NOTE_FILTER, createdAt: { gte: w.start, lt: w.end } };
+}
+
+/**
+ * Returns on counter-sale orders of ANY day that count in THIS window, each by the day it was RESOLVED: an external
+ * refund by `refundedAt` (a PENDING refund, `refundedAt` still null, counts nowhere); a store-credit return by the day its
+ * credit note was created (`creditNoteIds` = `creditNotesInWindowWhere`'s ids; `Return.creditNoteId` has no Prisma
+ * relation, so the service reads the ids first). A legacy store-credit return with no credit note id keeps the day it
+ * was captured (`createdAt`), the only date it has. A return that was rejected or cancelled counts nowhere.
+ */
+export function windowReturnsWhere(
+  tenantId: string,
+  w: DayWindow,
+  creditNoteIds: readonly string[] = [],
+) {
   return {
     tenantId,
     status: { notIn: DEAD_RETURN_STATUSES },
     order: { tenantId, counterSale: true },
     OR: [
       { refundMethod: REFUND_METHOD_EXTERNAL, refundedAt: { gte: w.start, lt: w.end } },
-      { refundMethod: REFUND_METHOD_CREDIT_NOTE, createdAt: { gte: w.start, lt: w.end } },
+      {
+        refundMethod: REFUND_METHOD_CREDIT_NOTE,
+        creditNoteId: null,
+        createdAt: { gte: w.start, lt: w.end },
+      },
+      ...(creditNoteIds.length > 0
+        ? [{ refundMethod: REFUND_METHOD_CREDIT_NOTE, creditNoteId: { in: [...creditNoteIds] } }]
+        : []),
     ],
   };
 }
@@ -165,6 +188,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           returnNumber: true,
           status: true,
           refundMethod: true,
+          refundedAt: true,
           creditNoteId: true,
           refundAmount: true,
           creditSubtotal: true,
@@ -200,6 +224,8 @@ export interface TodayOrderRecord {
     returnNumber: string | null;
     status: string;
     refundMethod: string | null;
+    /** The page query always selects it (null = not recorded yet); `undefined` (a hand-built record) is not read as pending. */
+    refundedAt?: Date | null;
     creditNoteId: string | null;
     refundAmount: unknown;
     creditSubtotal: unknown;
@@ -220,6 +246,8 @@ export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
 }
 
 function resolutionOf(r: TodayOrderRecord["returns"][number]): TodaysSaleReturnResolution {
+  // A refund chosen at capture but not recorded yet (`refundedAt` null): the clerk still has to hand the money back.
+  if (r.refundMethod === REFUND_METHOD_EXTERNAL && r.refundedAt === null) return "PENDING";
   if (r.refundMethod === REFUND_METHOD_EXTERNAL) return "REFUND";
   if (r.refundMethod === REFUND_METHOD_CREDIT_NOTE || r.creditNoteId) return "STORE_CREDIT";
   // Settled with no stored resolution (a legacy return): nothing is waiting on the clerk.
