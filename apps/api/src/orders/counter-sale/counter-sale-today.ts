@@ -49,7 +49,8 @@ export interface DayWindow {
 }
 
 const DEAD_INVOICE_STATUSES = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
-const DEAD_RETURN_STATUSES = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
+/** Returns that moved no money and never will; shared with the invoice void guard (`CASH_REFUNDED_RETURN_WHERE`). */
+export const DEAD_RETURN_STATUSES = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
 
 const isDeadInvoice = (status: string) =>
   (DEAD_INVOICE_STATUSES as readonly string[]).includes(status);

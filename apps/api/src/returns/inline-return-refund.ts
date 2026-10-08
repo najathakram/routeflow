@@ -10,6 +10,7 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { DEAD_RETURN_STATUSES } from "../orders/counter-sale/counter-sale-today";
 
 /** The only tenders a counter refund can record. A card refund is RECORDED only; no processor is called. */
 export const REFUND_TENDERS = ["CASH", "CARD", "CHECK"] as const;
@@ -77,13 +78,14 @@ export const isRefundPending = (ret: {
 
 /**
  * A refund that is RECORDED, not merely captured: `refundMethod` EXTERNAL_REFUND with `refundedAt` set, on a return that is
- * not CANCELLED. The mirror image of `isRefundPending` (same method, `refundedAt` still null). One definition of "cash left
- * the till" for every reader that must not strand it (the invoice void guard); it is a Prisma `where` fragment.
+ * not dead (REJECTED / CANCELLED: `DEAD_RETURN_STATUSES`, the list today's sales already uses). The mirror image of
+ * `isRefundPending` (same method, `refundedAt` still null). One definition of "cash left the till" for every reader that
+ * must not strand it (the invoice void and order cancel guards); it is a Prisma `where` fragment.
  */
 export const CASH_REFUNDED_RETURN_WHERE = {
   refundMethod: EXTERNAL_REFUND_METHOD,
   refundedAt: { not: null },
-  status: { not: "CANCELLED" },
+  status: { notIn: DEAD_RETURN_STATUSES },
 } as const;
 
 /**
