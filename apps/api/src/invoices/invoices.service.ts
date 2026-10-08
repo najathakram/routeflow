@@ -5231,16 +5231,15 @@ export class InvoicesService {
           code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
           message: "The invoice changed while it was being deleted. Try again.",
         });
-
+      await assertNoCashRefundOnInvoice(tx, id, inv.orderId); // 409: cash already refunded
       if (inv.payments.length > 0) {
         throw new BadRequestException(
           "Cannot delete an invoice that has recorded payments. Remove all payments first, or void the invoice.",
         );
       }
 
-      // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable
-      // balance — deleting would orphan it (invoiceId → null) as provenance-less wallet money.
-      // Runs before any write, on rows read through this tx (L-081).
+      // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable balance
+      // (deleting would orphan it as provenance-less wallet money). Before any write, via this tx (L-081).
       await assertNoUnspentSourcedCredits(tx, [id]);
 
       // Free up invoicedQty on the source order BEFORE deleting the invoice

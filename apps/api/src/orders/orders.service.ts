@@ -5299,9 +5299,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // B214 (REG-B214): this loop hard-deletes invoices WITHOUT going through
-      // InvoicesService.deleteInvoice (ledger-reversal duplication, see below), so it must refuse
-      // on its own — same shared guard, before any write (L-072, L-081).
+      await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
+      // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
+      // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
       await assertNoUnspentSourcedCredits(
         tx,
         order.invoices.map((inv) => inv.id),
