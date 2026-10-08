@@ -53,6 +53,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
@@ -289,6 +290,10 @@ export class PlatformAdminService {
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
     if (RESERVED_SLUGS.includes(slug.toLowerCase()))
       throw new ConflictException(`Slug "${slug}" is reserved and cannot be used`);
+
+    // Row 195: the test-tenant slug patterns are reserved at create too. Neutral message.
+    if (isApprovedTestTenantSlug(slug.toLowerCase()))
+      throw new BadRequestException(`Slug "${slug}" is not available`);
 
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
     if (slugTaken) throw new ConflictException(`Slug "${slug}" is already taken`);

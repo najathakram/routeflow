@@ -27,6 +27,7 @@ import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.cons
 import { escapeHtml } from "../common/html-escape";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -96,7 +97,7 @@ export class TenantsService {
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
-    if (RESERVED_SLUGS.has(slug)) return false;
+    if (RESERVED_SLUGS.has(slug) || isApprovedTestTenantSlug(slug)) return false;
     const existing = await this.prisma.tenant.findUnique({ where: { slug } });
     return !existing;
   }
@@ -107,6 +108,13 @@ export class TenantsService {
 
     if (RESERVED_SLUGS.has(slug)) {
       throw new ConflictException(`Slug "${slug}" is reserved`);
+    }
+
+    // Row 195: the test-tenant slug patterns are reserved for the policy's own test tenants — a real
+    // signup can never land on one (the protected-tenant guard and the test-tenant allow-lists key
+    // on them). The message is deliberately neutral: it does not say why.
+    if (isApprovedTestTenantSlug(slug)) {
+      throw new BadRequestException(`Slug "${slug}" is not available`);
     }
 
     const slugTaken = await this.prisma.tenant.findUnique({ where: { slug } });
