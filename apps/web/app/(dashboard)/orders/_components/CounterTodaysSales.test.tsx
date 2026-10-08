@@ -2,6 +2,12 @@ import * as React from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within, act } from "@/test-utils/render";
 import { useCreateCounterSale } from "@/lib/api/counter-sale";
 import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
+import {
+  cancelCounterLeave,
+  confirmCounterLeave,
+  getCounterLeaveRequest,
+  setCounterCartHasLines,
+} from "@/lib/counter-cart-signal";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -10,6 +16,11 @@ import { CounterTodaysSales } from "./CounterTodaysSales";
  */
 const get = jest.fn();
 const post = jest.fn();
+const push = jest.fn();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ push }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: (...a: unknown[]) => get(...a),
@@ -108,6 +119,11 @@ const open = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Today's sales" }));
   return r;
 };
+
+afterEach(() => {
+  cancelCounterLeave();
+  setCounterCartHasLines(false);
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -506,5 +522,24 @@ describe("CounterTodaysSales", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "Today's sales" })),
     );
+  });
+  it("View order with lines in the cart asks to discard first; Discard then opens the order", async () => {
+    setCounterCartHasLines(true);
+    await open();
+    const link = await screen.findByRole("link", { name: "View order" });
+    // fireEvent returns false when the click's default (the navigation) was prevented
+    expect(fireEvent.click(link)).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+    expect(getCounterLeaveRequest()).toBe(true);
+    act(() => confirmCounterLeave());
+    expect(push).toHaveBeenCalledWith("/orders/o1");
+  });
+
+  it("View order with an empty cart is a plain link: not intercepted, nothing parked", async () => {
+    await open();
+    const link = await screen.findByRole("link", { name: "View order" });
+    expect(fireEvent.click(link)).toBe(true);
+    expect(getCounterLeaveRequest()).toBe(false);
+    expect(push).not.toHaveBeenCalled();
   });
 });

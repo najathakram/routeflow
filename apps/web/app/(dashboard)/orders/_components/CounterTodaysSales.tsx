@@ -3,6 +3,7 @@
 // POS-7b-2: the counter's "Today's sales" sheet. Own file so CounterSaleScreen takes one mount line.
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
@@ -11,6 +12,7 @@ import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@route
 import { COUNTER_SALE_TODAY_KEY, useCounterSaleToday } from "@/lib/api/counter-sale-today";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
   formatSaleTime,
@@ -205,6 +207,7 @@ function SaleRow({
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
   const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
+  const router = useRouter();
   return (
     <li className="space-y-2 py-3" data-testid={`today-row-${row.orderId}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -242,7 +245,14 @@ function SaleRow({
             />
           </>
         )}
-        <Link href={`/orders/${row.orderId}`} className={cn(TAP, "text-brand-700")}>
+        <Link
+          href={`/orders/${row.orderId}`}
+          className={cn(TAP, "text-brand-700")}
+          onClick={(e) => {
+            // a cart with lines asks "Discard this sale?" first; Discard runs the raw push (no second ask)
+            if (guardCounterLeave(() => router.push(`/orders/${row.orderId}`))) e.preventDefault();
+          }}
+        >
           View order
         </Link>
       </div>
