@@ -28,7 +28,7 @@ export interface CounterPriceEdit {
 
 export interface CounterLinePriceEditProps {
   /**
-   * The ONE gate (`useCanEditPrices()` / `canEditPrices(user)`). When false NOTHING renders: no button, no
+   * The ONE gate (`canEditPrices(user)`). When false NOTHING renders: no button, no
    * dialog, no label, no tab stop. Hidden, never disabled.
    */
   canEditPrices: boolean;

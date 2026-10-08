@@ -1,5 +1,3 @@
-import { useOptionalAuth } from "./auth-context";
-
 /**
  * POS-5: may this user change a counter-sale line's price (a one-time price, a percent or an amount off)?
  *
@@ -11,9 +9,4 @@ import { useOptionalAuth } from "./auth-context";
 export function canEditPrices(user: { role?: string | null } | null | undefined): boolean {
   const role = user?.role;
   return role === "TENANT_ADMIN" || role === "SUPER_ADMIN";
-}
-
-/** The flag for the signed-in user. Fails CLOSED (false) with no auth provider mounted or no user yet. */
-export function useCanEditPrices(): boolean {
-  return canEditPrices(useOptionalAuth()?.user);
 }
