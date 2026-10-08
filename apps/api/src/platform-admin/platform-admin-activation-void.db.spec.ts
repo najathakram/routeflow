@@ -9,6 +9,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "./audit-actions.constant";
 import { PlatformAdminService } from "./platform-admin.service";
+import { RfInvoiceIssuerService } from "../billing/rf-invoice/rf-invoice-issuer.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -22,6 +23,8 @@ let emit: jest.Mock;
 const tenantIds: string[] = [];
 // When set, the activation's marker audit row (its LAST in-transaction write, after the void) throws.
 let failMarker = false;
+// When set, the RF_INVOICE_VOIDED audit row (written right after the void's CAS update) throws.
+let failVoidAudit = false;
 let createdVersionId: string | undefined; // only a version this spec created is ever deleted
 const SLUG_BASE = `e2e-rfinv4a-${Date.now()}`;
 const ACTOR_DTO = { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" };
@@ -54,6 +57,51 @@ const voidAudits = () =>
   });
 const subRow = () => prisma.tenantSubscription.findUnique({ where: { tenantId } });
 
+/** An invoice for [start, start+30d) with the issuer's own periodKey (the period start, ISO). */
+async function monthlyInvoice(start: Date, status: "OPEN" | "PAID"): Promise<{ id: string }> {
+  const n = ++seq;
+  return prisma.rfInvoice.create({
+    data: {
+      tenantId,
+      number: `RF-2097-M${String(Date.now() % 100000).padStart(5, "0")}${n}`,
+      amount: 499,
+      status,
+      periodStart: start,
+      periodEnd: new Date(start.getTime() + 30 * DAY),
+      periodKey: start.toISOString(),
+      dueDate: start,
+    },
+    select: { id: true },
+  });
+}
+
+/**
+ * The REAL issuer (its findFirst reads run against the DB, nothing stubbed there); only the price builder is a
+ * fixed draft. The cron is not started: a class-TEST tenant is not one of its candidates, so the same loop it
+ * runs per subscription (windowsFor with the 7-day lead, then issuePeriod per window) is driven here directly.
+ */
+function realIssuer(): RfInvoiceIssuerService {
+  return new (RfInvoiceIssuerService as any)(prisma, {
+    build: async () => ({
+      ok: true,
+      lines: [
+        { kind: "PLAN", code: "SCALE", label: "Scale", quantity: 1, unitAmount: 499, amount: 499 },
+      ],
+      total: 499,
+      needsReview: false,
+      currency: "USD",
+    }),
+  }) as RfInvoiceIssuerService;
+}
+async function runIssuer(issuer: RfInvoiceIssuerService, now: Date, leadDays?: number) {
+  const sub = (await subRow())!;
+  const out: Array<{ window: { periodStart: Date; periodEnd: Date }; status: string }> = [];
+  for (const window of await issuer.windowsFor(sub as any, now, leadDays)) {
+    out.push({ window, status: (await issuer.issuePeriod(sub as any, window, now)).status });
+  }
+  return out;
+}
+
 /**
  * The real client, except that while `failMarker` is set the activation's transaction throws when it writes
  * the TENANT_MANUAL_ACTIVATION_MARKER audit row - the last write of the transaction, strictly after the
@@ -77,6 +125,12 @@ function failingMarkerPrisma(real: PrismaClient): PrismaClient {
                       args?.data?.action === AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER
                     ) {
                       throw new Error("injected: activation marker write failed");
+                    }
+                    if (
+                      failVoidAudit &&
+                      args?.data?.action === AdminAuditAction.RF_INVOICE_VOIDED
+                    ) {
+                      throw new Error("injected: void audit write failed");
                     }
                     return a.create(args);
                   }
@@ -173,6 +227,7 @@ describeDb("manual activation auto-void (DB)", () => {
   });
   beforeEach(async () => {
     failMarker = false;
+    failVoidAudit = false;
     const slug = `${SLUG_BASE}-${tenantIds.length}`;
     assertTestTenant(slug);
     const t = await prisma.tenant.create({
@@ -183,6 +238,7 @@ describeDb("manual activation auto-void (DB)", () => {
   });
   afterEach(async () => {
     failMarker = false;
+    failVoidAudit = false;
     if (tenantId) await cleanupTenant(tenantId);
   });
   afterAll(async () => {
@@ -216,24 +272,16 @@ describeDb("manual activation auto-void (DB)", () => {
     expect(await statusOf(paid.id)).toBe("PAID");
   });
 
-  it("a void failure rolls the activation back (a colliding void periodKey -> unique violation)", async () => {
+  it("a void failure rolls the activation back (the void's audit write fails after its CAS update)", async () => {
     const inv = await coveredInvoice();
-    // squat the exact key the void will write, so the void's UPDATE violates (tenantId, periodKey)
-    await prisma.rfInvoice.create({
-      data: {
-        tenantId,
-        number: `RF-2097-SQ${Date.now() % 100000}`,
-        amount: 1,
-        status: "VOID",
-        periodKey: `${inv.periodKey}:void:${inv.id}`,
-      },
-    });
+    failVoidAudit = true; // the void's UPDATE has run; its audit row throws -> one transaction, one rollback
 
     await expect(
       svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a"),
-    ).rejects.toThrow();
+    ).rejects.toThrow("injected: void audit write failed");
 
     expect(await statusOf(inv.id)).toBe("OPEN");
+    expect(await voidAudits()).toBe(0);
     expect(await subRow()).toBeNull();
     expect((await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status).toBe(
       "TRIAL",
@@ -251,7 +299,8 @@ describeDb("manual activation auto-void (DB)", () => {
     expect(v.status).toBe("VOID");
     expect(v.voidReason).toMatch(/^Covered by manual activation on \d{4}-\d{2}-\d{2}$/);
     expect(v.voidedAt).not.toBeNull();
-    expect(v.periodKey).toBe(`${open.periodKey}:void:${open.id}`);
+    // an activation void keeps the key ("settled outside, period consumed"): only the admin void renames it
+    expect(v.periodKey).toBe(open.periodKey);
     expect(await statusOf(paid.id)).toBe("PAID");
     expect(await voidAudits()).toBe(1);
     expect((await subRow())?.externalPayment).toBe(true);
@@ -292,5 +341,85 @@ describeDb("manual activation auto-void (DB)", () => {
     const sub = await subRow();
     expect(sub?.periodStart?.getTime()).toBe(startsBefore.getTime());
     expect(sub?.periodEnd?.getTime()).toBe(startsBefore.getTime() + 14 * DAY);
+  });
+
+  // The defect this pins: the activation used to rename the voided row's periodKey, and the issuer's catch-up
+  // branch (a PAID prior row whose periodEnd == P) then re-billed [P, P+30d), the period the activation had
+  // just settled. The void keeps the key, so (tenantId, periodKey) holds the slot and the issuer says 'exists'.
+  describe("an activation void keeps the period consumed against the REAL issuer", () => {
+    // PAID [P-30d, P) + OPEN [P, P+30d); a 30-day activation at P-3d anchors on P and covers the OPEN row.
+    async function activateAheadOfOpenInvoice() {
+      const P = new Date(Date.now() + 3 * DAY);
+      const paid = await monthlyInvoice(new Date(P.getTime() - 30 * DAY), "PAID");
+      const open = await monthlyInvoice(P, "OPEN");
+      await svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a");
+      return { P, paid, open };
+    }
+    const forPeriod = (P: Date) =>
+      prisma.rfInvoice.findMany({ where: { tenantId, periodStart: P } });
+
+    it("the OPEN row is VOID at its ORIGINAL periodKey; the cron at activation time and at P+23d bills only [P+30d, P+60d)", async () => {
+      const { P, paid, open } = await activateAheadOfOpenInvoice();
+
+      const v = await prisma.rfInvoice.findUniqueOrThrow({ where: { id: open.id } });
+      expect(v.status).toBe("VOID");
+      expect(v.periodKey).toBe(P.toISOString());
+      expect(await statusOf(paid.id)).toBe("PAID");
+      const sub = await subRow();
+      expect(sub?.periodStart?.getTime()).toBe(P.getTime());
+      expect(sub?.periodEnd?.getTime()).toBe(P.getTime() + 30 * DAY);
+
+      const issuer = realIssuer();
+      // the cron at `now` (P-3d): the catch-up proposes [P, P+30d) (the PAID row ends at P) and finds it taken
+      const atNow = await runIssuer(issuer, new Date(P.getTime() - 3 * DAY));
+      expect(atNow.map((r) => r.status)).toEqual(["exists"]);
+      expect(await forPeriod(P)).toHaveLength(1); // only the VOID row: nothing new for [P, P+30d)
+      expect(await prisma.rfInvoice.count({ where: { tenantId } })).toBe(2);
+
+      // the cron at P+23d: the next period starts within the 7-day lead -> [P+30d, P+60d) is issued
+      const later = await runIssuer(issuer, new Date(P.getTime() + 23 * DAY));
+      expect(later.map((r) => r.status)).toEqual(["exists", "issued"]);
+      expect(await forPeriod(P)).toHaveLength(1);
+      const next = await prisma.rfInvoice.findMany({
+        where: { tenantId, periodStart: new Date(P.getTime() + 30 * DAY) },
+      });
+      expect(next).toHaveLength(1);
+      expect(next[0].periodEnd!.getTime()).toBe(P.getTime() + 60 * DAY);
+      expect(next[0].status).toBe("OPEN");
+    });
+
+    it("issue-now (leadDays Infinity) at activation time also creates nothing for [P, P+30d)", async () => {
+      const { P } = await activateAheadOfOpenInvoice();
+
+      const out = await runIssuer(realIssuer(), new Date(P.getTime() - 3 * DAY), Infinity);
+
+      // window 1 is the catch-up for [P, P+30d): 'exists'. Window 2 is the NEXT period, which issue-now issues.
+      expect(out[0]).toMatchObject({ status: "exists" });
+      expect(out[0].window.periodStart.getTime()).toBe(P.getTime());
+      const rows = await forPeriod(P);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("VOID");
+    });
+  });
+
+  it("an activation whose window already ended is refused 409 ACTIVATION_PERIOD_ALREADY_ENDED and writes nothing", async () => {
+    // OPEN [now-40d, now-10d): the 30-day window anchors there and ends 10 days ago
+    const stale = await monthlyInvoice(new Date(Date.now() - 40 * DAY), "OPEN");
+
+    await expect(
+      svc.activateManualSubscription(tenantId, ACTOR_DTO as any, "sa-4a"),
+    ).rejects.toMatchObject({
+      response: {
+        code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+        message: expect.stringContaining("already ended on"),
+      },
+    });
+
+    expect(await statusOf(stale.id)).toBe("OPEN");
+    expect(await voidAudits()).toBe(0);
+    expect(await subRow()).toBeNull();
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } })).status).toBe(
+      "TRIAL",
+    );
   });
 });
