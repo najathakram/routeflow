@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
 import { useFleetAccess } from "@/lib/api/addons";
+import { useUnitsEnabled } from "@/lib/api/product-units";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
@@ -52,6 +53,7 @@ const RESTRICTIONS_ITEM: HubItem = {
 };
 
 const ROUTE_DEFAULTS_HREF = "#route-defaults";
+const UNITS_HREF = "/settings/units";
 const OVERSELL_HREF = "#out-of-stock-ordering";
 
 const GROUPS: HubGroup[] = [
@@ -105,7 +107,7 @@ const GROUPS: HubGroup[] = [
         label: "Units",
         // The hub has no keywords field: the words people search by live in the description.
         desc: "The names you sell and stock by. Search: unit, units, case, box, pack, piece, bottle, size, pieces per box",
-        href: "/settings/units",
+        href: UNITS_HREF,
       },
     ],
   },
@@ -248,6 +250,8 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
   // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
   const { fleet } = useFleetAccess();
+  // Settings > Units ships dark behind flag.units_v1 (granted per tenant once its unit backfill ran).
+  const unitsEnabled = useUnitsEnabled();
 
   // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
   // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
@@ -259,8 +263,14 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
 
   const canShow = React.useCallback(
     (item: HubItem) =>
-      item.href === ROUTE_DEFAULTS_HREF && !fleet ? false : item.show === "admin" ? isAdmin : true,
-    [isAdmin, fleet],
+      item.href === ROUTE_DEFAULTS_HREF && !fleet
+        ? false
+        : item.href === UNITS_HREF && !unitsEnabled
+          ? false
+          : item.show === "admin"
+            ? isAdmin
+            : true,
+    [isAdmin, fleet, unitsEnabled],
   );
 
   const q = query.trim().toLowerCase();

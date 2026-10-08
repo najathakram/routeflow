@@ -18,6 +18,8 @@ jest.mock("@routeflow/ui/web", () => ({
   useToast: () => ({ toast }),
 }));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
+let flag = { enabled: true, isLoading: false };
+jest.mock("@/lib/api/product-units", () => ({ useUnitsFlag: () => flag }));
 jest.mock("@/lib/api/tenant-units", () => ({
   ...jest.requireActual("@/lib/api/tenant-units"),
   useTenantUnits: () => ({ ...state, refetch }),
@@ -46,11 +48,32 @@ const setOnline = (online: boolean) => {
 };
 
 beforeEach(() => {
+  flag = { enabled: true, isLoading: false };
   jest.clearAllMocks();
   createMutate.mockReset();
   updateMutate.mockReset();
   setUnits();
   setOnline(true);
+});
+
+describe("Units page: ships DARK behind flag.units_v1", () => {
+  it("without the flag it shows a plain not-available message and never asks for the units", () => {
+    flag = { enabled: false, isLoading: false };
+    setUnits(u("Case"));
+    render();
+    expect(screen.getByText("Units are not available on your account yet.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Unit name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Case")).not.toBeInTheDocument();
+  });
+
+  it("while the plan is still loading it shows nothing (no flash of the screen or the message)", () => {
+    flag = { enabled: false, isLoading: true };
+    render();
+    expect(screen.queryByLabelText("Unit name")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Units are not available on your account yet."),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("Units page: load states", () => {

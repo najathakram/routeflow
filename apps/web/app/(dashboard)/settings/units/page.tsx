@@ -7,6 +7,7 @@ import { ArrowLeft, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { MORE_UNIT_CHIPS, UNIT_CHIPS } from "@/lib/common-units";
+import { useUnitsFlag } from "@/lib/api/product-units";
 import {
   checkUnitName,
   normalizeUnitName,
@@ -53,7 +54,20 @@ function useOnline(): boolean {
   return online;
 }
 
+/**
+ * Ships DARK behind `flag.units_v1` (granted per tenant once its unit backfill ran): without the flag
+ * the API refuses every call, so the screen is never mounted and the units query is never sent.
+ */
 export default function UnitsPage() {
+  const { enabled, isLoading } = useUnitsFlag();
+  if (isLoading) return null;
+  if (!enabled) {
+    return <p className="text-sm text-navy/70">Units are not available on your account yet.</p>;
+  }
+  return <UnitsScreen />;
+}
+
+function UnitsScreen() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Units");

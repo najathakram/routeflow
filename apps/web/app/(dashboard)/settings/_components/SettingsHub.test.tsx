@@ -5,6 +5,8 @@ import { OFF_HUB_SCREENS, SETTINGS_REGISTRY, type SettingRow } from "@routeflow/
 import { SettingsHub } from "./SettingsHub";
 
 const restrictions = jest.fn();
+let unitsEnabled = true;
+jest.mock("@/lib/api/product-units", () => ({ useUnitsEnabled: () => unitsEnabled }));
 jest.mock("@/lib/api/restrictions-settings", () => ({
   useRestrictionsSettings: () => restrictions(),
 }));
@@ -28,6 +30,7 @@ const TITLES = [
 ];
 
 beforeEach(() => {
+  unitsEnabled = true;
   restrictions.mockReturnValue({ data: { enabled: true }, isLoading: false, isError: false });
 });
 
@@ -111,6 +114,20 @@ describe("SettingsHub regroup", () => {
       expect(hrefs[hrefs.length - 1]).toBe("/settings/units");
       expect(unitsLinks()).toHaveLength(1);
       expect(within(unitsLinks()[0]).getByText("Units")).toBeInTheDocument();
+    });
+
+    it("ships DARK: without flag.units_v1 the tile is gone, and search cannot find it either", () => {
+      unitsEnabled = false;
+      const noUnitsLinks = () =>
+        screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/settings/units");
+      renderWithProviders(<SettingsHub isAdmin />);
+      expect(noUnitsLinks()).toHaveLength(0);
+      const hrefs = within(section("Selling & catalog"))
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href"));
+      expect(hrefs).not.toContain("/settings/units");
+      fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "unit" } });
+      expect(noUnitsLinks()).toHaveLength(0);
     });
 
     it("operators see it too (all staff may edit units)", () => {

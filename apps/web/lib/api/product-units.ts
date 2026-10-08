@@ -14,10 +14,18 @@ export const UNITS_FLAG = "flag.units_v1";
  * Does the tenant's subscription serve `flag.units_v1`? Deliberately FAIL-CLOSED (unlike
  * `usePlanFlag`, which fails open for route guards): an unknown answer must never reveal an
  * editor whose every call would 403, so the surface stays hidden until the flag is confirmed.
+ * `isLoading` lets a page tell "still asking" from "not granted".
  */
-export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
+export function useUnitsFlag(opts?: { enabled?: boolean }): {
+  enabled: boolean;
+  isLoading: boolean;
+} {
   const q = useSubscription({ staleTime: 60_000, ...opts });
-  return (q.data?.flags ?? []).includes(UNITS_FLAG);
+  return { enabled: (q.data?.flags ?? []).includes(UNITS_FLAG), isLoading: q.isLoading };
+}
+
+export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
+  return useUnitsFlag(opts).enabled;
 }
 
 const key = (productId: string) => ["products", productId, "units"] as const;
