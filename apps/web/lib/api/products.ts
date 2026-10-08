@@ -115,8 +115,16 @@ export function useDeactivateProduct() {
   const qc = useQueryClient();
   return useMutation({
     meta: { localErrorToast: true },
-    mutationFn: (id: string) =>
-      apiClient.patch(`/products/${id}`, { isActive: false }).then((r) => r.data),
+    // `confirmCascade` is only ever sent after the operator confirmed the 409 FAMILY_HAS_ACTIVE_VARIANTS prompt.
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .patch(`/products/${id}`, {
+          isActive: false,
+          ...(confirmCascade ? { confirmCascade } : {}),
+        })
+        .then((r) => r.data);
+    },
     onSuccess: () => invalidateProductSet(qc),
   });
 }
@@ -126,7 +134,15 @@ export function useDeleteProduct() {
   return useMutation({
     // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
     meta: { localErrorToast: true },
-    mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .delete(
+          `/products/${id}`,
+          confirmCascade ? { params: { confirmCascade: "true" } } : undefined,
+        )
+        .then((r) => r.data);
+    },
     onSuccess: () => invalidateProductSet(qc),
   });
 }
