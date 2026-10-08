@@ -76,6 +76,7 @@ import { escapeHtml } from "../common/html-escape";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
 /** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
 function activeTenantTrialRefusal(): ConflictException {
@@ -1350,6 +1351,7 @@ export class PlatformAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: "15m",
     });
 
