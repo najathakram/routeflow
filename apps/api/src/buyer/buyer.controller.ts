@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { FulfillPath, InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -525,8 +525,21 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
-  async getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
-    const order = await this.ordersService.findActiveOrder(ctx.customerId);
+  async getActiveOrder(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("fulfillPath") fulfillPath?: string,
+  ) {
+    // `fulfillPath` scopes the read to the order a cart on that path would fold into (the SAME
+    // search create runs), so the cart banner matches the server. Absent or unknown = today's read.
+    const path = (Object.values(FulfillPath) as string[]).includes(fulfillPath ?? "")
+      ? (fulfillPath as FulfillPath)
+      : null;
+    const order = path
+      ? await this.ordersService.findActiveOrder(ctx.customerId, {
+          forMerge: true,
+          mergeAs: { audience: "buyer", explicit: path },
+        })
+      : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
   }
 

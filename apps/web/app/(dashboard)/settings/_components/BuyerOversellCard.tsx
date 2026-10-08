@@ -59,11 +59,16 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
     );
   }
 
+  // The choice is tenant-wide: it stays editable while the switch is off if customers have their own
+  // (on) setting, so it can still be managed. The server accepts it either way.
+  const overrides = data?.customerOverrides ?? 0;
+  const canEditVisibility = canEdit && (on || overrides > 0);
+
   // Only the exact value "hide" hides; an unknown value reads as the default, "show".
   const visibility = data?.buyerBackorderVisibility === "hide" ? "hide" : "show";
 
   function onVisibility(next: "show" | "hide") {
-    if (!canEdit || !data || !on || next === visibility) return;
+    if (!canEditVisibility || !data || next === visibility) return;
     update.mutate(
       { buyerBackorderVisibility: next },
       {
@@ -76,8 +81,6 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
       },
     );
   }
-
-  const overrides = data?.customerOverrides ?? 0;
 
   return (
     <Card title={OVERSELL_COPY.title}>
@@ -114,7 +117,7 @@ export function BuyerOversellCard({ canEdit }: { canEdit: boolean }) {
           </div>
           <fieldset
             className="space-y-1.5 border-t border-surface-border pt-3"
-            disabled={!canEdit || !on || update.isPending}
+            disabled={!canEditVisibility || update.isPending}
           >
             <legend className="text-sm font-medium text-navy">
               {OVERSELL_COPY.visibilityTitle}

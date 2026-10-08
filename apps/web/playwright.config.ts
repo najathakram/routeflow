@@ -954,9 +954,7 @@ export default defineConfig({
       },
     },
 
-    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
-    // page-level header action overflows the viewport at 390px across every
-    // affected list page. Operator auth, same shape as "orders" et al.
+    // Customers list UX (spec 65). Operator auth, same shape as "orders" et al.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
     {
@@ -968,6 +966,12 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
     {
       name: "pageheader-action-wrap",
       testMatch: /57-pageheader-action-wrap\.spec\.ts/,
