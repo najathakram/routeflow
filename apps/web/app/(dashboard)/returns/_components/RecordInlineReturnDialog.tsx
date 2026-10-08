@@ -304,6 +304,8 @@ export function RecordInlineReturnDialog({
           setServerAmount(changedAmount);
         } else if (kind === "changed") {
           // The amount moved under us: re-fetch the quote; the clerk must confirm the new figure.
+          // A stale server amount from an earlier 409 must not outrank the re-quote.
+          setServerAmount(null);
           setRequoting(true);
           requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
             onSuccess: (fresh) => {
