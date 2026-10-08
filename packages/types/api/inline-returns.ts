@@ -184,11 +184,12 @@ export interface InlineReturnQuoteBreakdown {
 }
 
 /** SA-727: the refund eligibility the quote adds to its pricing. `canRefund` is ALWAYS set explicitly (a paid walk-in
- *  sale -> true; an unpaid one, or a caller without the refund gate -> false). The API always sends all four; a client
+ *  sale -> true; an unpaid one, or a caller without the refund gate -> false). The API always sends all five; a client
  *  that may talk to an older API reads it as `Partial<InlineReturnRefundEligibility>`. */
 export interface InlineReturnRefundEligibility {
-  /** The caller passes the refund gate (office roles) AND every source invoice is paid in full. A hint: the refund
-   *  endpoint re-checks under its locks. */
+  /** The caller passes the refund gate (office roles), every source invoice is paid in full, none of it was paid with store
+   *  credit (`paidWithStoreCredit`) AND the return is worth more than $0.00. A hint: the refund endpoint re-checks under its
+   *  locks. */
   canRefund: boolean;
   /** Every returned line is on a source invoice that is non-VOID, not written off, with balance 0. False when a line is
    *  on no invoice at all. */
@@ -196,11 +197,15 @@ export interface InlineReturnRefundEligibility {
   /** The payment methods (`PaymentMethod` values, sorted) of the confirmed payments on those invoices, for
    *  preselecting the refund tender (CASH -> CASH, CREDIT_CARD -> CARD, CHECK -> CHECK). */
   paidMethods: string[];
+  /** F4: any part of those invoices was paid with store credit (a confirmed CREDIT_NOTE or ADVANCE payment). Store credit is
+   *  never turned into cash, so `canRefund` is false and the return goes back as store credit ("Paid with store credit, so it
+   *  goes back as store credit"). */
+  paidWithStoreCredit: boolean;
   /** The customer is the tenant's system walk-in customer (a counter sale to an anonymous buyer). */
   customerIsWalkIn: boolean;
 }
 
-/** The exact shape `POST /returns/inline/quote` resolves to: `quote()`'s `QuoteBreakdown & { productBreakdown, ...the four
+/** The exact shape `POST /returns/inline/quote` resolves to: `quote()`'s `QuoteBreakdown & { productBreakdown, ...the five
  *  InlineReturnRefundEligibility fields }`. */
 export interface InlineReturnQuoteResponse
   extends InlineReturnQuoteBreakdown, InlineReturnRefundEligibility {

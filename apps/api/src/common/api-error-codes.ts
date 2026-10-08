@@ -292,6 +292,11 @@ export const API_ERROR_CODES = {
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
   REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /**
+   * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
+   * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
+   */
+  REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
   /** SA-727: a return that was refunded in cash/card/check cannot be cancelled (the money already left). 409. */
   RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
   /** SA-727: the return is not in a state a refund can resolve (not captured, on hold, rejected, cancelled, or worth $0). 409. */

@@ -107,13 +107,19 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
     expect(own).toEqual(["productBreakdown"]);
 
     const eligibility = interfaceFieldNames(sharedTypesSource, "InlineReturnRefundEligibility");
-    expect(eligibility).toEqual(["canRefund", "paidInFull", "paidMethods", "customerIsWalkIn"]);
+    expect(eligibility).toEqual([
+      "canRefund",
+      "paidInFull",
+      "paidMethods",
+      "paidWithStoreCredit",
+      "customerIsWalkIn",
+    ]);
     // the engine adds exactly the response's own key plus the eligibility fields: a rename, drop or add on either side fails here
     expect(new Set(engine)).toEqual(new Set([...own, ...eligibility]));
     expect(engine.length).toBe(own.length + eligibility.length);
   });
 
-  it("the engine types the four eligibility fields as non-optional (canRefund is ALWAYS set explicitly)", () => {
+  it("the engine types the five eligibility fields as non-optional (canRefund is ALWAYS set explicitly)", () => {
     const sigMatch = quoteServiceSource.match(
       /async quote\([^)]*\):\s*Promise<\s*QuoteBreakdown\s*&\s*\{([\s\S]*?)\}\s*>/,
     );
@@ -121,6 +127,7 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
     expect(body).toMatch(/canRefund: boolean;/);
     expect(body).toMatch(/paidInFull: boolean;/);
     expect(body).toMatch(/paidMethods: string\[\];/);
+    expect(body).toMatch(/paidWithStoreCredit: boolean;/);
     expect(body).toMatch(/customerIsWalkIn: boolean;/);
   });
 });

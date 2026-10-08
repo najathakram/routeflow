@@ -68,6 +68,7 @@ function quoteResponse(chunks: InlineReturnQuoteChunk[]): InlineReturnQuoteRespo
     canRefund: false,
     paidInFull: false,
     paidMethods: [],
+    paidWithStoreCredit: false,
     customerIsWalkIn: false,
   };
 }

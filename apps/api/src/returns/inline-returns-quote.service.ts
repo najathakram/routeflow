@@ -44,7 +44,11 @@ import {
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { canRefundRole, loadSourceInvoicesState } from "./inline-return-refund";
+import {
+  canRefundRole,
+  loadSourceInvoicesState,
+  sourcesAreRefundable,
+} from "./inline-return-refund";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -134,6 +138,7 @@ export class InlineReturnsQuoteService {
       canRefund: boolean;
       paidInFull: boolean;
       paidMethods: string[];
+      paidWithStoreCredit: boolean;
       customerIsWalkIn: boolean;
     }
   > {
@@ -153,9 +158,11 @@ export class InlineReturnsQuoteService {
     ]);
     return {
       ...priced,
-      canRefund: canRefundRole(user.role) && source.paidInFull,
+      // F4/F5: paid in full AND none of it paid with store credit (store credit is never turned into cash) AND worth money
+      canRefund: canRefundRole(user.role) && sourcesAreRefundable(source) && priced.total > 0.001,
       paidInFull: source.paidInFull,
       paidMethods: source.paidMethods,
+      paidWithStoreCredit: source.paidWithStoreCredit,
       customerIsWalkIn: customer?.isWalkIn === true,
     };
   }

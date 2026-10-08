@@ -75,6 +75,23 @@ export const isRefundPending = (ret: {
   !ret.refundedAt &&
   !ret.creditNoteId;
 
+/**
+ * SA-727 (F4): the payment methods that are MONEY (a cash/card/check refund can hand it back). Everything else a confirmed
+ * payment can carry (`CREDIT_NOTE`, `ADVANCE`) is store credit, which a refund must never turn into cash.
+ */
+export const MONEY_PAYMENT_METHODS = [
+  "CASH",
+  "CHECK",
+  "CREDIT_CARD",
+  "ACH",
+  "ZELLE",
+  "OTHER",
+] as const;
+export const STORE_CREDIT_PAYMENT_METHODS: ReadonlySet<string> = new Set([
+  "CREDIT_NOTE",
+  "ADVANCE",
+]);
+
 export interface SourceInvoicesState {
   /** Distinct source invoice ids of the returned lines (sorted). */
   invoiceIds: string[];
@@ -82,7 +99,20 @@ export interface SourceInvoicesState {
   paidInFull: boolean;
   /** The distinct methods of the CONFIRMED payments recorded on those invoices (sorted), for preselecting a tender. */
   paidMethods: string[];
+  /**
+   * F4: ANY part of those invoices was paid with store credit (a CONFIRMED CREDIT_NOTE or ADVANCE payment worth money). Such a
+   * return goes back as store credit only: it is never refundable in cash, whatever `paidInFull` says.
+   */
+  paidWithStoreCredit: boolean;
 }
+
+/**
+ * The one refund-eligibility rule of the sources (pure): paid in full AND none of it paid with store credit. The endpoint, the
+ * REFUND capture pre-check and the quote's `canRefund` all use it (the quote adds the role gate).
+ */
+export const sourcesAreRefundable = (
+  src: Pick<SourceInvoicesState, "paidInFull" | "paidWithStoreCredit">,
+): boolean => src.paidInFull && !src.paidWithStoreCredit;
 
 /**
  * M3: reads the source invoices of the returned lines and answers "paid in full". FAILS CLOSED: no
@@ -99,7 +129,9 @@ export async function loadSourceInvoicesState(
 ): Promise<SourceInvoicesState> {
   const wanted = [...new Set(sourceInvoiceItemIds.filter((i): i is string => !!i))];
   const hasUnreferenced = sourceInvoiceItemIds.some((i) => !i);
-  if (wanted.length === 0) return { invoiceIds: [], paidInFull: false, paidMethods: [] };
+  if (wanted.length === 0) {
+    return { invoiceIds: [], paidInFull: false, paidMethods: [], paidWithStoreCredit: false };
+  }
 
   const lines: Array<{ id: string; invoiceId: string }> =
     (await db.invoiceItem.findMany({
@@ -109,7 +141,9 @@ export async function loadSourceInvoicesState(
   const invoiceIds = [...new Set(lines.map((l) => l.invoiceId))].sort();
   // a source line that was deleted since the sale has no invoice to be paid: not refundable in cash
   const allLinesFound = lines.length === wanted.length;
-  if (invoiceIds.length === 0) return { invoiceIds, paidInFull: false, paidMethods: [] };
+  if (invoiceIds.length === 0) {
+    return { invoiceIds, paidInFull: false, paidMethods: [], paidWithStoreCredit: false };
+  }
   if (opts.beforeInvoiceRead) await opts.beforeInvoiceRead(invoiceIds);
 
   const invoices: Array<{
@@ -130,10 +164,16 @@ export async function loadSourceInvoicesState(
   const dead = new Set<string>(CREDIT_SOURCE_EXCLUDED);
   const methods = new Set<string>();
   let allPaid = invoices.length === invoiceIds.length;
+  let paidWithStoreCredit = false;
   for (const inv of invoices) {
     const payments = inv.payments ?? [];
     for (const p of payments) {
-      if (p.status === CONFIRMED_STATUS && p.method) methods.add(p.method);
+      if (p.status === CONFIRMED_STATUS && p.method) {
+        methods.add(p.method);
+        if (STORE_CREDIT_PAYMENT_METHODS.has(p.method) && roundMoney(Number(p.amount)) > 0.001) {
+          paidWithStoreCredit = true;
+        }
+      }
     }
     const balance = roundMoney(roundMoney(Number(inv.total)) - roundMoney(sumConfirmed(payments)));
     if (dead.has(inv.status) || balance > 0.001) allPaid = false;
@@ -142,6 +182,7 @@ export async function loadSourceInvoicesState(
     invoiceIds,
     paidInFull: allPaid && allLinesFound && !hasUnreferenced,
     paidMethods: [...methods].sort(),
+    paidWithStoreCredit,
   };
 }
 
