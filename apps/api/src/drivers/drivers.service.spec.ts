@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { UserRole } from "@prisma/client";
 import { DriversService } from "./drivers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -317,7 +318,7 @@ describe("DriversService", () => {
       prisma.routeRun.count.mockResolvedValue(0);
       prisma.user.findUnique.mockResolvedValue({ role: "DRIVER" } as any);
 
-      const result = await service.remove("drv-1");
+      const result = await service.remove("drv-1", UserRole.OPERATOR);
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
@@ -330,7 +331,7 @@ describe("DriversService", () => {
       prisma.routeRun.count.mockResolvedValue(0);
       prisma.user.findUnique.mockResolvedValue({ role: "TENANT_ADMIN" } as any);
 
-      const result = await service.remove("drv-1");
+      const result = await service.remove("drv-1", UserRole.TENANT_ADMIN);
 
       expect(result).toEqual({ success: true });
       expect(prisma.driver.delete).toHaveBeenCalledWith({ where: { id: "drv-1" } });
@@ -345,11 +346,67 @@ describe("DriversService", () => {
       prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
       prisma.routeRun.count.mockResolvedValue(1);
 
-      await expect(service.remove("drv-1")).rejects.toThrow(BadRequestException);
+      await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(BadRequestException);
 
       expect(prisma.driver.delete).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    // B1061 (the DELETE /drivers/:id residual of B1056): the users module's admin-account rule applies here too.
+    describe("admin-target check (same rule as the users module)", () => {
+      const noWrites = () => {
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+        expect(prisma.route.updateMany).not.toHaveBeenCalled();
+        expect(prisma.driver.delete).not.toHaveBeenCalled();
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      };
+      const arrange = (linkedRole: string) => {
+        prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+        prisma.routeRun.count.mockResolvedValue(0);
+        prisma.user.findUnique.mockResolvedValue({ role: linkedRole } as any);
+      };
+
+      it("refuses an OPERATOR deleting the driver record of an admin account, before any write", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(
+          ForbiddenException,
+        );
+        noWrites();
+      });
+
+      it("is fail-closed: an admin target with no caller role is refused", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", undefined)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      });
+
+      it("lets a TENANT_ADMIN remove an admin's driver record (login kept, flag cleared)", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(service.remove("drv-1", UserRole.TENANT_ADMIN)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: "user-drv" },
+          data: { canActAsDriver: false },
+        });
+      });
+
+      it("an OPERATOR can still delete a pure DRIVER record and an operator's driver record", async () => {
+        arrange("DRIVER");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "user-drv" } });
+        prisma.user.delete.mockClear();
+        arrange("OPERATOR");
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).resolves.toEqual({
+          success: true,
+        });
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+      });
     });
   });
 });

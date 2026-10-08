@@ -91,8 +91,8 @@ export class DriversController {
   @Delete(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.driversService.remove(id);
+  remove(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.driversService.remove(id, user.role);
   }
 
   @Get(":id/history")
