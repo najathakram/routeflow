@@ -46,7 +46,9 @@
 //   UNIT_NAME_TAKEN — `body.code` of the 409 when renaming a unit to a name another unit of the tenant already has
 //                    (archived or not).
 //   UNIT_RENAME_COLLISION — `body.code` of the 409 when a unit rename would give one product two levels the same name;
-//                    `products` lists up to 10 `{id, name}` and `total` counts them all. Nothing was changed.
+//                    `body.reason` is NAME (a product already has that name), DUPLICATE_LEVELS (two of its levels are
+//                    linked to the unit) or MIXED; `products` lists up to 10 `{id, name}` and `total` counts them all.
+//                    Nothing was changed.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED

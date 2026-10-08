@@ -35,6 +35,8 @@ interface RawUnitRow {
 
 export const MAX_UNIT_NAME_LENGTH = 30;
 const MAX_COLLISION_PRODUCTS = 10;
+/** Why a product refuses a rename; `MIXED` is the body reason when several causes apply. */
+type CollisionReason = "NAME" | "DUPLICATE_LEVELS";
 /**
  * A rename reads and relabels every product of the tenant that uses the unit, in CHUNK-sized writes,
  * and first waits for the tenant units lock behind in-flight pack edits (milliseconds each). Sized for
@@ -305,32 +307,28 @@ export class UnitsService {
         if (list) list.push(l);
         else levelsByProduct.set(l.productId, [l]);
       }
-      const colliding = products.filter((p) => {
+      // Why a product cannot take the new name (null = it can). First cause wins per product.
+      const collisionOf = (p: (typeof products)[number]): CollisionReason | null => {
         const mine = levelsByProduct.get(p.id) ?? [];
         const renamed = mine.filter((l) => l.tenantUnitId === id);
         // Several levels of one product linked to this unit ("Case" + "case") would all take the new
         // name and break the (productId,label) unique: refuse, the operator fixes the product.
-        if (renamed.length > 1) return true;
-        if (newKey === oldKey) return false;
-        const others: string[] = mine
-          .filter((l) => l.tenantUnitId !== id)
-          .map((l) => unitNameKey(l.label));
-        if (p.baseUnitLabel && !matches(p.baseUnitLabel)) others.push(unitNameKey(p.baseUnitLabel));
-        if (p.packLabel && !matches(p.packLabel)) others.push(unitNameKey(p.packLabel));
+        if (renamed.length > 1) return "DUPLICATE_LEVELS";
+        const others = mine.filter((l) => l.tenantUnitId !== id);
+        // A case-only change keeps the key, but the unique index compares the exact label.
+        if (newKey === oldKey) return others.some((l) => l.label === newName) ? "NAME" : null;
+        const keys: string[] = others.map((l) => unitNameKey(l.label));
+        if (p.baseUnitLabel && !matches(p.baseUnitLabel)) keys.push(unitNameKey(p.baseUnitLabel));
+        if (p.packLabel && !matches(p.packLabel)) keys.push(unitNameKey(p.packLabel));
         // A pack word that renames with this unit is the renamed one, not a clash.
-        if (renamed.length > 0 && !matches(p.unit)) others.push(packWordKey(p.unit));
-        return others.includes(newKey);
+        if (renamed.length > 0 && !matches(p.unit)) keys.push(packWordKey(p.unit));
+        return keys.includes(newKey) ? "NAME" : null;
+      };
+      const colliding = products.flatMap((p) => {
+        const reason = collisionOf(p);
+        return reason ? [{ p, reason }] : [];
       });
-      if (colliding.length > 0) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.UNIT_RENAME_COLLISION,
-          message: `Can't rename to ${newName}: some products already have a ${newName}.`,
-          products: colliding
-            .slice(0, MAX_COLLISION_PRODUCTS)
-            .map((p) => ({ id: p.id, name: p.name })),
-          total: colliding.length,
-        });
-      }
+      if (colliding.length > 0) throw this.renameCollision(colliding, newName, unit.name as string);
 
       const baseIds = products.filter((p) => matches(p.baseUnitLabel)).map((p) => p.id);
       const packIds = products.filter((p) => matches(p.packLabel)).map((p) => p.id);
@@ -346,10 +344,17 @@ export class UnitsService {
         if (isUniqueViolation(e)) throw this.nameTaken(newName);
         throw e;
       }
-      await tx.productUnit.updateMany({
-        where: { tenantId, tenantUnitId: id },
-        data: { label: newName },
-      });
+      try {
+        await tx.productUnit.updateMany({
+          where: { tenantId, tenantUnitId: id },
+          data: { label: newName },
+        });
+      } catch (e) {
+        // Backstop for a clash the pre-check could not see (a level written in a race): still the
+        // collision 409, and the throw rolls the whole rename back.
+        if (isUniqueViolation(e)) throw this.renameCollision([], newName, unit.name as string);
+        throw e;
+      }
       // Literal `data` on purpose: the Product-write tripwires reject variable or spread data.
       for (const part of chunks(baseIds)) {
         await tx.product.updateMany({
@@ -396,6 +401,30 @@ export class UnitsService {
       },
       productsUpdated: done.productsUpdated,
     };
+  }
+
+  private renameCollision(
+    colliding: Array<{ p: { id: string; name: string }; reason: CollisionReason }>,
+    newName: string,
+    oldName: string,
+  ): ConflictException {
+    const reasons = [...new Set(colliding.map((c) => c.reason))];
+    const reason: CollisionReason | "MIXED" =
+      reasons.length === 1 ? reasons[0] : reasons.length === 0 ? "NAME" : "MIXED";
+    const message: Record<CollisionReason | "MIXED", string> = {
+      NAME: `Can't rename to ${newName}: some products already have a ${newName}.`,
+      DUPLICATE_LEVELS: `Can't rename to ${newName}: some products have two ${oldName} units that would both become ${newName}.`,
+      MIXED: `Can't rename to ${newName}: some products can't take that name.`,
+    };
+    return new ConflictException({
+      code: API_ERROR_CODES.UNIT_RENAME_COLLISION,
+      reason,
+      message: message[reason],
+      products: colliding
+        .slice(0, MAX_COLLISION_PRODUCTS)
+        .map((c) => ({ id: c.p.id, name: c.p.name })),
+      total: colliding.length,
+    });
   }
 
   private nameTaken(name: string): ConflictException {

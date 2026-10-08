@@ -61,6 +61,18 @@ export function unitErrorMessage(err: unknown, name: string): string {
       products.map((p) => p.name),
       total,
     );
+    if (products.length === 0 && total === 0) {
+      return `Can't rename to ${name}. Some products already have a ${name}. Change those first.`;
+    }
+    const reason = data.reason;
+    if (reason === "DUPLICATE_LEVELS") {
+      return many
+        ? `Can't rename to ${name}. ${text} have two units that would both become ${name}. Change those first.`
+        : `Can't rename to ${name}. ${text} has two units that would both become ${name}. Change that first.`;
+    }
+    if (reason === "MIXED") {
+      return `Can't rename to ${name}. ${text} can't take that name. Change ${many ? "those" : "that"} first.`;
+    }
     return many
       ? `Can't rename to ${name}. ${text} already have a ${name}. Change those first.`
       : `Can't rename to ${name}. ${text} already has a ${name}. Change that first.`;

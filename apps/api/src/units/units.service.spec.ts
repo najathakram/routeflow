@@ -675,6 +675,73 @@ describe("UnitsService", () => {
       expect(Date.now() - started).toBeLessThan(4_000);
     }, 30_000);
 
+    it("the Case + case refusal says what is really wrong (two linked levels), with its own reason", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [
+          { id: "l1", productId: "p1" },
+          { id: "l2", productId: "p1" },
+        ],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Each" }],
+        levels: [
+          { productId: "p1", label: "Case", tenantUnitId: "u1" },
+          { productId: "p1", label: "case", tenantUnitId: "u1" },
+        ],
+      });
+      const body = (
+        await h.service.update("u1", { name: "Carton" }, user).catch((e) => e)
+      ).getResponse();
+      expect(body.code).toBe("UNIT_RENAME_COLLISION");
+      expect(body.reason).toBe("DUPLICATE_LEVELS");
+      expect(body.message).toBe(
+        "Can't rename to Carton: some products have two Case units that would both become Carton.",
+      );
+    });
+
+    it("a name clash keeps its sentence and reason NAME", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Each" }],
+        levels: [
+          { productId: "p1", label: "Case", tenantUnitId: "u1" },
+          { productId: "p1", label: "Carton", tenantUnitId: null },
+        ],
+      });
+      const body = (
+        await h.service.update("u1", { name: "Carton" }, user).catch((e) => e)
+      ).getResponse();
+      expect(body.reason).toBe("NAME");
+      expect(body.message).toBe("Can't rename to Carton: some products already have a Carton.");
+    });
+
+    it("a case-only rename onto an UNLINKED level of the exact new label is refused up front (linked Case + unlinked case -> case)", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Each" }],
+        levels: [
+          { productId: "p1", label: "Case", tenantUnitId: "u1" },
+          { productId: "p1", label: "case", tenantUnitId: null },
+        ],
+      });
+      await expect(h.service.update("u1", { name: "case" }, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "UNIT_RENAME_COLLISION", reason: "NAME" }),
+      });
+      expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("backstop: a P2002 from the level relabel (a race the pre-check could not see) is the collision 409, never a 500", async () => {
+      const h = make();
+      seedRename(h, { products: [], levels: [] });
+      h.db.productUnit.updateMany.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+      );
+      await expect(h.service.update("u1", { name: "Carton" }, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: "UNIT_RENAME_COLLISION" }),
+      });
+    });
+
     it("the 409 names at most 10 products", async () => {
       const h = make();
       const ids = Array.from({ length: 12 }, (_, i) => `p${i}`);

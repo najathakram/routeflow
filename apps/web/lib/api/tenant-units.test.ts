@@ -75,6 +75,36 @@ describe("unitErrorMessage", () => {
       "Can't rename to Case. Gift Box, Mini Gift Box, Mug and 2 more already have a Case. Change those first.",
     );
   });
+  it("names the real cause when it is not a name clash (reason on the 409 body)", () => {
+    const body = (reason: string, n: number) => ({
+      code: "UNIT_RENAME_COLLISION",
+      reason,
+      products: Array.from({ length: n }, (_, i) => ({
+        id: `p${i}`,
+        name: ["Gift Box", "Mug"][i],
+      })),
+    });
+    expect(unitErrorMessage(http(409, body("DUPLICATE_LEVELS", 1)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box has two units that would both become Carton. Change that first.",
+    );
+    expect(unitErrorMessage(http(409, body("DUPLICATE_LEVELS", 2)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box and Mug have two units that would both become Carton. Change those first.",
+    );
+    expect(unitErrorMessage(http(409, body("MIXED", 2)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box and Mug can't take that name. Change those first.",
+    );
+    expect(unitErrorMessage(http(409, body("NAME", 1)), "Carton")).toBe(
+      "Can't rename to Carton. Gift Box already has a Carton. Change that first.",
+    );
+  });
+  it("a collision body that names no product (a race backstop) still reads as a sentence", () => {
+    expect(
+      unitErrorMessage(
+        http(409, { code: "UNIT_RENAME_COLLISION", reason: "NAME", products: [] }),
+        "Case",
+      ),
+    ).toBe("Can't rename to Case. Some products already have a Case. Change those first.");
+  });
   it("anything else is the fixed save-failed sentence", () => {
     const fixed = "Couldn't save. Your change is still here. Try again.";
     expect(unitErrorMessage(http(500), "Case")).toBe(fixed);
