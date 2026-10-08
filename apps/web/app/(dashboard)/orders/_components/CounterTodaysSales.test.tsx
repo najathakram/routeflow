@@ -1,11 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within, act } from "@/test-utils/render";
 import { useCreateCounterSale } from "@/lib/api/counter-sale";
-import type {
-  TodaysSaleRow,
-  TodaysSalesResponse,
-  TodaysSalesSummary,
-} from "@/lib/api/counter-sale-today";
+import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -57,7 +53,7 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
   paid: 22.5,
   balanceDue: 0,
   customerId: "c1",
-  customerName: null,
+  customerName: "Walk-in",
   isWalkIn: true,
   status: "DELIVERED",
   paymentState: "PAID",
@@ -91,7 +87,7 @@ const resp = (
     windowStart: "2026-10-07T04:00:00.000Z",
     windowEnd: "2026-10-08T04:00:00.000Z",
   },
-  ...(over.summary === null ? {} : { summary: over.summary ?? SUMMARY }),
+  summary: over.summary === undefined ? SUMMARY : over.summary,
 });
 const page1 = (rows: TodaysSaleRow[] = [row()], over = {}) => resp(rows, over);
 const serve = (pages: Record<number, TodaysSalesResponse>) =>

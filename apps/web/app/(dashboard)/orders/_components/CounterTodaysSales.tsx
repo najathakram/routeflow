@@ -7,13 +7,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
-import {
-  COUNTER_SALE_TODAY_KEY,
-  useCounterSaleToday,
-  type TodaysSaleRow,
-  type TodaysSalesSummary,
-  type TodaysTenderMethod,
-} from "@/lib/api/counter-sale-today";
+import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
+import { COUNTER_SALE_TODAY_KEY, useCounterSaleToday } from "@/lib/api/counter-sale-today";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
 import {
@@ -25,7 +20,7 @@ import {
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 
-const METHOD_LABEL: Record<TodaysTenderMethod, string> = {
+const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",
@@ -130,23 +125,24 @@ function Reprint({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
-  const model = order
-    ? receiptModelFromOrder({
-        order,
-        cashier,
-        profile: { ...settings, businessName: branding?.businessName || settings?.businessName },
-        sale: {
-          invoiceId: row.invoiceId,
-          invoiceNumber: row.invoiceNumber,
-          paymentState: row.paymentState,
-          paid: row.paid,
-          balanceDue: row.balanceDue,
-          methods: row.methods,
-          createdAt: row.createdAt,
-          timezone,
-        },
-      })
-    : null;
+  const model =
+    order && row.invoiceId && row.invoiceNumber
+      ? receiptModelFromOrder({
+          order,
+          cashier,
+          profile: { ...settings, businessName: branding?.businessName || settings?.businessName },
+          sale: {
+            invoiceId: row.invoiceId,
+            invoiceNumber: row.invoiceNumber,
+            paymentState: row.paymentState,
+            paid: row.paid,
+            balanceDue: row.balanceDue,
+            methods: row.methods,
+            createdAt: row.createdAt,
+            timezone,
+          },
+        })
+      : null;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 print:hidden">
@@ -218,9 +214,11 @@ function SaleRow({
       <div className="flex flex-wrap gap-2">
         {row.voided ? null : (
           <>
-            <button type="button" className={TAP} onClick={onReprint}>
-              Reprint
-            </button>
+            {row.invoiceId && row.invoiceNumber ? (
+              <button type="button" className={TAP} onClick={onReprint}>
+                Reprint
+              </button>
+            ) : null}
             <CounterReturnAction orderId={row.orderId} onDone={onDone} />
           </>
         )}
@@ -247,7 +245,7 @@ export function CounterTodaysSales() {
 
   return (
     <>
-      <Button className="min-h-11" variant="secondary" onClick={() => setOpen(true)}>
+      <Button className="min-h-[44px]" variant="secondary" onClick={() => setOpen(true)}>
         Today&apos;s sales
       </Button>
       <Modal

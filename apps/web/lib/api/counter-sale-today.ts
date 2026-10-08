@@ -1,73 +1,8 @@
-// Replace with the @routeflow/types import when POS-7b-1 lands; do not keep both.
-// Mirrors packages/types/api/counter-sale.ts (TodaysSalesResponse / TodaysSaleRow / TodaysSalesSummary).
-// `GET /orders/counter-sale/today?page=N`: today's counter sales, newest first.
-// ASSUMPTION: `summary` is an optional top-level field (page 1 carries it); later pages may omit it.
+// `GET /orders/counter-sale/today?page=N`: today's counter sales, newest first. The shapes are the server's
+// (`@routeflow/types`); page 1 carries `summary`, later pages have `summary: null`.
 import { useInfiniteQuery } from "@tanstack/react-query";
+import type { TodaysSalesResponse } from "@routeflow/types";
 import { apiClient } from "../api-client";
-
-export type TodaysTenderMethod = "CASH" | "CARD" | "CHECK" | "OTHER" | "STORE_CREDIT";
-
-export interface TodaysSaleRow {
-  orderId: string;
-  invoiceId: string;
-  orderNumber: string;
-  invoiceNumber: string;
-  /** ISO time of the sale: format it in `meta.timezone` */
-  createdAt: string;
-  total: number;
-  /** server figure: every PAID payment on the sale's live invoices, store credit included */
-  paid: number;
-  balanceDue: number;
-  customerId: string;
-  customerName: string | null;
-  isWalkIn: boolean;
-  status: string;
-  paymentState: "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
-  /** STORE_CREDIT is a payment against the sale but is never money in */
-  methods: { method: TodaysTenderMethod; amount: number }[];
-  returned: {
-    amount: number;
-    state: "NONE" | "PARTLY" | "FULL" | "PENDING";
-    returns: unknown[];
-  };
-  /** a cancelled sale: shown struck through, no Return action */
-  voided: boolean;
-}
-
-export interface TodaysSalesSummary {
-  sales: { count: number; total: number };
-  moneyIn: { cash: number; card: number; check: number; other: number; total: number };
-  storeCreditUsed: number;
-  onAccount: number;
-  /** `tenderKnown: false` until a refund-tender column exists: show only `total` */
-  refunds: {
-    count: number;
-    cash: number;
-    card: number;
-    check: number;
-    other: number;
-    total: number;
-    tenderKnown: boolean;
-  };
-  storeCreditIssued: { count: number; amount: number };
-  cashExpectedInDrawer: number;
-  netCollected: number;
-}
-
-export interface TodaysSalesResponse {
-  data: TodaysSaleRow[];
-  meta: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    day: string;
-    timezone: string;
-    windowStart: string;
-    windowEnd: string;
-  };
-  summary?: TodaysSalesSummary;
-}
 
 /** Under ["orders"], so a completed counter sale (which invalidates ["orders"]) refreshes the sheet with no extra wiring. */
 export const COUNTER_SALE_TODAY_KEY = ["orders", "counter-sale-today"] as const;
