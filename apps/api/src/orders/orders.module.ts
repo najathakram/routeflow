@@ -36,6 +36,7 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 // SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -83,6 +84,7 @@ import { StorageModule } from "../storage/storage.module";
     PolicyOversellReader,
     BuyerBackorderViewResolver,
     CounterSaleService,
+    CounterSaleTodayService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

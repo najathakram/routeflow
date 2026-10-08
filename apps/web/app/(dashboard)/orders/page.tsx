@@ -22,6 +22,7 @@ import {
   Route as RouteIcon,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
@@ -236,7 +237,11 @@ function PagerControls({
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const counterGate = useCounterSaleGate();
+  const { user } = useAuth();
+  // Same staff test as the shell's gate callers (layout.tsx, CommandPalette): everyone but CUSTOMER / DRIVER.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");

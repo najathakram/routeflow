@@ -542,6 +542,20 @@ describe("held attempt: minimal customer, validated read", () => {
     expect(readHeldAttempt(SK)).toBeNull();
   });
 
+  it("a stored invalid attempt stays 'corrupt' (never null) even when writing the marker throws", () => {
+    window.sessionStorage.setItem(SK, "{nope");
+    const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    try {
+      expect(readHeldAttempt(SK)).toBe("corrupt");
+    } finally {
+      spy.mockRestore();
+    }
+    // the bad payload is still stored, so the next read is locked as well
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+  });
+
   it("heldAttemptKey is unchanged", () => {
     expect(heldAttemptKey("acme", "u-a")).toBe(SK);
   });
