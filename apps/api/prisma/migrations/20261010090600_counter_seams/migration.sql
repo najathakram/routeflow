@@ -3,11 +3,13 @@
 --   - the new table "CounterParkedCart" (a counter cart set aside, resumable until "expiresAt"): three btree indexes and
 --     three foreign keys ("Tenant" ON DELETE CASCADE; "createdById" and "resumedById" to "User" ON DELETE SET NULL).
 --   - btree "Order" ("tenantId", "counterSale", "createdAt").
--- LOCKS ON A POPULATED TABLE: each ALTER TABLE "Order" takes ACCESS EXCLUSIVE until COMMIT. The "Order_soldById_fkey"
--- validation scans "Order" while holding SHARE ROW EXCLUSIVE on "Order" and on "User" (the column is all-NULL, but the
--- scan still runs), so it blocks writes to both for the scan. The "Order" index build blocks writes to "Order" for the
--- build. RUN OFF-PEAK. If "Order" is larger than ~500k rows (the PR body carries the prod count), move the index into its
--- own folder `20261010090650_order_counter_sale_index` and apply it separately.
+-- LOCKS ON A POPULATED TABLE: the ALTER TABLE "Order" takes ACCESS EXCLUSIVE and holds it until COMMIT. "soldById" is added
+-- WITH its foreign key INLINE (`ADD COLUMN ... CONSTRAINT "Order_soldById_fkey" REFERENCES`): Postgres does not scan the
+-- table for a new column without a default, so there is no validation scan (the constraint name is the one Prisma
+-- generates, so no drift). The "Order" index build, however, runs inside the same transaction while that ACCESS EXCLUSIVE
+-- lock is held, so it blocks READS AND WRITES of "Order" for the build. RUN OFF-PEAK. If "Order" is larger than ~500k rows
+-- (the PR body carries the prod count), move the index into its own folder `20261010090650_order_counter_sale_index`
+-- (a plain CREATE INDEX there takes only a SHARE lock: reads continue, writes wait) and apply it separately.
 --
 -- LOCK PROFILE: `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that
 -- waits longer than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
@@ -26,7 +28,7 @@ SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
 ALTER TABLE "Order" ADD COLUMN     "registerKey" TEXT,
-ADD COLUMN     "soldById" TEXT;
+ADD COLUMN     "soldById" TEXT CONSTRAINT "Order_soldById_fkey" REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- CreateTable
 CREATE TABLE "CounterParkedCart" (
@@ -61,14 +63,9 @@ CREATE INDEX "CounterParkedCart_expiresAt_idx" ON "CounterParkedCart"("expiresAt
 CREATE INDEX "CounterParkedCart_resumedAt_idx" ON "CounterParkedCart"("resumedAt");
 
 -- CreateIndex
--- reason: index on populated "Order" (counterSale, createdAt are existing columns): blocks writes to "Order" for the build; the owner runs this sitting off-peak and the PR body carries the prod row count
+-- reason: index on populated "Order" (counterSale, createdAt are existing columns): the build runs under the ALTER ACCESS EXCLUSIVE lock, blocking reads and writes of "Order"; the owner runs this sitting off-peak and the PR body carries the prod row count
 -- squawk-ignore require-concurrent-index-creation
 CREATE INDEX "Order_tenantId_counterSale_createdAt_idx" ON "Order"("tenantId", "counterSale", "createdAt");
-
--- AddForeignKey
--- reason: "soldById" is a new all-NULL column, so validation finds no violating row; it still scans "Order" under SHARE ROW EXCLUSIVE on "Order" and "User", run off-peak
--- squawk-ignore adding-foreign-key-constraint
-ALTER TABLE "Order" ADD CONSTRAINT "Order_soldById_fkey" FOREIGN KEY ("soldById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 -- reason: brand-new empty table; adding the FK scans nothing

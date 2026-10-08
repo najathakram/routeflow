@@ -4,6 +4,8 @@
 --   - "CustomerLink"."inviteTokenHash" (nullable) with a UNIQUE index (the hashed replacement for "inviteToken",
 --     which stays until a later cut-over drops it; that drop is NOT in this PR).
 -- The new table is empty. "CustomerLink" is small (one row per linked customer): the unique index build is instant.
+-- LOCKS: the ALTER TABLE "User" takes ACCESS EXCLUSIVE until COMMIT (it also takes part in the new table's FK check), so it
+-- is the LAST statement before COMMIT and the lock window is as short as the file allows.
 --
 -- LOCK PROFILE: `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that
 -- waits longer than 5s for its lock fails and rolls the whole file back (recorded FAILED; recover with
@@ -19,9 +21,6 @@
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-
--- AlterTable
-ALTER TABLE "User" ADD COLUMN     "emailVerifiedAt" TIMESTAMP(3);
 
 -- AlterTable
 ALTER TABLE "CustomerLink" ADD COLUMN     "inviteTokenHash" TEXT;
@@ -62,5 +61,8 @@ CREATE UNIQUE INDEX "CustomerLink_inviteTokenHash_key" ON "CustomerLink"("invite
 -- reason: brand-new empty table; adding the FK scans nothing
 -- squawk-ignore adding-foreign-key-constraint
 ALTER TABLE "UserEmailVerificationToken" ADD CONSTRAINT "UserEmailVerificationToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "emailVerifiedAt" TIMESTAMP(3);
 
 COMMIT;

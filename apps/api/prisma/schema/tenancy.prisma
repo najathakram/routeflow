@@ -576,10 +576,6 @@ model BuyerPasswordResetToken {
   @@index([expiresAt])
 }
 
-// Registration email-verification token — proves the registrant controls the
-// mailbox before `emailVerified` unlocks auto-connect in requestSeller. Kept as
-// a separate model from BuyerPasswordResetToken so a verification token can
-// never be replayed to change a password (and vice versa).
 /// Sitting 3 (SA-741r2), schema only: single-use email verification token for a staff user (mirrors
 /// BuyerEmailVerificationToken). Only the hash is stored. Nothing reads or writes it yet.
 model UserEmailVerificationToken {
@@ -596,6 +592,10 @@ model UserEmailVerificationToken {
   @@index([expiresAt])
 }
 
+// Registration email-verification token — proves the registrant controls the
+// mailbox before `emailVerified` unlocks auto-connect in requestSeller. Kept as
+// a separate model from BuyerPasswordResetToken so a verification token can
+// never be replayed to change a password (and vice versa).
 model BuyerEmailVerificationToken {
   id             String    @id @default(uuid())
   buyerAccountId String
