@@ -267,7 +267,7 @@ describe("UnitsService", () => {
       const out = await service.create({ name: "case" }, user);
       expect(db.tenantUnit.create).not.toHaveBeenCalled();
       expect(db.tenantUnit.updateMany).toHaveBeenCalledWith({
-        where: { id: "u1", tenantId: T },
+        where: { id: "u1", tenantId: T, archivedAt: { not: null } },
         data: { archivedAt: null },
       });
       expect(out.id).toBe("u1");
@@ -907,7 +907,7 @@ describe("UnitsService", () => {
       h.prisma.$queryRaw.mockResolvedValue([dtoRow({ productCount: 40 })]);
       const out = await h.service.update("u1", { archived: true }, user);
       const call = h.db.tenantUnit.updateMany.mock.calls[0][0];
-      expect(call.where).toEqual({ id: "u1", tenantId: T });
+      expect(call.where).toEqual({ id: "u1", tenantId: T, archivedAt: null });
       expect(call.data.archivedAt).toBeInstanceOf(Date);
       expect(h.db.product.updateMany).not.toHaveBeenCalled();
       expect(h.db.productUnit.updateMany).not.toHaveBeenCalled();
@@ -936,6 +936,26 @@ describe("UnitsService", () => {
       h.prisma.$queryRaw.mockResolvedValue([dtoRow({ archivedAt: new Date("2026-10-01") })]);
       await h.service.update("u1", { archived: true }, user);
       expect(h.db.tenantUnit.updateMany).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
+    });
+
+    it("two concurrent archives audit ONCE: the loser's conditional write matches 0 rows and writes no audit row", async () => {
+      const h = make();
+      h.db.tenantUnit.findFirst.mockResolvedValue(row()); // both saw it active
+      h.db.tenantUnit.updateMany.mockResolvedValue({ count: 0 }); // the other request already archived it
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ archivedAt: new Date() })]);
+      const out = await h.service.update("u1", { archived: true }, user);
+      expect(out.productsUpdated).toBe(0);
+      expect(h.audit.log).not.toHaveBeenCalled();
+    });
+
+    it("two concurrent restores audit ONCE too (via update and via an add of the archived name)", async () => {
+      const h = make();
+      h.db.tenantUnit.findFirst.mockResolvedValue(row({ archivedAt: new Date() }));
+      h.db.tenantUnit.updateMany.mockResolvedValue({ count: 0 });
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await h.service.update("u1", { archived: false }, user);
+      await h.service.create({ name: "Case" }, user);
       expect(h.audit.log).not.toHaveBeenCalled();
     });
 

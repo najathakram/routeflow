@@ -174,19 +174,23 @@ export class UnitsService {
       }
     }
     if (existing.archivedAt) {
-      await db.tenantUnit.updateMany({
-        where: { id: existing.id, tenantId },
+      // Conditional on still being archived: of two concurrent restores only one matches a row, and
+      // only that one audits.
+      const { count } = await db.tenantUnit.updateMany({
+        where: { id: existing.id, tenantId, archivedAt: { not: null } },
         data: { archivedAt: null },
       });
       const unit = await this.oneRow(tenantId, existing.id);
-      await this.audit.log({
-        tenantId,
-        userId: user.sub,
-        action: "tenant_unit.restored",
-        entityType: "TenantUnit",
-        entityId: existing.id,
-        meta: { name: existing.name, productCount: unit.productCount, via: "add" },
-      });
+      if (count === 1) {
+        await this.audit.log({
+          tenantId,
+          userId: user.sub,
+          action: "tenant_unit.restored",
+          entityType: "TenantUnit",
+          entityId: existing.id,
+          meta: { name: existing.name, productCount: unit.productCount, via: "add" },
+        });
+      }
       return unit;
     }
     return this.oneRow(tenantId, existing.id);
@@ -220,12 +224,14 @@ export class UnitsService {
     if (archived === (existing.archivedAt != null)) {
       return { unit: await this.oneRow(tenantId, id), productsUpdated: 0 };
     }
+    // Conditional on the state still being the one read: of two concurrent requests only one matches a
+    // row (count 1) and only that one audits; the other found it already done.
     const { count } = await db.tenantUnit.updateMany({
-      where: { id, tenantId },
+      where: { id, tenantId, archivedAt: archived ? null : { not: null } },
       data: { archivedAt: archived ? new Date() : null },
     });
-    if (count === 0) throw new NotFoundException("Unit not found");
-    const unit = await this.oneRow(tenantId, id);
+    const unit = await this.oneRow(tenantId, id); // 404s if the unit vanished meanwhile
+    if (count === 0) return { unit, productsUpdated: 0 };
     await this.audit.log({
       tenantId,
       userId: user.sub,
