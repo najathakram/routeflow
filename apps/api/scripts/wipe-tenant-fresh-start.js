@@ -44,6 +44,7 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { classifyDbTarget } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
 
 const USAGE =
   "Usage: node wipe-tenant-fresh-start.js <test-slug> --local [--execute]\n" +
@@ -306,6 +307,14 @@ async function nuke(tenantId) {
     if (target.exit === 2) console.error(USAGE);
     process.exit(target.exit);
   }
+  // Row 195: the operator-named protected slugs, validated against the URL this run will dial.
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, target.url);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
   slug = args.slug;
   execute = args.execute;
   prisma = new PrismaClient({ adapter: new PrismaPg(new Pool(target.poolConfig)) });
@@ -342,7 +351,12 @@ async function nuke(tenantId) {
     where: { tenantId: tenant.id },
     select: { planKey: true, stripeSubId: true },
   });
-  const guard = checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant });
+  const guard = checkProtectedTarget({
+    tenant,
+    sub,
+    allowPayingTenant: args.allowPayingTenant,
+    protectedSlugs,
+  });
   if (!guard.ok) {
     console.error(guard.reason);
     await prisma.$disconnect();

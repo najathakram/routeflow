@@ -26,7 +26,7 @@ const prot = b.protectedTenants([
   row("t-stripe", "qa-2639-stripe", { class: "TEST", status: "READ_ONLY", planKey: null, stripeSubId: "sub_fake_qa" }),
   row("t-plain", "qa-2639-plain", { class: "TEST" }),
   row("t-deleted", "qa-2639-deleted", { class: "TEST", planKey: null, stripeSubId: "sub_fake_qa", deletedAt: "2026-01-01" }),
-]);
+], new Set());
 const cands = ["t-paying", "t-stripe", "t-plain"].map((tenantId, i) => ({ invoiceId: "inv-" + i, tenantId }));
 const now = (ids) => new Map(ids.map((id) => [id, { arm: "paying", slug: "qa-2639-" + id.slice(2) }]));
 // Lead's Opus HIGH-1: the plan file the DRY RUN writes must verify at APPLY (it never did: \`held\` was

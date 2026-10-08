@@ -455,6 +455,7 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
         tenantSlug: "acme-live",
         apply: false,
         liveTenantOverride: "acme-live",
+        protectedSlugs: new Set<string>(),
       });
       expect(counts.tenants).toBe(1);
       expect(

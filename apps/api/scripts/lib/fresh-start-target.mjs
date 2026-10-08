@@ -183,10 +183,11 @@ export function checkExcludedTenants({ exclude, found, tenant }) {
  * type-back. `tenant`/`sub` are the rows read from the SAME resolved database the wipe will hit.
  * @param tenant { id, slug, name, status, class, deletedAt }
  * @param sub    { planKey, stripeSubId } | null — the tenant's TenantSubscription row
+ * @param protectedSlugs the Set from protected-slugs.cjs loadProtectedSlugs (row 195, env-listed arm)
  * @returns {{ ok: false, reason: string } | { ok: true, phrase: string | null, line: string | null }}
  */
-export function checkProtectedTarget({ tenant, sub, allowPayingTenant }) {
-  const arm = protectedArm(tenant, sub);
+export function checkProtectedTarget({ tenant, sub, allowPayingTenant, protectedSlugs }) {
+  const arm = protectedArm(tenant, sub, protectedSlugs);
   if (arm === null) return { ok: true, phrase: null, line: null };
   const why =
     arm === "paying"

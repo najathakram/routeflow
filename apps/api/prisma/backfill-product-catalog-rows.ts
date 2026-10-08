@@ -45,9 +45,17 @@ import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { isProtectedTenant } = require("../scripts/lib/paying-tenant.cjs") as {
   isProtectedTenant: (
-    tenant: { status: string; deletedAt: Date | null | undefined; class: string },
+    tenant: { slug: string; status: string; deletedAt: Date | null | undefined; class: string },
     sub: { planKey?: string | null; stripeSubId?: string | null } | null | undefined,
+    protectedSlugs: Set<string>,
   ) => boolean;
+};
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { loadProtectedSlugs } = require("../scripts/lib/protected-slugs.cjs") as {
+  loadProtectedSlugs: (
+    env: Record<string, string | undefined>,
+    dbUrl: string | null | undefined,
+  ) => Set<string>;
 };
 
 const BATCH_SIZE = 500;
@@ -75,6 +83,8 @@ export interface BackfillOpts {
   allTenants?: boolean;
   apply: boolean;
   liveTenantOverride?: string;
+  /** Row 195: loadProtectedSlugs() result. Required for any non-test tenant; never read from env here. */
+  protectedSlugs?: Set<string>;
 }
 
 /** Strip credentials from a Postgres connection string for safe logging. */
@@ -110,7 +120,7 @@ export async function backfillProductCatalogRows(
   prisma: PrismaClient,
   opts: BackfillOpts,
 ): Promise<BackfillCounts> {
-  const { tenantSlug, allTenants, apply, liveTenantOverride } = opts;
+  const { tenantSlug, allTenants, apply, liveTenantOverride, protectedSlugs } = opts;
 
   if (!tenantSlug && !allTenants) {
     throw new BackfillRefused("exactly one of --tenant=<slug> or --all-tenants is required");
@@ -163,15 +173,20 @@ export async function backfillProductCatalogRows(
       }
       // The override IS the owner's per-tenant yes — still allowed even when protected (paying).
       // This is informational only: a counts-only stderr warning, never a second refusal.
+      if (!protectedSlugs) {
+        throw new BackfillRefused("protected-tenant list not loaded for a non-test tenant");
+      }
       const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenant.id } });
       if (
         isProtectedTenant(
           {
+            slug: tenant.slug,
             status: tenant.status,
             deletedAt: tenant.deletedAt,
             class: tenant.class,
           },
           sub,
+          protectedSlugs,
         )
       ) {
         process.stderr.write("WARNING: protected (paying) tenant, owner override present\n");
@@ -370,7 +385,10 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
 
   try {
-    const opts = parseArgs(process.argv.slice(2));
+    const opts = {
+      ...parseArgs(process.argv.slice(2)),
+      protectedSlugs: loadProtectedSlugs(process.env, dbUrl),
+    };
     const counts = await backfillProductCatalogRows(prisma, opts);
     console.log(JSON.stringify(counts));
   } catch (err) {

@@ -51,6 +51,7 @@ import {
 } from "@routeflow/pricing";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import payingTenant from "./lib/paying-tenant.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
@@ -121,6 +122,7 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
 }
 
 const { protectedArm } = payingTenant;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
 const PROTECTION_SQL = `
@@ -129,12 +131,13 @@ const PROTECTION_SQL = `
   WHERE t.id = ANY($1::text[])`;
 
 /** Pure (#2639): rows from PROTECTION_SQL → Map<tenantId, "paying" | "stripe-linked"> (protected only). */
-export function protectedTenants(rows) {
+export function protectedTenants(rows, protectedSlugs) {
   const out = new Map();
   for (const r of rows) {
     const arm = protectedArm(
-      { status: r.status, class: r.class, deletedAt: r.deletedAt },
+      { slug: r.slug, status: r.status, class: r.class, deletedAt: r.deletedAt },
       { planKey: r.planKey, stripeSubId: r.stripeSubId },
+      protectedSlugs,
     );
     if (arm) out.set(r.id, arm);
   }
@@ -255,6 +258,7 @@ async function fingerprint(client) {
 
 async function dryRun() {
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   const before = argOf("--before") ? new Date(argOf("--before")) : new Date();
   console.log(
     `${TAG}: target ${redactUrl(url)} DRY-RUN (invoices created before ${before.toISOString()})`,
@@ -272,6 +276,7 @@ async function dryRun() {
     const scopeTenantIds = [...new Set(invoices.map((i) => i.tenantId))];
     const protectedById = protectedTenants(
       scopeTenantIds.length ? (await client.query(PROTECTION_SQL, [scopeTenantIds])).rows : [],
+      protectedSlugs,
     );
     await client.query("ROLLBACK");
 
@@ -385,6 +390,7 @@ async function apply() {
   }
 
   const url = await resolveTarget();
+  const protectedSlugs = loadProtectedSlugs(process.env, url);
   console.log(`${TAG}: target ${redactUrl(url)} APPLY (${plan.apply.length} invoice(s))`);
   const client = new pg.Client(dialConfig(url));
   await client.connect();
@@ -402,7 +408,7 @@ async function apply() {
     const protRows = tenantIds.length
       ? (await client.query(`${PROTECTION_SQL} FOR SHARE OF t`, [tenantIds])).rows
       : [];
-    const nowArm = protectedTenants(protRows);
+    const nowArm = protectedTenants(protRows, protectedSlugs);
     const nowProtected = new Map(
       [...nowArm.entries()].map(([id, arm]) => [id, { arm, slug: slugById.get(id) }]),
     );

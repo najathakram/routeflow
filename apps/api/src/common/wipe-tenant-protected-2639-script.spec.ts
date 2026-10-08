@@ -21,7 +21,7 @@ const LIB_HREF = pathToFileURL(path.join(API_DIR, "scripts", "lib", "fresh-start
 const CASES = `
 import * as t from "${LIB_HREF}";
 const T = { id: "t-1", slug: "qa-2639", name: "QA 2639", status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
-const check = (tenant, sub, allowPayingTenant) => t.checkProtectedTarget({ tenant, sub, allowPayingTenant });
+const check = (tenant, sub, allowPayingTenant) => t.checkProtectedTarget({ tenant, sub, allowPayingTenant, protectedSlugs: new Set() });
 console.log(JSON.stringify({
   paying: check(T, { planKey: "STARTER", stripeSubId: null }, false),
   stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa" }, false),
@@ -143,9 +143,7 @@ describe("#2639 wipe-tenant-fresh-start refuses a protected target", () => {
       return i;
     };
     const subRead = at("prisma.tenantSubscription.findUnique(");
-    const guard = at(
-      "checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant })",
-    );
+    const guard = at("checkProtectedTarget({");
     const counts = at("await countAll(tenant.id)");
     const slugTypeBack = at("await confirm(slug)");
     const phrase = at("await confirm(guard.phrase");
