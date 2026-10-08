@@ -5,17 +5,25 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { UnitsService } from "./units.service";
 import { CreateUnitDto } from "./dto/create-unit.dto";
 import { UpdateUnitDto } from "./dto/update-unit.dto";
 
 /**
  * Tenant unit names (Settings > Units). All staff (OPERATOR, which TENANT_ADMIN satisfies) may add,
- * rename, archive and restore; drivers and buyers may not. Not behind any plan flag or add-on.
- * Deliberately NO DELETE route: units are archived, never deleted.
+ * rename, archive and restore; drivers and buyers may not. Deliberately NO DELETE route: units are
+ * archived, never deleted.
+ *
+ * DARK: gated on `flag.units_v1` (enforced but ungranted, so invisible until the owner grants it to a
+ * tenant). A rename reaches a level only through `ProductUnit.tenantUnitId`; levels that predate the
+ * link (and the unit names behind them) are filled in by the U-6 backfill, so the owner grants the
+ * flag to a tenant only after that backfill has run for it.
  */
 @Controller("units")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
+@RequirePlanFlag("flag.units_v1")
 export class UnitsController {
   constructor(private readonly units: UnitsService) {}
 

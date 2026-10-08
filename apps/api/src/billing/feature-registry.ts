@@ -497,9 +497,10 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       // owner override GRANT), not `dark` — a dark flag is courtesy-allowed to every tenant.
       state: "enforced",
       added: "2026-09-19",
-      routes: ["ALL /products/:productId/units (class-level)"],
+      routes: ["ALL /products/:productId/units (class-level)", "ALL /units (class-level)"],
       grantPath: "Owner override GRANT per tenant (feature grants) — no plan bundles it yet",
-      backfill: "New key: no tenant has used it, so there is nothing to backfill.",
+      backfill:
+        "New key: no tenant has used it, so there is nothing to backfill. /units (Settings > Units) is gated by it too: grant a tenant only after its U-6 unit backfill has run.",
     },
     billing: { skus: [], selfService: false },
     defaultGranted: false,

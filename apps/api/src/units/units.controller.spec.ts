@@ -4,6 +4,8 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { REQUIRE_PLAN_FLAG_KEY } from "../billing/require-plan-flag.decorator";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { UnitsController } from "./units.controller";
 
 const proto = UnitsController.prototype as unknown as Record<string, object>;
@@ -33,13 +35,25 @@ describe("UnitsController", () => {
     for (const h of handlers()) expect(rolesOf(h)).toEqual([UserRole.OPERATOR]);
   });
 
-  it("is not behind any plan flag or add-on gate", () => {
+  it("ships DARK: every route needs flag.units_v1 (owner-granted per tenant once the backfill ran)", () => {
+    const guards = (Reflect.getMetadata("__guards__", UnitsController) ?? []).map(
+      (g: { name: string }) => g.name,
+    );
+    expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "RolesGuard", "PlanFlagGuard"]));
+    // Class-level: a handler added later is gated too.
+    expect(Reflect.getMetadata(REQUIRE_PLAN_FLAG_KEY, UnitsController)).toBe("flag.units_v1");
     for (const h of handlers()) {
       const keys = Reflect.getMetadataKeys(proto[h]).map(String);
-      expect(keys.filter((k) => /plan.?flag|addon/i.test(k))).toEqual([]);
+      expect(keys.filter((k) => /addon/i.test(k))).toEqual([]);
     }
-    const classKeys = Reflect.getMetadataKeys(UnitsController).map(String);
-    expect(classKeys.filter((k) => /plan.?flag|addon/i.test(k))).toEqual([]);
+  });
+
+  it("the feature registry lists the units routes under the same flag", () => {
+    const row = FEATURE_REGISTRY.find((r) => r.key === "flag.units_v1");
+    expect(row?.gate.via).toBe("RequirePlanFlag");
+    expect(row?.gate.routes.some((r) => /^ALL \/units\b/.test(r))).toBe(true);
+    expect(row?.gate.routes.join(" ")).toContain("/products/:productId/units");
+    expect(row?.defaultGranted).toBe(false);
   });
 
   describe("RolesGuard against the handlers", () => {
