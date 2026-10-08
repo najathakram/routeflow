@@ -7,14 +7,24 @@ import {
   sellableOnly,
 } from "./product-search-groups";
 
-const family = (id: string, name: string, variants: any[] = []) => ({
+interface Row {
+  id: string;
+  name: string;
+  kind?: string;
+  variantName?: string;
+  parentProductId?: string | null;
+  parent?: { id: string; name: string } | null;
+  variants?: Row[];
+}
+
+const family = (id: string, name: string, variants: Row[] = []): Row => ({
   id,
   name,
   kind: "FAMILY",
   parentProductId: null,
   variants,
 });
-const variant = (id: string, parentId: string, parentName: string, flavor: string) => ({
+const variant = (id: string, parentId: string, parentName: string, flavor: string): Row => ({
   id,
   name: flavor,
   kind: "VARIANT",

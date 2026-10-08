@@ -50,7 +50,9 @@ describe("SearchableProductPicker (B1215 C7)", () => {
   it("static mode: a curated list (e.g. choose a parent) still shows families", () => {
     render(<SearchableProductPicker value="" onChange={jest.fn()} products={[FAMILY, COLA]} />);
     fireEvent.focus(screen.getByPlaceholderText("Search products…"));
-    expect(screen.getAllByRole("option")).toHaveLength(2);
-    expect(screen.getByText("Sample Pod")).toBeInTheDocument();
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    // Scope to the options: the floating preview repeats the highlighted row's name.
+    expect(options[0]).toHaveTextContent("Sample Pod");
   });
 });

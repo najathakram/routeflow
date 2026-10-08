@@ -78,6 +78,10 @@ interface SearchableProductPickerProps {
   preview?: boolean;
 }
 
+// A stable empty default: a fresh `[]` per render would change `sourceProducts` every render and
+// (with the flattened async list now a new array too) loop the preview-position effect.
+const NO_PRODUCTS: PickerProduct[] = [];
+
 /**
  * A real searchable combobox that replaces the native `<select>` for product
  * pickers. Native selects don't support type-to-search reliably across browsers
@@ -92,7 +96,7 @@ interface SearchableProductPickerProps {
 export function SearchableProductPicker({
   value,
   onChange,
-  products = [],
+  products = NO_PRODUCTS,
   excludeIds,
   placeholder = "Search products…",
   className,

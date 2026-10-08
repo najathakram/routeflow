@@ -518,8 +518,7 @@ export interface EditItemState {
   /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
    *  mirrors the server's stored `priceType`, not otherwise read on this page. */
   priceType?: PriceType;
-  /** A line ADDED here starts on the product's default selling unit (the row's OrderLineUnitPicker
-   *  applies it once the ladder is known, exactly like Create Order); setLineUnit consumes it. */
+  /** A line ADDED here starts on the product's default selling unit (OrderLineUnitPicker applies it). */
   startOnDefaultUnit?: boolean;
 }
 
@@ -952,7 +951,6 @@ function CommissionEditModal({
 interface SubstituteOption {
   id: string;
   name: string;
-  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is never offered (B1215 C7). */
   kind?: string | null;
   variantName?: string | null;
   parentProductId?: string | null;
@@ -983,7 +981,7 @@ function SubstitutePicker({
     return () => clearTimeout(t);
   }, [search]);
 
-  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  // includeVariants: a family's name finds its variants; a family is never a line (B1215 C7).
   const { data } = useProducts({
     search: debouncedSearch || undefined,
     isActive: true,
@@ -1115,7 +1113,6 @@ export function EditableLineItems({
     isActive: true,
     includeVariants: true,
   });
-  // A family's variants stand in for it; the family itself is never a line (B1215 C7).
   const products: any[] = sellableFlat<any>((productsData as any)?.data ?? []);
 
   // Auto-focus the scan input when the component mounts (edit mode opened) so a

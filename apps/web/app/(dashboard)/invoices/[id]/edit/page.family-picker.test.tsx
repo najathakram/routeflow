@@ -79,42 +79,6 @@ jest.mock("@/components/InlineCreateProductModal", () => ({
 }));
 jest.mock("@/components/BarcodeScannerButton", () => ({ BarcodeScannerButton: () => null }));
 
-const MINT = {
-  id: "v-mint",
-  name: "Mint",
-  variantName: "Mint",
-  kind: "VARIANT",
-  parentProductId: "f-pod",
-  unit: "each",
-  pricePerUnit: "4.00",
-};
-const FAMILY = {
-  id: "f-pod",
-  name: "Sample Pod",
-  kind: "FAMILY",
-  parentProductId: null,
-  pricePerUnit: "0",
-  variants: [MINT],
-};
-jest.mock("@/lib/api/products", () => ({
-  useProducts: () => ({ data: { data: [FAMILY] } }),
-}));
-jest.mock("@/lib/api-client", () => ({
-  apiClient: {
-    get: jest.fn(() => Promise.reject(new Error("not found"))),
-    post: jest.fn(),
-  },
-}));
-jest.mock("@/components/InlineCreateProductModal", () => ({
-  InlineCreateProductModal: () => null,
-}));
-jest.mock("@/components/BarcodeScannerButton", () => ({
-  BarcodeScannerButton: (props: { onScan: (code: string) => void }) => {
-    capturedOnScan = props.onScan;
-    return null;
-  },
-}));
-
 beforeEach(() => {
   jest.clearAllMocks();
 });
