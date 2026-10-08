@@ -20,7 +20,7 @@ import { counterMethodOf } from "./counter-sale-readback";
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
  * so the unit specs can pin it without a database: the where-builders (ONE definition of "a counter sale of the
- * day", shared by the page, the count and all three summary queries: L-167), the per-sale row fold and the
+ * day", shared by the page, the count and every summary query: L-167), the per-sale row fold and the
  * whole-day summary fold. Every money figure goes through roundMoney; PAID payments only (sumConfirmed rule:
  * DRAFT / PENDING / VOID never count).
  */
@@ -60,7 +60,12 @@ export function counterSalesWhere(tenantId: string, w: DayWindow) {
   return { tenantId, counterSale: true, createdAt: { gte: w.start, lt: w.end } };
 }
 
-/** The sales the SUMMARY counts: not cancelled, with at least one invoice that is not VOID / WRITTEN_OFF. */
+/**
+ * The sales the SUMMARY counts: not cancelled, with at least one invoice that is not VOID / WRITTEN_OFF. A
+ * half-written sale with NO invoice row at all (the first attempt stopped before the invoice step) is therefore
+ * LISTED on the page (flagged unpaid) but NOT counted in `sales`: nothing was invoiced, so there is no sale to
+ * total yet (a re-POST with the same key finishes it).
+ */
 export function liveCounterSalesWhere(tenantId: string, w: DayWindow) {
   return {
     ...counterSalesWhere(tenantId, w),
@@ -69,8 +74,36 @@ export function liveCounterSalesWhere(tenantId: string, w: DayWindow) {
   };
 }
 
-/** PAID payments on the live invoices of the live sales (belt-and-braces `tenantId` on the nested filters). */
+/** A counter sale of ANY day that is still a sale: not cancelled (its invoices are filtered separately). */
+function liveCounterOrderAnyDayWhere(tenantId: string) {
+  return { tenantId, counterSale: true, status: { not: OrderStatus.CANCELLED } };
+}
+
+/**
+ * MONEY IN, keyed to the day the money CAME IN: PAID payments whose `paidAt` falls in the window, on the live
+ * invoices of live counter sales of ANY day (mirrors `windowReturnsWhere`, which keys refunds the same way). A
+ * day-1 sale left on account and paid in cash on day 2 counts in day 2's `moneyIn.cash` and
+ * `cashExpectedInDrawer`, never in day 1's. `paidAt` is NOT NULL (defaults to now()), so there is no
+ * `createdAt` fallback to apply. Belt-and-braces `tenantId` on the nested filters.
+ */
 export function salePaymentsWhere(tenantId: string, w: DayWindow) {
+  return {
+    tenantId,
+    status: PaymentStatus.PAID,
+    paidAt: { gte: w.start, lt: w.end },
+    invoice: {
+      tenantId,
+      status: { notIn: DEAD_INVOICE_STATUSES },
+      order: liveCounterOrderAnyDayWhere(tenantId),
+    },
+  };
+}
+
+/**
+ * Everything PAID, on any date, on the live invoices of the day's own live sales: what `onAccount` (the day's
+ * sales still owed) is measured against. NOT money in (that is `salePaymentsWhere`, by paid date).
+ */
+export function paidOnDaysSalesWhere(tenantId: string, w: DayWindow) {
   return {
     tenantId,
     status: PaymentStatus.PAID,
@@ -194,8 +227,20 @@ function resolutionOf(r: TodayOrderRecord["returns"][number]): TodaysSaleReturnR
   return "PENDING";
 }
 
-/** The return's priced credit; the stored refund amount only when no priced split was stored. */
-function returnAmount(r: TodayOrderRecord["returns"][number]): number {
+/** The money fields a return's priced amount reads (a page row's return and the summary's return query both carry them). */
+export interface ReturnMoney {
+  refundAmount: unknown;
+  creditSubtotal: unknown;
+  creditTax: unknown;
+  creditCategoryTax: unknown;
+}
+
+/**
+ * THE one rule for what a return is worth (L-119): its priced credit (subtotal + tax + category tax); a legacy
+ * return with no priced split is worth its stored refund amount. Applied PER RETURN by the page rows and by the
+ * summary's `storeCreditIssued`, so the two can never disagree.
+ */
+export function returnAmount(r: ReturnMoney): number {
   const credit = roundMoney(num(r.creditSubtotal) + num(r.creditTax) + num(r.creditCategoryTax));
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
@@ -267,31 +312,34 @@ export interface SalesAggregate {
   _count?: { _all?: number } | number | null;
   _sum?: { total?: unknown } | null;
 }
-/** `invoicePayment.groupBy(["method"])` over the live sales' PAID payments. */
+/** `invoicePayment.groupBy(["method"])` over the PAID payments that came in during the window. */
 export interface PaymentGroup {
   method: string;
   _sum?: { amount?: unknown } | null;
 }
-/** `return.groupBy(["refundMethod"])` over the window's returns. */
-export interface ReturnGroup {
+/** `invoicePayment.aggregate` over everything paid, any date, on the day's own live sales. */
+export interface PaidAggregate {
+  _sum?: { amount?: unknown } | null;
+}
+/**
+ * One return counted in the window (`return.findMany` over `windowReturnsWhere`: a day's returns are few, and
+ * `returnAmount` must apply per return, which a grouped sum cannot do).
+ */
+export interface WindowReturn extends ReturnMoney {
   refundMethod: string | null;
-  _count?: { _all?: number } | number | null;
-  _sum?: {
-    refundAmount?: unknown;
-    creditSubtotal?: unknown;
-    creditTax?: unknown;
-    creditCategoryTax?: unknown;
-  } | null;
 }
 
 const countOf = (c: { _all?: number } | number | null | undefined): number =>
   typeof c === "number" ? c : (c?._all ?? 0);
 
-/** The whole-day figures, folded from the three grouped queries (never from rows). */
+/** The whole-day figures, folded from the summary queries (never from the page's rows). */
 export function foldSummary(input: {
   sales: SalesAggregate;
+  /** money that CAME IN in the window, by payment method */
   payments: readonly PaymentGroup[];
-  returns: readonly ReturnGroup[];
+  /** everything paid (any date) on the day's own sales: the `onAccount` measure */
+  paidOnSales: PaidAggregate;
+  returns: readonly WindowReturn[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
     CASH: 0,
@@ -317,16 +365,13 @@ export function foldSummary(input: {
   let refundTotal = 0;
   let creditCount = 0;
   let creditAmount = 0;
-  for (const g of input.returns) {
-    if (g.refundMethod === REFUND_METHOD_EXTERNAL) {
-      refundCount += countOf(g._count);
-      refundTotal = roundMoney(refundTotal + num(g._sum?.refundAmount));
-    } else if (g.refundMethod === REFUND_METHOD_CREDIT_NOTE) {
-      creditCount += countOf(g._count);
-      const priced = roundMoney(
-        num(g._sum?.creditSubtotal) + num(g._sum?.creditTax) + num(g._sum?.creditCategoryTax),
-      );
-      creditAmount = roundMoney(creditAmount + (priced > 0 ? priced : num(g._sum?.refundAmount)));
+  for (const r of input.returns) {
+    if (r.refundMethod === REFUND_METHOD_EXTERNAL) {
+      refundCount += 1;
+      refundTotal = roundMoney(refundTotal + num(r.refundAmount));
+    } else if (r.refundMethod === REFUND_METHOD_CREDIT_NOTE) {
+      creditCount += 1;
+      creditAmount = roundMoney(creditAmount + returnAmount(r));
     }
   }
   // Tender not stored (REFUND_TENDER_KNOWN): the whole refund is untendered, so `other`; the drawer figure
@@ -345,7 +390,10 @@ export function foldSummary(input: {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
     storeCreditUsed: by.STORE_CREDIT,
-    onAccount: Math.max(0, roundMoney(salesTotal - moneyIn.total - by.STORE_CREDIT)),
+    onAccount: Math.max(
+      0,
+      roundMoney(salesTotal - roundMoney(num(input.paidOnSales._sum?.amount))),
+    ),
     refunds,
     storeCreditIssued: { count: creditCount, amount: creditAmount },
     cashExpectedInDrawer: roundMoney(moneyIn.cash - refunds.cash),

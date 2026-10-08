@@ -1,6 +1,6 @@
 /**
  * POS-7b-1 — real-Postgres pin for GET /orders/counter-sale/today: the page query and the three grouped
- * summary queries (order.aggregate, invoicePayment.groupBy, return.groupBy) return exactly the figures the same
+ * summary queries (order.aggregate, invoicePayment.groupBy / aggregate, return.findMany) return exactly the figures the same
  * fixtures give when folded in plain JS (integer cents), across the tenant-zone day window (to the millisecond:
  * `Order.createdAt` is timestamp(3) UTC), two tenants, a non-counter order, voided and cancelled sales, ignored
  * DRAFT / PENDING / VOID payments, a refund made today on YESTERDAY's sale, and a refund made tomorrow.
@@ -31,7 +31,8 @@ const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cj
 const DAY = "2026-10-06";
 const NOW = new Date("2026-10-07T15:00:00.000Z"); // "today" is the 7th, so the 6th is a valid past day
 
-type Pay = { method: string; amount: number; status?: string };
+/** `paidAt` defaults to the order's own instant; the money-in day is the PAYMENT's day (MED-1). */
+type Pay = { method: string; amount: number; status?: string; paidAt?: string };
 type Fixture = {
   key: string;
   at: string;
@@ -40,6 +41,8 @@ type Fixture = {
   walkIn?: boolean;
   orderStatus?: string;
   invoiceStatus?: string;
+  /** a half-written sale: the order exists, no invoice row was ever written */
+  noInvoice?: boolean;
   total: number;
   payments?: Pay[];
 };
@@ -124,6 +127,26 @@ const FIXTURES: Fixture[] = [
     invoiceStatus: "PAID",
     payments: [{ method: "CASH", amount: 2.2 }],
   },
+  // rung in the day, left owing, paid in cash the NEXT day: a sale of this day, money in of the next
+  {
+    key: "paid-next-day",
+    at: "2026-10-06T12:00:00.000Z",
+    tenant: "A",
+    total: 15,
+    invoiceStatus: "PAID",
+    payments: [{ method: "CASH", amount: 15, paidAt: "2026-10-07T10:00:00.000Z" }],
+  },
+  // a half-written sale: listed, but not counted as a sale
+  { key: "no-invoice", at: "2026-10-06T11:00:00.000Z", tenant: "A", total: 8, noInvoice: true },
+  // rung the DAY BEFORE, paid in cash IN the day: not a sale of this day, but this day's money in
+  {
+    key: "late-paid",
+    at: "2026-10-05T16:00:00.000Z",
+    tenant: "A",
+    total: 40,
+    invoiceStatus: "PAID",
+    payments: [{ method: "CASH", amount: 40, paidAt: "2026-10-06T19:00:00.000Z" }],
+  },
   // outside the day / not the tenant's counter sales
   {
     key: "just-before",
@@ -194,6 +217,14 @@ const RETURNS: ReturnFixture[] = [
     refundAmount: 3,
     refundedAt: "2026-10-06T19:00:00.000Z",
   },
+  // a LEGACY store-credit return (no priced split) captured in the day: worth its stored amount (LOW-2)
+  {
+    on: "check",
+    status: "PROCESSED",
+    refundMethod: "CREDIT_NOTE",
+    refundAmount: 15,
+    createdAt: "2026-10-06T20:00:00.000Z",
+  },
   // store credit captured in the day
   {
     on: "card",
@@ -215,11 +246,23 @@ function expected() {
     f.counterSale !== false &&
     Date.parse(f.at) >= start &&
     Date.parse(f.at) < end;
-  const live = (f: Fixture) => f.orderStatus !== "CANCELLED" && f.invoiceStatus !== "VOID";
+  const hasLiveInvoice = (f: Fixture) => !f.noInvoice && f.invoiceStatus !== "VOID";
+  const live = (f: Fixture) => f.orderStatus !== "CANCELLED" && hasLiveInvoice(f);
   const sold = FIXTURES.filter((f) => inDay(f) && live(f));
-  const paid = sold.flatMap((f) => f.payments ?? []).filter((p) => (p.status ?? "PAID") === "PAID");
+  const paidRows = (fs: Fixture[]) =>
+    fs.flatMap((f) =>
+      (f.payments ?? [])
+        .filter((p) => (p.status ?? "PAID") === "PAID")
+        .map((p) => ({ ...p, paidAt: Date.parse(p.paidAt ?? f.at) })),
+    );
+  // MONEY IN: payments PAID in the window, on live counter sales of ANY day
+  const cameIn = paidRows(
+    FIXTURES.filter((f) => f.tenant === "A" && f.counterSale !== false && live(f)),
+  ).filter((p) => p.paidAt >= start && p.paidAt < end);
+  // ON ACCOUNT: everything paid, any date, on the day's own sales
+  const paidOnSales = paidRows(sold).reduce((s, p) => s + cents(p.amount), 0);
   const sum = (m: string[]) =>
-    paid.filter((p) => m.includes(p.method)).reduce((s, p) => s + cents(p.amount), 0);
+    cameIn.filter((p) => m.includes(p.method)).reduce((s, p) => s + cents(p.amount), 0);
   const refunds = RETURNS.filter(
     (r) =>
       !["REJECTED", "CANCELLED"].includes(r.status) &&
@@ -249,12 +292,15 @@ function expected() {
     check: check / 100,
     moneyIn: (cash + card + check) / 100,
     credit: credit / 100,
-    onAccount: Math.max(0, salesTotal - (cash + card + check) - credit) / 100,
+    onAccount: Math.max(0, salesTotal - paidOnSales) / 100,
     refundCount: refunds.length,
     refundTotal: refundTotal / 100,
+    // per return: the priced credit, or the stored amount when no priced split was stored
     creditIssued:
-      credits.reduce((s, r) => s + (r.credit as number[]).reduce((a, n) => a + cents(n), 0), 0) /
-      100,
+      credits.reduce((s, r) => {
+        const priced = (r.credit ?? ([] as number[])).reduce((a, n) => a + cents(n), 0);
+        return s + (priced > 0 ? priced : cents(r.refundAmount ?? 0));
+      }, 0) / 100,
     net: (cash + card + check - refundTotal) / 100,
   };
 }
@@ -331,6 +377,7 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
         },
       });
       orderIdByKey[f.key] = order.id;
+      if (f.noInvoice) continue;
       const invoice = await raw.invoice.create({
         data: {
           invoiceNumber: `INV-${run}-${n}`,
@@ -348,6 +395,7 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
           data: {
             invoiceId: invoice.id,
             tenantId: tenants[f.tenant],
+            paidAt: new Date(p.paidAt ?? f.at),
             amount: p.amount,
             method: p.method as never,
             status: (p.status ?? "PAID") as never,
@@ -415,11 +463,34 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
     expect(s.storeCreditUsed).toBe(want.credit);
     expect(s.onAccount).toBe(want.onAccount);
     expect(s.refunds).toMatchObject({ count: want.refundCount, total: want.refundTotal });
-    expect(s.storeCreditIssued).toEqual({ count: 1, amount: want.creditIssued });
+    expect(s.storeCreditIssued).toEqual({ count: 2, amount: want.creditIssued });
     expect(s.netCollected).toBe(want.net);
     // the refund tender is not stored: cash expected is cash taken, not reduced
     expect(s.cashExpectedInDrawer).toBe(want.cash);
     expect(s.refunds.tenderKnown).toBe(false);
+  });
+
+  it("MED-1: money in is the day the payment CAME IN: a day-before sale paid today counts, a sale paid tomorrow does not", async () => {
+    const res = await read();
+    // 24.50 + 5.50 + 1.10 + 2.20 rung and paid in the day, + 40.00 rung the day before and paid in the day;
+    // the 15.00 sale of this day paid the NEXT day is not in.
+    expect(res.summary!.moneyIn.cash).toBe(73.3);
+    expect(res.summary!.cashExpectedInDrawer).toBe(73.3);
+    expect(res.data.some((r) => r.orderId === orderIdByKey["late-paid"])).toBe(false);
+    // the next day sees that 15.00 as money in (plus the 60.00 sale rung and paid at its first instant)
+    const next = await read({ day: "2026-10-07" });
+    expect(next.summary!.moneyIn.cash).toBe(75);
+    expect(next.summary!.sales).toEqual({ count: 1, total: 60 });
+  });
+
+  it("NIT: a sale with no invoice is listed but not counted", async () => {
+    const want = expected();
+    const res = await read();
+    const row = res.data.find((r) => r.orderId === orderIdByKey["no-invoice"]);
+    expect(row).toMatchObject({ invoiceId: null, paymentState: "ON_ACCOUNT", voided: false });
+    expect(want.rowKeys).toHaveLength(10);
+    expect(want.count).toBe(8); // the cancelled sale and the no-invoice sale are not counted
+    expect(res.summary!.sales.count).toBe(8);
   });
 
   it("14. the day window to the millisecond: rows are exactly the in-window counter sales of this tenant", async () => {
@@ -475,6 +546,8 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
     // a stored STORE_CREDIT return of 3.30 on a 9.99 sale: partly returned; the rejected refund is ignored
     expect(row("card").returned).toMatchObject({ state: "PARTLY", amount: 3.3 });
     expect(row("card").returned.returns).toHaveLength(1);
+    // a legacy store-credit return (no priced split) is worth its stored amount, here as in the summary (LOW-2)
+    expect(row("check").returned).toMatchObject({ state: "PARTLY", amount: 15 });
   });
 
   it("4. pages: limit 3 walks the whole day with no repeat or gap; summary only on page 1", async () => {

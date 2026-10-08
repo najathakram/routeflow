@@ -1,8 +1,15 @@
-import { foldSummary, toTodaysSaleRow, type TodayOrderRecord } from "./counter-sale-today";
+import { PaymentMethod } from "@prisma/client";
+import {
+  foldSummary,
+  returnAmount,
+  toTodaysSaleRow,
+  todaysMethodOf,
+  type TodayOrderRecord,
+} from "./counter-sale-today";
 
 /**
  * Today's sales, the PURE half (rows + summary fold). No Prisma: the fixtures are the shapes the page query
- * `select`s and the three grouped queries return. Fixtures are placeholders (acme); no live-client data.
+ * `select`s and the summary queries return. Fixtures are placeholders (acme); no live-client data.
  */
 type Pay = { method: string; amount: unknown; status: string };
 type Ret = TodayOrderRecord["returns"][number];
@@ -254,6 +261,21 @@ describe("toTodaysSaleRow: returns (test 9)", () => {
   });
 });
 
+const noReturnMoney = {
+  refundAmount: null,
+  creditSubtotal: null,
+  creditTax: null,
+  creditCategoryTax: null,
+};
+const credit = (subtotal: string, tax = "0", category = "0") => ({
+  ...noReturnMoney,
+  refundMethod: "CREDIT_NOTE",
+  creditSubtotal: subtotal,
+  creditTax: tax,
+  creditCategoryTax: category,
+});
+const none = { _sum: { amount: null } };
+
 describe("foldSummary (tests 10 and 11)", () => {
   const sales = { _count: { _all: 12 }, _sum: { total: "284.50" } };
 
@@ -268,15 +290,30 @@ describe("foldSummary (tests 10 and 11)", () => {
         { method: "ADVANCE", _sum: { amount: "3.00" } },
         { method: "ZELLE", _sum: { amount: "2.00" } },
       ],
+      paidOnSales: { _sum: { amount: "274.50" } },
       returns: [],
     });
     expect(s.sales).toEqual({ count: 12, total: 284.5 });
     expect(s.moneyIn).toEqual({ cash: 100, card: 144.5, check: 20, other: 2, total: 266.5 });
     expect(s.storeCreditUsed).toBe(8);
-    // 284.50 - 266.50 - 8.00
+    // sales 284.50 - everything paid on those sales 274.50
     expect(s.onAccount).toBe(10);
     expect(s.cashExpectedInDrawer).toBe(100);
     expect(s.netCollected).toBe(266.5);
+  });
+
+  it("MED-1: money in is what CAME IN today, so it can exceed what today's own sales were paid (a late payment)", () => {
+    // Today rang 20.00, still owed in full; a payment of 30.00 came in today for an EARLIER day's sale.
+    const s = foldSummary({
+      sales: { _count: { _all: 1 }, _sum: { total: "20.00" } },
+      payments: [{ method: "CASH", _sum: { amount: "30.00" } }],
+      paidOnSales: none,
+      returns: [],
+    });
+    expect(s.sales).toEqual({ count: 1, total: 20 });
+    expect(s.moneyIn.cash).toBe(30);
+    expect(s.cashExpectedInDrawer).toBe(30);
+    expect(s.onAccount).toBe(20);
   });
 
   it("0.1 + 0.2 style group sums come out as cents, never 0.30000000000000004", () => {
@@ -286,6 +323,7 @@ describe("foldSummary (tests 10 and 11)", () => {
         { method: "CASH", _sum: { amount: 0.1 } },
         { method: "CASH", _sum: { amount: 0.2 } },
       ],
+      paidOnSales: { _sum: { amount: 0.3 } },
       returns: [],
     });
     expect(s.moneyIn.cash).toBe(0.3);
@@ -297,6 +335,7 @@ describe("foldSummary (tests 10 and 11)", () => {
     const s = foldSummary({
       sales: { _count: {}, _sum: { total: null } },
       payments: [],
+      paidOnSales: none,
       returns: [],
     });
     expect(s).toEqual({
@@ -315,12 +354,10 @@ describe("foldSummary (tests 10 and 11)", () => {
     const s = foldSummary({
       sales,
       payments: [{ method: "CASH", _sum: { amount: "120.00" } }],
+      paidOnSales: { _sum: { amount: "120.00" } },
       returns: [
-        {
-          refundMethod: "EXTERNAL_REFUND",
-          _count: { _all: 2 },
-          _sum: { refundAmount: "16.00" },
-        },
+        { ...noReturnMoney, refundMethod: "EXTERNAL_REFUND", refundAmount: "10.00" },
+        { ...noReturnMoney, refundMethod: "EXTERNAL_REFUND", refundAmount: "6.00" },
       ],
     });
     expect(s.refunds).toEqual({
@@ -340,16 +377,50 @@ describe("foldSummary (tests 10 and 11)", () => {
     const s = foldSummary({
       sales,
       payments: [],
-      returns: [
-        {
-          refundMethod: "CREDIT_NOTE",
-          _count: { _all: 3 },
-          _sum: { creditSubtotal: "10.00", creditTax: "0.80", creditCategoryTax: "0.20" },
-        },
-      ],
+      paidOnSales: none,
+      returns: [credit("5.00", "0.40", "0.10"), credit("5.00", "0.40", "0.10"), credit("5.00")],
     });
-    expect(s.storeCreditIssued).toEqual({ count: 3, amount: 11 });
+    expect(s.storeCreditIssued).toEqual({ count: 3, amount: 16 });
     expect(s.refunds.total).toBe(0);
     expect(s.netCollected).toBe(0);
+  });
+
+  it("LOW-2: the amount rule is PER RETURN, one function for rows and summary: a $20 priced + a $15 legacy return is $35 in both", () => {
+    const priced = credit("20.00");
+    const legacy = { ...noReturnMoney, refundMethod: "CREDIT_NOTE", refundAmount: "15.00" };
+    expect(returnAmount(priced)).toBe(20);
+    expect(returnAmount(legacy)).toBe(15);
+
+    const s = foldSummary({ sales, payments: [], paidOnSales: none, returns: [priced, legacy] });
+    expect(s.storeCreditIssued).toEqual({ count: 2, amount: 35 });
+
+    const row = toTodaysSaleRow(
+      order({
+        total: "100.00",
+        returns: [
+          ret({ id: "r-1", ...priced, creditNoteId: "cn-1", status: "PROCESSED" }),
+          ret({ id: "r-2", ...legacy, creditNoteId: "cn-2", status: "PROCESSED" }),
+        ],
+      }),
+    );
+    expect(row.returned.returns.map((r) => r.amount)).toEqual([20, 15]);
+    expect(row.returned.amount).toBe(35);
+  });
+});
+
+describe("the payment-method fold (ON_ACCOUNT pin)", () => {
+  it("the Prisma PaymentMethod enum has no ON_ACCOUNT: the day one is added, this fails and the fold must be reviewed", () => {
+    expect(Object.values(PaymentMethod)).not.toContain("ON_ACCOUNT");
+  });
+
+  it("every stored method maps to a till label; STORE_CREDIT is CREDIT_NOTE / ADVANCE only, never CASH / CARD / CHECK", () => {
+    for (const m of Object.values(PaymentMethod)) {
+      const label = todaysMethodOf(m);
+      expect(label === "STORE_CREDIT").toBe(m === "CREDIT_NOTE" || m === "ADVANCE");
+    }
+    expect(todaysMethodOf("CASH")).toBe("CASH");
+    expect(todaysMethodOf("CREDIT_CARD")).toBe("CARD");
+    expect(todaysMethodOf("CHECK")).toBe("CHECK");
+    expect(todaysMethodOf("ON_ACCOUNT")).toBe("OTHER");
   });
 });

@@ -18,6 +18,7 @@ import {
   foldSummary,
   liveCounterSalesWhere,
   pageQuery,
+  paidOnDaysSalesWhere,
   salePaymentsWhere,
   toTodaysSaleRow,
   windowReturnsWhere,
@@ -44,7 +45,8 @@ const badDay = (message: string) =>
  * calendar-date helpers (DST-safe), never by this class.
  *
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
- * three whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy`, `return.groupBy`. No per-row call.
+ * four whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
+ * `invoicePayment.aggregate` (paid on the day's own sales) and `return.findMany` (a day's few returns). No per-row call.
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -93,13 +95,18 @@ export class CounterSaleTodayService {
     };
   }
 
-  /** The whole day, three grouped / aggregate queries (never row loops), folded in counter-sale-today.ts. */
+  /**
+   * The whole day, four queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
+   * money that CAME IN in the window by method (groupBy on `paidAt`, sales of any day), what is paid on the day's own
+   * sales (aggregate, for `onAccount`), and the returns counted in the window (a day's few returns are read whole so
+   * the per-return amount rule applies; a grouped sum cannot).
+   */
   private async summary(
     db: ReturnType<PrismaService["forTenant"]>,
     tenantId: string,
     window: { start: Date; end: Date },
   ) {
-    const [sales, payments, returns] = await Promise.all([
+    const [sales, payments, paidOnSales, returns] = await Promise.all([
       db.order.aggregate({
         where: liveCounterSalesWhere(tenantId, window),
         _count: { _all: true },
@@ -110,11 +117,14 @@ export class CounterSaleTodayService {
         where: salePaymentsWhere(tenantId, window),
         _sum: { amount: true },
       }),
-      db.return.groupBy({
-        by: ["refundMethod"],
+      db.invoicePayment.aggregate({
+        where: paidOnDaysSalesWhere(tenantId, window),
+        _sum: { amount: true },
+      }),
+      db.return.findMany({
         where: windowReturnsWhere(tenantId, window),
-        _count: { _all: true },
-        _sum: {
+        select: {
+          refundMethod: true,
           refundAmount: true,
           creditSubtotal: true,
           creditTax: true,
@@ -122,6 +132,6 @@ export class CounterSaleTodayService {
         },
       }),
     ]);
-    return foldSummary({ sales, payments, returns });
+    return foldSummary({ sales, payments, paidOnSales, returns });
   }
 }
