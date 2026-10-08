@@ -31,6 +31,8 @@ export class CounterSaleItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(200) priceReason?: string;
+  /** POS-3: an optional per-line note, stored on OrderItem.notes (max 200, HTML stripped). */
+  @IsOptional() @StripHtml() @IsString() @MaxLength(200) note?: string;
 }
 
 /** `CounterSalePayment`: `amount` is cash tendered / amount paid; omitted = the exact balance. */

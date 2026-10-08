@@ -21,6 +21,8 @@ export interface CounterSaleItem {
   unitPrice?: number;
   /** why the price moved (optional; required on a special-priced line) */
   priceReason?: string;
+  /** an optional per-line note (max 200, HTML stripped server-side); stored on the order line */
+  note?: string;
 }
 
 export interface CounterSalePayment {
