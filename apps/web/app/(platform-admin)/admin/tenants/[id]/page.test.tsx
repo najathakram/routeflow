@@ -794,4 +794,38 @@ describe("SA-3: the Readiness card on Overview", () => {
     expect(heading.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(container.querySelector("#admin-account")).not.toBeNull();
   });
+
+  it("fetches the admin once, and Create admin flips the Has an admin row without a refetch", async () => {
+    mockAdmin = null;
+    mockFetchEffective.mockResolvedValue([
+      {
+        ...EFFECTIVE_FIXTURE[0],
+        key: "fulfilment_model",
+        mode: { value: "pickup", effective: "pickup", source: "TENANT", allowed: [], blocked: [] },
+      },
+    ]);
+    (superAdminClient.post as unknown as jest.Mock).mockImplementationOnce(() =>
+      Promise.resolve({
+        data: { id: "u-9", username: "new_admin", email: "a@b.co", status: "ACTIVE" },
+      }),
+    );
+    render(<TenantDetailPage />);
+    const rowOf = async () =>
+      (await screen.findByText("Has an admin")).closest("li") as HTMLElement;
+    await waitFor(async () =>
+      expect(within(await rowOf()).getByText(/Not ready/)).toBeInTheDocument(),
+    );
+    const adminGets = () =>
+      (superAdminClient.get as unknown as jest.Mock).mock.calls.filter((c) =>
+        /\/admin$/.test(String(c[0])),
+      );
+    expect(adminGets()).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Create Admin Account" }));
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new_admin" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Admin" }));
+    await waitFor(async () => expect(within(await rowOf()).queryByText(/Not ready/)).toBeNull());
+    expect(within(await rowOf()).getByText(/Ready/)).toBeInTheDocument();
+    expect(adminGets()).toHaveLength(1);
+  });
 });

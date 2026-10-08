@@ -30,7 +30,7 @@ import {
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
-import { ReadinessCard } from "./_components/ReadinessCard";
+import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
 import { FeatureConsole } from "./_features/FeatureConsole";
 import { SetupSection } from "./_features/SetupSection";
@@ -164,7 +164,7 @@ function TenantAdminSection({
   tenantId: string;
   onRefreshTenant: () => void;
   /** The admin's username once known (null when there is none): the Impersonate dialog names it. */
-  onAdminChange?: (username: string | null) => void;
+  onAdminChange?: (admin: TenantAdminUser | null, state: AdminReadState) => void;
 }) {
   const [admin, setAdmin] = React.useState<TenantAdminUser | null | undefined>(undefined); // undefined = loading
   const [showCreateForm, setShowCreateForm] = React.useState(false);
@@ -181,11 +181,11 @@ function TenantAdminSection({
       .get(`/platform-admin/tenants/${tenantId}/admin`)
       .then((res) => {
         setAdmin(res.data.admin);
-        onAdminChange?.(res.data.admin?.username ?? null);
+        onAdminChange?.(res.data.admin ?? null, "loaded");
       })
       .catch(() => {
         setAdmin(null);
-        onAdminChange?.(null);
+        onAdminChange?.(null, "failed");
       });
   }, [tenantId, onAdminChange]);
 
@@ -204,6 +204,7 @@ function TenantAdminSection({
       );
       setCreateResult(res.data);
       setAdmin(res.data);
+      onAdminChange?.(res.data, "loaded");
       setShowCreateForm(false);
       setCreateForm({ username: "", email: "" });
       onRefreshTenant();
@@ -389,7 +390,17 @@ function OverviewTab({
   >(null);
   // The server only deletes SUSPENDED tenants: its refusal is shown inside the delete dialog, which stays open.
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
-  const [adminUsername, setAdminUsername] = React.useState<string | null>(null);
+  // The page's single Admin Account read (TenantAdminSection reports it): feeds the Impersonate dialog and the
+  // Readiness card, so a create updates both with no second fetch.
+  const [adminRead, setAdminRead] = React.useState<{
+    admin: TenantAdminUser | null;
+    state: AdminReadState;
+  }>({ admin: null, state: "loading" });
+  const adminUsername = adminRead.admin?.username ?? null;
+  const handleAdminChange = React.useCallback(
+    (admin: TenantAdminUser | null, state: AdminReadState) => setAdminRead({ admin, state }),
+    [],
+  );
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -413,7 +424,7 @@ function OverviewTab({
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <ReadinessCard tenant={tenant} />
+      <ReadinessCard tenant={tenant} admin={adminRead.admin} adminState={adminRead.state} />
 
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
@@ -545,7 +556,7 @@ function OverviewTab({
         <TenantAdminSection
           tenantId={tenant.id}
           onRefreshTenant={onRefreshTenant}
-          onAdminChange={setAdminUsername}
+          onAdminChange={handleAdminChange}
         />
       </div>
 

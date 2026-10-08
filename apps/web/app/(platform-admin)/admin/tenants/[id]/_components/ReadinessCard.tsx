@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import type { CounterSalesMode, FulfilmentMode } from "@routeflow/types";
-import { superAdminClient } from "@/lib/admin-api";
 import { fetchTenantFeaturesEffective } from "@/lib/platform-admin/features";
 import { AdminCard } from "../../../../_components/AdminCard";
 
@@ -32,8 +31,11 @@ const IN_STORE_MODES: readonly FulfilmentMode[] = ["pickup", "pickup_ship"];
 const COUNTER_ON: CounterSalesMode = "on";
 const CAN_SELL_STATUSES = ["TRIAL", "ACTIVE"];
 
+/** The page's own Admin Account read: the card never fetches it (one source, no stale copy). */
+export type ReadinessAdmin = { status?: string } | null;
+export type AdminReadState = "loading" | "loaded" | "failed";
+
 interface Data {
-  admin: { status?: string } | null;
   /** Stored fulfilment_model / counter_sales; null = the effective read had no such row (not checked). */
   fulfilment: string | null;
   counter: string | null;
@@ -59,13 +61,18 @@ function isRelevant(d: Data): boolean {
   return d.counter === COUNTER_ON;
 }
 
-function buildRows(tenant: ReadinessTenant, d: Data): Row[] {
+function buildRows(
+  tenant: ReadinessTenant,
+  d: Data,
+  admin: ReadinessAdmin,
+  adminState: AdminReadState,
+): Row[] {
   const name = tenant.businessName ?? tenant.name;
   const base = `/admin/tenants/${tenant.id}`;
   const onTrial = tenant.status === "TRIAL";
   const canSell = CAN_SELL_STATUSES.includes(tenant.status);
-  const hasAdmin =
-    d.admin !== null && (d.admin.status === undefined || d.admin.status === "ACTIVE");
+  const hasAdmin = admin !== null && (admin.status === undefined || admin.status === "ACTIVE");
+  const adminVerdict: Verdict = adminState !== "loaded" ? "unknown" : hasAdmin ? "pass" : "fail";
   const products = tenant.counts?.products;
   const sellsInStore =
     d.fulfilment === null
@@ -84,10 +91,11 @@ function buildRows(tenant: ReadinessTenant, d: Data): Row[] {
     {
       key: "admin",
       label: "Has an admin",
-      verdict: hasAdmin ? "pass" : "fail",
-      link: hasAdmin
-        ? undefined
-        : { href: "#admin-account", text: "Create admin", aria: `Create admin for ${name}` },
+      verdict: adminVerdict,
+      link:
+        adminVerdict !== "fail"
+          ? undefined
+          : { href: "#admin-account", text: "Create admin", aria: `Create admin for ${name}` },
     },
     {
       key: "account",
@@ -155,11 +163,20 @@ const STATUS_CLASS: Record<Verdict, string> = {
 };
 
 /**
- * "Ready to take a sale?": the first card on the tenant Overview. Read-only; it composes the Admin Account read, the
+ * "Ready to take a sale?": the first card on the tenant Overview. Read-only; it composes the page's Admin Account read (a prop), the
  * detail's own status/trial/product count, and the stored fulfilment_model / counter_sales modes (the effective trace),
  * so a failed or missing read is "Not checked", never green.
  */
-export function ReadinessCard({ tenant }: { tenant: ReadinessTenant }) {
+export function ReadinessCard({
+  tenant,
+  admin,
+  adminState,
+}: {
+  tenant: ReadinessTenant;
+  /** The page's loaded admin (null = none); a failed read keeps the row "Not checked". */
+  admin: ReadinessAdmin;
+  adminState: AdminReadState;
+}) {
   const [data, setData] = React.useState<Data | null>(null);
   const [failed, setFailed] = React.useState(false);
   const [open, setOpen] = React.useState(false);
@@ -167,14 +184,10 @@ export function ReadinessCard({ tenant }: { tenant: ReadinessTenant }) {
   const load = React.useCallback(() => {
     setFailed(false);
     setData(null);
-    Promise.all([
-      superAdminClient.get(`/platform-admin/tenants/${tenant.id}/admin`),
-      fetchTenantFeaturesEffective(tenant.id),
-    ])
-      .then(([adminRes, effective]) => {
+    fetchTenantFeaturesEffective(tenant.id)
+      .then((effective) => {
         const byKey = new Map((Array.isArray(effective) ? effective : []).map((f) => [f.key, f]));
         setData({
-          admin: adminRes.data?.admin ?? null,
           fulfilment: byKey.get("fulfilment_model")?.mode?.value ?? null,
           counter: byKey.get("counter_sales")?.mode?.value ?? null,
         });
@@ -205,7 +218,7 @@ export function ReadinessCard({ tenant }: { tenant: ReadinessTenant }) {
       </AdminCard>
     );
   }
-  if (!data) {
+  if (!data || adminState === "loading") {
     return (
       <AdminCard title={title} className="lg:col-span-2">
         <div aria-busy="true" className="flex flex-col gap-2">
@@ -221,7 +234,7 @@ export function ReadinessCard({ tenant }: { tenant: ReadinessTenant }) {
     );
   }
 
-  const rows = buildRows(tenant, data);
+  const rows = buildRows(tenant, data, admin, adminState);
   const allGreen = rows.every((r) => r.verdict === "pass" || r.verdict === "info");
   const showRows = !allGreen || open;
 
