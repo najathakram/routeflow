@@ -54,9 +54,12 @@ function fakeDb(f: Fake) {
     },
     return: {
       findMany: jest.fn(async (args: any) =>
-        (f.itemless ?? [])
-          .filter((n) => args.where.creditNoteId.in.includes(n.id))
-          .map((n) => ({ items: n.returnItems })),
+        // SA-727: the external-refund read (refundMethod EXTERNAL_REFUND, no credit note) finds none in this fixture
+        args.where.refundMethod === "EXTERNAL_REFUND"
+          ? []
+          : (f.itemless ?? [])
+              .filter((n) => args.where.creditNoteId.in.includes(n.id))
+              .map((n) => ({ items: n.returnItems })),
       ),
     },
   };

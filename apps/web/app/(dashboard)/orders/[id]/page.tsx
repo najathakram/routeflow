@@ -2578,6 +2578,7 @@ export default function OrderDetailPage() {
                 customerId={order.customerId}
                 customerName={order.customer?.businessName}
                 orderId={order.id}
+                allowRefund
               />
             </ActionTier>
           )}

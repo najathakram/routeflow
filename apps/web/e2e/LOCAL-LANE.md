@@ -229,5 +229,14 @@ back (the API caches modes briefly), and fails with the observed and expected va
 layout, Complete & show receipt) is on the `local:e2e` allow-list right after 71 and is registered under the same local-only
 condition. It reuses 71's helper to turn the counter on and restores the tenant's fulfilment config in `afterAll`; it needs
 `npm run local:sa` for the same reason. It creates a throwaway tier-2 customer and a throwaway product (tier-2 price differs)
-on the approved test tenant through the operator API and deletes both again, so the "Prices updated for ... (<tier>)" note
+on the approved test tenant through the operator API and soft-retires both again (the product inactive, the customer INACTIVE; nothing is deleted), so the "Prices updated for ... (<tier>)" note
 is always asserted, never skipped. It rings one real counter sale on that tenant.
+
+## Spec 73 (`counter-register-look`): same lane, same rules as 71
+
+`73-counter-register-look.spec.ts` (POS-7: the counter's register look and the "Open the counter on this device" preference) is on
+the `local:e2e` allow-list right after 72 and is registered under the same local-only condition. It reuses 71's helper to turn
+the counter on and restores the tenant's fulfilment config in `afterAll`; it needs `npm run local:sa`. At 390 / 768 / 1024 / 1440
+it enters the counter from the nav, checks the 64 px rail (lg+ only), the peek (which never writes `rf-sidebar-collapsed`), Exit
+with and without a cart (the "Discard this sale?" guard) and the device preference redirect. It sells nothing and creates no rows
+(it only puts a product on the cart and discards it); the preference lives in the browser context's localStorage.
