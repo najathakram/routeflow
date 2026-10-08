@@ -108,8 +108,8 @@ describe("SettingsHub regroup", () => {
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
     expect(hrefs).toHaveLength(2);
-    expect(screen.getByText("Selling & catalog")).toBeInTheDocument();
-    expect(screen.getByText("Compliance")).toBeInTheDocument();
+    expect(screen.getByText("Selling & catalog › Selling restrictions")).toBeInTheDocument();
+    expect(screen.getByText("Compliance › Selling restrictions")).toBeInTheDocument();
   });
 
   describe("a page loaded with a card's hash scrolls to that card", () => {
@@ -173,7 +173,7 @@ describe("SettingsHub regroup", () => {
     expect(screen.queryByText("oversell-card-edit")).not.toBeInTheDocument();
   });
 
-  it.each(["speed & depot", "service time, start time", "orders & stock"])(
+  it.each(["speed & depot", "service time, start time"])(
     "a search that lists the Route defaults result ('%s') also shows its card",
     (q) => {
       renderWithProviders(<SettingsHub isAdmin />);
@@ -186,15 +186,15 @@ describe("SettingsHub regroup", () => {
     },
   );
 
-  it("a query spanning two fields ('defaults service') lists nothing, so the card stays hidden", () => {
+  it("a query spanning two fields ('defaults service') lists Route defaults and shows its card", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), {
       target: { value: "defaults service" },
     });
     expect(
-      screen.queryAllByRole("link").some((l) => l.getAttribute("href") === "#route-defaults"),
-    ).toBe(false);
-    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+      screen.getAllByRole("link").some((l) => l.getAttribute("href") === "#route-defaults"),
+    ).toBe(true);
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
   it("hides the route defaults card when the search matches nothing", () => {
@@ -214,6 +214,116 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
     expect(document.getElementById("route-defaults")).toContainElement(
       screen.getByText("route-defaults-card"),
+    );
+  });
+});
+
+describe("SettingsHub search speaks the user's words", () => {
+  const search = (q: string) =>
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+  const results = () => screen.getByRole("list", { name: "Search results" });
+  // A result row's accessible name is "label, effect, breadcrumb": match on the label.
+  const hrefOf = (label: string) =>
+    within(results())
+      .getAllByRole("link")
+      .find((l) => l.textContent?.startsWith(label))
+      ?.getAttribute("href");
+
+  it("1: 'low stock' finds the Low-stock digest card", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("low stock");
+    expect(hrefOf("Low-stock digest")).toBe("/settings?tab=notifications#low-stock-digest");
+  });
+
+  it("2: 'stock' lists Out-of-stock ordering, not Route defaults or Batch invoice import", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("stock");
+    expect(within(results()).getByText("Out-of-stock ordering")).toBeInTheDocument();
+    expect(within(results()).queryByText("Route defaults")).not.toBeInTheDocument();
+    expect(within(results()).queryByText("Batch invoice import")).not.toBeInTheDocument();
+  });
+
+  it("3: 'carrier' shows the answer as plain text, not a link", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("carrier");
+    const answer = within(results()).getByText(
+      "You choose the carrier on each order when you mark it shipped.",
+    );
+    expect(answer.closest("a")).toBeNull();
+    expect(within(results()).queryAllByRole("link")).toHaveLength(0);
+  });
+
+  it.each([true, false])("4: stripe and tier find their cards (admin=%s)", (isAdmin) => {
+    renderWithProviders(<SettingsHub isAdmin={isAdmin} />);
+    search("stripe");
+    expect(hrefOf("Card payments")).toBe("/settings#card-payments");
+    search("tier");
+    expect(hrefOf("Pricing tier names")).toBe("/settings#tier-names");
+  });
+
+  it("5: 'defaults service' lists Route defaults and mounts its card", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("defaults service");
+    expect(hrefOf("Route defaults")).toBe("#route-defaults");
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+  });
+
+  it("6: 'invoice terms' lists Payment terms under Selling & catalog > Invoicing", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("invoice terms");
+    const row = within(results()).getByRole("link", { name: /Payment terms/ });
+    expect(within(row).getByText("Selling & catalog › Invoicing")).toBeInTheDocument();
+  });
+
+  it("7: 'restrictions' gives exactly two links to the restrictions page", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("restrictions");
+    const hrefs = within(results())
+      .getAllByRole("link")
+      .filter((l) => l.getAttribute("href") === "/settings/restrictions");
+    expect(hrefs).toHaveLength(2);
+  });
+
+  it("8: an operator searching 'regulated' gets no link and the no-results text", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    search("regulated");
+    expect(screen.getByText("No settings match “regulated”.")).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("link").some((l) => l.getAttribute("href")?.includes("regulated")),
+    ).toBe(false);
+  });
+
+  it("9: a miss says so, and Clear Search restores the hub and focuses the input", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("zzzzqq");
+    expect(screen.getByText("No settings match “zzzzqq”.")).toBeInTheDocument();
+    expect(screen.getByText("Try another word, or browse all settings.")).toBeInTheDocument();
+    expect(screen.queryByText("route-defaults-card")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+    const input = screen.getByLabelText("Search settings") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input).toHaveFocus();
+    expect(screen.getAllByTestId(/^settings-group-/)).toHaveLength(7);
+  });
+
+  it("10: 'walk-in' finds the counter-sales answer", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    search("walk-in");
+    expect(within(results()).getByText(/Ring up walk-in customers/)).toBeInTheDocument();
+  });
+
+  it("11: an empty query renders the hub exactly as before", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    expect(screen.getAllByTestId(/^settings-group-/)).toHaveLength(7);
+    expect(screen.queryByRole("list", { name: "Search results" })).not.toBeInTheDocument();
+    for (const c of ["Invoicing", "User management", "Import", "Notifications"]) {
+      expect(screen.getAllByRole("link", { name: c }).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText("Frequently used:")).toBeInTheDocument();
+    expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /My account/ })).toHaveAttribute(
+      "href",
+      "/settings?tab=account",
     );
   });
 });

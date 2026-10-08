@@ -3008,11 +3008,11 @@ function SettingsPageInner() {
           {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
               OAuth callback returns the operator to bare `/settings?stripe=...` and the
               card renders that banner. */}
-          <div className="mt-5 max-w-3xl">
+          <div id="card-payments" className="mt-5 max-w-3xl">
             <StripeConnectCard />
           </div>
           {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
-          <div className="mt-5 max-w-3xl">
+          <div id="tier-names" className="mt-5 max-w-3xl">
             <TierLabelsCard />
           </div>
         </>
