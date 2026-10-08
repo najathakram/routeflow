@@ -215,7 +215,6 @@ export interface ReprintOrderLike {
 export interface ReprintSaleFacts {
   invoiceId: string;
   invoiceNumber: string;
-  paymentState: "PAID" | "PARTLY_PAID" | "ON_ACCOUNT" | "UNPAID";
   /** the server's figures, used as given */
   paid: number;
   balanceDue: number;
@@ -253,6 +252,7 @@ export function formatSaleTime(at: string | Date, timeZone?: string): string {
 export function receiptModelFromOrder(input: {
   order: ReprintOrderLike;
   sale: ReprintSaleFacts;
+  /** Omit on a reprint: the Order stores no creator, so the original cashier is unknown. */
   cashier?: string | null;
   profile: ReceiptBusinessProfile | null | undefined;
 }): CounterReceiptModel {

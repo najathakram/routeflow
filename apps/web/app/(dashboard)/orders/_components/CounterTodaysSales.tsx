@@ -119,7 +119,7 @@ function Reprint({
   onBack: () => void;
 }) {
   const { branding } = useTenant();
-  const cashier = useOptionalAuth()?.user?.username ?? null;
+  const reprintedBy = useOptionalAuth()?.user?.username ?? null;
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
@@ -129,12 +129,10 @@ function Reprint({
     order && row.invoiceId && row.invoiceNumber
       ? receiptModelFromOrder({
           order,
-          cashier,
           profile: { ...settings, businessName: branding?.businessName || settings?.businessName },
           sale: {
             invoiceId: row.invoiceId,
             invoiceNumber: row.invoiceNumber,
-            paymentState: row.paymentState,
             paid: row.paid,
             balanceDue: row.balanceDue,
             methods: row.methods,
@@ -157,6 +155,7 @@ function Reprint({
         <CounterReceiptView
           model={model}
           logoUrl={branding?.logoUrl ?? null}
+          reprintedBy={reprintedBy}
           reprintLabel={`Reprint · sold ${formatSaleTime(row.createdAt, timezone)}`}
         />
       ) : isError ? (
@@ -176,16 +175,27 @@ function Reprint({
 }
 
 function SaleRow({
+  focusReprint,
+  onFocused,
   row,
   timezone,
   onReprint,
   onDone,
 }: {
+  focusReprint: boolean;
+  onFocused: () => void;
   row: TodaysSaleRow;
   timezone: string;
   onReprint: () => void;
   onDone: () => void;
 }) {
+  const reprintRef = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    if (focusReprint) {
+      reprintRef.current?.focus();
+      onFocused();
+    }
+  }, [focusReprint, onFocused]);
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
   const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
@@ -215,7 +225,7 @@ function SaleRow({
         {row.voided ? null : (
           <>
             {row.invoiceId && row.invoiceNumber ? (
-              <button type="button" className={TAP} onClick={onReprint}>
+              <button ref={reprintRef} type="button" className={TAP} onClick={onReprint}>
                 Reprint
               </button>
             ) : null}
@@ -233,6 +243,9 @@ function SaleRow({
 export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
+  // the row whose Reprint button gets focus back after "Back to sales"
+  const [refocusId, setRefocusId] = React.useState<string | null>(null);
+  const clearRefocus = React.useCallback(() => setRefocusId(null), []);
   const qc = useQueryClient();
   const q = useCounterSaleToday(open);
   const refetchList = React.useCallback(
@@ -259,7 +272,14 @@ export function CounterTodaysSales() {
         className="max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none"
       >
         {reprint ? (
-          <Reprint row={reprint} timezone={timezone} onBack={() => setReprint(null)} />
+          <Reprint
+            row={reprint}
+            timezone={timezone}
+            onBack={() => {
+              setRefocusId(reprint.orderId);
+              setReprint(null);
+            }}
+          />
         ) : q.isError ? (
           <div role="alert" className="space-y-2 text-sm">
             <p>Could not load today&apos;s sales.</p>
@@ -283,6 +303,8 @@ export function CounterTodaysSales() {
                     key={r.orderId}
                     row={r}
                     timezone={timezone}
+                    focusReprint={refocusId === r.orderId}
+                    onFocused={clearRefocus}
                     onReprint={() => setReprint(r)}
                     onDone={refetchList}
                   />

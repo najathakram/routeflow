@@ -240,6 +240,35 @@ describe("CounterTodaysSales", () => {
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
   });
 
+  it("a reprint credits the reprinter, never a Cashier line", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).getByTestId("receipt-reprinted-by")).toHaveTextContent("Reprinted by pat");
+    expect(within(root).queryByTestId("receipt-cashier")).toBeNull();
+    expect(root.textContent).not.toMatch(/Cashier/);
+  });
+
+  it("a non-voided row without an invoice has no Reprint, but keeps View order", async () => {
+    serve({ 1: page1([row({ invoiceId: null, invoiceNumber: null })]) });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    expect(within(r).queryByRole("button", { name: "Reprint" })).toBeNull();
+    expect(within(r).getByRole("link", { name: "View order" })).toBeInTheDocument();
+  });
+
+  it("Back to sales returns focus to that row's Reprint button", async () => {
+    serve({ 1: page1([row({ orderId: "o1" }), row({ orderId: "o2", orderNumber: "ORD-2" })]) });
+    await open();
+    const r2 = await screen.findByTestId("today-row-o2");
+    fireEvent.click(within(r2).getByRole("button", { name: "Reprint" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Back to sales" }));
+    const again = within(await screen.findByTestId("today-row-o2")).getByRole("button", {
+      name: "Reprint",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(again));
+  });
+
   it("reprint shows the server's paid and balance due, never a client sum", async () => {
     serve({
       1: page1([

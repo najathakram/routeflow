@@ -12,11 +12,14 @@ export function CounterReceiptView({
   model: m,
   logoUrl,
   reprintLabel,
+  reprintedBy,
   headingRef,
 }: {
   model: CounterReceiptModel;
   logoUrl?: string | null;
   reprintLabel?: string;
+  /** A reprint does not know who sold it (the Order stores no creator), so it names who reprinted instead. */
+  reprintedBy?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
@@ -58,6 +61,7 @@ export function CounterReceiptView({
         ) : (
           <p data-testid="receipt-date">{m.dateLabel}</p>
         )}
+        {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
         {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
       </div>
       <ul className="divide-y text-sm">

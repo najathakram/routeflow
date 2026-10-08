@@ -62,7 +62,6 @@ const reprint = (
     sale: {
       invoiceId: "i1",
       invoiceNumber: "INV-1",
-      paymentState,
       ...money,
       methods,
       createdAt: SOLD.toISOString(),
