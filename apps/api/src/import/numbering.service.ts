@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger } from "@nes
 import { randomUUID } from "crypto";
 import { DocumentNumberType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { validateDocumentPrefix } from "../common/document-prefix";
 import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 
 /**
@@ -138,6 +139,46 @@ export class NumberingService {
         settings.push({ docType, prefix, nextNumber, padding, preview, configured: !!row });
       }
       return settings;
+    });
+  }
+
+  /**
+   * B1188: the true next number a prefix change would mint, WITHOUT saving anything — what the
+   * Settings card shows the user to confirm. It is the same max-first scan the live mint uses
+   * (`previewConfigured`): the highest existing document under the NEW prefix, one past it, never
+   * below the stored counter. Returns the version token (`expectedNextNumber`, the stored
+   * `nextNumber`; 1 for an unsaved row) the save must echo, so a sequence that moves between the
+   * preview and the save is refused by `updateSettings` instead of silently renumbering.
+   */
+  async previewPrefix(
+    docType: DocumentNumberType,
+    prefix: string,
+  ): Promise<{
+    docType: DocumentNumberType;
+    prefix: string;
+    preview: string;
+    expectedNextNumber: number;
+  }> {
+    const tenantId = this.requireTenant();
+    const invalid = validateDocumentPrefix(prefix);
+    if (invalid) throw new BadRequestException(invalid);
+    if (!isYearScoped(docType)) {
+      throw new BadRequestException(`${docTypeLabel(docType)} numbering has no preview.`);
+    }
+    const key = { tenantId_docType_year: { tenantId, docType, year: 0 } };
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const existing = await tx.numberingSequence.findUnique({ where: key });
+      const padding = existing?.padding ?? DEFAULTS[docType].padding;
+      const expectedNextNumber = existing?.nextNumber ?? 1;
+      const preview = await this.previewConfigured(
+        tx,
+        docType,
+        tenantId,
+        prefix,
+        padding,
+        expectedNextNumber,
+      );
+      return { docType, prefix, preview, expectedNextNumber };
     });
   }
 

@@ -252,6 +252,9 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
     return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
+  // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
+  if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
+    return PICKUP_TENDER_SHORT_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
   if (status === 409)
@@ -365,6 +368,9 @@ export interface HeldAttemptSnapshot {
   tendered: string;
   reference: string;
 }
+/** Shown with the Discard button: the unreadable held sale may already have been written. */
+export const COUNTER_DISCARD_COPY =
+  "The previous sale may have gone through. Check recent sales before ringing it again.";
 /** The storage key for one signed-in tenant + user, or null when either is unknown (then nothing is stored or restored). */
 export function heldAttemptKey(tenant?: string | null, userId?: string | null): string | null {
   return tenant && userId ? `${HELD_ATTEMPT_KEY}:${tenant}:${userId}` : null;
@@ -417,7 +423,8 @@ export function readHeldAttempt(storeKey: string | null): HeldAttemptSnapshot | 
       ok = false;
     }
     if (ok) return v as HeldAttemptSnapshot;
-    window.sessionStorage.removeItem(storeKey);
+    // Keep a payload-free marker (never delete): a reload must stay LOCKED until the cashier discards.
+    window.sessionStorage.setItem(storeKey, JSON.stringify({ state: "unknown" }));
     return "corrupt";
   } catch {
     return null;
@@ -441,6 +448,65 @@ export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnaps
   }
 }
 export function clearHeldAttempt(storeKey: string | null): void {
+  if (!storeKey) return;
+  try {
+    window.sessionStorage.removeItem(storeKey);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** Pickup codes the pickup dialog answers with its own fixed copy: the global error toast stays quiet for these. */
+const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED,
+  API_ERROR_CODES.COUNTER_TENDER_SHORT,
+  API_ERROR_CODES.PICKUP_KEY_CONFLICT,
+  API_ERROR_CODES.PICKUP_INVOICE_MISSING,
+  API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
+  API_ERROR_CODES.WALK_IN_NO_ACCOUNT,
+  API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED,
+  API_ERROR_CODES.PICKUP_NOT_READY,
+  API_ERROR_CODES.PICKUP_ONLY,
+]);
+export function isPickupHandledError(err: unknown): boolean {
+  const code = pickupErrorCode(err);
+  return code !== undefined && PICKUP_HANDLED_CODES.has(code);
+}
+
+/**
+ * The Idempotency-Key of a pickup whose outcome is UNKNOWN, kept in sessionStorage (per tab) so a reload of the order page
+ * retries with the SAME key. Scoped to tenant + user + order; every access is guarded and the value is validated on read.
+ */
+export const HELD_PICKUP_KEY = "rf.pickup.heldKey";
+export function heldPickupStoreKey(
+  tenant?: string | null,
+  userId?: string | null,
+  orderId?: string | null,
+): string | null {
+  return tenant && userId && orderId ? `${HELD_PICKUP_KEY}:${tenant}:${userId}:${orderId}` : null;
+}
+export function readHeldPickupKey(storeKey: string | null): string | null {
+  if (!storeKey) return null;
+  try {
+    const raw = window.sessionStorage.getItem(storeKey);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { key?: unknown } | null;
+    if (v && typeof v.key === "string" && v.key.length > 0 && v.key.length <= 200) return v.key;
+    window.sessionStorage.removeItem(storeKey);
+    return null;
+  } catch {
+    return null;
+  }
+}
+export function writeHeldPickupKey(storeKey: string | null, key: string): void {
+  if (!storeKey) return;
+  try {
+    window.sessionStorage.setItem(storeKey, JSON.stringify({ key }));
+  } catch {
+    /* storage unavailable: the key is still held in memory */
+  }
+}
+export function clearHeldPickupKey(storeKey: string | null): void {
   if (!storeKey) return;
   try {
     window.sessionStorage.removeItem(storeKey);

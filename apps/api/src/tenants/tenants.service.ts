@@ -8,6 +8,11 @@ import {
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
@@ -64,6 +69,7 @@ const RESERVED_USERNAMES = new Set([
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
+  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -72,7 +78,13 @@ export class TenantsService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.emailVerifyKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.emailVerify,
+      config.get<string>("jwt.secret") ?? "",
+    );
+  }
 
   async isUsernameAvailable(username: string): Promise<boolean> {
     if (RESERVED_USERNAMES.has(username.toLowerCase())) return false;
@@ -172,11 +184,13 @@ export class TenantsService {
     let emailSent = false;
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const jwtSecret = this.config.get<string>("jwt.secret")!;
-
       const verifyToken = this.jwt.sign(
         { sub: result.user.id, tenantId: result.tenant.id, type: "email_verify" },
-        { secret: jwtSecret, expiresIn: "24h" },
+        {
+          secret: this.emailVerifyKey,
+          audience: DERIVED_JWT_AUDIENCES.emailVerify,
+          expiresIn: "24h",
+        },
       );
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
@@ -264,11 +278,13 @@ export class TenantsService {
 
     try {
       const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const jwtSecret = this.config.get<string>("jwt.secret")!;
-
       const verifyToken = this.jwt.sign(
         { sub: user.id, tenantId: user.tenant.id, type: "email_verify" },
-        { secret: jwtSecret, expiresIn: "24h" },
+        {
+          secret: this.emailVerifyKey,
+          audience: DERIVED_JWT_AUDIENCES.emailVerify,
+          expiresIn: "24h",
+        },
       );
 
       const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;

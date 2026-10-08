@@ -889,7 +889,16 @@ export class OrderTemplatesService {
         },
       });
       await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
-      const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
+      // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
+      // decrement can SET that row's backorder marker; `position` is the template's own line order.
+      const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
+      const stockLines = lineItemsData.map((li, position) => {
+        const at = unmatched.findIndex(
+          (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+        );
+        const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
+        return { id, position, productId: li.productId, qty: li.qty };
+      });
       // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
       // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
       await decrementStockForSale(
@@ -898,7 +907,13 @@ export class OrderTemplatesService {
         stockLines,
         allowOversell,
         // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
-        { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
+        // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
+        {
+          orderId: order.id,
+          notes: `TEMPLATE:${template.id}`,
+          performedById: null,
+          customerFacing: !unattended && !isStaffRole,
+        },
       );
       return order;
     });

@@ -187,6 +187,8 @@ export interface OrderItem {
    *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
    *  previews at full price while the server bills the reduced subtotal. */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /**
@@ -224,6 +226,10 @@ export function useOrders(
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /** Shipped on/after this date (`shippedAt`): the "Shipped this week" card + its list. */
+    shippedFrom?: string;
+    /** `false` = only orders with no tracking number yet ("Shipped, no tracking"). */
+    hasTracking?: boolean;
     /**
      * B144: composes with `customerId` and role scope (never swallowed by
      * either) — matches against order number OR the customer's business

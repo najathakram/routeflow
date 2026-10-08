@@ -60,7 +60,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "trySend :: params.html": TRANSPORT,
   },
   "billing/billing-notification.service.ts": {
-    "sendIfClaimed :: tmpl.html":
+    "deliverToAdmins :: tmpl.html":
       "built in billing-notification.templates.ts, which this guard scans (0 hits)",
   },
   "messaging/providers/email-channel.provider.ts": {

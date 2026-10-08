@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "path";
 import { requireBaseUrl } from "./lib/e2e-setup-guard";
+import { isLocalOnlyLane } from "./lib/local-fulfilment-guard";
 
 /**
  * Playwright configuration for full Chrome UI coverage against Railway.
@@ -181,6 +182,18 @@ export default defineConfig({
     {
       name: "product-demand",
       testMatch: /11-product-demand\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
+    // /dashboard layout shift with every read delayed 2 s; read-only.
+    {
+      name: "dashboard-cls",
+      testMatch: /69-dashboard-cls\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -476,10 +489,27 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── B1219: a single fuzzy scan match asks "Did you mean ...?" in Create Order (spec 70).
+    {
+      name: "scan-did-you-mean",
+      testMatch: /70-scan-did-you-mean\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
       testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
+    // never clicks Confirm; asserts no write request leaves the page.
+    {
+      name: "invoice-numbering-card",
+      testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -919,6 +949,15 @@ export default defineConfig({
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
     {
+      name: "customers-list-ux",
+      testMatch: /65-customers-list-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    {
       name: "pageheader-action-wrap",
       testMatch: /57-pageheader-action-wrap\.spec\.ts/,
       dependencies: ["setup"],
@@ -952,5 +991,31 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
+    // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
+    // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
+    // and this is not GitHub Actions (the spec also refuses on its own: lib/local-fulfilment-guard.ts).
+    ...(isLocalOnlyLane(process.env)
+      ? [
+          {
+            name: "counter-ship-handoff",
+            testMatch: /71-counter-ship-handoff\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "counter-pos-stack",
+            testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+        ]
+      : []),
   ],
 });

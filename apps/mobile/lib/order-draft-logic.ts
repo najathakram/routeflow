@@ -1,6 +1,7 @@
 import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
+import { isFamilyProduct } from "./sellable-products";
 
 /**
  * Pure gate for the operator order builder's two save paths, mirroring web's
@@ -54,12 +55,18 @@ export interface ResumeLineDecision<P> {
  *    line scanned into a draft and parked used to come back as "no longer in
  *    your catalog" and vanish. An archived product is still orderable
  *    server-side; the row flags itself instead of deleting the operator's work.
- *  - 404 → DROP: the product is genuinely gone.
+ *  - 404 → DROP: the product is genuinely gone. A FAMILY container also drops (never orderable).
  *  - anything else (timeout, 5xx, offline) → FAILED: abort hydration and keep
  *    the spinner, so autosave can never PATCH a truncated cart over the draft.
  */
 export function decideResumeLine<P>(fetched: ResumeLineFetch<P>): ResumeLineDecision<P> {
-  if (fetched.ok) return { product: fetched.product, failed: false };
+  // A FAMILY container is never orderable (400 FAMILY_NOT_SELLABLE): a restored draft drops it instead of queuing it.
+  if (fetched.ok) {
+    if (isFamilyProduct(fetched.product as { kind?: "FAMILY" } | null)) {
+      return { product: null, failed: false };
+    }
+    return { product: fetched.product, failed: false };
+  }
   return { product: null, failed: fetched.status !== 404 };
 }
 

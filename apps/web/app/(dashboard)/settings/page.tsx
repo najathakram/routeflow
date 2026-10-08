@@ -80,6 +80,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
@@ -87,6 +88,7 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -403,6 +405,8 @@ function AddUserModal({
   onCreated: (tempPassword: string) => void;
 }) {
   const createOperator = useCreateOperator();
+  // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
+  const { fleet } = useFleetAccess();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -417,6 +421,10 @@ function AddUserModal({
     resolver: zodResolver(addUserSchema),
     defaultValues: { role: "DRIVER" },
   });
+
+  React.useEffect(() => {
+    if (!fleet) setValue("role", "OPERATOR");
+  }, [fleet, setValue]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -519,7 +527,7 @@ function AddUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -567,6 +575,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
+  const { fleet } = useFleetAccess();
   const { toast } = useToast();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -660,7 +670,7 @@ function EditUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet || user?.role === "DRIVER" ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -1953,7 +1963,11 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch, EXCEPT while
+  // it is already ON, so it can still be turned off.
+  const { fleet: hasFleet } = useFleetAccess();
+  const canToggleDriver =
+    (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
@@ -2407,14 +2421,6 @@ function TierLabelsCard() {
 
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
-const TERMS_OPTIONS = [
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 function InvoicingTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -2428,23 +2434,27 @@ function InvoicingTab() {
 
   const [invoiceNotes, setInvoiceNotes] = React.useState("");
   const [invoiceTerms, setInvoiceTerms] = React.useState("");
-  const [invoicePrefix, setInvoicePrefix] = React.useState("");
-  const [paymentDueDays, setPaymentDueDays] = React.useState("");
   const [savingDefaults, setSavingDefaults] = React.useState(false);
 
   React.useEffect(() => {
     if (savedSettings) {
       setInvoiceNotes(savedSettings.invoiceNotes ?? "");
       setInvoiceTerms(savedSettings.invoiceTerms ?? "");
-      setInvoicePrefix(savedSettings.invoicePrefix ?? "");
-      setPaymentDueDays(savedSettings.paymentDueDays ?? "");
     }
   }, [savedSettings]);
 
+  // ONE value for the "Payment Terms" select and the Invoice Numbering "Payment Due Days" select
+  // (B1188): the draft shows the pick at once in both; it is dropped once the save settles, when
+  // the refetched server value takes over (or the pick reverts on failure).
+  const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
+  const shownTerms = termsDraft ?? invoiceSettings?.defaultTerms ?? "Net 30";
+
   const handleTermsChange = (value: string) => {
+    setTermsDraft(value);
     updateSettings.mutate(
       { defaultTerms: value },
       {
+        onSettled: () => setTermsDraft(null),
         onSuccess: () =>
           toast({
             title: "Invoice settings saved",
@@ -2552,8 +2562,6 @@ function InvoicingTab() {
       await apiClient.patch("/settings", {
         invoiceNotes,
         invoiceTerms,
-        invoicePrefix,
-        paymentDueDays,
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
@@ -2580,11 +2588,12 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment Terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={invoiceSettings?.defaultTerms ?? "Net 30"}
+                aria-label="Payment Terms"
+                value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
-                {TERMS_OPTIONS.map((opt) => (
+                {INVOICE_TERMS_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -2679,46 +2688,11 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <Card title="Invoice Numbering">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">
-              Invoice Number Prefix
-            </label>
-            <input
-              type="text"
-              value={invoicePrefix}
-              onChange={(e) => setInvoicePrefix(e.target.value)}
-              placeholder="INV-"
-              maxLength={10}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Prepended to invoice numbers (e.g. INV-, 2026-).
-            </p>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">Payment Due Days</label>
-            <input
-              type="number"
-              value={paymentDueDays}
-              onChange={(e) => setPaymentDueDays(e.target.value)}
-              placeholder="30"
-              min="0"
-              max="365"
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Default days until payment is due (0 = due on receipt).
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={handleSaveDefaults} loading={savingDefaults} size="sm">
-            Save Numbering
-          </Button>
-        </div>
-      </Card>
+      <InvoiceNumberingCard
+        terms={shownTerms}
+        onTermsChange={handleTermsChange}
+        termsDisabled={isLoading || updateSettings.isPending}
+      />
 
       <Card title="Invoice Defaults">
         <div className="space-y-4">

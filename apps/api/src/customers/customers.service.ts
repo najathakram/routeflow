@@ -894,7 +894,7 @@ export class CustomersService {
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
     // Customer-facing fields only for the customer themself (common/staff-only-fields.ts).
-    const rows = user.role === UserRole.CUSTOMER ? data.map(toCustomerOrder) : data;
+    const rows = user.role === UserRole.CUSTOMER ? data.map((o) => toCustomerOrder(o)) : data;
     return { data: rows, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
 

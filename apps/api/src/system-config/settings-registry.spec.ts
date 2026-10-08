@@ -163,7 +163,18 @@ describe("settings registry — rules", () => {
       "notifications.staffOrderEmail",
       "orders.buyerOversell",
     ]);
-    for (const r of policy) expect(r).toMatchObject({ status: "pending #1337", kind: "behaviour" });
+    for (const r of policy) {
+      expect(r).toMatchObject({
+        status: r.key === "orders.buyerOversell" ? "live" : "pending #1337",
+        kind: "behaviour",
+      });
+    }
+  });
+
+  it("the out-of-stock switch is LIVE: its screen is the in-hub card anchor and operators can open it", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "orders.buyerOversell")!;
+    expect(r).toMatchObject({ home: "policy", status: "live", screen: "#out-of-stock-ordering" });
+    expect(r.adminOnly).toBeFalsy();
   });
 
   it("userPref rows are exactly the shared and api preference allow-lists", () => {
