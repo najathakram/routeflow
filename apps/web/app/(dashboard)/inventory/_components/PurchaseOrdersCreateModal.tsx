@@ -230,6 +230,7 @@ export function CreatePOModal({
                             step={0.0001}
                             placeholder="0.00"
                             title={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
+                            aria-label={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
                             value={line.unitCost}
                             onChange={(e) => updateLine(i, "unitCost", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"

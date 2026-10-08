@@ -201,7 +201,7 @@ export function PurchaseOrderLinesTable({
                     min={0}
                     step={0.0001}
                     title={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
-                    aria-label="Unit cost"
+                    aria-label={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
                     value={line.unitCost}
                     onChange={(e) => updateLine(i, { unitCost: e.target.value })}
                     className={`${inputCls} ${NUM_MIN}`}

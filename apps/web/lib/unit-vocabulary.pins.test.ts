@@ -58,6 +58,8 @@ type Pin = {
   gone: string[];
   /** Exact string-literal contents that are legitimately NOT display words (with the reason). */
   allow?: string[];
+  /** New literals that must be present. */
+  present?: string[];
 };
 
 const FILES: Pin[] = [
@@ -78,6 +80,7 @@ const FILES: Pin[] = [
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
     ],
+    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
   },
   {
     file: `${D}orders/_components/scan/PriceEditor.tsx`,
@@ -91,6 +94,7 @@ const FILES: Pin[] = [
       "1 case = {li.unitsPerBox} units",
       '"Case price"',
     ],
+    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
   },
   {
     file: `${D}invoices/new/page.tsx`,
@@ -122,7 +126,7 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}products/[id]/ProductUnitsCard.tsx`,
-    gone: ["· the pack (edit", "derived from the pack price"],
+    gone: ["· the pack (edit", "derived from the pack price", "per unit\n"],
   },
   {
     file: `${D}inventory/_components/PurchaseOrdersCreateModal.tsx`,
@@ -131,13 +135,16 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}inventory/_components/PurchaseOrderLinesTable.tsx`,
-    gone: ["Unit Cost ($)", "Cost per unit", '"per unit"'],
+    gone: ["Unit Cost ($)", "Cost per unit", '"per unit"', 'aria-label="Unit cost"'],
   },
   {
     file: `${D}returns/_components/InlineReturnSection.tsx`,
     gone: ['label="Qty (pieces)"'],
   },
-  { file: `${D}products/[id]/page.tsx`, gone: ['label="Units per case"'] },
+  {
+    file: `${D}products/[id]/page.tsx`,
+    gone: ['label="Units per case"', "} units`", "/ unit</p>", "(same as case code)"],
+  },
   { file: `${D}products/page.tsx`, gone: ['header: "Units / case"'] },
   {
     file: `${W}components/ProductCreateModal.tsx`,
@@ -148,8 +155,11 @@ const FILES: Pin[] = [
 ];
 
 describe("U-3a unit words: operator copy comes from the helper (web)", () => {
-  describe.each(FILES)("$file", ({ file, gone, allow = [] }) => {
+  describe.each(FILES)("$file", ({ file, gone, allow = [], present = [] }) => {
     const src = read(file);
+    it.each(present)("now contains %j", (s) => {
+      expect(src).toContain(s);
+    });
     it.each(gone)("no longer contains %j", (s) => {
       expect(src).not.toContain(s);
     });
@@ -196,10 +206,6 @@ const KEEP: Array<{ file: string; mustContain: string[] }> = [
     mustContain: ['"case" | "unit"', 'aria-label="Unit price"'],
   },
   { file: `${W}components/LineItemRowReadOnly.tsx`, mustContain: ["formatQtySplit"] },
-  {
-    file: `${D}inventory/_components/PurchaseOrderLinesTable.tsx`,
-    mustContain: ['aria-label="Unit cost"'],
-  },
   { file: `${W}components/family/FamilyVariantsGrid.tsx`, mustContain: ['label: "Unit code"'] },
   { file: `${W}components/PackSizeUnknownModal.tsx`, mustContain: ["Units per case missing"] },
 ];

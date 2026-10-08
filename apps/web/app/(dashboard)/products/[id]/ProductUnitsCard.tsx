@@ -129,7 +129,7 @@ function UnitRow({
         </div>
         <div>
           <label className={LABEL} htmlFor={`${idp}-factor`}>
-            {w.base.other} per unit
+            {w.base.other} per {unit.label.toLowerCase()}
           </label>
           <DecimalInput
             id={`${idp}-factor`}

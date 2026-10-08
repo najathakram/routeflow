@@ -60,6 +60,7 @@ import {
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
+import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -977,7 +978,9 @@ export default function ProductDetailPage() {
     if (!(activeUnitsPerBox > 1)) return null;
     const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
-      <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
+      <p className="mt-0.5 text-[11px] text-navy/50">
+        ≈ ${pu.toFixed(2)} / {UW.base.short.one}
+      </p>
     ) : null;
   };
 
@@ -1690,7 +1693,7 @@ export default function ProductDetailPage() {
                         />
                       ) : (
                         (product.unitSku ?? (
-                          <span className="text-navy/30">— (same as case code)</span>
+                          <span className="text-navy/30">— (same as {UW.pack.lower} code)</span>
                         ))
                       )
                     }
@@ -1766,10 +1769,8 @@ export default function ProductDetailPage() {
                           }
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
-                      ) : Number(product.unitsPerBox) > 1 ? (
-                        `${product.unitsPerBox} units`
                       ) : (
-                        "Sold individually"
+                        <PiecesPerBoxValue unitsPerBox={product.unitsPerBox} />
                       )
                     }
                   />
