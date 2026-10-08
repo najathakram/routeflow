@@ -416,6 +416,51 @@ describe("RfInvoiceMailerService", () => {
     });
   });
 
+  describe("needsReview rows are not chased automatically (PR4a)", () => {
+    it("PIN 4: a flagged row gets no email at d0, d7 or d14 (and no issue email); an unflagged row still gets each", async () => {
+      const flagged = make({
+        invoices: [
+          inv("inv-1", { dueDate: dueIn(0), needsReview: true }),
+          inv("inv-2", { dueDate: dueIn(-7), needsReview: true }),
+          inv("inv-3", { dueDate: dueIn(-14), needsReview: true }),
+        ],
+      });
+      const r = await flagged.svc.runRemind(NOW);
+      expect(r).toMatchObject({ considered: 0, sent: 0 });
+      await flagged.svc.sendAuto("inv-1", "issue", NOW);
+      expect(flagged.sendPlatform).not.toHaveBeenCalled();
+      expect(flagged.prisma.billingNotificationLog.create).not.toHaveBeenCalled();
+      expect(sent(flagged.audits)).toHaveLength(0);
+      expect(flagged.invoices.map((x) => x.sendCount)).toEqual([0, 0, 0]);
+
+      const plain = make({
+        invoices: [
+          inv("inv-1", { dueDate: dueIn(0) }),
+          inv("inv-2", { dueDate: dueIn(-7) }),
+          inv("inv-3", { dueDate: dueIn(-14), needsReview: false }),
+        ],
+      });
+      expect((await plain.svc.runRemind(NOW)).sent).toBe(3);
+      const keys = plain.prisma.billingNotificationLog.create.mock.calls.map(
+        (c: any) => c[0].data.key,
+      );
+      expect(keys.sort()).toEqual(["RF-2026-0001:d0", "RF-2026-0002:d7", "RF-2026-0003:d14"]);
+    });
+
+    it("a flagged row does not stop the sweep reaching an unflagged one, and a manual resend still works", async () => {
+      const { svc, sendPlatform } = make({
+        invoices: [
+          inv("inv-1", { dueDate: dueIn(-7), needsReview: true }),
+          inv("inv-2", { dueDate: dueIn(-7) }),
+        ],
+      });
+      expect(await svc.runRemind(NOW)).toMatchObject({ considered: 1, sent: 1 });
+      sendPlatform.mockClear();
+      expect((await svc.sendManual("inv-1", ADMIN, NOW)).outcome).toBe("sent");
+      expect(sendPlatform).toHaveBeenCalled();
+    });
+  });
+
   describe("issue email", () => {
     it("live: sent once under the '<number>:issued' claim, with an RF_INVOICE_SENT trigger issue audit", async () => {
       const { svc, sendPlatform, invoices, audits, prisma } = make({ invoices: [inv("inv-1")] });
