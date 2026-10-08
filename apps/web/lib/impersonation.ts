@@ -102,7 +102,12 @@ export function exitImpersonationTarget(): string {
  */
 export function exitImpersonation(): void {
   if (typeof window === "undefined") return;
-  if (guardCounterLeave()) return; // a counter sale is being recorded: do not hard-load away from it
+  // a sale is being recorded: do not hard-load away; lines in the cart: ask first
+  if (guardCounterLeave(doExitImpersonation)) return;
+  doExitImpersonation();
+}
+
+function doExitImpersonation(): void {
   // Read BEFORE clearing: clearImpersonation drops the stored source id.
   const target = exitImpersonationTarget();
   clearTenantCookie();
