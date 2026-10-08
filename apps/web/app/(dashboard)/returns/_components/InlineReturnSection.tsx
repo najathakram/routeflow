@@ -101,6 +101,8 @@ export interface InlineReturnSectionProps {
   renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
   /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
   quoteOverride?: InlineReturnQuoteResponse | null;
+  /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
+  quoteNote?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -123,6 +125,7 @@ export function InlineReturnSection({
   renderQuoteFooter,
   hideBack,
   quoteOverride,
+  quoteNote,
   onQuoteRefused,
   hidden = false,
 }: InlineReturnSectionProps) {
@@ -654,7 +657,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              This will be issued as credit note on the customer&apos;s balance.
+              {quoteNote ?? <>This will be issued as credit note on the customer&apos;s balance.</>}
             </p>
           </div>
 

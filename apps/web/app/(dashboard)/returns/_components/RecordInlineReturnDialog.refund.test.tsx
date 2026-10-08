@@ -149,6 +149,43 @@ describe("choice block visibility", () => {
     expect(confirmBtn(/^return & refund \$12\.40$/i)).toBeInTheDocument();
   });
 
+  it("W21b: the quote note follows the choice (credit note vs refund; no choice block = unchanged)", async () => {
+    await toQuote(quote());
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+    expect(screen.queryByText(/issued as credit note/i)).toBeNull();
+    expect(screen.getByText(/this will be refunded to the customer/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+    expect(screen.queryByText(/refunded to the customer/i)).toBeNull();
+  });
+
+  it("W21b: with no choice block the credit-note line is today's", async () => {
+    await toQuote(quote({ canRefund: false, paidInFull: false }));
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+  });
+
+  it("W21b: walk-in (Refund preselected) never shows the credit-note line", async () => {
+    await toQuote(quote({ customerIsWalkIn: true }));
+    expect(screen.queryByText(/issued as credit note/i)).toBeNull();
+    expect(screen.getByText(/this will be refunded to the customer/i)).toBeInTheDocument();
+  });
+
+  it("W21b: closing hands focus to onCloseAutoFocus (the opener restores it)", async () => {
+    const onCloseAutoFocus = jest.fn((e: Event) => e.preventDefault());
+    const props = {
+      onClose: jest.fn(),
+      customerId: "cust-1",
+      orderId: "order-1",
+      allowRefund: true,
+      onCloseAutoFocus,
+    };
+    const { rerender } = renderWithProviders(<RecordInlineReturnDialog open {...props} />);
+    await screen.findByText(/what came back/i);
+    rerender(<RecordInlineReturnDialog open={false} {...props} />);
+    await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalled());
+  });
+
   it("Refund by is preselected from paidMethods[0], falling back to Cash", async () => {
     await toQuote(quote({ paidMethods: ["CARD", "CASH"] }));
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
