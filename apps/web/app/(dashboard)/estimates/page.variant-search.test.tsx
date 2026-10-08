@@ -127,3 +127,57 @@ describe("new estimate - product search variants and families (B1215)", () => {
     expect(box.value).toBe("pod");
   });
 });
+
+/**
+ * #3323 fold (c): a NON-family parent (a sellable product that also has variants) stays quotable as its
+ * own line - the picker may not over-filter it down to an expander. A FAMILY still never is.
+ */
+const PARENT = {
+  id: "p-bar",
+  name: "Protein Bar",
+  kind: "STANDARD",
+  parentProductId: null,
+  unit: "box",
+  pricePerUnit: "24.00",
+  isActive: true,
+  variants: [
+    {
+      id: "v-choc",
+      name: "Chocolate",
+      variantName: "Chocolate",
+      kind: "VARIANT",
+      parentProductId: "p-bar",
+      unit: "box",
+      pricePerUnit: "25.00",
+      isActive: true,
+    },
+  ],
+};
+
+describe("new estimate - a non-family parent stays quotable (#3323)", () => {
+  it("the expanded group offers the parent itself, and quoting it adds the parent line", async () => {
+    mockRows = [PARENT];
+    const { user, dialog } = await openDialog();
+    await user.type(within(dialog).getByPlaceholderText(/search by name, sku/i), "bar");
+    await user.click(await within(dialog).findByRole("button", { name: /Protein Bar/ }));
+    expect(
+      await within(dialog).findByRole("button", { name: /Protein Bar - Chocolate/ }),
+    ).toBeInTheDocument();
+    await user.click(
+      await within(dialog).findByRole("button", { name: /Quote Protein Bar itself/ }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).getAllByText("Protein Bar").length).toBeGreaterThan(0),
+    );
+    expect(within(dialog).queryByRole("button", { name: /Quote Protein Bar itself/ })).toBeNull();
+  });
+
+  it("a FAMILY group has no 'itself' row", async () => {
+    mockRows = [FAMILY];
+    const { user, dialog } = await openDialog();
+    await user.type(within(dialog).getByPlaceholderText(/search by name, sku/i), "pod");
+    await user.click(await within(dialog).findByRole("button", { name: /Sample Pod/ }));
+    await within(dialog).findByRole("button", { name: /Sample Pod - Mint/ });
+    expect(within(dialog).queryByRole("button", { name: /itself/ })).toBeNull();
+  });
+});
