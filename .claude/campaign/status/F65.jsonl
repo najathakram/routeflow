@@ -15,3 +15,5 @@
 {"id":"B1223","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1225","batch":"F65","tier":"T1","state":"already-fixed","pr":3268,"proof":null,"evidence":"duplicate of B1188; the B1188 fix commit 20385500b (#3268 content) is an ancestor of master"}
 {"id":"B1226","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1227","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1228","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
