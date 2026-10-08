@@ -53,6 +53,13 @@ const suggestion = {
 };
 
 beforeEach(() => jest.clearAllMocks());
+// An applied scan queues its count line behind the component's 900 ms flush debounce, and that timer outlives the
+// unmount. Let it fire inside the test that queued it, or it lands in a LATER test's "nothing was written" check.
+afterEach(async () => {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1000));
+  });
+});
 
 describe("StockCountTab - fuzzy single match (B1219)", () => {
   it("counts nothing until Apply", async () => {
