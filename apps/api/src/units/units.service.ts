@@ -143,6 +143,14 @@ export class UnitsService {
     if (!existing) {
       try {
         const created = await db.tenantUnit.create({ data: { tenantId, name, nameKey } });
+        await this.audit.log({
+          tenantId,
+          userId: user.sub,
+          action: "tenant_unit.created",
+          entityType: "TenantUnit",
+          entityId: created.id,
+          meta: { name },
+        });
         return this.oneRow(tenantId, created.id);
       } catch (e) {
         if (!isUniqueViolation(e)) throw e;
@@ -193,9 +201,13 @@ export class UnitsService {
     const db = this.prisma.forTenant();
     const existing = await db.tenantUnit.findFirst({ where: { id, tenantId } });
     if (!existing) throw new NotFoundException("Unit not found");
+    // Already in the asked state: nothing changed, so nothing is written or audited.
+    if (archived === (existing.archivedAt != null)) {
+      return { unit: await this.oneRow(tenantId, id), productsUpdated: 0 };
+    }
     const { count } = await db.tenantUnit.updateMany({
       where: { id, tenantId },
-      data: { archivedAt: archived ? (existing.archivedAt ?? new Date()) : null },
+      data: { archivedAt: archived ? new Date() : null },
     });
     if (count === 0) throw new NotFoundException("Unit not found");
     const unit = await this.oneRow(tenantId, id);
@@ -338,17 +350,19 @@ export class UnitsService {
       }
 
       const distinct = new Set<string>([...levelProductIds, ...baseIds, ...packIds, ...unitIds]);
-      return { before: unit.name as string, updated, productsUpdated: distinct.size };
-    });
-
-    // The audit row is non-transactional by design: written only once the rename has committed.
-    await this.audit.log({
-      tenantId,
-      userId: user.sub,
-      action: "tenant_unit.renamed",
-      entityType: "TenantUnit",
-      entityId: id,
-      meta: { from: done.before, to: newName, productsUpdated: done.productsUpdated },
+      // Inside the transaction: a rename that is not on the trail is rolled back with its audit row
+      // (AuditService.log swallows its own failures, so it cannot give that guarantee).
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: user.sub,
+          action: "tenant_unit.renamed",
+          entityType: "TenantUnit",
+          entityId: id,
+          meta: { from: unit.name as string, to: newName, productsUpdated: distinct.size },
+        },
+      });
+      return { updated, productsUpdated: distinct.size };
     });
     return {
       unit: {

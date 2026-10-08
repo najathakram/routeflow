@@ -26,6 +26,11 @@ function stubs() {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       update: jest.fn(),
     },
+    auditLog: {
+      create: jest.fn(async () => {
+        order.push("tx-audit");
+      }),
+    },
   };
   const prisma = {
     getTenantId: jest.fn().mockReturnValue(T),
@@ -225,6 +230,37 @@ describe("UnitsService", () => {
       );
     });
 
+    it("a NEW unit is audited (tenant_unit.created) after the row exists", async () => {
+      const { service, db, prisma, audit } = make();
+      db.tenantUnit.create.mockResolvedValue(
+        row({ id: "u9", name: "Half Case", nameKey: "half case" }),
+      );
+      prisma.$queryRaw.mockResolvedValue([dtoRow({ id: "u9", name: "Half Case" })]);
+      await service.create({ name: "Half Case" }, user);
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: T,
+          userId: "u1",
+          action: "tenant_unit.created",
+          entityType: "TenantUnit",
+          entityId: "u9",
+          meta: { name: "Half Case" },
+        }),
+      );
+    });
+
+    it("a P2002 loser of a concurrent add writes no created row (the winner audits)", async () => {
+      const { service, db, prisma, audit } = make();
+      db.tenantUnit.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(row());
+      db.tenantUnit.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
+      );
+      prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      await service.create({ name: "Case" }, user);
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
     it("an active duplicate writes no audit row", async () => {
       const { service, db, prisma, audit } = make();
       db.tenantUnit.findFirst.mockResolvedValue(row());
@@ -354,7 +390,7 @@ describe("UnitsService", () => {
       expect(h.db.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it("writes nothing to line snapshots: only TenantUnit, ProductUnit and Product are touched", async () => {
+    it("writes nothing to line snapshots: only TenantUnit, ProductUnit, Product and the audit row are touched", async () => {
       const h = make();
       seedRename(h, { products: [], levels: [] });
       await h.service.update("u1", { name: "Carton" }, user);
@@ -362,7 +398,7 @@ describe("UnitsService", () => {
         Object.keys(h.db)
           .filter((k) => !k.startsWith("$"))
           .sort(),
-      ).toEqual(["product", "productUnit", "tenantUnit"]);
+      ).toEqual(["auditLog", "product", "productUnit", "tenantUnit"]);
     });
 
     it("a collision inside one product refuses the WHOLE rename (409, names the products, nothing written)", async () => {
@@ -540,7 +576,7 @@ describe("UnitsService", () => {
       });
     });
 
-    it("audits ONCE, AFTER the transaction commits, with old and new name and the count", async () => {
+    it("audits ONCE, INSIDE the rename's transaction (rolled back with it), with old and new name and the count", async () => {
       const h = make();
       seedRename(h, {
         linked: [{ id: "l1", productId: "p1" }],
@@ -548,10 +584,11 @@ describe("UnitsService", () => {
         levels: [{ productId: "p1", label: "Case", tenantUnitId: "u1" }],
       });
       await h.service.update("u1", { name: "Carton" }, user);
-      expect(h.order).toEqual(["tx-end", "audit"]);
-      expect(h.audit.log).toHaveBeenCalledTimes(1);
-      expect(h.audit.log).toHaveBeenCalledWith(
-        expect.objectContaining({
+      expect(h.order).toEqual(["tx-audit", "tx-end"]);
+      expect(h.audit.log).not.toHaveBeenCalled();
+      expect(h.db.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(h.db.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
           tenantId: T,
           userId: "u1",
           action: "tenant_unit.renamed",
@@ -559,7 +596,25 @@ describe("UnitsService", () => {
           entityId: "u1",
           meta: expect.objectContaining({ from: "Case", to: "Carton", productsUpdated: 1 }),
         }),
-      );
+      });
+    });
+
+    it("a failed audit write fails the rename (the transaction rolls the relabel back)", async () => {
+      const h = make();
+      seedRename(h, { products: [], levels: [] });
+      h.db.auditLog.create.mockRejectedValue(new Error("audit down"));
+      await expect(h.service.update("u1", { name: "Carton" }, user)).rejects.toThrow("audit down");
+    });
+
+    it("a refused rename writes no audit row", async () => {
+      const h = make();
+      seedRename(h, {
+        linked: [{ id: "l1", productId: "p1" }],
+        products: [{ id: "p1", name: "Mug", baseUnitLabel: null, packLabel: null, unit: "Crate" }],
+        levels: [{ productId: "p1", label: "Case", tenantUnitId: "u1" }],
+      });
+      await h.service.update("u1", { name: "Crate" }, user).catch(() => undefined);
+      expect(h.db.auditLog.create).not.toHaveBeenCalled();
     });
   });
 
@@ -581,6 +636,25 @@ describe("UnitsService", () => {
           meta: expect.objectContaining({ name: "Case", productCount: 40 }),
         }),
       );
+    });
+
+    it("restoring a unit that is NOT archived is a no-op: no write, no restored audit row", async () => {
+      const h = make();
+      h.db.tenantUnit.findFirst.mockResolvedValue(row());
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow()]);
+      const out = await h.service.update("u1", { archived: false }, user);
+      expect(out).toEqual({ unit: dtoRow(), productsUpdated: 0 });
+      expect(h.db.tenantUnit.updateMany).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
+    });
+
+    it("archiving a unit that is already archived is a no-op too (archivedAt keeps its date)", async () => {
+      const h = make();
+      h.db.tenantUnit.findFirst.mockResolvedValue(row({ archivedAt: new Date("2026-10-01") }));
+      h.prisma.$queryRaw.mockResolvedValue([dtoRow({ archivedAt: new Date("2026-10-01") })]);
+      await h.service.update("u1", { archived: true }, user);
+      expect(h.db.tenantUnit.updateMany).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
     });
 
     it("restore clears archivedAt and audits", async () => {
