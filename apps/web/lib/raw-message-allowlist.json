@@ -91,8 +91,12 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
+  "app/(dashboard)/invoices/[id]/AdjustPricesPanel.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    "count": 17,
+    "count": 16,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/invoices/page.tsx": {
@@ -108,12 +112,16 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/orders/[id]/page.tsx": {
-    "count": 2,
-    "why": "B991 / B987-E (codes + structured fields first): the cancel and fulfillment refusals are UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the cancel refusal is UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
   },
   "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
     "count": 2,
     "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
+  },
+  "app/(dashboard)/orders/_components/OrderFulfilmentRow.tsx": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): the fulfillment refusal is UNCODED and today's server sentence says what to fix, so it keeps it (coded refusals are mapped first); moved here from orders/[id]/page.tsx; pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
     "count": 2,
@@ -183,6 +191,10 @@
   "app/(dashboard)/settings/batch-import/page.tsx": {
     "count": 2,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/settings/billing/page.tsx": {
+    "count": 1,
+    "why": "SA-690: renders the API-authored ADDON_BILLING_PENDING_CHECKOUT message on a failed checkout; pending"
   },
   "app/(dashboard)/settings/import/page.tsx": {
     "count": 8,
@@ -257,7 +269,7 @@
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/[id]/page.tsx": {
-    "count": 8,
+    "count": 7,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/tenants/new/page.tsx": {
@@ -265,7 +277,7 @@
     "why": "B986-2 platform-admin: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(platform-admin)/admin/tenants/page.tsx": {
-    "count": 6,
+    "count": 2,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/buyer/change-password/page.tsx": {
@@ -297,10 +309,6 @@
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/buyer/portal/[seller]/payments/_components/MakePaymentPanel.tsx": {
-    "count": 1,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
-  "app/buyer/portal/[seller]/templates/page.tsx": {
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },

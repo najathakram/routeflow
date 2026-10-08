@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 // #2406 — order-edit host: the edit-mode Returns section folds an inline return into the SAME
@@ -60,6 +61,7 @@ const order = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  seedSession("OPERATOR"); // B1134: the action bar is staff-only
   get.mockImplementation((url: string) => {
     if (url === "/orders/o1") return Promise.resolve({ data: order });
     if (url === "/tenants/me/addons")

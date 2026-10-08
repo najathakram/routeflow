@@ -29,3 +29,31 @@ export function selectableOptions(options: FeatureModeOption[]): FeatureModeOpti
 }
 
 export const MIXED_LABEL = "Both";
+
+const UNKNOWN_MODE = "a setting this screen does not recognise";
+
+/** A mode key as the registry's own label; an unknown key is described, never printed raw. */
+export function modeLabel(options: FeatureModeOption[], key: string): string {
+  return options.find((o) => o.key === key)?.label ?? UNKNOWN_MODE;
+}
+
+/** Where the applied mode came from, in plain words (B1132). */
+export function modeSourceLabel(mode: Pick<FeatureModeState, "source">): string {
+  return mode.source === "TENANT" ? "Set for this business" : "Default (not set for this business)";
+}
+
+/**
+ * Why a free configuration row (gate `none`: no plan flag or add-on decides it) reads the way it
+ * does. The plan default is NOT the reason such a row is on, so the plan sentence never applies to
+ * it (B1132): the stored mode, and its source, are.
+ */
+export function explainModeSentence(options: FeatureModeOption[], mode: FeatureModeState): string {
+  const applied = modeLabel(options, mode.effective);
+  const base =
+    mode.source === "TENANT"
+      ? `Set to "${applied}" for this business, for example by applying a business profile in Setup. The plan does not decide this setting.`
+      : `Not set for this business, so it uses the default, "${applied}". The plan does not decide this setting.`;
+  return mode.value !== mode.effective
+    ? `${base} The saved value "${modeLabel(options, mode.value)}" is not in effect because what it needs is not turned on.`
+    : base;
+}

@@ -17,6 +17,11 @@ export type FulfilmentMode = (typeof FULFILMENT_MODE_VALUES)[number];
 export const COUNTER_SALES_MODE_VALUES = ["unset", "on"] as const;
 export type CounterSalesMode = (typeof COUNTER_SALES_MODE_VALUES)[number];
 
+/** The modules that make a fleet (routes, order delivery), for the web's setup copy. The api keeps
+ *  its own `FLEET_KEYS` literal (a runtime import of this raw-TS package fails its dist build);
+ *  apps/api/src/billing/fleet-keys-parity.spec.ts pins the two set-equal. */
+export const FLEET_MODULE_KEYS = ["recurring_routes", "order_delivery"] as const;
+
 /**
  * PICKUP is a capability METHOD and a FulfillPath value (the order enum is ROUTE|SHIP|PICKUP since
  * the 20261004150000 migration). No order write accepts "PICKUP" yet (WRITABLE_FULFILL_PATHS);
@@ -47,6 +52,29 @@ export interface FulfilmentCapability {
   consistent: boolean;
 }
 
+/** An account with no fulfilment mode set: exactly today's behaviour (ROUTE/SHIP both offered). The ONE
+ *  copy: the api's derive is pinned to it and the web's unset check reads it. */
+export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
+  methods: ["ROUTE", "SHIP"],
+  staffDefault: "ROUTE",
+  staffOpensAs: "order",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: true,
+  consistent: true,
+};
+
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }
+
+/**
+ * `GET /buyer/capabilities` (business profiles 1B): the ONLY fulfilment facts a buyer gets about
+ * its seller — how portal orders ship and whether the seller runs its own fleet. No staff fields
+ * (`methods`, `staffDefault`, `staffOpensAs`, `counter`) and no `consistent`.
+ */
+export type BuyerSellerCapability = Pick<
+  FulfilmentCapability,
+  "portalMethods" | "portalDefault" | "fleet"
+>;

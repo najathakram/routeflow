@@ -2,11 +2,18 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
-import { getStoredActiveSeller } from "@/lib/buyer-auth";
+import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
+import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
+import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
+import {
+  isTrackingLive,
+  type FulfilmentMethod,
+  type InvoiceStatus,
+  type OrderTrackingResponse,
+} from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
@@ -70,6 +77,9 @@ export interface DashboardData {
     createdAt: string;
     requestedDeliveryDate: string | null;
     itemCount: number;
+    /** Business profiles 1B: the badge reads the order detail's label (buyerOrderStatusLabel). */
+    fulfillPath: string;
+    shippedAt: string | null;
   }>;
   stats: {
     activeOrders: number;
@@ -134,6 +144,8 @@ export interface BuyerOrderTemplate {
     productId: string;
     qty: number;
     notes: string | null;
+    /** Set when the seller suspended this line — a manual reorder never places it. */
+    suspendedAt?: string | null;
     product: { id: string; name: string; unit: string };
   }>;
   customer: { id: string; businessName: string };
@@ -367,6 +379,8 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
+    // The cart and shelf render their own sentence for the "order already placed" refusals.
+    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
     mutationFn: (data: {
       items: Array<{
         productId: string;
@@ -380,8 +394,22 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
       forceNew?: boolean;
-    }) => buyerApiClient.post("/buyer/orders", data).then((r) => r.data),
+      /** order ahead: the buyer's pickup / ship choice; omitted = the server's own default */
+      fulfillPath?: FulfilmentMethod;
+    }) =>
+      // B1094: the same cart carries the same key, so a double click / timeout retry applies once.
+      buyerApiClient
+        .post("/buyer/orders", data, {
+          headers: {
+            "Idempotency-Key": buyerSubmitKeyFor(
+              data,
+              `${getStoredBuyerId() ?? ""}|${getStoredActiveSeller()?.tenant.id ?? ""}`,
+            ),
+          },
+        })
+        .then((r) => r.data),
     onSuccess: () => {
+      clearBuyerSubmitKey();
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
@@ -444,7 +472,7 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: number;
   taxAmount: number;
   discount: number;
@@ -507,9 +535,12 @@ export function useBuyerTemplates() {
   });
 }
 
-export function useBuyerReorder() {
+/** `localErrorToast`: the caller (the reorder review sheet) renders its own fixed error sentence,
+ *  so the app-wide "Something went wrong…" toast must not also fire (one message per failure). */
+export function useBuyerReorder(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (templateId: string) =>
       buyerApiClient.post(`/buyer/templates/${templateId}/reorder`).then((r) => r.data),
     onSuccess: () => {

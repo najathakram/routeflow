@@ -15,8 +15,15 @@
  * invented for a partial shipment.
  */
 import { ConflictException, Logger } from "@nestjs/common";
+import type { OrderCancelBlockedReason } from "@routeflow/types";
 import { FulfillPath, OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  RECONCILE_PARTIALS,
+  invoicesNeedReview,
+  orderInvoicesNeedReviewError,
+} from "../invoices/invoice-partition";
+import { SHIP_STATE_REOPENED } from "./ship-state-markers"; // a leaf: order-ship-state.ts imports THIS file
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
@@ -92,18 +99,45 @@ export async function settleOrderInvoice(
     moment === "delivered" && alreadySettledAtShipment
       ? null
       : await self.invoicesService.findOpenOrderDraft(id);
+  let partials = false;
   if (draft) {
     try {
-      await self.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      return undefined;
+      // SA-681: "partials" = the draft is one of several invoices (or a lone partial) and was left
+      // untouched; fall through to bill only the un-invoiced remainder (qty - invoicedQty).
+      const res = await self.invoicesService.reconcileOrderDraftInvoice(id, {
+        basis: "order",
+        shortDraftIsPartial: true,
+      });
+      if (res !== RECONCILE_PARTIALS) return undefined;
+      partials = true;
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
-      return new ConflictException(
-        `The order was marked ${moment}, but its invoice could not be updated ` +
+      return new ConflictException({
+        code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+        message:
+          `The order was marked ${moment}, but its invoice could not be updated ` +
           `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
-      );
+      });
     }
+  }
+  // SA-687: the remainder create below trusts OrderItem.invoicedQty. After a replace-all edit (it
+  // resets it and orphans the invoices' lines) or a line cut under what is invoiced it cannot be
+  // trusted, so bill nothing and ask for a review. Runs on EVERY path that reaches the create, with
+  // or without an open draft (PARTIALLY_DELIVERED with the partials sent; DELIVERED after a
+  // shipment-time settle). Beside open partials the review also applies when nothing remains.
+  try {
+    if (await invoicesNeedReview(self.prisma.forTenant(), id, { onlyWhenRemainder: !partials })) {
+      return orderInvoicesNeedReviewError();
+    }
+  } catch (err: any) {
+    logger.error(`Failed to check invoices for order ${id}: ${err?.message ?? err}`);
+    return new ConflictException({
+      code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+      message:
+        `The order was marked ${moment}, but its invoice could not be checked ` +
+        `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
+    });
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;
@@ -124,28 +158,53 @@ export async function settleOrderInvoice(
   logger.error(
     `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
   );
-  return new ConflictException(
-    `The order was marked ${moment}, but its invoice could not be created ` +
+  return new ConflictException({
+    code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+    message:
+      `The order was marked ${moment}, but its invoice could not be created ` +
       `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
       `the order page to retry — the order stays ${moment} and nothing has been billed yet.`,
-  );
+  });
 }
 
 /**
- * L6: a CARRIER (SHIP) order that is out with the carrier is not cancelled — cancelling credits its
- * units back to stock while the parcel is still in transit. It goes through the return flow instead.
+ * L6 / B1082 / B1083: a CARRIER (SHIP) order whose parcel is with the carrier is not cancelled or
+ * deleted: that would credit its units back to stock while the parcel is still out. It goes through the
+ * return flow instead. "With the carrier" = out for delivery / partly delivered, OR still open
+ * (PENDING / CONFIRMED) with `shippedAt` set AND its last ship-state change a REOPEN from delivery
+ * (`order-ship-state.ts`). A deliberate "Unmark shipped" is NOT with the carrier (the parcel never left,
+ * so the stock comes back): the unmarked order is cancellable again. `shippedAt` itself survives both.
+ * KNOWN: a reopen that predates the markers has none, so it reads as unmarked (cancellable); pinned in
+ * `carrier-cancel.spec.ts` ("KNOWN: legacy reopen without marker"), see `order-ship-state.ts`.
  * GATED on the billing moment (`billsAtShipment`: ship / both / pickup_ship businesses only), so an
- * unset-mode business cancels exactly as before. A coded 409 before any write.
+ * unset-mode business is untouched. Returns the reason the web reads to disable Cancel, or null.
  */
-export async function assertCarrierOrderNotInTransit(
+export type CancelBlockedReason = OrderCancelBlockedReason;
+export async function carrierCancelBlockedReason(
   featureConfig: Parameters<typeof billsAtShipment>[0],
   tenantId: string | null | undefined,
-  order: { status: OrderStatus; fulfillPath: FulfillPath },
-): Promise<void> {
+  order: { id?: string; status: OrderStatus; fulfillPath: FulfillPath; shippedAt?: Date | null },
+  /** The last ship-state marker (`lastShipStateSource`); absent = unknown, which reads as with the carrier. */
+  lastShipState?: (orderId: string) => Promise<string | null>,
+): Promise<CancelBlockedReason | null> {
+  const open = order.status === OrderStatus.PENDING || order.status === OrderStatus.CONFIRMED;
   const inTransit =
     order.status === OrderStatus.OUT_FOR_DELIVERY ||
-    order.status === OrderStatus.PARTIALLY_DELIVERED;
-  if (!inTransit || !(await billsAtShipment(featureConfig, tenantId, order))) return;
+    order.status === OrderStatus.PARTIALLY_DELIVERED ||
+    (open && !!order.shippedAt);
+  if (!inTransit) return null;
+  if (!(await billsAtShipment(featureConfig, tenantId, order))) return null;
+  if (open) {
+    // shipped, then open again: unmarked (cancellable) or reopened after delivery (with the carrier)
+    const last = lastShipState && order.id ? await lastShipState(order.id) : null;
+    if (lastShipState && last !== SHIP_STATE_REOPENED) return null;
+  }
+  return "WITH_CARRIER";
+}
+
+/** The coded 409 for a blocked cancel / delete (see `carrierCancelBlockedReason`). */
+export function throwIfWithCarrier(reason: CancelBlockedReason | null): void {
+  if (!reason) return;
   throw new ConflictException({
     code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CANCEL,
     message: "This order is already with the carrier. Use a return instead of cancelling.",

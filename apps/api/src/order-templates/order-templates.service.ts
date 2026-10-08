@@ -12,6 +12,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
@@ -865,6 +866,23 @@ export class OrderTemplatesService {
         })
       : (allowOversellArg ?? isStaffRole);
     let replayed = false;
+    // Fulfil path (SA-678): the standing order takes the path order create would give it (the shared
+    // resolver) for EVERY tenant, so a SHIP customer's standing order is SHIP and folds with their
+    // other SHIP orders (the column default made it ROUTE).
+    const storedPath = (
+      await this.prisma.forTenant().customer.findFirst({
+        where: { id: template.customerId },
+        select: { fulfillPath: true },
+      })
+    )?.fulfillPath;
+    const fulfillPath = await resolveFulfilPath(
+      {
+        featureConfig: this.featureConfig,
+        tenantId: this.prisma.getTenantId(),
+        logger: this.logger,
+      },
+      { stored: storedPath, audience: "staff" },
+    );
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {
         // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
@@ -878,6 +896,7 @@ export class OrderTemplatesService {
         data: {
           customerId: template.customerId,
           templateId: template.id,
+          fulfillPath,
           orderNumber,
           subtotal,
           tax,
@@ -891,7 +910,16 @@ export class OrderTemplatesService {
         include: GENERATED_ORDER_INCLUDE,
       });
       await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
-      const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
+      // SA-714 R1: each stock line is paired with its created row (product + qty, consumed once) so the
+      // decrement can SET that row's backorder marker; `position` is the template's own line order.
+      const unmatched = [...(Array.isArray(order.lineItems) ? order.lineItems : [])];
+      const stockLines = lineItemsData.map((li, position) => {
+        const at = unmatched.findIndex(
+          (r) => r.productId === li.productId && Number(r.qty) === Number(li.qty),
+        );
+        const id = at >= 0 ? unmatched.splice(at, 1)[0].id : undefined;
+        return { id, position, productId: li.productId, qty: li.qty };
+      });
       // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
       // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
       await decrementStockForSale(
@@ -900,7 +928,13 @@ export class OrderTemplatesService {
         stockLines,
         allowOversell,
         // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
-        { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
+        // OOS PR2 (R4): a buyer's Reorder is customer-facing: a refusal carries the fixed copy, no numbers.
+        {
+          orderId: order.id,
+          notes: `TEMPLATE:${template.id}`,
+          performedById: null,
+          customerFacing: !unattended && !isStaffRole,
+        },
       );
       return order;
     });
@@ -943,7 +977,8 @@ export class OrderTemplatesService {
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
         template.customerId,
-        {},
+        // focusOrderId: only the standing order's path folds, so `merged` is never another path's pair
+        { focusOrderId: created.id },
         // POST-COMMIT: `try`, never `wait`. On the 06:00 cron this runs once per template in a
         // loop — waiting 20 s on each contended customer would stretch the run without changing
         // the outcome, since the hourly sweep folds whatever is left anyway.

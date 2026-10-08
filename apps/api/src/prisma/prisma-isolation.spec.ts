@@ -343,17 +343,22 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
     });
   });
 
-  describe("(a) post-filters the two findUnique* verbs (neither can take an extra `where` field)", () => {
-    it("findUnique: leaves `where` unchanged, but blanks a cross-tenant hit to null", async () => {
+  describe("(a) scopes the two findUnique* verbs (tenantId in `where`, plus a fail-closed result check)", () => {
+    it("findUnique: carries tenantId in `where`; the result check still blanks a cross-tenant hit to null", async () => {
       const { model, tx } = buildTx();
 
       const ownRow = await tx.order.findUnique({ where: { id: "order-a1" } });
       const foreignRow = await tx.order.findUnique({ where: { id: "order-b1" } });
 
-      // The underlying call never receives tenantId — Prisma's findUnique only accepts
-      // @id/@@unique fields in `where`, so injecting it there throws at runtime.
-      expect(model.findUnique).toHaveBeenNthCalledWith(1, { where: { id: "order-a1" } });
-      expect(model.findUnique).toHaveBeenNthCalledWith(2, { where: { id: "order-b1" } });
+      // Prisma >= 5 accepts non-unique filters beside the unique selector, so the tenant
+      // filter travels with the query. (This fake store ignores the extra filter and returns
+      // the foreign row anyway — the result check is what yields null here.)
+      expect(model.findUnique).toHaveBeenNthCalledWith(1, {
+        where: { id: "order-a1", tenantId: "tenant-a" },
+      });
+      expect(model.findUnique).toHaveBeenNthCalledWith(2, {
+        where: { id: "order-b1", tenantId: "tenant-a" },
+      });
       expect(ownRow).toEqual({ id: "order-a1", tenantId: "tenant-a", status: "OPEN" });
       expect(foreignRow).toBeNull();
     });
@@ -366,7 +371,9 @@ describe("REG-G8a PrismaService#_wrapTxWithTenant — tenant-isolation proxy (T-
         tenantId: "tenant-a",
         status: "OPEN",
       });
-      expect(model.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "order-a1" } });
+      expect(model.findUniqueOrThrow).toHaveBeenCalledWith({
+        where: { id: "order-a1", tenantId: "tenant-a" },
+      });
     });
 
     it("findUniqueOrThrow: a tenant-B row rejects with Prisma's own P2025, not the row (L-055)", async () => {
@@ -536,8 +543,8 @@ describe("REG-G8a PrismaService#_tenantExtension — tenant-isolation $extends l
     await expect(
       runExtension("findUniqueOrThrow", { where: { id: "order-a1" } }, query),
     ).resolves.toEqual(own);
-    // `where` is handed on untouched — findUnique* accepts only @id/@@unique fields.
-    expect(query).toHaveBeenCalledWith({ where: { id: "order-a1" } });
+    // The tenant filter rides in `where` beside the unique selector.
+    expect(query).toHaveBeenCalledWith({ where: { id: "order-a1", tenantId: "tenant-a" } });
   });
 
   it("findUniqueOrThrow: a tenant-B row rejects with Prisma's own P2025, not the row (L-055)", async () => {
@@ -594,7 +601,8 @@ describe("REG-G8a PrismaService#_tenantExtension — tenant-isolation $extends l
     }
 
     // The remaining four are covered above with their own shapes: upsert (where +
-    // create), findUnique / findUniqueOrThrow (post-filter, `where` untouched).
+    // create), findUnique / findUniqueOrThrow (tenantId in `where` + result check; see
+    // tenant-unique-lookup.spec.ts for the full matrix).
   });
 });
 

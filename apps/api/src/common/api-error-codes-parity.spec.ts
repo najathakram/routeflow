@@ -166,7 +166,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "LINE_ALREADY_DELIVERED",
     "STOP_ALREADY_COMPLETED",
   ],
-  "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": ["MERGE_CHOICE_REQUIRED"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx": ["MONEY_INVARIANT"],
@@ -204,7 +203,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 75;
+const CONSUMER_ALLOWLIST_TOTAL = 74;
 
 /**
  * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).
@@ -422,17 +421,47 @@ describe("API error codes: the onboarding contracts are registered (B987-C)", ()
   });
 });
 
+/**
+ * A code the API has STOPPED sending but a client still names, registered until that client drops it.
+ * SA-690 option A retired the interim checkout gate (`ADDON_BILLING_PENDING_CHECKOUT`): the API now bills
+ * a trial's add-ons at checkout instead of refusing. The web billing page still names the code (a
+ * refused-checkout branch and the trial enable-sheet copy its own comment says to DROP when Option A
+ * removes the gate), so the constant stays registered until that web copy lands; then delete the entry,
+ * the constant (api, shared types, mobile mock) and the web branch together.
+ * SELF-EXPIRING: while listed, no API source may send it and some web source must still consume it.
+ */
+const RETIRED_NOT_SENT: Record<string, string> = {
+  ADDON_BILLING_PENDING_CHECKOUT:
+    "SA-690 option A bills a trial's add-ons at checkout; the web billing page still maps the retired gate code",
+};
+
 describe("API error codes: every code is still sent by the API (#2163)", () => {
-  it.each(Object.keys(API_LOCAL))(
+  const apiUsersOf = (key: string) =>
+    sources.filter(
+      (s) =>
+        s.rel.startsWith(path.join("apps", "api", "src")) &&
+        s.rel !== CONSTANTS_FILE &&
+        s.text.includes(`API_ERROR_CODES.${key}`),
+    );
+
+  it.each(Object.keys(API_LOCAL).filter((k) => !(k in RETIRED_NOT_SENT)))(
     "API_ERROR_CODES.%s is referenced by an API source file",
     (key) => {
-      const users = sources.filter(
+      expect(apiUsersOf(key).length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(Object.keys(RETIRED_NOT_SENT))(
+    "retired %s: no API source sends it, a web source still consumes it, and it states why",
+    (key) => {
+      expect(RETIRED_NOT_SENT[key].length).toBeGreaterThan(20);
+      expect(Object.keys(API_LOCAL)).toContain(key); // an entry for a removed constant is deleted
+      expect(apiUsersOf(key)).toEqual([]);
+      const webUsers = sources.filter(
         (s) =>
-          s.rel.startsWith(path.join("apps", "api", "src")) &&
-          s.rel !== CONSTANTS_FILE &&
-          s.text.includes(`API_ERROR_CODES.${key}`),
+          s.rel.startsWith(path.join("apps", "web")) && s.text.includes(`API_ERROR_CODES.${key}`),
       );
-      expect(users.length).toBeGreaterThan(0);
+      expect(webUsers.length).toBeGreaterThan(0);
     },
   );
 });

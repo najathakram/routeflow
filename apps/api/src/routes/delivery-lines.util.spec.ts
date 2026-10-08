@@ -318,7 +318,12 @@ describe("assertDeliveriesFitStop — the at-door ceiling", () => {
 
     it.each(["completeWithPayment", "completeStop"])("%s", (name) => {
       const m = method(name);
-      const guard = calls(m, "assertDeliveriesFitStop");
+      // SA-706c: completeWithPayment runs the ceiling through lockStopOrdersAndFit (the stop's Orders
+      // locked first, then assertDeliveriesFitStop); completeStop still calls it directly.
+      const guard = [
+        ...calls(m, "assertDeliveriesFitStop"),
+        ...calls(m, "lockStopOrdersAndFit"),
+      ].sort((a, b) => a - b);
       const writes = [...calls(m, "orderItem.update"), ...calls(m, "deliveryMutation.create")];
       expect(guard.length).toBeGreaterThan(0);
       expect(writes.length).toBeGreaterThan(0);

@@ -18,6 +18,16 @@ import { useProduct } from "../../../../lib/api/products";
 import { useDeliveryAccess } from "../../../../lib/api/addons";
 import { useTripDraftStore } from "../../../../lib/trip-draft";
 import { DraftStrip } from "../../../../components/DraftStrip";
+import { BatchShipSheet } from "../../../../components/BatchShipSheet";
+import { usePackingSlips } from "../../../../lib/api/orders";
+import { useTenantFeatures } from "../../../../lib/tenant-features";
+import {
+  batchShipLimit,
+  orderSelectControls,
+  visibleSelectedIds,
+} from "../../../../lib/batch-ship-select";
+import { printPdf } from "../../../../lib/print-pdf";
+import { showToast } from "../../../../lib/toast";
 import {
   customerFilterChipLabel,
   productFilterChipLabel,
@@ -109,6 +119,25 @@ export default function OrdersListScreen() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const setTripOrderIds = useTripDraftStore((s) => s.setOrderIds);
 
+  // #3168 batch ship + packing slips: offered wherever the tenant's fulfilment methods include SHIP
+  // (hide-only; the server refuses non-carrier orders regardless).
+  const { data: tenantFeatures } = useTenantFeatures();
+  const offersShip = tenantFeatures?.capabilities?.fulfilment?.methods?.includes("SHIP") ?? false;
+  const packingSlips = usePackingSlips();
+  const [shipSheetOpen, setShipSheetOpen] = useState(false);
+  const printSlips = async (ids: string[]) => {
+    try {
+      const res = await packingSlips.mutateAsync(ids);
+      if (!res.url) {
+        showToast("No packing slips to print. Only carrier orders have them.");
+        return;
+      }
+      await printPdf({ url: res.url, filename: "packing-slips.pdf" });
+    } catch {
+      showToast("Could not generate packing slips. Try again.");
+    }
+  };
+
   const toggleSelectMode = () => {
     setSelectMode((v) => !v);
     setSelected(new Set());
@@ -153,6 +182,14 @@ export default function OrdersListScreen() {
   };
 
   const orders = data?.data ?? [];
+  const { showSelect, showPlanTrip } = orderSelectControls({ deliveryEnabled, offersShip });
+  // Only selected orders still in the loaded list count / ship / print (a filter change can leave
+  // off-screen ids selected).
+  const selectedIds = visibleSelectedIds(
+    selected,
+    orders.map((o) => o.id),
+  );
+  const shipLimit = batchShipLimit(selectedIds.length);
 
   // O-6: detect customers with multiple PENDING orders so the operator can see duplicates at a glance
   const pendingCountByCustomer = useMemo(() => {
@@ -171,7 +208,7 @@ export default function OrdersListScreen() {
       <NavBar
         largeTitle="Orders"
         leading={
-          deliveryEnabled ? (
+          showSelect ? (
             <NavAction label={selectMode ? "Done" : "Select"} onPress={toggleSelectMode} />
           ) : undefined
         }
@@ -272,16 +309,73 @@ export default function OrdersListScreen() {
           target, no double-submit. */}
       {selectMode ? (
         <View style={styles.bulkBar}>
-          <Pressable
-            style={[styles.bulkBtn, selected.size === 0 && styles.bulkBtnDisabled]}
-            disabled={selected.size === 0}
-            onPress={handlePlanTrip}
-          >
-            <Ionicons name="navigate-outline" size={18} color="#fff" />
-            <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
-          </Pressable>
+          {showPlanTrip ? (
+            <Pressable
+              style={[styles.bulkBtn, selected.size === 0 && styles.bulkBtnDisabled]}
+              disabled={selected.size === 0}
+              onPress={handlePlanTrip}
+            >
+              <Ionicons name="navigate-outline" size={18} color="#fff" />
+              <Text style={styles.bulkBtnText}>{selected.size} selected · Plan trip</Text>
+            </Pressable>
+          ) : null}
+          {offersShip && shipLimit.message ? (
+            <Text style={styles.bulkLimitText} testID="batch-ship-limit">
+              {shipLimit.message}
+            </Text>
+          ) : null}
+          {offersShip ? (
+            <View style={styles.bulkShipRow}>
+              <Pressable
+                style={[
+                  styles.bulkBtn,
+                  styles.bulkShipBtn,
+                  (selectedIds.length === 0 || shipLimit.tooMany) && styles.bulkBtnDisabled,
+                ]}
+                disabled={selectedIds.length === 0 || shipLimit.tooMany}
+                onPress={() => setShipSheetOpen(true)}
+                accessibilityRole="button"
+                testID="batch-ship-open"
+              >
+                <Text style={styles.bulkBtnText}>Mark shipped ({selectedIds.length})</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.bulkBtn,
+                  styles.bulkShipBtn,
+                  (selectedIds.length === 0 || shipLimit.tooMany || packingSlips.isPending) &&
+                    styles.bulkBtnDisabled,
+                ]}
+                disabled={selectedIds.length === 0 || shipLimit.tooMany || packingSlips.isPending}
+                onPress={() => void printSlips(selectedIds)}
+                accessibilityRole="button"
+                testID="batch-ship-slips-open"
+              >
+                <Text style={styles.bulkBtnText}>Print packing slips</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
+      <BatchShipSheet
+        visible={shipSheetOpen}
+        orders={orders
+          .filter((o) => selected.has(o.id))
+          .map((o) => ({
+            id: o.id,
+            orderNumber: o.orderNumber,
+            customerName: o.customer?.businessName,
+          }))}
+        onClose={(ran) => {
+          setShipSheetOpen(false);
+          if (ran) {
+            setSelectMode(false);
+            setSelected(new Set());
+          }
+        }}
+        onPrintSlips={(ids) => void printSlips(ids)}
+        printing={packingSlips.isPending}
+      />
     </SafeAreaView>
   );
 }
@@ -459,5 +553,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   bulkBtnDisabled: { opacity: 0.4 },
+  bulkShipRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  bulkLimitText: { fontSize: 13, color: ios.system.redInk, marginTop: 8, textAlign: "center" },
+  bulkShipBtn: { flex: 1, paddingHorizontal: 8 },
   bulkBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });

@@ -35,6 +35,10 @@ import { invoiceLineUnitNoun } from "../../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { confirm } from "../../../../../lib/confirm";
+import { decideScanResult, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -105,6 +109,7 @@ export default function AdjustOrderScreen() {
   const [qtyById, setQtyById] = useState<Record<string, number>>({});
   const [added, setAdded] = useState<AddedLineDraft[]>([]);
   const [saving, setSaving] = useState(false);
+  const matchPicker = useScanMatchPicker();
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const pendingRef = useRef<{ diff: CreateChangeRequestInput[]; index: number } | null>(null);
@@ -185,51 +190,61 @@ export default function AdjustOrderScreen() {
         showToast(`No product for "${trimmed}"`);
         return;
       }
-      const p = result.product;
-      const upb = Number(p.unitsPerBox ?? 0);
-      setAdded((prev) => {
-        const idx = prev.findIndex((a) => a.productId === p.id);
-        if (idx >= 0) {
-          const cur = prev[idx]!;
-          if (upb > 1) {
-            const boxes = cur.boxes + 1;
-            const next: AddedLineDraft = { ...cur, boxes, qty: boxes * upb + cur.pieces };
+      const addScanned = (p: ScannedProduct) => {
+        const upb = Number(p.unitsPerBox ?? 0);
+        setAdded((prev) => {
+          const idx = prev.findIndex((a) => a.productId === p.id);
+          if (idx >= 0) {
+            const cur = prev[idx]!;
+            if (upb > 1) {
+              const boxes = cur.boxes + 1;
+              const next: AddedLineDraft = { ...cur, boxes, qty: boxes * upb + cur.pieces };
+              return prev.map((a, i) => (i === idx ? next : a));
+            }
+            const next: AddedLineDraft = { ...cur, qty: cur.qty + 1 };
             return prev.map((a, i) => (i === idx ? next : a));
           }
-          const next: AddedLineDraft = { ...cur, qty: cur.qty + 1 };
-          return prev.map((a, i) => (i === idx ? next : a));
-        }
-        // Boxed products ALWAYS carry an explicit boxes/pieces split — a bare
-        // qty is read as a BOX count by one of the server's two ADD_ITEM code
-        // paths (the "merge into an existing line" branch treats qty as a raw
-        // piece delta; the "new line" branch derives pieces from boxes/pieces
-        // when present). Sending both keeps qty and boxes/pieces consistent
-        // (qty = the true piece-equivalent) so either server path is correct.
-        const draft: AddedLineDraft =
-          upb > 1
-            ? {
-                productId: p.id,
-                name: p.name,
-                unit: p.unit,
-                unitsPerBox: upb,
-                trackedCategoryId: p.trackedCategoryId ?? null,
-                boxes: 1,
-                pieces: 0,
-                qty: upb,
-              }
-            : {
-                productId: p.id,
-                name: p.name,
-                unit: p.unit,
-                unitsPerBox: null,
-                trackedCategoryId: p.trackedCategoryId ?? null,
-                boxes: 0,
-                pieces: 0,
-                qty: 1,
-              };
-        return [...prev, draft];
-      });
-      showToast(`Added ${p.name}`);
+          // Boxed products ALWAYS carry an explicit boxes/pieces split — a bare
+          // qty is read as a BOX count by one of the server's two ADD_ITEM code
+          // paths (the "merge into an existing line" branch treats qty as a raw
+          // piece delta; the "new line" branch derives pieces from boxes/pieces
+          // when present). Sending both keeps qty and boxes/pieces consistent
+          // (qty = the true piece-equivalent) so either server path is correct.
+          const draft: AddedLineDraft =
+            upb > 1
+              ? {
+                  productId: p.id,
+                  name: p.name,
+                  unit: p.unit,
+                  unitsPerBox: upb,
+                  trackedCategoryId: p.trackedCategoryId ?? null,
+                  boxes: 1,
+                  pieces: 0,
+                  qty: upb,
+                }
+              : {
+                  productId: p.id,
+                  name: p.name,
+                  unit: p.unit,
+                  unitsPerBox: null,
+                  trackedCategoryId: p.trackedCategoryId ?? null,
+                  boxes: 0,
+                  pieces: 0,
+                  qty: 1,
+                };
+          return [...prev, draft];
+        });
+        showToast(`Added ${p.name}`);
+      };
+      // B1220: a lone fuzzy match is only added after the driver confirms.
+      // B1220: a lone fuzzy match asks first; 2+ matches open a list — neither adds unprompted.
+      if (
+        !runScanDecision(decideScanResult(result, "add"), addScanned, confirm, {
+          pick: matchPicker.open,
+        })
+      ) {
+        addScanned(result.product);
+      }
     } catch (err: any) {
       showToast(err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.");
     }
@@ -504,6 +519,7 @@ export default function AdjustOrderScreen() {
           during the license block -- a scan landing mid-batch grows a draft
           past what a just-sent ADD_ITEM already covers. */}
       <BarcodeFab onScanned={handleScanned} aimAssist hidden={saving || !!licenseBlock} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the

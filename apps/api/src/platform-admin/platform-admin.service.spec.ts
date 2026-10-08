@@ -22,6 +22,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
+import * as manualActivationAddons from "../billing/manual-activation-addons";
 import { UserRole } from "@prisma/client";
 
 /**
@@ -92,6 +93,8 @@ describe("PlatformAdminService — audit provenance", () => {
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      // S3: activateManualSubscription writes its billing marker row inside the transaction.
+      create: jest.fn().mockResolvedValue({}),
     };
     // createMockPrisma's default $transaction mock builds `tx` from its internal model
     // set, which — like the top level — omits tenantSubscription. updatePlan writes
@@ -469,6 +472,120 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
 
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // Back-office P2: an ACTIVE (paying) tenant is never moved to TRIAL, on EITHER server path that
+  // can write TRIAL (extend-trial and the status PATCH): a coded 409 and NO write.
+  describe("ACTIVE -> TRIAL is refused (TENANT_TRIAL_EXTEND_NOT_ALLOWED)", () => {
+    const refusedWith = async (run: () => Promise<unknown>) => {
+      const err = await run().then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getStatus()).toBe(409);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+      });
+    };
+
+    describe("extendTrial", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          trialEndsAt: new Date("2026-11-01T00:00:00.000Z"),
+        } as any);
+      });
+
+      it("an ACTIVE tenant: the predicate write matches nothing, so 409 with the code and no audit row", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+
+        await refusedWith(() => service.extendTrial(TENANT_ID, 30, ADMIN_ID));
+
+        // the refusal is part of the write itself (no read-then-write gap)
+        expect(prisma.tenant.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: TENANT_ID, status: { not: "ACTIVE" } } }),
+        );
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it.each(["TRIAL", "SUSPENDED", "READ_ONLY"])(
+        "a %s tenant is extended: status TRIAL, a new end date, audited",
+        async () => {
+          prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+
+          const out = await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+
+          const data = prisma.tenant.updateMany.mock.calls[0][0].data as any;
+          expect(data.status).toBe("TRIAL");
+          expect(data.trialEndsAt).toBeInstanceOf(Date);
+          expect(out).toMatchObject({ trialEndsAt: expect.any(Date) });
+          expect(auditLog).toHaveBeenCalledWith(
+            expect.objectContaining({ action: "TENANT_TRIAL_EXTENDED", tenantId: TENANT_ID }),
+          );
+        },
+      );
+    });
+
+    describe("updateStatus (the status PATCH accepts any TenantStatus)", () => {
+      beforeEach(() => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      });
+
+      const prior = (status: string) =>
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          status,
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: null,
+        } as any);
+
+      it("ACTIVE -> TRIAL: 409 with the code, and nothing is written or audited", async () => {
+        prior("ACTIVE");
+
+        await refusedWith(() =>
+          service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID),
+        );
+
+        expect(prisma.tenant.update).not.toHaveBeenCalled();
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it.each(["SUSPENDED", "READ_ONLY", "TRIAL"])("%s -> TRIAL is still allowed", async (from) => {
+        prior(from);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "TRIAL",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "TRIAL" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: "TRIAL" } }),
+        );
+      });
+
+      it("ACTIVE -> SUSPENDED is untouched by the refusal", async () => {
+        prior("ACTIVE");
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "STARTER",
+        } as any);
+
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+
+        expect(prisma.tenant.update).toHaveBeenCalled();
+      });
     });
   });
 
@@ -2911,6 +3028,220 @@ describe("PlatformAdminService — audit provenance", () => {
       const upsertArg = (prisma as any).tenantSubscription.upsert.mock.calls[0][0];
       expect(upsertArg.create.cycle).toBe("ANNUAL");
       expect(upsertArg.update.cycle).toBe("ANNUAL");
+    });
+  });
+
+  // SA-668c residual / M-A: the manual activation hands a trial's unbilled self-serve add-ons to the pricing
+  // helper — the wiring (which status/class/cycle it sees, which locks it takes) is what these pin; the helper's
+  // own rules are in billing/manual-activation-addons.spec.ts and, on real Postgres, the override-activation DB spec.
+  describe("activateManualSubscription — wiring to priceUnbilledAddonsOnActivation (SA-668c / M-A)", () => {
+    const activateDto = {
+      plan: "PROFESSIONAL",
+      billingPeriodDays: 30,
+      paymentMethod: "BANK_TRANSFER",
+    } as any;
+    let priceSpy: jest.SpyInstance;
+    let lockSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
+        addonSkus: [{ sku: "CUSTOMER_PACK_100", name: "Customer pack (+100)", monthlyPrice: 50 }],
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([
+        {
+          sku: "CUSTOMER_PACK_100",
+          addonKey: "CUSTOMER_PACK_100",
+          quantity: 2,
+          active: true,
+          priceSnapshot: 0,
+          stripeItemId: null,
+          isComp: false,
+        },
+      ]);
+      priceSpy = jest.spyOn(manualActivationAddons, "priceUnbilledAddonsOnActivation");
+      priceSpy.mockResolvedValue([]);
+      lockSpy = jest.spyOn(manualActivationAddons, "withAddonLocks");
+      lockSpy.mockImplementation(async (_t: string, _s: readonly string[], fn: () => unknown) =>
+        fn(),
+      );
+    });
+    afterEach(() => {
+      priceSpy.mockRestore();
+      lockSpy.mockRestore();
+    });
+
+    const tenantBefore = (over: Record<string, unknown> = {}) =>
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        name: "Acme Foods",
+        slug: "acme",
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+        ...over,
+      } as any);
+
+    it("hands the helper the tx, the ledger, the status/class it read under the tenant lock, the cycle, plan, catalog and actor", async () => {
+      tenantBefore();
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy).toHaveBeenCalledTimes(1);
+      const [tx, events, args] = priceSpy.mock.calls[0];
+      expect(tx).toBeDefined();
+      expect(events).toBe(billingEventService);
+      expect(args).toMatchObject({
+        tenantId: TENANT_ID,
+        tenantLabel: "Acme Foods",
+        fromStatus: "TRIAL",
+        tenantClass: "PRODUCTION",
+        cycle: "MONTHLY",
+        planKey: "SCALE",
+        actorId: ADMIN_ID,
+        catalogAddons: [expect.objectContaining({ sku: "CUSTOMER_PACK_100" })],
+      });
+    });
+
+    it("MUST-A1: a lapsed trial reaches the helper as READ_ONLY + its readOnlyReason, read in the tx", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({
+        fromStatus: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+      });
+      // the in-tx `before` read selects it (it is read under the tenant row lock, with the status)
+      const select = prisma.tenant.findUniqueOrThrow.mock.calls
+        .map((c: any[]) => c[0]?.select)
+        .find((x: any) => x?.status && x?.name);
+      expect(select).toMatchObject({ status: true, readOnlyReason: true });
+    });
+
+    it("SHOULD: the ACTIVE write clears a stale readOnlyReason (as every other ACTIVE write does)", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "trial_expired" });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(prisma.tenant.update.mock.calls.at(-1)?.[0]).toMatchObject({
+        where: { id: TENANT_ID },
+        data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
+      });
+    });
+
+    it("S4: the activation crossing reads only BILLABLE add-ons (a comp with a stale snapshot is never booked)", async () => {
+      tenantBefore(); // a TRIAL: the crossing runs
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      const crossingRead = (prisma as any).tenantAddon.findMany.mock.calls.find(
+        (c: any[]) => c[0]?.select?.sku === true && c[0]?.select?.priceSnapshot === true,
+      );
+      expect(crossingRead?.[0].where).toEqual({ tenantId: TENANT_ID, active: true, isComp: false });
+    });
+
+    it("S3: the activation writes its billing MARKER row INSIDE the transaction (not only the best-effort post-commit trail)", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => {
+        order.push("tx-open");
+        const r = await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        order.push("tx-commit");
+        return r;
+      });
+      (prisma as any).auditLog.create.mockImplementation(async () => {
+        order.push("marker");
+        return {};
+      });
+      auditLog.mockImplementation(async () => {
+        order.push("trail");
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual(["tx-open", "marker", "tx-commit", "trail"]);
+      const [{ data }] = (prisma as any).auditLog.create.mock.calls[0];
+      expect(data).toMatchObject({
+        tenantId: TENANT_ID,
+        userId: ADMIN_ID,
+        action: "TENANT_MANUAL_ACTIVATION_MARKER",
+        entityType: "tenant",
+        entityId: TENANT_ID,
+        meta: expect.objectContaining({
+          platformAdmin: true,
+          paymentMethod: "BANK_TRANSFER",
+          cycle: "MONTHLY",
+        }),
+      });
+      // the post-commit trail row is a different action: it is never the marker
+      expect(auditLog.mock.calls[0][0]).toMatchObject({ action: "TENANT_SUBSCRIPTION_ACTIVATED" });
+    });
+
+    it("S3: a failing marker write rolls the activation back (the marker exists exactly when the activation does)", async () => {
+      tenantBefore();
+      (prisma as any).auditLog.create.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
+      ).rejects.toThrow("db down");
+      expect(auditLog).not.toHaveBeenCalled(); // no post-commit trail for an activation that never committed
+    });
+
+    it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
+      tenantBefore();
+      await service.activateManualSubscription(
+        TENANT_ID,
+        { ...activateDto, billingPeriodDays: 365 },
+        ADMIN_ID,
+      );
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ cycle: "ANNUAL" });
+    });
+
+    it("passes the status as it stands in the tx — an ACTIVE tenant's renewal reaches the helper as ACTIVE (which prices nothing)", async () => {
+      tenantBefore({ status: "ACTIVE", subscription: { planKey: "SCALE" } });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ fromStatus: "ACTIVE" });
+    });
+
+    it("a non-PRODUCTION class is passed through (the helper writes no notice for it)", async () => {
+      tenantBefore({ class: "DEMO" });
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy.mock.calls[0][2]).toMatchObject({ tenantClass: "DEMO" });
+    });
+
+    it("takes the add-on billing locks for the unbilled self-serve SKUs BEFORE the transaction, and the tenant row lock inside it", async () => {
+      tenantBefore();
+      const order: string[] = [];
+      lockSpy.mockImplementation(async (t: string, skus: readonly string[], fn: () => unknown) => {
+        order.push(`locks:${t}:${skus.join(",")}`);
+        return fn();
+      });
+      (prisma.$transaction as jest.Mock).mockImplementation((fn: any) => {
+        order.push("tx");
+        return fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+      });
+      priceSpy.mockImplementation(async () => {
+        order.push("price");
+        return [];
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect(order).toEqual([`locks:${TENANT_ID}:CUSTOMER_PACK_100`, "tx", "price"]);
+    });
+
+    it("no unbilled self-serve add-on: the helper is not called and no lock is taken", async () => {
+      tenantBefore();
+      (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(priceSpy).not.toHaveBeenCalled();
+      expect(lockSpy).toHaveBeenCalledWith(TENANT_ID, [], expect.any(Function));
     });
   });
 

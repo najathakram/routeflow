@@ -9,6 +9,7 @@ import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
+import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
@@ -84,6 +85,7 @@ export function StockCountTab() {
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
+  const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const scanContainerRef = React.useRef<HTMLDivElement>(null);
   const [resolving, setResolving] = React.useState(false);
 
@@ -518,6 +520,11 @@ export function StockCountTab() {
         setUnknownCode(code);
         return;
       }
+      if (result.suggestion || result.ambiguous) {
+        // B1219: a fuzzy guess writes a count only after the operator confirms it.
+        setScanMatches(result.matches?.length ? result.matches : [result.product]);
+        return;
+      }
       addOrIncrementProduct(result.product, qtyPerScan);
       if (result.source !== "barcode") {
         toast({
@@ -802,6 +809,26 @@ export function StockCountTab() {
               <BarcodeScannerButton inputRef={scanInputRef} onScan={handleScan} />
             </div>
             {resolving && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
+
+            {scanMatches.length > 0 && (
+              <div className="mt-2">
+                <DidYouMeanPicker
+                  matches={scanMatches}
+                  confirmLabel="Apply"
+                  onConfirm={async (product) => {
+                    setScanMatches([]);
+                    const sid = await ensureSession();
+                    if (!sid) return;
+                    addOrIncrementProduct(product, qtyPerScan);
+                    scanInputRef.current?.focus();
+                  }}
+                  onCancel={() => {
+                    setScanMatches([]);
+                    scanInputRef.current?.focus();
+                  }}
+                />
+              </div>
+            )}
 
             {suggestOpen && suggestions.length > 0 && (
               <ul

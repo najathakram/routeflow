@@ -11,6 +11,7 @@ export const NOTIFICATION_TRIGGERS: ReadonlySet<NotificationEvent> = new Set<Not
   NotificationEvent.OUT_FOR_DELIVERY,
   NotificationEvent.ORDER_SHIPPED,
   NotificationEvent.SHIPMENT_TRACKING_ADDED,
+  NotificationEvent.READY_FOR_PICKUP, // SA-655: orders.service.ts changeStatus fires it on a PICKUP handover
   NotificationEvent.DELIVERED,
   NotificationEvent.CANCELLED,
   NotificationEvent.ORDER_CHANGED_AT_DOOR,

@@ -23,6 +23,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
@@ -104,6 +105,7 @@ describe("RoutesService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2" });
     invoicesService = {
       recordDeliveryPaymentInTx: jest
         .fn()
@@ -279,7 +281,7 @@ describe("RoutesService", () => {
     });
 
     it("creates the stop for a live customer", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
+      prisma.customer.findFirst.mockResolvedValue({ deletedAt: null });
 
       await service.addStop("route-1", { customerId: "cust-1" } as any);
 
@@ -287,7 +289,7 @@ describe("RoutesService", () => {
     });
 
     it("REG-B157: refuses to add a removed customer to a route", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ deletedAt: new Date() });
+      prisma.customer.findFirst.mockResolvedValue({ deletedAt: new Date() });
 
       await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
         ConflictException,
@@ -296,7 +298,7 @@ describe("RoutesService", () => {
     });
 
     it("REG-B157: throws NotFoundException for a nonexistent customer", async () => {
-      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue(null);
 
       await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
         NotFoundException,
@@ -539,7 +541,7 @@ describe("RoutesService", () => {
     });
 
     it("addStop clears it", async () => {
-      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
+      prisma.customer.findFirst.mockResolvedValue({ deletedAt: null });
       prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
       prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
       prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
@@ -915,6 +917,10 @@ describe("RoutesService", () => {
     // door (delivery, order, invoice) is already refused, so sending a driver there is a wasted trip.
     describe("removed-customer stops (B131)", () => {
       const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+      beforeEach(() => {
+        mockRouteRefsInTenant(prisma, { a1: "c-live", a2: "c-removed" });
+      });
 
       const stops = (removedAt: Date | null) => [
         {
@@ -2000,6 +2006,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1"],
         [],
+        expect.any(String), // the completing user (SA-687c: stamped on the review audit row)
       );
       // Additive field: the driver app attaches a best-effort payment photo to
       // paymentIds[0] after the stop completes — must be surfaced on the response.
@@ -2079,6 +2086,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1", "ord-2"],
         ["ord-1"],
+        expect.any(String),
       );
     });
 
@@ -2254,6 +2262,7 @@ describe("RoutesService", () => {
         txMock,
         ["ord-1"],
         ["ord-1"],
+        expect.any(String),
       );
       expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
     });

@@ -84,4 +84,32 @@ describe("BuyerDashboardService — W7 gate", () => {
     expect(res.stats.unpaidInvoiceCount).toBe(0);
     expect(res.stats.unpaidInvoiceTotal).toBe(0);
   });
+
+  it("1B: recent orders carry fulfillPath + shippedAt so the badge matches the order detail", async () => {
+    visibility.computeGate.mockResolvedValue({ hiddenIds: new Set(), locked: [] });
+    prisma.invoice.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { total: null } });
+    // The recent-orders read is the only order.findMany with a `select` + take 5.
+    prisma.order.findMany.mockResolvedValue([
+      {
+        id: "o1",
+        orderNumber: "ORD-00001",
+        status: "CONFIRMED",
+        total: 20,
+        createdAt: new Date("2026-09-10T12:00:00Z"),
+        requestedDeliveryDate: null,
+        fulfillPath: "SHIP",
+        shippedAt: new Date("2026-10-01T10:00:00Z"),
+        lineItems: [{ id: "li-1" }],
+      },
+    ]);
+
+    const res = await service.getDashboard("c1");
+
+    const recentCall = prisma.order.findMany.mock.calls.find(([a]: any[]) => a?.take === 5)?.[0];
+    expect(recentCall.select).toMatchObject({ fulfillPath: true, shippedAt: true });
+    expect(res.recentOrders[0]).toMatchObject({
+      fulfillPath: "SHIP",
+      shippedAt: new Date("2026-10-01T10:00:00Z"),
+    });
+  });
 });

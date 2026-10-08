@@ -144,6 +144,10 @@ describeDb(
         pricing as any,
         { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any, // billingNotification
         planTransitionStub,
+        {
+          checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+          adoptCheckoutAddons: async () => undefined,
+        } as any, // mutations (SA-690)
       );
 
       platformAdmin = new PlatformAdminService(

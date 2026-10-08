@@ -221,7 +221,15 @@ describe("CreditNoteReissueService (#2648)", () => {
 
     it("a counter collision on the number (P2002) is a 409", async () => {
       creditNotes.insertCreditNoteInTx.mockRejectedValue(
-        Object.assign(new Error("unique"), { code: "P2002" }),
+        Object.assign(new Error("unique"), {
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: {
+            driverAdapterError: {
+              cause: { constraint: { index: "CreditNote_tenantId_creditNoteNumber_key" } },
+            },
+          },
+        }),
       );
       await expect(service.reissue("cn-old", { amount: 20 }, "key-1", "u")).rejects.toThrow(
         ConflictException,
@@ -452,7 +460,15 @@ describe("CreditNoteReissueService (#2648)", () => {
       creditNotes.voidWithReversalInTx.mockReset();
       creditNotes.voidWithReversalInTx.mockResolvedValue({ creditNote: {}, reopened: [] });
       creditNotes.insertCreditNoteInTx.mockRejectedValueOnce(
-        Object.assign(new Error("u"), { code: "P2002" }),
+        Object.assign(new Error("u"), {
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: {
+            driverAdapterError: {
+              cause: { constraint: { index: "CreditNote_tenantId_creditNoteNumber_key" } },
+            },
+          },
+        }),
       );
       await expectRefusal(await run(), CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY, 409);
       creditNotes.voidWithReversalInTx.mockRejectedValueOnce(

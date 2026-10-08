@@ -688,7 +688,8 @@ describe("OrdersService.updateOrderItems — replaceAll is explicit-only (T-B198
 // ─── T-B199 (REG-B199 / R11) — denomination-aware atomic merge ─────────────
 
 describe("OrdersController.create — staff merge is denomination-aware (T-B199 / R11 / REG-B199)", () => {
-  const buildController = (ordersService: any) => new OrdersController(ordersService, {} as any);
+  const buildController = (ordersService: any) =>
+    new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
   it("folds boxes+pieces via normalizeBoxesPieces and preserves unitPrice/notes — never a flat qty sum", async () => {
     const ordersService: any = {
@@ -931,7 +932,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue({ id: "ord-active" }),
     };
-    const controller = new OrdersController(ordersService, {} as any);
+    const controller = new OrdersController(ordersService, {} as any, {} as any, {} as any);
 
     await controller.create(
       {
@@ -1312,8 +1313,9 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     );
 
     // The row exists. Reporting a failure here would have the buyer place a second
-    // order for the same cart.
-    expect(result).toBe(created);
+    // order for the same cart. A CUSTOMER gets the customer-facing COPY of it
+    // (common/staff-only-fields.ts: id + status survive, customerId is not listed), so the oracle is content.
+    expect(result).toEqual({ id: "ord-new", status: "PENDING" });
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -1381,7 +1383,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenNthCalledWith(
       2,
       "cust-1",
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "ord-new" }, // M2: folds only the new order's path
       { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });

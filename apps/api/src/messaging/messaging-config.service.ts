@@ -11,6 +11,7 @@ import {
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
 import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
 import { NOTIFICATION_TRIGGERS, notificationAudience } from "./notification-triggers";
+import { upgradeLegacyDefaultBody } from "./order-confirmed-copy";
 
 const { INTERNAL, WHATSAPP, SMS, EMAIL, PORTAL } = MessageChannel;
 const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
@@ -61,9 +62,11 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
  *  via extractVariables at seed time. Money-looking vars are PRE-FORMATTED
  *  STRINGS supplied by P6-5 callers — no money math in messaging. */
 export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body: string }> = {
+  // B1127: {{deliveryClause}} is " for delivery on <date>" / " and will ship by carrier" / "" — built by
+  // orderConfirmedVars() (order-confirmed-copy.ts); the pre-fix body is upgraded at render time.
   [NotificationEvent.ORDER_CONFIRMED]: {
     label: "Order confirmed",
-    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed for delivery on {{deliveryDate}}. Total: {{orderTotal}}.",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed{{deliveryClause}}. Total: {{orderTotal}}.",
   },
   [NotificationEvent.OUT_FOR_DELIVERY]: {
     label: "Out for delivery",
@@ -147,6 +150,11 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     body: "Order {{orderNumber}} from {{customerName}} was cancelled.",
   },
 };
+
+/** The body to render/show for a stored template row: the current default when the row still holds a
+ *  superseded default verbatim (B1127), else the stored text. See `upgradeLegacyDefaultBody`. */
+export const effectiveTemplateBody = (eventKey: NotificationEvent, storedBody: string): string =>
+  upgradeLegacyDefaultBody(eventKey, storedBody, DEFAULT_TEMPLATES[eventKey].body);
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
@@ -406,16 +414,19 @@ export class MessagingConfigService {
 
   private templateView(t: {
     id: string;
+    eventKey: NotificationEvent;
     body: string;
     variables: string[];
     waTemplateName: string | null;
     waApprovalStatus: WaApprovalStatus;
     isActive: boolean;
   }): TemplateView {
+    // B1127: show what notify() will actually send (a superseded default is upgraded at render time).
+    const body = effectiveTemplateBody(t.eventKey, t.body);
     return {
       id: t.id,
-      body: t.body,
-      variables: t.variables,
+      body,
+      variables: body === t.body ? t.variables : extractVariables(body),
       waTemplateName: t.waTemplateName,
       waApprovalStatus: t.waApprovalStatus,
       isActive: t.isActive,
