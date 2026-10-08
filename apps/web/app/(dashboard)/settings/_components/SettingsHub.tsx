@@ -101,6 +101,12 @@ const GROUPS: HubGroup[] = [
         desc: "Move from Zoho, QuickBooks, CSV or paper",
         href: "/settings/migration",
       },
+      {
+        label: "Units",
+        // The hub has no keywords field: the words people search by live in the description.
+        desc: "The names you sell and stock by. Search: unit, units, case, box, pack, piece, bottle, size, pieces per box",
+        href: "/settings/units",
+      },
     ],
   },
   {

@@ -47,6 +47,8 @@ const setOnline = (online: boolean) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  createMutate.mockReset();
+  updateMutate.mockReset();
   setUnits();
   setOnline(true);
 });
