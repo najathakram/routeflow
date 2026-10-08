@@ -600,6 +600,21 @@ function CreateEstimateModal({
                             )}
                           </button>
                         </li>
+                        {hasVariants && isExpanded && !isFamilyProduct(p) && (
+                          // A non-family parent is itself a sellable product: it stays quotable (#3323).
+                          <li className="bg-surface-raised/50">
+                            <button
+                              type="button"
+                              onClick={() => addLineItem(p)}
+                              className="flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised"
+                            >
+                              <span className="font-medium text-navy">Quote {p.name} itself</span>
+                              <span className="text-xs text-navy/70">
+                                {fmt(Number(p.pricePerUnit))}
+                              </span>
+                            </button>
+                          </li>
+                        )}
                         {hasVariants &&
                           isExpanded &&
                           p.variants.map((v: any) => (
