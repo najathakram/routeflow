@@ -39,9 +39,9 @@ export const REFUND_COPY = {
   notRefundable: "There's nothing to refund on this return.",
   /** F4: a sale paid (partly) with store credit goes back as store credit. */
   paidWithCredit: "Paid with store credit, so it goes back as store credit",
-  /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
   quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
+  /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;
 

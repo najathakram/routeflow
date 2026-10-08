@@ -229,9 +229,11 @@ function SaleRow({
                 Reprint
               </button>
             ) : null}
-            {row.returned.state === "FULL" ? null : (
-              <CounterReturnAction orderId={row.orderId} onDone={onDone} />
-            )}
+            <CounterReturnAction
+              orderId={row.orderId}
+              onDone={onDone}
+              canReturn={row.returned.state !== "FULL"}
+            />
           </>
         )}
         <Link href={`/orders/${row.orderId}`} className={cn(TAP, "text-brand-700")}>

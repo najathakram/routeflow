@@ -36,9 +36,15 @@ const ORDER = {
 };
 jest.mock("@/lib/api/orders", () => ({ useOrder: () => ({ data: ORDER }) }));
 let closeDialog: (() => void) | undefined;
+let recordReturn: ((r: unknown, info?: unknown) => void) | undefined;
 jest.mock("@/app/(dashboard)/returns/_components/RecordInlineReturnDialog", () => ({
-  RecordInlineReturnDialog: (p: { open: boolean; onClose: () => void }) => {
+  RecordInlineReturnDialog: (p: {
+    open: boolean;
+    onClose: () => void;
+    onRecorded?: (r: unknown, info?: unknown) => void;
+  }) => {
     closeDialog = p.onClose;
+    recordReturn = p.onRecorded;
     return p.open ? <div data-testid="return-dialog" /> : null;
   },
 }));
@@ -425,6 +431,25 @@ describe("CounterTodaysSales", () => {
     const partly = screen.getByTestId("today-row-o2");
     expect(within(full).queryByRole("button", { name: "Return items" })).toBeNull();
     expect(within(partly).getByRole("button", { name: "Return items" })).toBeInTheDocument();
+  });
+
+  it("W21b: a whole-sale return keeps its hand-back line after the refetch marks the row FULL", async () => {
+    serve({
+      1: page1([row({ orderId: "o1", returned: { amount: 0, state: "NONE", returns: [] } })]),
+    });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    fireEvent.click(within(r).getByRole("button", { name: "Return items" }));
+    act(() => recordReturn?.({}, { resolution: "REFUND", tender: "CASH", amount: 22.5 }));
+    serve({
+      1: page1([row({ orderId: "o1", returned: { amount: 22.5, state: "FULL", returns: [] } })]),
+    });
+    act(() => closeDialog?.());
+    await waitFor(() => expect(todayCalls().length).toBeGreaterThan(1));
+    const after = await screen.findByTestId("today-row-o1");
+    expect(within(after).getByRole("status")).toHaveTextContent(
+      "Hand $22.50 back to the customer.",
+    );
   });
 
   it("W21b: one Escape on the reprint view goes back to the list; a second closes the sheet", async () => {

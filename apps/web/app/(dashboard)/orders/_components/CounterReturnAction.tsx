@@ -33,8 +33,12 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
 export function CounterReturnAction({
   orderId,
   onDone,
+  canReturn = true,
 }: {
   orderId: string;
+  /** false hides the Return items button (a fully returned sale) WITHOUT unmounting, so a success line
+   *  shown after a whole-sale return survives the refetch that marks the row fully returned */
+  canReturn?: boolean;
   /** called when the return dialog closes or records (Today's sales refetches its list) */
   onDone?: () => void;
 }) {
@@ -47,17 +51,20 @@ export function CounterReturnAction({
   const { data: order } = useOrder(orderId);
   if (!hasInlineReturns || !staff || !order) return null;
 
+  const showButton = canReturn || open || recorded !== null;
   return (
     <>
-      <Button
-        ref={buttonRef}
-        variant="secondary"
-        className="min-h-11 w-full sm:w-auto"
-        leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
-        onClick={() => setOpen(true)}
-      >
-        Return items
-      </Button>
+      {showButton ? (
+        <Button
+          ref={buttonRef}
+          variant="secondary"
+          className="min-h-11 w-full sm:w-auto"
+          leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
+          onClick={() => setOpen(true)}
+        >
+          Return items
+        </Button>
+      ) : null}
       <RecordInlineReturnDialog
         open={open}
         onClose={() => {

@@ -103,6 +103,21 @@ describe("CounterReturnAction", () => {
       "Return recorded. Hand $12.40 back to the customer.",
     );
   });
+  it("W21b: a whole-sale return keeps its success line when the row flips to fully returned", () => {
+    const { rerender } = render(<CounterReturnAction orderId="o1" canReturn />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
+    // the refetch marks the sale FULL: the component must stay mounted with its success line
+    rerender(<CounterReturnAction orderId="o1" canReturn={false} />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Hand $12.40 back to the customer.",
+    );
+    expect(screen.getByRole("button", { name: "Return items" })).toBeInTheDocument();
+  });
+  it("W21b: a sale that is already fully returned offers no Return items button", () => {
+    render(<CounterReturnAction orderId="o1" canReturn={false} />);
+    expect(screen.queryByRole("button", { name: "Return items" })).toBeNull();
+  });
   it("card refund: repeats the card line", () => {
     render(<CounterReturnAction orderId="o1" />);
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
