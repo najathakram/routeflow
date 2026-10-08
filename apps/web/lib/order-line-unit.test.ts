@@ -1,3 +1,4 @@
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions, type UnitOption } from "./unit-options";
 import {
@@ -6,6 +7,7 @@ import {
   mergeSameLine,
   sameProductUnit,
   unitLabelPayload,
+  unitPickerValueOf,
   type UnitLine,
 } from "./order-line-unit";
 
@@ -191,5 +193,63 @@ describe("mergeSameLine", () => {
     const a = { qty: 44, unitsPerBox: 24, boxes: 1, pieces: 20 };
     const b = { qty: 34, unitsPerBox: 24, boxes: 1, pieces: 10 };
     expect(mergeSameLine(a, b)).toEqual({ qty: 78, unitsPerBox: 24, boxes: 3, pieces: 6 });
+  });
+});
+
+describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (preview == server)", () => {
+  const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+  const opts = buildUnitOptions(pack3, [level("Case", 12, null)], 1);
+  const line3: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t3",
+    productId: "p3",
+    unit: "Pack",
+    qty: 3,
+    unitsPerBox: 3,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 10,
+    unitPrice: 10,
+    priceType: "STANDARD",
+  };
+  const preview = (li: UnitLine) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: li.qty,
+      boxes: li.boxes ?? null,
+      pieces: li.pieces ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("2 pcs of a 3-pack @ $10: boxes 0 / pieces 2, no unitLabel, preview total $6.67 (== the server's)", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    const two = { ...one, ...normalizeBoxesPieces({ qty: 2, unitsPerBox: 3 }) };
+    expect(one.unitLabel).toBeUndefined();
+    expect(unitLabelPayload(one)).toEqual({});
+    expect(one).toMatchObject({ unitsPerBox: 3, boxes: 0, pieces: 1, qty: 1, unitPrice: 10 });
+    expect(two).toMatchObject({ boxes: 0, pieces: 2, qty: 2 });
+    expect(preview(two)).toBe(6.67);
+  });
+
+  it("the picker still shows Piece as selected, and switching back restores the pack line", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    expect(unitPickerValueOf(one)).toBe("Piece");
+    const back = applyLineUnit(one, by(opts, ""), { tier: 1 });
+    expect(unitPickerValueOf(back)).toBe("");
+    expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
+  });
+
+  it("an OWN-priced Piece row keeps the unit-line path (unitLabel Piece, price per piece)", () => {
+    const own = buildUnitOptions(pack3, [level("Case", 12, null), level("Piece", 1, "3.00")], 1);
+    const li = applyLineUnit(line3, by(own, "Piece"), { tier: 1 });
+    expect(li).toMatchObject({ unitLabel: "Piece", unitPrice: 3, qty: 1 });
+    expect(unitLabelPayload(li)).toEqual({ unitLabel: "Piece" });
+  });
+
+  it("a level pick from a derived-Piece line snapshots the PACK, not the pieces state", () => {
+    const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
+    const caseLine = applyLineUnit(one, by(opts, "Case"), { tier: 1 });
+    const back = applyLineUnit(caseLine, by(opts, ""), { tier: 1 });
+    expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
   });
 });
