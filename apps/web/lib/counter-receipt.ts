@@ -301,7 +301,7 @@ export function receiptModelFromOrder(input: {
         name: line.name,
         detail: lineDetail(line),
         note: null,
-        // A reprint is built from the stored order, which keeps only the net price: no struck original.
+        // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
         original: null,
         discount: 0,
         priceChanged: false,
