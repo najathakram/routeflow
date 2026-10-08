@@ -5,6 +5,7 @@ import {
   assertBuyerMayOrder,
   isBuyerVisibleProduct,
   NO_BUYER_RESTRICTIONS,
+  PORTAL_PARENT_SELECT,
 } from "./buyer-product-visibility";
 import { sellableProductWhere } from "../products/sellable-product-where";
 
@@ -63,6 +64,34 @@ describe("buyerVisibleProductWhere", () => {
       OR: [{ parentProductId: null }, { parent: { portalVisible: true, tenantId: "t-1" } }],
     });
     expect(buyerVisibleProductWhere({ restrictedIds: new Set() })).toEqual({ AND: BASE });
+  });
+
+  it("a tenant id also scopes the sellable clause's parent-active filter (cross-tenant parent)", () => {
+    const scoped = buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" }) as {
+      AND: Array<{ AND?: unknown[] }>;
+    };
+    expect(scoped.AND[0].AND?.[2]).toEqual({
+      OR: [{ parentProductId: null }, { parent: { isActive: true, tenantId: "t-1" } }],
+    });
+  });
+
+  it("the loaded-parent select carries tenantId so the twin can judge it", () => {
+    expect(PORTAL_PARENT_SELECT).toMatchObject({ tenantId: true });
+  });
+
+  it("the twin refuses a variant whose active, visible parent belongs to another tenant", () => {
+    const v = {
+      id: "v1",
+      isActive: true,
+      kind: "VARIANT",
+      portalVisible: true,
+      parent: { portalVisible: true, isActive: true, tenantId: "t-2" },
+    };
+    const ctx = { restrictedIds: new Set<string>(), tenantId: "t-1" };
+    expect(isBuyerVisibleProduct(ctx, v)).toBe(false);
+    expect(isBuyerVisibleProduct(ctx, { ...v, parent: { ...v.parent, tenantId: "t-1" } })).toBe(
+      true,
+    );
   });
 
   it("id helper is the builder with { id }", () => {

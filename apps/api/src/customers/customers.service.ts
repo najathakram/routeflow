@@ -1406,7 +1406,7 @@ export class CustomersService {
       return null;
     }
 
-    await assertProductIdNotFamily(this.prisma.forTenant(), dto.productId, "customer price"); // B1216
+    await assertProductIdNotFamily(this.prisma, dto.productId, "customer price"); // B1216
 
     return this.prisma.forTenant().customerPrice.upsert({
       where: {

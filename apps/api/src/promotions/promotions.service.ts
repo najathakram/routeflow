@@ -147,8 +147,10 @@ export class PromotionsService {
   /** B1216: a FAMILY container is never promoted (its variants are): refuse any named product of that kind. */
   private async refuseFamilyProducts(productIds: readonly string[] | undefined) {
     if (!productIds || productIds.length === 0) return;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
     const found = await this.prisma.forTenant().product.findMany({
-      where: { id: { in: [...productIds] } },
+      where: { tenantId, id: { in: [...productIds] } },
       select: { id: true, name: true, kind: true },
     });
     assertNoFamilyProducts(found, "promotion");

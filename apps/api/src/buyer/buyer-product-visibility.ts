@@ -39,7 +39,7 @@ export function buyerVisibleProductWhere(
 ): Prisma.ProductWhereInput {
   return {
     AND: [
-      sellableProductWhere(),
+      sellableProductWhere(undefined, ctx.tenantId),
       { portalVisible: true },
       {
         OR: [
@@ -74,11 +74,11 @@ export function isBuyerVisibleProduct(
     isActive: boolean;
     kind: string;
     portalVisible: boolean;
-    parent: { portalVisible: boolean; isActive: boolean } | null;
+    parent: { portalVisible: boolean; isActive: boolean; tenantId?: string | null } | null;
   },
 ): boolean {
   return (
-    isSellableProduct(p) &&
+    isSellableProduct(p, ctx.tenantId) &&
     p.portalVisible &&
     (p.parent === null || p.parent.portalVisible) &&
     !ctx.restrictedIds.has(p.id)
@@ -138,7 +138,11 @@ export function assertBuyerMayOrder(
  * The parent's `portalVisible` and `isActive`, which the visibility gate needs on every product it judges (a hidden or
  * inactive parent hides its variants).
  */
-export const PORTAL_PARENT_SELECT = { portalVisible: true, ...SELLABLE_PARENT_FIELDS } as const;
+export const PORTAL_PARENT_SELECT = {
+  portalVisible: true,
+  tenantId: true,
+  ...SELLABLE_PARENT_FIELDS,
+} as const;
 export const PORTAL_PARENT_INCLUDE = { parent: { select: PORTAL_PARENT_SELECT } } as const;
 
 /** `findMany` args for the products an order names: by id, WITH the parent's `portalVisible` the gate needs. */

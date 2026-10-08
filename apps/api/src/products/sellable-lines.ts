@@ -49,22 +49,28 @@ export function assertNoFamilyProducts(
 
 /**
  * B1216: the by-id form of `assertNoFamilyProducts` for a writer that holds only a product id (the customer
- * price upsert). An id that resolves to nothing is left to the caller's own not-found handling.
+ * price upsert). The lookup is scoped by the explicit tenant id as well as `forTenant()`. An id that resolves to
+ * nothing is left to the caller's own not-found handling.
  */
 export async function assertProductIdNotFamily(
-  db: {
-    product: {
-      findFirst(args: {
-        where: { id: string };
-        select: { id: true; name: true; kind: true };
-      }): PromiseLike<{ id: string; name: string | null; kind: string | null } | null>;
+  prisma: {
+    getTenantId(): string | null | undefined;
+    forTenant(): {
+      product: {
+        findFirst(args: {
+          where: { id: string; tenantId: string };
+          select: { id: true; name: true; kind: true };
+        }): PromiseLike<{ id: string; name: string | null; kind: string | null } | null>;
+      };
     };
   },
   productId: string,
   subject: "customer price" | "promotion",
 ): Promise<void> {
-  const target = await db.product.findFirst({
-    where: { id: productId },
+  const tenantId = prisma.getTenantId();
+  if (!tenantId) throw new BadRequestException("No tenant context");
+  const target = await prisma.forTenant().product.findFirst({
+    where: { id: productId, tenantId },
     select: { id: true, name: true, kind: true },
   });
   if (target) assertNoFamilyProducts([target], subject);

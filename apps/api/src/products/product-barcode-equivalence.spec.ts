@@ -137,4 +137,25 @@ describe("claimCodes: the claim path sees the equivalent holder", () => {
     expect(tx.audits).toHaveLength(1);
     expect(tx.audits[0].data.meta).toMatchObject({ codes: [UPC] });
   });
+
+  it("a unitSku holder of the equivalent spelling blocks a barcode claim, and the other way round", async () => {
+    const tx = makeTx({ products: [product({ id: "p1", unitSku: UPC })] });
+    const err = await claimCodes(tx, {
+      tenantId: T,
+      productId: "p2",
+      actorId: ACTOR,
+      codes: [{ field: "barcode", value: EAN }],
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ productId: "p1" });
+    const tx2 = makeTx({ products: [product({ id: "p1", barcode: UPC })] });
+    const err2 = await claimCodes(tx2, {
+      tenantId: T,
+      productId: "p2",
+      actorId: ACTOR,
+      codes: [{ field: "unitSku", value: EAN }],
+    }).catch((e) => e);
+    expect(err2).toBeInstanceOf(ConflictException);
+    expect(err2.getResponse()).toMatchObject({ productId: "p1" });
+  });
 });

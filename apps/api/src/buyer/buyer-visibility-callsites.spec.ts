@@ -34,7 +34,7 @@ describe("buyer product visibility call sites", () => {
     expect(strip(readFileSync(sellable, "utf8")).match(RAW_ACTIVE)).toHaveLength(2);
     const builder = strip(readFileSync(join(dir, BUILDER), "utf8"));
     expect(builder.match(RAW_ACTIVE)).toBeNull();
-    expect(builder).toContain("sellableProductWhere()");
+    expect(builder).toContain("sellableProductWhere(undefined, ctx.tenantId)");
   });
 
   it.each(files)("%s has no raw isActive: true outside the builder", (f) => {

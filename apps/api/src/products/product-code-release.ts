@@ -75,9 +75,9 @@ const CODE_SELECT = {
 function collidingColumns(field: CodeField, value: string): Array<Record<string, unknown>> {
   if (field === "sku") return [{ sku: value }, { unitSku: value }];
   // B1214: a barcode collides with every equivalent spelling of the same label (UPC-A <-> EAN-13 ...).
-  if (field === "barcode")
-    return [{ barcode: { in: barcodeEquivalents(value) } }, { unitSku: value }];
-  return [{ unitSku: value }, { sku: value }, { barcode: value }];
+  const same = barcodeEquivalents(value);
+  if (field === "barcode") return [{ barcode: { in: same } }, { unitSku: { in: same } }];
+  return [{ unitSku: { in: same } }, { sku: value }, { barcode: { in: same } }];
 }
 
 function taken(field: CodeField, value: string, holder: { id: string; name: string }): never {

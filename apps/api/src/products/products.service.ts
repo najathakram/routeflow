@@ -1327,6 +1327,8 @@ export class ProductsService {
           parentId: dto.parentProductId,
         });
         if (parentKind === "FAMILY" && existing.kind !== "VARIANT") data.kind = "VARIANT";
+        // A VARIANT moved under a STANDARD parent is no variant of a family any more: reset it, as un-parenting does.
+        else if (parentKind !== "FAMILY" && existing.kind === "VARIANT") data.kind = "STANDARD";
       }
       // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
       if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
@@ -1751,8 +1753,10 @@ export class ProductsService {
     // name (a unique violation). A parent keeps (or archives) its variants: refused while one of them stays
     // active, archived when every variant that stays is already inactive or is archived in this same batch, and
     // only hard-deleted when ALL its variants are hard-deleted with it.
+    const delTenantId = this.prisma.getTenantId();
+    if (!delTenantId) throw new BadRequestException("No tenant context");
     const variantRows = (await this.prisma.forTenant().product.findMany({
-      where: { parentProductId: { in: remaining } },
+      where: { tenantId: delTenantId, parentProductId: { in: remaining } },
       select: { id: true, parentProductId: true, isActive: true },
     })) as Array<{ id: string; parentProductId: string | null; isActive: boolean }>;
     if (variantRows.length > 0) {

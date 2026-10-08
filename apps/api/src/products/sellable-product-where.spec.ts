@@ -38,4 +38,30 @@ describe("sellableProductWhere (WS6/WS8, B1213)", () => {
     };
     expect(typeof compileOnly).toBe("function");
   });
+
+  describe("parent tenant scoping (cross-tenant parent link)", () => {
+    it("with a tenant, the parent relation filter also requires the parent to be in that tenant", () => {
+      expect(sellableProductWhere(undefined, "t-1")).toEqual({
+        AND: [
+          { isActive: true },
+          { kind: { not: "FAMILY" } },
+          { OR: [{ parentProductId: null }, { parent: { isActive: true, tenantId: "t-1" } }] },
+        ],
+      });
+    });
+
+    it("the twin never follows a parent of another tenant: an active foreign parent does not make a variant sellable", () => {
+      const v = { isActive: true, kind: "VARIANT" };
+      const foreign = { isActive: true, tenantId: "t-2" };
+      expect(isSellableProduct({ ...v, parent: foreign }, "t-1")).toBe(false);
+      expect(isSellableProduct({ ...v, parent: { ...foreign, tenantId: "t-1" } }, "t-1")).toBe(
+        true,
+      );
+    });
+
+    it("a parent that does not carry its tenantId fails closed once a tenant is given", () => {
+      const v = { isActive: true, kind: "VARIANT" };
+      expect(isSellableProduct({ ...v, parent: { isActive: true } }, "t-1")).toBe(false);
+    });
+  });
 });
