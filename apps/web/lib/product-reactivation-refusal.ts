@@ -142,6 +142,30 @@ export function newCodeFields(refusal: ReactivationRefusal | null): ReplaceableC
   return fields.length ? fields : null;
 }
 
+/**
+ * A plain 400 ("SKU already exists" and kin) from a reactivation that sent replacement codes: the typed
+ * code was taken between the availability check and the write. Returns the code field it names (sku by
+ * default), or null for any other error. The message is only matched, never shown.
+ */
+export function codeTakenOnSubmit(
+  err: unknown,
+  sent: Partial<Record<ReplaceableCodeField, string>>,
+): ReplaceableCodeField | null {
+  const res = (err as { response?: { status?: unknown; data?: { message?: unknown } } } | null)
+    ?.response;
+  if (res?.status !== 400) return null;
+  const raw = res.data?.message;
+  const message = Array.isArray(raw) ? raw.join(" ") : typeof raw === "string" ? raw : "";
+  if (!/already (exists|used|in use)|is taken/i.test(message)) return null;
+  const guess: ReplaceableCodeField = /barcode/i.test(message)
+    ? "barcode"
+    : /unit/i.test(message)
+      ? "unitSku"
+      : "sku";
+  if (sent[guess]) return guess;
+  return CODE_FIELD_ORDER.find((f) => sent[f]) ?? null;
+}
+
 /** The one-call button text: "Deactivate <holder> and reactivate this". */
 export function reactivationResolveLabel(names: string[]): string {
   if (names.length === 1) return `Deactivate "${names[0]}" and reactivate this`;

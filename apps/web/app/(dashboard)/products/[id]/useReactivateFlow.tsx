@@ -5,6 +5,7 @@ import { useToast } from "@routeflow/ui/web";
 import { useDeactivateProduct, useReactivateProduct } from "@/lib/api/products";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
+  codeTakenOnSubmit,
   deactivateFailureToast,
   getReactivationRefusal,
   isReadOnlyRefusal,
@@ -36,6 +37,9 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
     name?: string;
     refusal: ReactivationRefusal;
   } | null>(null);
+  // Codes the server refused on a new-code submit (a plain 400 "already exists"): the dialog stays
+  // open on its new-code step and flags them inline.
+  const [rejected, setRejected] = React.useState<NewCodes | null>(null);
   // A second click before the first request settles must not send a second PATCH.
   const inFlight = React.useRef(false);
 
@@ -48,6 +52,7 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
     ) => {
       if (inFlight.current) return;
       inFlight.current = true;
+      setRejected(null);
       reactivate.mutate(
         { id, ...extra },
         {
@@ -56,13 +61,20 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
           },
           onSuccess: () => {
             setPending(null);
+            setRejected(null);
             toast({ title: `${Noun(kind)} reactivated`, variant: "success" });
             opts?.onReactivated?.(id);
           },
           onError: (err) => {
             const refusal = getReactivationRefusal(err);
+            const takenField = extra?.newCodes ? codeTakenOnSubmit(err, extra.newCodes) : null;
             if (refusal) setPending({ id, kind, name, refusal });
-            else {
+            else if (takenField && extra?.newCodes) {
+              // Keep the dialog (and what was typed); the new-code step flags the refused code.
+              const next: NewCodes = {};
+              next[takenField] = extra.newCodes[takenField];
+              setRejected(next);
+            } else {
               setPending(null);
               // READ_ONLY already got the global "workspace is read-only" toast: no second one.
               if (!isReadOnlyRefusal(err)) {
@@ -105,8 +117,12 @@ export function useReactivateFlow(opts?: { onReactivated?: (id: string) => void 
       <ReactivateConflictDialog
         refusal={pending?.refusal ?? null}
         productName={pending?.name}
+        rejectedCodes={rejected}
         loading={reactivate.isPending}
-        onClose={() => setPending(null)}
+        onClose={() => {
+          setPending(null);
+          setRejected(null);
+        }}
         onResolve={(ids) =>
           pending && run(pending.id, pending.kind, pending.name, { deactivateHolderIds: ids })
         }

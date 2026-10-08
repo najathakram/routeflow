@@ -17,6 +17,10 @@ import {
 
 export type NewCodes = Partial<Record<ReplaceableCodeField, string>>;
 
+const TAKEN_MESSAGE = "That code is already used by another product.";
+const OWN_CODE_MESSAGE = "That is this product's current code; choose a different one.";
+const norm = (v: string | undefined) => (v ?? "").trim().toLowerCase();
+
 const isCodeField = (f: string): f is ReplaceableCodeField => f in CODE_NOUN;
 
 const HolderName = ({ h, link }: { h: ReactivationHolderView; link: boolean }) =>
@@ -37,6 +41,7 @@ const HolderName = ({ h, link }: { h: ReactivationHolderView; link: boolean }) =
 export function ReactivateConflictDialog({
   refusal,
   productName,
+  rejectedCodes,
   loading = false,
   onClose,
   onResolve,
@@ -47,6 +52,8 @@ export function ReactivateConflictDialog({
   refusal: ReactivationRefusal | null;
   /** The product being reactivated (named in the new-code step). */
   productName?: string;
+  /** Codes the server refused on the last new-code submit (taken since the check): flagged inline, submit blocked. */
+  rejectedCodes?: NewCodes | null;
   loading?: boolean;
   onClose: () => void;
   /** Resend the reactivation with `deactivateHolderIds` = these ids. */
@@ -59,6 +66,8 @@ export function ReactivateConflictDialog({
   const [step, setStep] = React.useState<"choose" | "codes">("choose");
   const [values, setValues] = React.useState<NewCodes>({});
   const [hints, setHints] = React.useState<Partial<Record<ReplaceableCodeField, string>>>({});
+  // Lower-cased values the availability check found taken, per field.
+  const [takenValues, setTakenValues] = React.useState<NewCodes>({});
   const valuesRef = React.useRef<NewCodes>({});
   valuesRef.current = values;
   const firstInput = React.useRef<HTMLInputElement | null>(null);
@@ -68,6 +77,7 @@ export function ReactivateConflictDialog({
     setStep("choose");
     setValues({});
     setHints({});
+    setTakenValues({});
   }, [refusal]);
 
   React.useEffect(() => {
@@ -109,10 +119,20 @@ export function ReactivateConflictDialog({
   if (step === "codes" && fields) {
     const clashes = (f: ReplaceableCodeField) =>
       refusal.holders.filter((h) => h.field === f).map((h) => h.value.trim().toLowerCase());
-    const ready = fields.every((f) => {
-      const v = (values[f] ?? "").trim();
-      return v.length > 0 && !clashes(f).includes(v.toLowerCase());
-    });
+    const ownCode = (f: ReplaceableCodeField) => clashes(f).includes(norm(values[f]));
+    const takenElsewhere = (f: ReplaceableCodeField) =>
+      norm(values[f]).length > 0 &&
+      (norm(rejectedCodes?.[f]) === norm(values[f]) || takenValues[f] === norm(values[f]));
+    const ready = fields.every(
+      (f) => norm(values[f]).length > 0 && !ownCode(f) && !takenElsewhere(f),
+    );
+    // One inline line per field: the product's own code, a code the server refused, or the check's answer.
+    const messageFor = (f: ReplaceableCodeField) => {
+      if (ownCode(f)) return OWN_CODE_MESSAGE;
+      if (norm(rejectedCodes?.[f]) === norm(values[f]) && norm(values[f])) return TAKEN_MESSAGE;
+      if (hints[f]) return hints[f];
+      return takenElsewhere(f) ? TAKEN_MESSAGE : undefined;
+    };
     const submit = () => {
       if (!ready || loading) return;
       const codes: NewCodes = {};
@@ -128,6 +148,7 @@ export function ReactivateConflictDialog({
       const holder = res.takenBy
         ? refusal.holders.find((h) => h.productId === res.takenBy?.productId)
         : undefined;
+      setTakenValues((prev) => ({ ...prev, [f]: res.available ? undefined : norm(value) }));
       setHints((prev) => ({
         ...prev,
         [f]: res.available
@@ -179,9 +200,15 @@ export function ReactivateConflictDialog({
                 onBlur={() => void onBlur(f)}
                 autoComplete="off"
               />
-              {hints[f] && (
-                <p role="status" className="mt-1 text-xs text-navy/70">
-                  {hints[f]}
+              {messageFor(f) && (
+                <p
+                  role="status"
+                  data-testid={`reactivate-code-message-${f}`}
+                  className={`mt-1 text-xs ${
+                    ownCode(f) || takenElsewhere(f) ? "text-danger" : "text-navy/70"
+                  }`}
+                >
+                  {messageFor(f)}
                 </p>
               )}
             </div>
