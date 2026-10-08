@@ -9,6 +9,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
+import { assertParentUsable } from "../products/product-parent";
 import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
@@ -540,6 +541,9 @@ export class InventoryService {
           if (parent.parentProductId != null) {
             throw new BadRequestException("A variant cannot itself be split");
           }
+          // B1211: the same parent rule create() / update() / bulkAssignParent() apply, on the row just read under the
+          // lock above (tenant-scoped by the transaction): an inactive or variant product is not a usable parent.
+          assertParentUsable(parent);
 
           // Resolve each assignment's qty. Boxes/pieces win over a raw qty —
           // recomputed via normalizeBoxesPieces against the PARENT's
