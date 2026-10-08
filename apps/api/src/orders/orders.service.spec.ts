@@ -542,9 +542,28 @@ describe("OrdersService", () => {
           unitSku: true,
           variantName: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          parent: { select: { name: true, tenantId: true } },
         }),
       );
+    });
+
+    it("never shows the name of a parent that belongs to another tenant, and strips tenantId (B1211)", async () => {
+      const line = (id: string, parent: { name: string; tenantId: string }) => ({
+        id,
+        product: { id: `p-${id}`, name: "Mint", parentProductId: "fam", parent },
+      });
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        tenantId: "test-tenant",
+        lineItems: [
+          line("own", { name: "Own family", tenantId: "test-tenant" }),
+          line("foreign", { name: "Foreign family", tenantId: "other-tenant" }),
+        ],
+      });
+      const result: any = await service.findOne("ord-1", operatorPayload);
+      expect(result.lineItems[0].product.parent).toEqual({ name: "Own family" });
+      expect(result.lineItems[1].product.parent).toBeNull();
+      expect(JSON.stringify(result)).not.toContain("Foreign family");
     });
 
     it("should throw ForbiddenException when customer does not own the order", async () => {

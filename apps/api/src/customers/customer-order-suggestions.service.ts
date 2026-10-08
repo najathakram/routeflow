@@ -8,6 +8,7 @@ import type {
   UsuallyBuysItem,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantSafeParent } from "../products/product-parent";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /** "Usually buys" looks back this many days from now. */
@@ -41,7 +42,8 @@ const PRODUCT_SELECT = {
   name: true,
   variantName: true,
   parentProductId: true,
-  parent: { select: { name: true } },
+  // tenantId only for the cross-tenant check (B1211); it never reaches the response.
+  parent: { select: { name: true, tenantId: true } },
   unit: true,
   unitsPerBox: true,
   pricePerUnit: true,
@@ -61,13 +63,14 @@ const num = (v: { toString(): string } | number | null | undefined): number => N
 const numOrNull = (v: { toString(): string } | number | null | undefined): number | null =>
   v == null ? null : Number(v);
 
-function toSuggestionProduct(p: ProductRow): OrderSuggestionProduct {
+function toSuggestionProduct(p: ProductRow, tenantId: string): OrderSuggestionProduct {
+  const parent = tenantSafeParent(p.parent, tenantId);
   return {
     id: p.id,
     name: p.name,
     variantName: p.variantName ?? null,
     parentProductId: p.parentProductId ?? null,
-    parent: p.parent ? { name: p.parent.name } : null,
+    parent: parent ? { name: parent.name } : null,
     unit: p.unit,
     unitsPerBox: numOrNull(p.unitsPerBox),
     pricePerUnit: num(p.pricePerUnit),
@@ -220,7 +223,7 @@ export class CustomerOrderSuggestionsService {
         where: { tenantId, id: { in: ids } },
         select: PRODUCT_SELECT,
       });
-      for (const p of rows) products[p.id] = toSuggestionProduct(p);
+      for (const p of rows) products[p.id] = toSuggestionProduct(p, tenantId);
     }
 
     return { customerId, usuallyBuys, recentOrders, products };

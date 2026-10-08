@@ -39,7 +39,7 @@ interface P {
   currentStock?: number;
   isActive?: boolean;
   isTobacco?: boolean;
-  parent?: { name: string } | null;
+  parent?: { name: string; tenantId?: string } | null;
 }
 
 const product = (p: P) => ({
@@ -224,7 +224,7 @@ describe("products export.csv", () => {
           id: "p2",
           tenantId: TENANT_A,
           name: "Cola Diet",
-          parent: { name: "Cola 12pk" },
+          parent: { name: "Cola 12pk", tenantId: TENANT_A },
           isActive: false,
         }),
       ],
@@ -251,6 +251,31 @@ describe("products export.csv", () => {
     const [, r1, r2] = rows(out);
     expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20");
     expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,");
+  });
+
+  it("leaves the parent column empty for a parent that belongs to another tenant (B1211)", async () => {
+    const { svc, productCalls } = build({
+      products: [
+        product({
+          id: "p1",
+          tenantId: TENANT_A,
+          name: "Cola Cherry",
+          parent: { name: "Foreign Family", tenantId: TENANT_B },
+        }),
+        product({
+          id: "p2",
+          tenantId: TENANT_A,
+          name: "Cola Diet",
+          parent: { name: "Own Family", tenantId: TENANT_A },
+        }),
+      ],
+    });
+    const { out } = await run(svc, WINDOW);
+    const [, r1, r2] = rows(out);
+    expect(r1.split(",")[12]).toBe("");
+    expect(r2.split(",")[12]).toBe("Own Family");
+    expect(out).not.toContain("Foreign Family");
+    expect(productCalls[0].select.parent).toEqual({ select: { name: true, tenantId: true } });
   });
 
   it("Avg cost uses @routeflow/pricing round4 (half away from zero; L-248), not a local Math.round nudge", async () => {
