@@ -49,6 +49,7 @@ import {
   loadSourceInvoicesState,
   sourcesAreRefundable,
 } from "./inline-return-refund";
+import { assertWalkInCoveredBySale, resolveSourceSale } from "./inline-returns-source-sale";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -182,7 +183,8 @@ export class InlineReturnsQuoteService {
     db: any,
     // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
     // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
-    opts: { excludeInvoiceIds?: readonly string[] } = {},
+    // SA-740: `defaultSourceOrderId` is the capture's carrying order, the source a WALK-IN return defaults to.
+    opts: { excludeInvoiceIds?: readonly string[]; defaultSourceOrderId?: string | null } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -240,9 +242,19 @@ export class InlineReturnsQuoteService {
     // used elsewhere (orders.service.ts).
     const customer = await db.customer.findFirst({
       where: { id: dto.customerId, deletedAt: null },
-      select: { id: true, pricingTier: true, isTaxExempt: true },
+      select: { id: true, pricingTier: true, isTaxExempt: true, isWalkIn: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+
+    // SA-740 (row 190): the walk-in is decided HERE from the row, never from the client. A walk-in names its source sale
+    // (the quote requires it; the capture defaults to the carrying order); a named customer is pinned only if they send one.
+    const walkIn = customer.isWalkIn === true;
+    const sourceOrderId = await resolveSourceSale(db, {
+      customerId: dto.customerId,
+      isWalkIn: walkIn,
+      requested: dto.sourceOrderId,
+      defaultSourceOrderId: opts.defaultSourceOrderId,
+    });
 
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
 
@@ -285,6 +297,7 @@ export class InlineReturnsQuoteService {
       productUpbMap,
       undefined,
       opts.excludeInvoiceIds,
+      sourceOrderId,
     );
 
     const tierByProduct = new Map(
@@ -454,6 +467,8 @@ export class InlineReturnsQuoteService {
         item.productId,
         requestedPieces,
       );
+      // SA-740: a walk-in never gets an unreferenced chunk (cash out with no sale behind it): over the sale is a 409.
+      if (walkIn) assertWalkInCoveredBySale(item.productId, productName, allocated);
 
       const tierForProduct = tierByProduct.get(item.productId) ?? customer.pricingTier;
       const unreferencedPrice = product ? Number(getTierPrice(product, tierForProduct)) : 0;
@@ -642,6 +657,8 @@ export class InlineReturnsQuoteService {
     // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
     soldWindowDays: number | null = DEFAULT_SOLD_WINDOW_DAYS,
     excludeInvoiceIds: readonly string[] = [],
+    // SA-740: pin the matching set to ONE source sale (the walk-in rule, or a named customer who named one)
+    sourceOrderId: string | null = null,
   ): Promise<CandidateInvoiceLine[]> {
     const since = new Date();
     since.setDate(since.getDate() - (soldWindowDays ?? 0));
@@ -649,7 +666,7 @@ export class InlineReturnsQuoteService {
     const invoices = await db.invoice.findMany({
       where: {
         customerId,
-        orderId: { not: null },
+        orderId: sourceOrderId ?? { not: null },
         ...(excludeInvoiceIds.length > 0 ? { id: { notIn: [...excludeInvoiceIds] } } : {}),
         ...(soldWindowDays === null
           ? { items: { some: { productId: { in: productIds } } } }

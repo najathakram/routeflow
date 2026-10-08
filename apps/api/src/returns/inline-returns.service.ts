@@ -272,6 +272,8 @@ export class InlineReturnsService {
         });
       }
     }
+    // SA-740: a NEW order has no id yet, so a walk-in cannot default a source here: it is refused (SOURCE_SALE_REQUIRED),
+    // failing closed (a counter return rides on its sale through the capture endpoint, never a nested order create).
     const priced = await this.quoteService.priceInlineReturn(
       { customerId, items: lines.items, routeRunStopId: lines.routeRunStopId },
       user,
@@ -305,7 +307,16 @@ export class InlineReturnsService {
     opts: { orderRouteRunId?: string | null; forRefund?: boolean } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean }> {
     const tenantId = this.prisma.getTenantId();
-    await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+    // SA-740 (row 190): lock the carrying order, plus the SOURCE sale when it is a different one, in ONE id-sorted,
+    // tenant-bound statement (the set and order `refund()` takes, so a capture and a refund cannot deadlock). It replaces
+    // the old carrying-only lock, which had no tenant predicate. The customer advisory lock the caller holds stays first.
+    await lockRefundOrders(
+      tx,
+      tenantId,
+      dto.sourceOrderId && dto.sourceOrderId !== dto.orderId
+        ? [dto.orderId, dto.sourceOrderId]
+        : [dto.orderId],
+    );
     const order = await tx.order.findFirst({
       where: { id: dto.orderId },
       select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
@@ -368,9 +379,16 @@ export class InlineReturnsService {
     // Same pricing engine the quote endpoint uses, run on THIS transaction's client so
     // it reads the matching-set/prior-returned snapshot under the lock just taken.
     const priced = await this.quoteService.priceInlineReturn(
-      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      {
+        customerId: dto.customerId,
+        items: dto.items,
+        routeRunStopId: dto.routeRunStopId,
+        sourceOrderId: dto.sourceOrderId,
+      },
       user,
       tx,
+      // SA-740: a WALK-IN's return is from the sale carrying it unless the caller names another source
+      { defaultSourceOrderId: dto.orderId },
     );
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
@@ -711,10 +729,15 @@ export class InlineReturnsService {
       ? (await selectEditRevertedInvoices(db, opts.revertOrderId)).map((inv) => inv.id)
       : [];
     const priced = await this.quoteService.priceInlineReturn(
-      { customerId: dto.customerId, items: dto.items, routeRunStopId: dto.routeRunStopId },
+      {
+        customerId: dto.customerId,
+        items: dto.items,
+        routeRunStopId: dto.routeRunStopId,
+        sourceOrderId: dto.sourceOrderId,
+      },
       user,
       db,
-      { excludeInvoiceIds },
+      { excludeInvoiceIds, defaultSourceOrderId: dto.orderId },
     );
     // B961: staff without the reason refuse HERE too (before the caller's revert commits); a driver is held at capture.
     this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
