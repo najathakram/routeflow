@@ -51,7 +51,7 @@ export function RegisterHeader({
     getCounterLeaveRequest,
     () => false,
   );
-  useCounterBackGuard(hasLines);
+  useCounterBackGuard(hasLines, () => router.push(readExitTarget()));
   const exitRef = React.useRef<HTMLButtonElement>(null);
   const openerRef = React.useRef<HTMLElement | null>(null);
   // The notice is raised by the shared guard, so it also shows when a rail link, a g shortcut, the palette or the user menu was refused.

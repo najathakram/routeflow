@@ -722,7 +722,8 @@ function HeaderTools({
                           href={n.href}
                           className="min-w-0 flex-1"
                           onClick={(e) => {
-                            if (guardCounterLeave(() => router.push(n.href!))) e.preventDefault(); // POS-7: not mid-sale
+                            if (guardCounterLeave(() => rawRouter.push(n.href!)))
+                              e.preventDefault(); // POS-7: not mid-sale
                           }}
                         >
                           <p className="text-sm font-medium text-navy">{n.title}</p>

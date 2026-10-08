@@ -632,6 +632,32 @@ describe("discard guard", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("a bell notification link with lines asks first; Discard navigates once and the dialog stays closed", async () => {
+    mockNotifications = [
+      {
+        id: "n1",
+        type: "order",
+        title: "New order",
+        description: "d",
+        timestamp: Date.now(),
+        read: true,
+        href: "/orders/1",
+      },
+    ];
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    const bell = within(registerHeader()).getByRole("button", { name: /notifications/i });
+    fireEvent.pointerDown(bell, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(bell, { key: "Enter" });
+    const link = (await screen.findByText("New order")).closest("a") as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(false);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/orders/1");
+    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
+  });
+
   it("a rail link with an empty cart leaves directly", () => {
     mount(COUNTER);
     const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
@@ -665,8 +691,18 @@ describe("discard guard", () => {
     beforeEach(() => {
       go = jest.spyOn(window.history, "go").mockImplementation(() => undefined);
       pushState = jest.spyOn(window.history, "pushState");
+      Object.defineProperty(window.history, "length", { value: 5, configurable: true });
     });
-    const back = () => act(() => void window.dispatchEvent(new PopStateEvent("popstate")));
+    afterEach(() => {
+      delete (window.history as { length?: number }).length;
+      window.history.replaceState(null, "");
+    });
+    // Real Back lands on the entry BEFORE the sentinel, which carries no marker.
+    const back = () =>
+      act(() => {
+        window.history.replaceState(null, "");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
 
     it("with lines asks first, re-pushes state, and Discard leaves", async () => {
       mount(COUNTER);
@@ -678,6 +714,30 @@ describe("discard guard", () => {
       expect(go).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Discard" }));
       expect(go).toHaveBeenCalledWith(-2);
+    });
+
+    it("a second sale after a completed one reuses the one sentinel (Back + Discard still leaves)", async () => {
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      const after1 = pushState.mock.calls.length;
+      act(() => setCounterCartHasLines(false)); // sale completed
+      act(() => setCounterCartHasLines(true)); // second sale
+      expect(pushState.mock.calls.length).toBe(after1);
+      back();
+      fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+      expect(go).toHaveBeenCalledTimes(1);
+      expect(go).toHaveBeenCalledWith(-2);
+    });
+
+    it("a deep link / new tab (no earlier page) falls back to the exit target on Discard", async () => {
+      Object.defineProperty(window.history, "length", { value: 2, configurable: true });
+      sessionStorage.setItem("rf-register-prev", "/invoices");
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      back();
+      fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+      expect(go).not.toHaveBeenCalled();
+      expect(mockPush).toHaveBeenCalledWith("/invoices");
     });
 
     it("Keep selling stays", async () => {
