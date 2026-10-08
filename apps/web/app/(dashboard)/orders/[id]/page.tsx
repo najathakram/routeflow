@@ -38,7 +38,7 @@ import {
   type BadgeStatus,
 } from "@routeflow/ui/web";
 import { displayProductName, orderLineName } from "@/lib/product-display";
-import { sellableFlat } from "@/lib/product-search-groups";
+import { sellableFlat, type PickerRow } from "@/lib/product-search-groups";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
@@ -948,14 +948,7 @@ function CommissionEditModal({
  * not the replaced product's), and the tier ladder so it can resolve THIS
  * customer's price for the substitute instead of billing list.
  */
-interface SubstituteOption {
-  id: string;
-  name: string;
-  kind?: string | null;
-  variantName?: string | null;
-  parentProductId?: string | null;
-  parent?: { name: string } | null;
-  variants?: SubstituteOption[];
+interface SubstituteOption extends PickerRow {
   unit?: string;
   sku?: string;
   pricePerUnit: number;
