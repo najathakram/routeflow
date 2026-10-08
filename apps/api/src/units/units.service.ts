@@ -35,6 +35,13 @@ interface RawUnitRow {
 
 export const MAX_UNIT_NAME_LENGTH = 30;
 const MAX_COLLISION_PRODUCTS = 10;
+/**
+ * A rename reads and relabels every product of the tenant that uses the unit, in CHUNK-sized writes,
+ * and first waits for the tenant units lock behind in-flight pack edits (milliseconds each). Sized for
+ * a catalog of tens of thousands of products: 60 s for the work (Prisma's default 5 s would abort a
+ * large tenant mid-relabel and roll everything back), 10 s to get a connection from a busy pool.
+ */
+const RENAME_TX_OPTIONS = { timeout: 60_000, maxWait: 10_000 } as const;
 const CHUNK = 5000;
 
 /**
@@ -292,8 +299,14 @@ export class UnitsService {
       // label) unique, base/pack sharing a label with a level, or a level sharing the PACK word
       // (`Product.unit`, "Box" when blank) which the ladder resolves first and so would make the
       // level unreachable (mirrors unit-pack-rules `assertPackKeepsLevelsValid`).
+      const levelsByProduct = new Map<string, typeof levelRows>();
+      for (const l of levelRows) {
+        const list = levelsByProduct.get(l.productId);
+        if (list) list.push(l);
+        else levelsByProduct.set(l.productId, [l]);
+      }
       const colliding = products.filter((p) => {
-        const mine = levelRows.filter((l) => l.productId === p.id);
+        const mine = levelsByProduct.get(p.id) ?? [];
         const renamed = mine.filter((l) => l.tenantUnitId === id);
         // Several levels of one product linked to this unit ("Case" + "case") would all take the new
         // name and break the (productId,label) unique: refuse, the operator fixes the product.
@@ -371,7 +384,7 @@ export class UnitsService {
         },
       });
       return { updated, productsUpdated: distinct.size };
-    });
+    }, RENAME_TX_OPTIONS);
     return {
       unit: {
         id,

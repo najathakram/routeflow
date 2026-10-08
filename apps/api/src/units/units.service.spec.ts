@@ -622,6 +622,59 @@ describe("UnitsService", () => {
       expect(sql).toContain('"tenantId"');
     });
 
+    it("runs under an explicit transaction budget sized for a large tenant (not Prisma's 5 s default)", async () => {
+      const h = make();
+      seedRename(h, { products: [], levels: [] });
+      await h.service.update("u1", { name: "Carton" }, user);
+      expect(h.prisma.tenantTransaction.mock.calls[0][1]).toEqual({
+        timeout: 60_000,
+        maxWait: 10_000,
+      });
+    });
+
+    it("a 30,000-product tenant renames without a per-product scan of every level (the collision pass groups levels by product)", async () => {
+      const h = make();
+      const N = 30_000;
+      const products = Array.from({ length: N }, (_, i) => ({
+        id: `p${i}`,
+        name: `Product ${i}`,
+        baseUnitLabel: null,
+        packLabel: null,
+        unit: "Each",
+      }));
+      const levels = products.flatMap((p, i) => [
+        { productId: p.id, label: "Case", tenantUnitId: "u1" },
+        // every 10,000th product already has a Carton level: those are the collisions
+        { productId: p.id, label: i % 10_000 === 0 ? "Carton" : `L${i}`, tenantUnitId: null },
+      ]);
+      h.db.tenantUnit.findFirst.mockImplementation(
+        async ({ where }: { where: Record<string, unknown> }) => (where.id === "u1" ? row() : null),
+      );
+      h.db.productUnit.findMany.mockImplementation(
+        async ({ where }: { where: { tenantUnitId?: string; productId?: { in: string[] } } }) => {
+          if (where.tenantUnitId) {
+            return levels
+              .filter((l) => l.tenantUnitId === "u1")
+              .map((l, i) => ({ id: `l${i}`, productId: l.productId }));
+          }
+          const ids = new Set(where.productId!.in);
+          return levels.filter((l) => ids.has(l.productId));
+        },
+      );
+      h.db.product.findMany.mockImplementation(
+        async ({ where }: { where: { id: { in: string[] } } }) => {
+          const ids = new Set(where.id.in);
+          return products.filter((p) => ids.has(p.id));
+        },
+      );
+      const started = Date.now();
+      const err = await h.service.update("u1", { name: "Carton" }, user).catch((e) => e);
+      expect(err.getResponse().total).toBe(3);
+      // Sanity bound, not a benchmark: the O(products x levels) scan took ~10 s here, the grouped pass
+      // well under one second.
+      expect(Date.now() - started).toBeLessThan(4_000);
+    }, 30_000);
+
     it("the 409 names at most 10 products", async () => {
       const h = make();
       const ids = Array.from({ length: 12 }, (_, i) => `p${i}`);
