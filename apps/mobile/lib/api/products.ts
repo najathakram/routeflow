@@ -48,7 +48,14 @@ export function useProducts(
  * Key stays under ["products"] so the existing mutation invalidations reach it.
  */
 export function useProductsInfinite(
-  params?: { search?: string; scanCode?: string; category?: string; limit?: number },
+  params?: {
+    search?: string;
+    scanCode?: string;
+    category?: string;
+    limit?: number;
+    /** Nest each family's active variants so the picker can list them instead of the container. */
+    includeVariants?: boolean;
+  },
   options?: { enabled?: boolean },
 ) {
   const limit = params?.limit ?? PRODUCT_PAGE_SIZE;
@@ -186,7 +193,11 @@ export function useCreateProduct() {
 
 export function useUpdateProduct() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateProductDto>>({
+  return useMutation<
+    { id: string },
+    Error,
+    { id: string; deactivateHolderIds?: string[] } & Partial<CreateProductDto>
+  >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/products/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["products"] });

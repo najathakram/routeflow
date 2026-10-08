@@ -8,7 +8,7 @@ import type {
   PickupCompleteResponse,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
-import { counterSaleGate } from "../counter-sale";
+import { counterSaleGate, isPickupHandledError } from "../counter-sale";
 import { useTenantFeatures } from "../tenant-features";
 
 /**
@@ -84,6 +84,8 @@ export function usePickupComplete(orderId: string) {
           headers: { "Idempotency-Key": idempotencyKey },
         })
         .then((r) => r.data),
+    // The dialog answers its own pickup codes with fixed copy: no second, global toast for those (anything else keeps it).
+    meta: { localErrorToast: isPickupHandledError },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });

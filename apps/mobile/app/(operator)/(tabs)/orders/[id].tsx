@@ -50,6 +50,7 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
@@ -744,6 +745,11 @@ export default function OrderDetailScreen() {
                         {!li.productId ? (
                           <View style={styles.customTag}>
                             <Text style={styles.customTagText}>Custom</Text>
+                          </View>
+                        ) : null}
+                        {lineBackorderPieces(li, order.status) > 0 ? (
+                          <View style={styles.customTag} testID="line-backorder-tag">
+                            <Text style={styles.customTagText}>Backorder</Text>
                           </View>
                         ) : null}
                       </View>

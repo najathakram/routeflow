@@ -22,7 +22,7 @@ export type ScanResolution =
   /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
   | { kind: "refused"; message: string }
   | { kind: "archived"; name: string }
-  /** B1219: fuzzy matches (one or several), no exact code - NOT added; the caller offers "Did you mean ...?". */
+  /** B1219: one fuzzy match, no exact code - NOT added; the caller offers "Did you mean ...?". */
   | { kind: "suggested"; product: any }
   | { kind: "unknown" }
   | {

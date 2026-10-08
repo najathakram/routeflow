@@ -10,6 +10,10 @@ import { guardCounterLeave } from "./counter-cart-signal";
 const TOKEN_KEY = "impersonationToken";
 const SLUG_KEY = "impersonationTenantSlug";
 const USERNAME_KEY = "impersonationUsername";
+// The tenant id (never a URL) of the page the operator started from, so Exit returns there.
+const SOURCE_ID_KEY = "impersonationSourceTenantId";
+const TENANTS_LIST = "/admin/tenants";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANGE_EVENT = "rf-impersonation-change";
 
 export interface ImpersonationState {
@@ -39,9 +43,19 @@ export function getImpersonation(): ImpersonationState | null {
   return { token, slug, username, expired: exp !== null && exp * 1000 < Date.now() };
 }
 
-export function setImpersonation(token: string, slug: string, username?: string): void {
+export function setImpersonation(
+  token: string,
+  slug: string,
+  username?: string,
+  sourceTenantId?: string,
+): void {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(SLUG_KEY, slug);
+  if (sourceTenantId) {
+    localStorage.setItem(SOURCE_ID_KEY, sourceTenantId);
+  } else {
+    localStorage.removeItem(SOURCE_ID_KEY);
+  }
   if (username) {
     localStorage.setItem(USERNAME_KEY, username);
   } else {
@@ -55,7 +69,24 @@ export function clearImpersonation(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(SLUG_KEY);
   localStorage.removeItem(USERNAME_KEY);
+  localStorage.removeItem(SOURCE_ID_KEY);
   window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+/**
+ * Where Exit impersonation lands: the tenant page the operator started from, else the tenants list.
+ * Only a stored tenant ID is trusted, and only when it is a UUID: the path is built here from it,
+ * never read back as a URL, so a tampered value cannot redirect anywhere else.
+ */
+export function exitImpersonationTarget(): string {
+  if (typeof window === "undefined") return TENANTS_LIST;
+  let id: string | null = null;
+  try {
+    id = localStorage.getItem(SOURCE_ID_KEY);
+  } catch {
+    id = null;
+  }
+  return id && UUID_RE.test(id) ? `${TENANTS_LIST}/${id.toLowerCase()}` : TENANTS_LIST;
 }
 
 /**
@@ -72,9 +103,11 @@ export function clearImpersonation(): void {
 export function exitImpersonation(): void {
   if (typeof window === "undefined") return;
   if (guardCounterLeave()) return; // a counter sale is being recorded: do not hard-load away from it
+  // Read BEFORE clearing: clearImpersonation drops the stored source id.
+  const target = exitImpersonationTarget();
   clearTenantCookie();
   clearImpersonation();
-  window.location.href = "/admin/tenants";
+  window.location.href = target;
 }
 
 /**
@@ -92,7 +125,8 @@ export function subscribeImpersonation(onChange: () => void): () => void {
       event.key !== null &&
       event.key !== TOKEN_KEY &&
       event.key !== SLUG_KEY &&
-      event.key !== USERNAME_KEY
+      event.key !== USERNAME_KEY &&
+      event.key !== SOURCE_ID_KEY
     ) {
       return;
     }

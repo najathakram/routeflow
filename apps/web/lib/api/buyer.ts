@@ -7,6 +7,7 @@ import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
+import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import {
   isTrackingLive,
   type FulfilmentMethod,
@@ -378,6 +379,8 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
+    // The cart and shelf render their own sentence for the "order already placed" refusals.
+    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
     mutationFn: (data: {
       items: Array<{
         productId: string;

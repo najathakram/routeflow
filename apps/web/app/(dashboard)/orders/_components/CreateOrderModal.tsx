@@ -90,6 +90,7 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -321,7 +322,7 @@ export function CreateOrderModal({
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
-  // B1219: a scan with no exact code match but fuzzy hits (one OR several) is offered here, never auto-added.
+  // B1219: a scan with no exact code match but ONE fuzzy hit is offered here, never auto-added.
   const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
@@ -471,12 +472,16 @@ export function CreateOrderModal({
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
+    defaultValues: { urgent: false },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
-  const fulfillPath = watch("fulfillPath");
+  const staffFulfilment = useStaffFulfilment();
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
+  // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
+  const fulfilmentPending = !staffFulfilment.known;
   // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
@@ -1040,6 +1045,7 @@ export function CreateOrderModal({
   const { user } = useAuth();
   const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -1057,7 +1063,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: fulfillPath ?? "ROUTE",
+      fulfillPath,
     }),
     [
       selectedCustomer,
@@ -1193,7 +1199,11 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
+    reset({
+      notes: p.notes ?? "",
+      urgent: !!p.urgent,
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
+    });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -1208,7 +1218,7 @@ export function CreateOrderModal({
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
       commissionRatePct: p.commissionRatePct ?? null,
-      fulfillPath: p.fulfillPath ?? "ROUTE",
+      fulfillPath: staffFulfilment.pickForm(p.fulfillPath),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, resumeDraftId, loadedDraft]);
@@ -1263,6 +1273,7 @@ export function CreateOrderModal({
     data: FormValues,
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
+    if (fulfilmentPending) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
@@ -1344,7 +1355,7 @@ export function CreateOrderModal({
       items: itemsForSubmit,
       notes: data.notes,
       urgent: data.urgent,
-      fulfillPath: data.fulfillPath || "ROUTE",
+      fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
       requestedDeliveryDate: requestedDeliveryDate || undefined,
       orderDate: orderDate || undefined,
       ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
@@ -1692,7 +1703,7 @@ export function CreateOrderModal({
               variant="secondary"
               type="button"
               loading={createOrder.isPending}
-              disabled={createOrder.isPending}
+              disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
               Save as Draft
@@ -1702,7 +1713,9 @@ export function CreateOrderModal({
               form="create-order-form"
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
-              disabled={createOrder.isPending || lineItems.some(isPendingDefaultUnit)}
+              disabled={
+                createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+              }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order
@@ -1729,6 +1742,18 @@ export function CreateOrderModal({
           {resumeDraftId && draftLoading && !activeDraftId && (
             <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
               Loading your parked draft…
+            </div>
+          )}
+
+          {staffFulfilment.failed && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>Couldn&apos;t load your delivery settings.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={staffFulfilment.retry}>
+                Retry
+              </Button>
             </div>
           )}
 
@@ -1799,7 +1824,7 @@ export function CreateOrderModal({
                               // effect) so hydrating a parked draft's own
                               // fulfillPath — via the same setSelectedCustomer call
                               // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
+                              setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
                               setCustomerSearch("");
                               setDebouncedCustomerSearch("");
                             }}
@@ -2279,36 +2304,29 @@ export function CreateOrderModal({
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
-              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "ROUTE")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Delivery route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "SHIP")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Ship via carrier
-                </button>
+            {staffFulfilment.choice && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+                <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                  {staffFulfilment.formMethods.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setValue("fulfillPath", m)}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === m ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
+                    </button>
+                  ))}
+                </div>
+                {fulfillPath === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
+                )}
               </div>
-              {fulfillPath === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            )}
 
             <Textarea
               label="Notes"

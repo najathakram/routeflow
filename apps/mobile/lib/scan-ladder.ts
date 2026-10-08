@@ -169,7 +169,9 @@ export function makeScanHandler<T extends ScanMatchable>(
         return settle("unresolved", {
           feedback: {
             kind: "error",
-            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
+            text: result.suggestion
+              ? `Did you mean ${(result.product as { name?: string })?.name ?? "this item"}?`
+              : `${result.matches?.length ?? 0} products match "${trimmed}"`,
             action: { label: "Choose", onPress: () => deps.onAmbiguous(trimmed) },
           },
         });

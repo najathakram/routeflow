@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import DashboardPage from "./page";
 
 jest.mock("next/navigation", () => ({
@@ -26,10 +26,33 @@ jest.mock("@/lib/api/addons", () => ({
 jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
 const idle = { data: undefined, isLoading: false, isError: false };
 /** Every options object the dashboard passed to an operator/customer-only read. */
-const reads: { hook: string; options: { enabled?: boolean } | undefined }[] = [];
+const reads: {
+  hook: string;
+  params?: { fulfillPath?: string };
+  options: { enabled?: boolean } | undefined;
+}[] = [];
+/** Served `GET /tenants/me/features` body: undefined = an unset account (today's behaviour). */
+let features: unknown = undefined;
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({ data: features }),
+}));
+const SHIPPING_CAPS = {
+  capabilities: {
+    fulfilment: {
+      methods: ["SHIP"],
+      staffDefault: "SHIP",
+      portalMethods: [],
+      portalDefault: null,
+      counter: "off",
+      fleet: false,
+    },
+  },
+};
+const isShipTile = (r: (typeof reads)[number]) =>
+  r.hook === "useOrders" && r.params?.fulfillPath === "SHIP";
 jest.mock("@/lib/api/orders", () => ({
-  useOrders: (_p: unknown, options?: { enabled?: boolean }) => {
-    reads.push({ hook: "useOrders", options });
+  useOrders: (params: { fulfillPath?: string }, options?: { enabled?: boolean }) => {
+    reads.push({ hook: "useOrders", params, options });
     return idle;
   },
 }));
@@ -50,7 +73,7 @@ jest.mock("@/lib/api/drivers", () => ({ useDrivers: () => idle }));
 jest.mock("@/lib/api/products", () => ({ useProducts: () => idle }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
-  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+  apiClient: { get: jest.fn().mockResolvedValue({ data: { timezone: "America/New_York" } }) },
 }));
 
 /**
@@ -62,6 +85,7 @@ jest.mock("@/lib/api-client", () => ({
 describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => {
   beforeEach(() => {
     reads.length = 0;
+    features = undefined;
     authUser = { role: "DRIVER" };
     access = { routes: false, delivery: false };
   });
@@ -85,11 +109,38 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
   it("an OPERATOR's reads stay enabled and the Recent Orders card still renders", () => {
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
-    for (const r of reads) expect(r.options?.enabled).not.toBe(false);
+    // Unset account: the ONLY disabled reads are the three SHIP-filtered shipping-tile reads.
+    const disabled = reads.filter((r) => r.options?.enabled === false);
+    expect(disabled.length).toBe(3);
+    expect(disabled.every(isShipTile)).toBe(true);
+    expect(reads.filter(isShipTile).length).toBe(3);
     expect(screen.getByText("Recent Orders")).toBeInTheDocument();
     expect(
       screen.queryByText(/plan doesn't include routes or deliveries/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("a shipping account's OPERATOR enables both tile reads; a DRIVER keeps them disabled", async () => {
+    features = SHIPPING_CAPS;
+    authUser = { role: "OPERATOR" };
+    renderWithProviders(<DashboardPage />);
+    // The week tile also waits for the business timezone (/settings), so it enables a render later.
+    await waitFor(() => {
+      const last = reads.slice(-reads.filter((r) => r.hook === "useOrders").length);
+      expect(last.length).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      const week = reads.filter(isShipTile).slice(-3);
+      expect(week.every((r) => r.options?.enabled !== false)).toBe(true);
+    });
+    expect(reads.filter(isShipTile).length).toBeGreaterThanOrEqual(3);
+
+    reads.length = 0;
+    authUser = { role: "DRIVER" };
+    renderWithProviders(<DashboardPage />);
+    const tiles = reads.filter(isShipTile);
+    expect(tiles.length).toBe(3);
+    for (const r of reads) expect(r.options?.enabled).toBe(false);
   });
 });
 

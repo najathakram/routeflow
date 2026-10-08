@@ -176,3 +176,45 @@ export async function waitForApiCapability(
     `the API still reports the spec's fulfilment config ${timeoutMs / 1000}s after the restore.\n  observed: ${seen}\n  expected: ${want}`,
   );
 }
+
+/**
+ * Delivery + ship WITH the counter on (2+ staff methods, so the order builder offers the Fulfillment picker): applies the
+ * delivery_distributor profile (fleet on), then writes fulfilment_model=both and counter_sales=on on the test tenant's
+ * TenantFeatureConfig rows. LOCAL-ONLY like restoreFulfilmentConfig: assertLocalFulfilmentTarget runs first (via withDb) and the
+ * caller's afterAll restores the snapshot row-for-row. Polls the API until it reports ROUTE + SHIP and the counter.
+ */
+export async function applyDeliveryShipCounter(
+  t: LocalFulfilmentTarget,
+  snap: FulfilmentSnapshot,
+): Promise<void> {
+  await applyBusinessProfile(t, snap, "delivery_distributor");
+  await withDb(t, async (c) => {
+    for (const [key, mode] of [
+      ["fulfilment_model", "both"],
+      ["counter_sales", "on"],
+    ] as const) {
+      const up = await c.query(
+        'UPDATE "TenantFeatureConfig" SET mode = $3, "updatedAt" = now() WHERE "tenantId" = $1 AND "featureKey" = $2',
+        [snap.tenantId, key, mode],
+      );
+      if (up.rowCount === 0) {
+        await c.query(
+          'INSERT INTO "TenantFeatureConfig" (id, "tenantId", "featureKey", mode, reason, "updatedAt") VALUES (gen_random_uuid()::text, $1, $2, $3, $4, now())',
+          [snap.tenantId, key, mode, "local e2e spec 71 (restored afterwards)"],
+        );
+      }
+    }
+  });
+  const deadline = Date.now() + 60_000;
+  let seen = "";
+  for (;;) {
+    const cap: any = await readApiCapability(t);
+    seen = JSON.stringify(cap);
+    const methods: string[] = cap?.capability?.methods ?? [];
+    if (methods.includes("ROUTE") && methods.includes("SHIP") && cap?.counter_sales === "on")
+      return;
+    if (Date.now() >= deadline)
+      throw new Error(`the API never reported delivery+ship with the counter on: ${seen}`);
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}

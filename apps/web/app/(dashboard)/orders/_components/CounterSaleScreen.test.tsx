@@ -149,6 +149,11 @@ describe("CounterSaleScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "$20" }));
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    // print: the wrapper drops its padding and width cap so the 72 mm printable area is the receipt's
+    expect(screen.getByTestId("counter-sale-receipt").className).toEqual(
+      expect.stringContaining("print:max-w-none"),
+    );
+    expect(screen.getByTestId("counter-sale-receipt").className).toContain("print:p-0");
     expect(mutateAsync).toHaveBeenCalledWith({
       dto: {
         walkIn: true,
@@ -923,13 +928,14 @@ describe("CounterSaleScreen: API contract wiring", () => {
             expect(screen.queryByText("Change")).toBeNull();
           });
 
-          it("a live (non-recovered) cash receipt is unchanged: server change, no Tendered row, no 'as entered'", async () => {
+          it("a live (non-recovered) cash receipt: server change, Tendered = paid + change, no 'as entered'", async () => {
             renderWithProviders(<CounterSaleScreen />);
             await fillCola();
             fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
             const receipt = await screen.findByTestId("counter-sale-receipt");
             expect(screen.getByText("Change")).toBeInTheDocument();
-            expect(receipt.textContent).not.toMatch(/as entered|Tendered/);
+            expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$37.50");
+            expect(receipt.textContent).not.toMatch(/as entered/);
           });
         });
 
@@ -1275,7 +1281,8 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(cart).toHaveTextContent("Single · × 1");
       expect(cart.textContent).not.toMatch(/box/i);
       const receipt = await completeAndReceipt();
-      expect(receipt).toHaveTextContent("Single × 1");
+      expect(receipt).toHaveTextContent("Single");
+      expect(receipt).toHaveTextContent("1 × $1.00");
       expect(receipt.textContent).not.toMatch(/box/i);
     });
 
@@ -1299,7 +1306,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$12.00"));
       expect(screen.getByRole("list", { name: "Items" })).toHaveTextContent("Water · 1 box");
       const receipt = await completeAndReceipt();
-      expect(receipt).toHaveTextContent("Water × 1 box");
+      expect(receipt).toHaveTextContent("1 box × $12.00 per box");
     });
   });
 
@@ -1628,17 +1635,34 @@ describe("CounterSaleScreen: held attempt hardening", () => {
           method: "CASH",
         }),
     ],
-  ])("MUST2: %s stays locked on check-recent-sales, no crash, entry removed", (_n, payload) => {
-    window.sessionStorage.setItem(STORE_KEY, payload());
-    renderWithProviders(<CounterSaleScreen />);
-    expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
-    expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
-    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
-    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
-  });
+  ])(
+    "MUST2: %s stays locked on check-recent-sales, no crash, marker kept until Discard",
+    (_n, payload) => {
+      window.sessionStorage.setItem(STORE_KEY, payload());
+      const first = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Check recent sales" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      expect(JSON.parse(window.sessionStorage.getItem(STORE_KEY) as string)).toEqual({
+        state: "unknown",
+      });
+      // a reload (remount) is STILL locked
+      first.unmount();
+      renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-outcome-unknown")).toBeInTheDocument();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      // the Discard copy says the sale may have gone through
+      expect(
+        screen.getByText(
+          "The previous sale may have gone through. Check recent sales before ringing it again.",
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Discard and start a new sale" }));
+      expect(window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+      expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    },
+  );
 
   it("restores the locked sale with a slimmed customer (name still shown)", async () => {
     window.sessionStorage.setItem(

@@ -30,6 +30,7 @@ import {
   quickTenderOptions,
   readAutoPrint,
   heldAttemptKey,
+  clearHeldAttempt,
   readHeldAttempt,
   writeHeldAttempt,
   validatePayment,
@@ -531,10 +532,14 @@ describe("held attempt: minimal customer, validated read", () => {
       "missing key",
       () => window.sessionStorage.setItem(SK, JSON.stringify(snap({ key: undefined }))),
     ],
-  ])("%s -> corrupt, and the entry is removed", (_n, seed) => {
+  ])("%s -> corrupt, payload dropped, an unknown marker kept", (_n, seed) => {
     seed();
     expect(readHeldAttempt(SK)).toBe("corrupt");
-    expect(window.sessionStorage.getItem(SK)).toBeNull();
+    expect(JSON.parse(window.sessionStorage.getItem(SK) as string)).toEqual({ state: "unknown" });
+    // a second read still says corrupt (stays locked) until the cashier discards
+    expect(readHeldAttempt(SK)).toBe("corrupt");
+    clearHeldAttempt(SK);
+    expect(readHeldAttempt(SK)).toBeNull();
   });
 
   it("heldAttemptKey is unchanged", () => {
