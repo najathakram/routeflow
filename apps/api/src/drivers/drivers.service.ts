@@ -11,7 +11,7 @@ import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
-import { assertMayChangeAccount } from "../users/admin-account-protection";
+import { assertMayChangeAccount, touchesDriverIdentity } from "../users/admin-account-protection";
 import { ListDriversDto } from "./dto/list-drivers.dto";
 import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
@@ -186,7 +186,11 @@ export class DriversService {
 
   async update(id: string, dto: UpdateDriverDto, callerRole: UserRole | undefined) {
     const driver = await this.findOneOrThrow(id);
-    await this.assertMayChangeDriver(driver.userId, callerRole);
+    // B1061: operators edit operational fields freely; only an identity / account-linking change on an
+    // admin-linked driver needs an admin caller (DRIVER_IDENTITY_FIELDS), and before the geocoder call.
+    if (touchesDriverIdentity(dto, driver)) {
+      await this.assertMayChangeDriver(driver.userId, callerRole);
+    }
     const { homeLine1, homeCity, homeState, homeZip, ...rest } = dto;
     const data: Record<string, unknown> = { ...rest };
     const homeFieldPresent =

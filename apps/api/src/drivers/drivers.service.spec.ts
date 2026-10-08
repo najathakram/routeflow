@@ -374,14 +374,77 @@ describe("DriversService", () => {
       },
     );
 
-    it("update refuses before the geocoder is called", async () => {
+    describe("update: only identity / account-linking fields are guarded", () => {
+      const run = (dto: Record<string, unknown>, role: UserRole | undefined) =>
+        service.update("drv-1", dto as any, role);
+
+      it.each([
+        ["vehicle", { vehicleMake: "Ford", vehicleModel: "Transit", vehiclePlate: "XYZ-9" }],
+        ["phone", { phone: "555-0300" }],
+        ["home address", { homeLine1: "1 Main St", homeCity: "Springfield" }],
+        ["an unchanged name echoed back", { contactName: "Jane Smith", phone: "555-0301" }],
+      ])("an OPERATOR may edit %s of an admin-linked driver", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.OPERATOR)).resolves.toBeDefined();
+        expect(prisma.driver.update).toHaveBeenCalledTimes(1);
+      });
+
+      it("an operational edit does not need a caller role (the DTO decides whether the check applies)", async () => {
+        arrange("TENANT_ADMIN");
+        await expect(run({ phone: "555-0302" }, undefined)).resolves.toBeDefined();
+      });
+
+      it.each([
+        ["the user link", { userId: "other-user" }],
+        ["the login email", { email: "x@example.com" }],
+        ["the login username", { username: "someone" }],
+        ["the name", { contactName: "Renamed" }],
+        ["the name alongside an operational field", { contactName: "Renamed", phone: "1" }],
+      ])("an OPERATOR changing %s of an admin-linked driver is refused", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.OPERATOR)).rejects.toThrow(ForbiddenException);
+        await expect(run(dto, undefined)).rejects.toThrow(ForbiddenException);
+        noWrites();
+      });
+
+      it.each([
+        ["the user link", { userId: "other-user" }],
+        ["the login email", { email: "x@example.com" }],
+        ["the name", { contactName: "Renamed" }],
+      ])("a TENANT_ADMIN may change %s of an admin-linked driver", async (_n, dto) => {
+        arrange("TENANT_ADMIN");
+        await expect(run(dto, UserRole.TENANT_ADMIN)).resolves.toBeDefined();
+      });
+
+      it("an identity change on a non-admin-linked driver is allowed for an OPERATOR", async () => {
+        arrange("DRIVER");
+        await expect(run({ contactName: "Renamed" }, UserRole.OPERATOR)).resolves.toBeDefined();
+      });
+
+      it("the self-edit path (updateByUserId) is unaffected", async () => {
+        arrange("TENANT_ADMIN");
+        prisma.driver.findFirst.mockResolvedValue(MOCK_DRIVER);
+        await expect(
+          service.updateByUserId("user-drv", { phone: "555-0303" }, UserRole.TENANT_ADMIN),
+        ).resolves.toBeDefined();
+        await expect(
+          service.updateByUserId("user-drv", { contactName: "Renamed" }, UserRole.TENANT_ADMIN),
+        ).resolves.toBeDefined();
+      });
+    });
+
+    it("update refuses an identity change before the geocoder is called", async () => {
       arrange("TENANT_ADMIN");
       configGet.mockImplementation((key: string) =>
         key === "googleMaps.apiKey" ? "test-key" : null,
       );
       global.fetch = jest.fn() as any;
       await expect(
-        service.update("drv-1", { homeLine1: "1 Main St" }, UserRole.OPERATOR),
+        service.update(
+          "drv-1",
+          { homeLine1: "1 Main St", contactName: "Renamed" },
+          UserRole.OPERATOR,
+        ),
       ).rejects.toThrow(ForbiddenException);
       expect(global.fetch).not.toHaveBeenCalled();
     });
