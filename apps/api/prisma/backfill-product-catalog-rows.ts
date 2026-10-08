@@ -171,8 +171,8 @@ export async function backfillProductCatalogRows(
             "(the owner's per-tenant yes)",
         );
       }
-      // The override IS the owner's per-tenant yes — still allowed even when protected (paying).
-      // This is informational only: a counts-only stderr warning, never a second refusal.
+      // Row 195: the live-tenant override is the owner's yes for an ordinary live tenant, NEVER for a
+      // protected one (paying, Stripe-linked, or listed in PROTECTED_TENANT_SLUGS): refuse, no override.
       if (!protectedSlugs) {
         throw new BackfillRefused("protected-tenant list not loaded for a non-test tenant");
       }
@@ -189,7 +189,7 @@ export async function backfillProductCatalogRows(
           protectedSlugs,
         )
       ) {
-        process.stderr.write("WARNING: protected (paying) tenant, owner override present\n");
+        throw new BackfillRefused(`tenant ${tenant.id} is protected: refused (no override exists)`);
       }
     }
     tenants = [{ id: tenant.id, slug: tenant.slug }];

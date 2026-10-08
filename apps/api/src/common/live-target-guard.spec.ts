@@ -128,6 +128,22 @@ describe("confirmProtectedOverride", () => {
     ).rejects.toThrow(/must name this tenant/);
   });
 
+  it("the flag may repeat (one per protected tenant) and a script may name its own backup flag", async () => {
+    const token = await guard.confirmProtectedOverride(
+      base({
+        argv: [
+          "--allow-protected",
+          "t-x",
+          "--allow-protected",
+          "t-trial",
+          "--i-have-a-fresh-backup",
+        ],
+        backupFlag: "--i-have-a-fresh-backup",
+      }),
+    );
+    expect(token.tenantId).toBe("t-trial");
+  });
+
   it("--backup-taken is required", async () => {
     await expect(
       guard.confirmProtectedOverride(base({ argv: ["--allow-protected", "t-trial"] })),

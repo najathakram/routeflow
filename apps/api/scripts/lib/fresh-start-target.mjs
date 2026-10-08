@@ -26,15 +26,15 @@ const { protectedArm } = payingTenant;
 export const BACKUP_COMMAND = (slug) =>
   `railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-${slug}`;
 
-const FLAGS = new Set([
-  "--execute",
-  "--local",
-  "--live-tenant-override",
-  "--backup-taken",
-  "--allow-paying-tenant",
-]);
+// Row 195: --allow-paying-tenant is RETIRED (now an unknown argument). A protected target needs
+// `--allow-protected <tenantId>` (+ --backup-taken, a real terminal and a typed phrase; see
+// live-target-guard.cjs confirmProtectedOverride).
+const FLAGS = new Set(["--execute", "--local", "--live-tenant-override", "--backup-taken"]);
 
-/** Strict argv: one positional slug, the known flags, `--exclude-tenant <slug,...>` (repeatable). */
+/**
+ * Strict argv: one positional slug, the known flags, `--exclude-tenant <slug,...>` (repeatable) and
+ * `--allow-protected <tenantId>`.
+ */
 export function parseFreshStartArgs(argv) {
   const out = {
     slug: null,
@@ -42,7 +42,7 @@ export function parseFreshStartArgs(argv) {
     local: false,
     live: false,
     backupTaken: false,
-    allowPayingTenant: false,
+    allowProtected: null,
     exclude: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -55,12 +55,17 @@ export function parseFreshStartArgs(argv) {
         if (!out.exclude.includes(s)) out.exclude.push(s);
       }
       i++;
+    } else if (a === "--allow-protected") {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith("--"))
+        return { error: "--allow-protected needs a tenant id" };
+      out.allowProtected = v;
+      i++;
     } else if (FLAGS.has(a)) {
       if (a === "--execute") out.execute = true;
       if (a === "--local") out.local = true;
       if (a === "--live-tenant-override") out.live = true;
       if (a === "--backup-taken") out.backupTaken = true;
-      if (a === "--allow-paying-tenant") out.allowPayingTenant = true;
     } else if (a.startsWith("-")) {
       return { error: `unknown argument: ${a}` };
     } else if (out.slug === null) {
@@ -177,33 +182,33 @@ export function checkExcludedTenants({ exclude, found, tenant }) {
 }
 
 /**
- * #2639 / SA-547: a PROTECTED target — paying (mrr.service's isPayingRow) or linked to a Stripe
- * subscription — is refused in EVERY mode (dry run included) unless `--allow-paying-tenant`. With the
- * flag, `--execute` additionally needs the operator to type `WIPE PAYING <slug>` after the slug
- * type-back. `tenant`/`sub` are the rows read from the SAME resolved database the wipe will hit.
- * @param tenant { id, slug, name, status, class, deletedAt }
+ * #2639 / SA-547 + row 195: is the target PROTECTED — paying (mrr.service's isPayingRow), linked to a
+ * Stripe subscription, or named in PROTECTED_TENANT_SLUGS (the env-listed arm; ignores deletedAt)?
+ * Pure. A protected target is refused in EVERY mode (dry run included) unless the operator passes
+ * `--allow-protected <tenantId>` and completes live-target-guard.cjs confirmProtectedOverride at a
+ * real terminal; the script then re-checks with assertWritableTenant and the override token.
+ * `tenant`/`sub` are the rows read from the SAME resolved database the wipe will hit.
+ * @param tenant { id, slug, status, class, deletedAt }
  * @param sub    { planKey, stripeSubId } | null — the tenant's TenantSubscription row
- * @param protectedSlugs the Set from protected-slugs.cjs loadProtectedSlugs (row 195, env-listed arm)
- * @returns {{ ok: false, reason: string } | { ok: true, phrase: string | null, line: string | null }}
+ * @param protectedSlugs the Set from protected-slugs.cjs loadProtectedSlugs
+ * @returns {{ protected: false, arm: null, reason: null } | { protected: true, arm: string, reason: string }}
  */
-export function checkProtectedTarget({ tenant, sub, allowPayingTenant, protectedSlugs }) {
+export function checkProtectedTarget({ tenant, sub, protectedSlugs }) {
   const arm = protectedArm(tenant, sub, protectedSlugs);
-  if (arm === null) return { ok: true, phrase: null, line: null };
+  if (arm === null) return { protected: false, arm: null, reason: null };
   const why =
     arm === "paying"
       ? "it is a PAYING tenant (ACTIVE, PRODUCTION, on a plan)"
-      : "its subscription is linked to Stripe";
-  if (!allowPayingTenant)
-    return {
-      ok: false,
-      reason:
-        // SA-547a: the id + arm only — a business NAME is a client identifier, like a slug.
-        `tenant ${tenant.id} is protected: ${why}. Refused in every mode. ` +
-        "An owner-approved wipe of a protected tenant needs --allow-paying-tenant plus a typed confirmation.",
-    };
+      : arm === "stripe-linked"
+        ? "its subscription is linked to Stripe"
+        : "it is named in PROTECTED_TENANT_SLUGS";
   return {
-    ok: true,
-    phrase: `WIPE PAYING ${tenant.slug}`,
-    line: `PROTECTED (${arm}) — --allow-paying-tenant given; --execute will also ask for a typed confirmation.`,
+    protected: true,
+    arm,
+    // SA-547a: the id + arm only — a business NAME or slug is a client identifier.
+    reason:
+      `tenant ${tenant.id} is protected: ${why}. Refused in every mode. ` +
+      "An owner-approved wipe of a protected tenant needs --allow-protected <tenantId> " +
+      "--backup-taken, run at a real terminal, plus a typed confirmation.",
   };
 }

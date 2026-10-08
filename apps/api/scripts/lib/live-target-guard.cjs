@@ -104,14 +104,15 @@ async function confirmProtectedOverride({
   stdin = process.stdin,
   stdout = process.stdout,
   ask,
+  backupFlag = "--backup-taken",
 }) {
   const refuse = (why) =>
     new ProtectedTenantError(`tenant ${tenantId} is protected: override refused — ${why}.`);
   refuseRetiredFlags(argv);
-  const at = argv.indexOf("--allow-protected");
-  if (at === -1 || argv[at + 1] !== tenantId)
+  // The flag may repeat (one per protected tenant): any occurrence naming THIS tenant counts.
+  if (!argv.some((a, i) => a === "--allow-protected" && argv[i + 1] === tenantId))
     throw refuse("--allow-protected must name this tenant's id");
-  if (!argv.includes("--backup-taken")) throw refuse("--backup-taken is required");
+  if (!argv.includes(backupFlag)) throw refuse(`${backupFlag} is required`);
   if (!(stdin && stdin.isTTY && stdout && stdout.isTTY))
     throw refuse("the confirmation needs a real terminal (stdin and stdout)");
   const phrase = `ALLOW PROTECTED ${tenantId}`;
