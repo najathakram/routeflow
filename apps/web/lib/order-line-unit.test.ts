@@ -223,7 +223,8 @@ describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (previe
 
   it("2 pcs of a 3-pack @ $10: boxes 0 / pieces 2, no unitLabel, preview total $6.67 (== the server's)", () => {
     const one = applyLineUnit(line3, by(opts, "Piece"), { tier: 1 });
-    const two = { ...one, ...normalizeBoxesPieces({ qty: 2, unitsPerBox: 3 }) };
+    const n = normalizeBoxesPieces({ qty: 2, unitsPerBox: 3 });
+    const two = { ...one, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
     expect(one.unitLabel).toBeUndefined();
     expect(unitLabelPayload(one)).toEqual({});
     expect(one).toMatchObject({ unitsPerBox: 3, boxes: 0, pieces: 1, qty: 1, unitPrice: 10 });

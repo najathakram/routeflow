@@ -175,6 +175,8 @@ interface LineItem {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** Units P0b: the base option shown while a DERIVED base is sold as pack pieces (see UnitLine.derivedBase). */
+  derivedBase?: string;
   /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
   startOnDefaultUnit?: boolean;
   /** #2865 case c UI-only: the PENDING TAP COUNT (N default-start taps before the ladder loaded = N of the default unit). */

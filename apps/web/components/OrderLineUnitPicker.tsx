@@ -5,7 +5,7 @@ import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
-import { ladderProductOf, type PackBase } from "@/lib/order-line-unit";
+import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
 export interface OrderLineUnitPickerLine {
@@ -22,6 +22,7 @@ export interface OrderLineUnitPickerLine {
   /** Informational only: on a boxed line this is TOTAL PIECES, so the start-on-default rule never guards on it. */
   qty?: number;
   unitLabel?: string;
+  derivedBase?: string;
   packBase?: PackBase;
   tierPrices?: Parameters<typeof ladderProductOf>[0]["tierPrices"];
   /** #2381: the operator TYPED this line's price this session. The first-sight refresh (which
@@ -132,7 +133,7 @@ export function OrderLineUnitPicker({
       tier={tier}
       packPrice={packPrice}
       ariaLabel={`Sell ${line.productName} by`}
-      value={line.unitLabel ?? ""}
+      value={unitPickerValueOf(line)}
       onChange={(label) => {
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):
         // the held unit would otherwise be unfixable and the save would 400 on it.

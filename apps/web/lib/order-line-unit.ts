@@ -34,6 +34,12 @@ export interface PackBase {
 /** The line fields this module reads/writes (structurally satisfied by the modal's LineItem). */
 export interface UnitLine extends PackBase {
   unitLabel?: string;
+  /**
+   * Units P0b / SA-728: the base option's value while the line sells a DERIVED base unit. Such a line is a
+   * PACK-PIECES line (boxes/pieces, `sellBy: "unit"`, no `unitLabel`) so the preview and the payload are the
+   * server's own proration; this marker only keeps the picker showing the base. Never submitted.
+   */
+  derivedBase?: string;
   packBase?: PackBase;
   /** The product's tier-price columns (the modal's snapshot) — lets a restored pack line be re-priced. */
   tierPrices?: Parameters<typeof getTierPrice>[0];
@@ -66,16 +72,19 @@ export function applyLineUnit<T extends UnitLine>(
   option: UnitOption,
   ctx: { tier: number; keepQty?: boolean },
 ): T {
-  const base = li.packBase ?? snapshot(li);
+  // A derived-base line is the pack with a piece count: leave that shape first, so a snapshot or a restore
+  // below always sees the PACK (never the pieces state).
+  const line = li.derivedBase ? backToPack(li) : li;
+  const base = line.packBase ?? snapshot(line);
   if (option.kind === "pack") {
-    if (!li.packBase) return li;
-    const { packBase, ...rest } = li;
+    if (!line.packBase) return line;
+    const { packBase, ...rest } = line;
     const restored = { ...rest, ...packBase, unitLabel: undefined } as T;
     // The snapshot's AUTO-derived price (tier / list) goes stale if the customer's tier moved while the
     // line sold by a unit — restoring it verbatim would show a price the server will not store. Only an
     // operator's one-time price (`discountedPrice`) is theirs to keep across the switch.
-    if (packBase.discountedPrice == null && li.tierPrices) {
-      const tierPrice = getTierPrice(li.tierPrices, ctx.tier);
+    if (packBase.discountedPrice == null && line.tierPrices) {
+      const tierPrice = getTierPrice(line.tierPrices, ctx.tier);
       const special = isSpecialTier(ctx.tier);
       restored.unitPrice = tierPrice;
       restored.priceType = special ? "SPECIAL" : "STANDARD";
@@ -84,8 +93,24 @@ export function applyLineUnit<T extends UnitLine>(
     return restored;
   }
   const special = isSpecialTier(ctx.tier);
+  if (option.derived) {
+    // Units P0b: a DERIVED base unit bills as the pack line's pieces (computeLineSubtotal proration), never
+    // qty x a rounded per-piece price — the same line the server stores for it.
+    const keep = ctx.keepQty && li.derivedBase === option.value ? li.qty : 1;
+    const n = normalizeBoxesPieces({ boxes: 0, pieces: keep, unitsPerBox: option.derived.n });
+    return {
+      ...line,
+      derivedBase: option.value,
+      unitLabel: undefined,
+      unitsPerBox: option.derived.n,
+      boxes: n.boxes ?? 0,
+      pieces: n.pieces ?? 0,
+      qty: n.qty,
+      sellBy: "unit",
+    } as T;
+  }
   return {
-    ...li,
+    ...line,
     packBase: base,
     unitLabel: option.value,
     unit: option.label,
@@ -93,7 +118,7 @@ export function applyLineUnit<T extends UnitLine>(
     boxes: undefined,
     pieces: undefined,
     sellBy: undefined,
-    qty: ctx.keepQty && li.unitLabel === option.value ? li.qty : 1,
+    qty: ctx.keepQty && line.unitLabel === option.value ? line.qty : 1,
     listPrice: option.listPrice,
     unitPrice: option.price,
     priceType: special ? "SPECIAL" : "STANDARD",
@@ -102,6 +127,21 @@ export function applyLineUnit<T extends UnitLine>(
     unitCost: base.unitCost != null ? base.unitCost * option.factorToBase : undefined,
   };
 }
+
+/** A derived-base line back on the pack: one whole pack, the case entry mode, the marker gone. */
+function backToPack<T extends UnitLine>(li: T): T {
+  const upb = li.unitsPerBox;
+  const { derivedBase: _gone, ...rest } = li;
+  return {
+    ...rest,
+    sellBy: "case",
+    ...(upb ? { qty: upb, boxes: 1, pieces: 0 } : {}),
+  } as T;
+}
+
+/** What the unit picker shows as selected: the held unit, else the derived base, else the pack (`""`). */
+export const unitPickerValueOf = (li: { unitLabel?: string; derivedBase?: string }): string =>
+  li.unitLabel ?? li.derivedBase ?? "";
 
 /** The pack ladder inputs of a line, whichever unit it currently sells by. */
 export function ladderProductOf(li: {
@@ -136,9 +176,9 @@ export const unitLabelPayload = (li: { unitLabel?: string }): { unitLabel?: stri
 
 /** Same product AND same unit = the same line (a Case and a Box of one product are two lines). */
 export const sameProductUnit = (
-  a: { productId: string; unitLabel?: string },
-  b: { productId: string; unitLabel?: string },
-): boolean => a.productId === b.productId && (a.unitLabel ?? "") === (b.unitLabel ?? "");
+  a: { productId: string; unitLabel?: string; derivedBase?: string },
+  b: { productId: string; unitLabel?: string; derivedBase?: string },
+): boolean => a.productId === b.productId && unitPickerValueOf(a) === unitPickerValueOf(b);
 
 /**
  * Fold `add` into `into` — two lines of the SAME product and unit become one. Unit lines add their
