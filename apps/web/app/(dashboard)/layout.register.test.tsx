@@ -719,6 +719,8 @@ describe("discard guard", () => {
     it("a second sale after a completed one reuses the one sentinel (Back + Discard still leaves)", async () => {
       mount(COUNTER);
       act(() => setCounterCartHasLines(true));
+      back(); // a Back during the first sale: Keep selling re-pushes the one sentinel
+      fireEvent.click(await screen.findByRole("button", { name: "Keep selling" }));
       const after1 = pushState.mock.calls.length;
       act(() => setCounterCartHasLines(false)); // sale completed
       act(() => setCounterCartHasLines(true)); // second sale
