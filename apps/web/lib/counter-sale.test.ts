@@ -1,4 +1,5 @@
 import type { FulfilmentCapability } from "@routeflow/types";
+import * as keys from "./counter-live-cart-keys";
 import {
   AUTO_PRINT_KEY,
   cartTotals,
@@ -562,9 +563,6 @@ describe("held attempt: minimal customer, validated read", () => {
 });
 
 describe("live cart storage (SA-748 section 1)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const keys = require("./counter-live-cart-keys") as typeof import("./counter-live-cart-keys");
-
   it("keys by tenant + user, and by nothing when either is unknown", () => {
     expect(keys.liveCartKey("acme", "u1")).toBe("rf.counterSale.liveCart:acme:u1");
     expect(keys.liveCartKey("acme", null)).toBeNull();
