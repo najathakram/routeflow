@@ -30,13 +30,23 @@ export type GeneratedOrder = Prisma.OrderGetPayload<{ include: typeof GENERATED_
 export const replayCutoff = (startedAt: Date): Date =>
   new Date(startedAt.getTime() - GENERATE_NOW_REPLAY_WINDOW_MS);
 
+/** The slice of the tenant client / a tenant transaction the replay lookup needs. */
+export type ReplayDb = {
+  order: { findFirst: (args: Prisma.OrderFindFirstArgs) => Promise<unknown> };
+};
+
+/** A tenant transaction as the template lock sees it: the lookup plus a tagged raw statement. */
+export type ReplayTx = ReplayDb & {
+  $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+};
+
 /**
  * The live (not cancelled) order this template already placed at or after `since`, or null. A
  * cancelled one never answers a later run: the operator cancelled it and ran again on purpose.
  * Template-keyed: a different template of the same customer is its own run.
  */
 export async function findReplayOrder(
-  db: { order: { findFirst: (args: any) => Promise<unknown> } }, // the tenant client or a tenant tx
+  db: ReplayDb, // the tenant client or a tenant tx
   templateId: string,
   since: Date,
 ): Promise<GeneratedOrder | null> {
@@ -56,10 +66,12 @@ export async function findReplayOrder(
  * transaction's own connection and ends with it: no in-process lock, no extra pool.
  */
 export async function lockTemplateThenFindReplay(
-  tx: any,
+  tx: ReplayTx,
   templateId: string,
+  tenantId: string,
   since: Date,
 ): Promise<GeneratedOrder | null> {
-  await tx.$executeRaw`SELECT id FROM "OrderTemplate" WHERE id = ${templateId} FOR NO KEY UPDATE`;
+  // The id alone is unique, but the tenant predicate keeps the raw statement inside its tenant too.
+  await tx.$executeRaw`SELECT id FROM "OrderTemplate" WHERE id = ${templateId} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE`;
   return findReplayOrder(tx, templateId, since);
 }

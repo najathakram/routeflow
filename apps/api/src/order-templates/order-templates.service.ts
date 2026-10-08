@@ -909,7 +909,12 @@ export class OrderTemplatesService {
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {
         // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
-        const prior = await lockTemplateThenFindReplay(tx, template.id, replaySince);
+        const prior = await lockTemplateThenFindReplay(
+          tx,
+          template.id,
+          restrictionTenantId,
+          replaySince,
+        );
         if (prior) {
           replayed = true;
           if (ctx) ctx.replayed = true;

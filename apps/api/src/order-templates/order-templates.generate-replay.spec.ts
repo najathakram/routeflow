@@ -14,7 +14,7 @@ jest.mock("../common/db-locks", () => ({
 import { Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
-import { GENERATE_NOW_REPLAY_WINDOW_MS } from "./generate-replay";
+import { GENERATE_NOW_REPLAY_WINDOW_MS, lockTemplateThenFindReplay } from "./generate-replay";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -220,6 +220,19 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
     });
     expect(prisma.order.create).toHaveBeenCalledTimes(1); // the operator cancelled: today's run goes
     expect(log).toHaveBeenCalledWith(expect.stringContaining("1 created, 0 skipped"));
+  });
+
+  it("the template row lock is tenant-scoped", async () => {
+    const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(0),
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+
+    await lockTemplateThenFindReplay(tx, "t1", "tn-1", DAY_START);
+
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0];
+    expect((strings as string[]).join("?")).toContain('"tenantId"');
+    expect(values).toEqual(["t1", "tn-1"]);
   });
 
   it("accepted limit: an order that lost a merge is not a replay target, so a retry in the window places a new one", async () => {
