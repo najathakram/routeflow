@@ -137,6 +137,51 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(hasFlag()).toHaveBeenCalledWith("test-tenant", "flag.units_v1");
   });
 
+  describe("SA-728 / P0b: a derived Piece from an OLD client bills as the pack's pieces", () => {
+    const PACK3 = { ...PRODUCT, id: "prod-3", unit: "Pack", pricePerUnit: 10, unitsPerBox: 3 };
+    const caseRow = {
+      productId: "prod-3",
+      label: "Case",
+      factorToBase: 12,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+      sortOrder: 0,
+    };
+    beforeEach(() => prisma.product.findMany.mockResolvedValue([PACK3]));
+
+    it("3-pack @10, 2 pcs sent as unitLabel Piece = $6.67 on a pack line (boxes 0, pieces 2), no unitLabel stored", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }]);
+      const line = orderData().lineItems.create[0];
+      expect("unitLabel" in line && line.unitLabel != null).toBe(false);
+      expect(line).toMatchObject({
+        boxes: 0,
+        pieces: 2,
+        qty: 2,
+        unitsPerBox: 3,
+        unitPrice: 10,
+        subtotal: 6.67,
+      });
+      expect(orderData().subtotal).toBe(6.67);
+    });
+
+    it("an own-priced Piece row keeps the unit-line path: unitLabel Piece at the row's price", async () => {
+      scopedUnits.findMany.mockResolvedValue([
+        { ...caseRow, label: "Piece", factorToBase: 1, price: "3.00" },
+      ]);
+      await create([{ productId: "prod-3", qty: 2, unitLabel: "Piece" }]);
+      expect(orderData().lineItems.create[0]).toMatchObject({
+        unitLabel: "Piece",
+        unitPrice: 3,
+        qty: 2,
+        subtotal: 6,
+      });
+    });
+  });
+
   it("a mixed order keeps its pack line exactly as before next to a unit line", async () => {
     await create([
       { productId: "prod-1", qty: 2, boxes: 2, pieces: 0 }, // pack: 2 boxes of 24 at $42

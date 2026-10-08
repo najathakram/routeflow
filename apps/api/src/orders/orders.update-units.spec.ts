@@ -20,7 +20,7 @@ jest.mock("../notifications/notifications.service", () => ({
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -420,6 +420,63 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
         }),
       }),
     );
+  });
+
+  it("SA-728 / P0b ADD a derived Piece (3-pack @10, 2 pcs) from an old client: a pack line of pieces = $6.67, no unitLabel", async () => {
+    const pack3 = { ...caseProduct, id: "prod-3", unit: "Pack", unitsPerBox: 3, pricePerUnit: 10 };
+    prisma.product.findMany.mockResolvedValue([pack3]);
+    prisma.productUnit.findMany.mockResolvedValue([
+      { ...caseLadderRow, productId: "prod-3", label: "Case", factorToBase: 12, price: null },
+    ]);
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingPackLine] });
+    await service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: false,
+        items: [{ productId: "prod-3", unitLabel: "Piece", qty: 2, unitPrice: 3.33 }],
+      } as never,
+      operatorPayload as never,
+    );
+    const data = (prisma.orderItem.create as jest.Mock).mock.calls.at(-1)[0].data;
+    expect(data.unitLabel ?? null).toBeNull();
+    expect(data).toMatchObject({ boxes: 0, pieces: 2, qty: 2, unitsPerBox: 3, subtotal: 6.67 });
+  });
+
+  it("units P0b snapshot fallback: Case renamed Carton -> a qty edit of the old-label line succeeds, price unchanged, never UnknownUnitError", async () => {
+    prisma.productUnit.findMany.mockResolvedValue([{ ...caseLadderRow, label: "Carton" }]);
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingCaseLine] });
+    await service.updateOrderItems(
+      "ord-1",
+      { replaceAll: false, items: [{ id: "li-case", unitLabel: "Case", qty: 3 }] } as never,
+      operatorPayload as never,
+    );
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          qty: 36,
+          boxes: 3,
+          unitsPerBox: 12,
+          unitPrice: 100,
+          unitLabel: "Case",
+          subtotal: 300,
+        }),
+      }),
+    );
+  });
+
+  it("units P0b: a NEW line naming an unknown unit is still a 400 and writes nothing", async () => {
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingPackLine] });
+    await expect(
+      service.updateOrderItems(
+        "ord-1",
+        {
+          replaceAll: false,
+          items: [{ productId: "prod-case", unitLabel: "Nope", qty: 2 }],
+        } as never,
+        operatorPayload as never,
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
   });
 
   it("SUBSTITUTE an existing pack line with a Case line", async () => {

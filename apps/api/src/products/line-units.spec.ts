@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces, computeLineSubtotal, type LadderUnit } from "@routeflow/pricing";
-import { lineUnitsPerBoxSnapshot, resolveLineUnits } from "./line-units";
+import { lineUnitsPerBoxSnapshot, normalizeDerivedBaseLine, resolveLineUnits } from "./line-units";
 
 const none = {
   price: null,
@@ -334,5 +334,58 @@ describe("resolveLineUnits — honourDefaultSelling (#2784, SA-601 buyer qty-onl
       unitLabel: null,
       kind: "pack",
     });
+  });
+});
+
+describe("normalizeDerivedBaseLine — a derived base unit bills as the pack line's pieces (SA-728)", () => {
+  const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+  const ownPiece: LadderUnit = { ...none, label: "Piece", factorToBase: 1, price: "3.00" };
+  const caseOf12: LadderUnit = { ...none, label: "Case", factorToBase: 12 };
+  const norm = (item: object, units: LadderUnit[] = [caseOf12], mode: "drop" | "pack" = "drop") =>
+    normalizeDerivedBaseLine(item as never, pack3, units, 1, { price: mode });
+
+  it("3-pack @10, 2 pcs: unitLabel cleared, boxes/pieces split via normalizeBoxesPieces, no per-piece price kept", () => {
+    const out = norm({ productId: "p", qty: 2, unitLabel: "Piece", unitPrice: 3.33 }) as any;
+    expect(out.unitLabel).toBeNull();
+    expect(out).toMatchObject({ boxes: 0, pieces: 2, qty: 2 });
+    expect(out.unitPrice).toBeUndefined();
+  });
+  it("rolls pieces over at the pack size, and the invoice mode carries the PACK price", () => {
+    const out = norm(
+      { productId: "p", qty: 7, unitLabel: "piece", unitPrice: 3.33 },
+      [],
+      "pack",
+    ) as any;
+    expect(out).toMatchObject({ unitLabel: null, boxes: 2, pieces: 1, qty: 7, unitPrice: 10 });
+  });
+  it("a custom base label is the base too", () => {
+    const out = normalizeDerivedBaseLine(
+      { productId: "p", qty: 2, unitLabel: "Each" } as never,
+      { ...pack3, baseUnitLabel: "Each" },
+      [caseOf12],
+      1,
+    ) as any;
+    expect(out).toMatchObject({ unitLabel: null, pieces: 2 });
+  });
+  it("an OWN-priced base row keeps the unit-line path (item untouched)", () => {
+    const item = { productId: "p", qty: 2, unitLabel: "Piece" };
+    expect(norm(item, [ownPiece])).toBe(item);
+  });
+  it("a deliberately different typed per-piece price, a non-base label, a boxes/pieces split, a held base line and an unboxed product are left alone", () => {
+    const typed = { productId: "p", qty: 2, unitLabel: "Piece", unitPrice: 3.0 };
+    expect(norm(typed)).toBe(typed);
+    const caseItem = { productId: "p", qty: 2, unitLabel: "Case" };
+    expect(norm(caseItem)).toBe(caseItem);
+    const split = { productId: "p", qty: 2, pieces: 2, unitLabel: "Piece" };
+    expect(norm(split)).toBe(split);
+    const plain = { productId: "p", qty: 2 };
+    expect(norm(plain)).toBe(plain);
+    const item = { productId: "p", qty: 2, unitLabel: "Piece" };
+    expect(normalizeDerivedBaseLine(item as never, pack3, [caseOf12], 1, { held: "Piece" })).toBe(
+      item,
+    );
+    expect(
+      normalizeDerivedBaseLine(item as never, { unit: "Each", pricePerUnit: "3.00" }, [], 1),
+    ).toBe(item);
   });
 });

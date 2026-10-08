@@ -360,3 +360,43 @@ describe("buildUnitLine — a held unit the product no longer offers (#2277)", (
     );
   });
 });
+
+describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)", () => {
+  // The line was sold as a "Carton" (12 pcs @ $100); the level has since been renamed/removed.
+  const liveUnits = [level({ label: "Case", factorToBase: 288, price: "480.00" })];
+  const existing = {
+    unitLabel: "Carton",
+    unitsPerBox: 12,
+    unitPrice: 100,
+    originalPrice: null,
+    priceType: PriceType.STANDARD,
+  };
+  const rebuild = (withExisting: boolean) =>
+    buildUnitLine({
+      product,
+      units: liveUnits,
+      resolved: resolveLineUnits(product, liveUnits, undefined, existing),
+      item: { productId: "p1", qty: 3, unitLabel: "Carton" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      ...(withExisting ? { existing } : {}),
+    } as never);
+
+  it("re-resolves from its own snapshot: factor = unitsPerBox, price = unitPrice, no UnknownUnitError", () => {
+    const line = rebuild(true);
+    expect(line).toMatchObject({
+      unitLabel: "Carton",
+      unitsPerBox: 12,
+      unitPrice: 100,
+      qty: 36,
+      boxes: 3,
+      subtotal: 300,
+      priceType: PriceType.STANDARD,
+    });
+  });
+  it("a NEW line (no snapshot) naming an unknown unit is still the 400 UNIT_NOT_OFFERED", () => {
+    expect(() => rebuild(false)).toThrow(BadRequestException);
+  });
+});

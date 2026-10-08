@@ -110,6 +110,42 @@ describe("InvoicesService.create — sell a line by a unit (units_v1, 4c-1)", ()
     expect(hasFlag).toHaveBeenCalledWith("test-tenant", "flag.units_v1");
   });
 
+  describe("SA-728 / P0b: a derived Piece from an OLD client bills as the pack's pieces", () => {
+    const PACK3 = { ...PRODUCT, unit: "Pack", unitsPerBox: 3, pricePerUnit: 10 };
+    const caseRow = { ...ladder[0], label: "Case", factorToBase: 12, price: null };
+    beforeEach(() => prisma.product.findMany.mockResolvedValue([PACK3]));
+
+    it("3-pack @10, 2 pcs typed at the derived $3.33 = $6.67 on a pack line, no unitLabel", async () => {
+      scopedUnits.findMany.mockResolvedValue([caseRow]);
+      await create([line({ qty: 2, unitPrice: 3.33, unitLabel: "Piece" })]);
+      const l = created().items.create[0];
+      expect(l.unitLabel ?? null).toBeNull();
+      expect(l).toMatchObject({
+        boxes: 0,
+        pieces: 2,
+        qty: 2,
+        unitsPerBox: 3,
+        unitPrice: 10,
+        subtotal: 6.67,
+      });
+      expect(created().subtotal).toBe(6.67);
+    });
+
+    it("an own-priced Piece row keeps the unit line: 1 pc of a 24-pack @48 + Piece @2.50 = $2.50", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, pricePerUnit: 48 }]);
+      scopedUnits.findMany.mockResolvedValue([
+        { ...ladder[0], label: "Piece", factorToBase: 1, price: "2.50" },
+      ]);
+      await create([line({ qty: 1, unitPrice: 2.5, unitLabel: "Piece" })]);
+      expect(created().items.create[0]).toMatchObject({
+        unitLabel: "Piece",
+        unitPrice: 2.5,
+        qty: 1,
+        subtotal: 2.5,
+      });
+    });
+  });
+
   it("a mixed invoice keeps its pack line exactly as before next to a unit line", async () => {
     await create([
       line({ qty: 1, boxes: 2, pieces: 6, unitPrice: 24 }),
