@@ -305,6 +305,16 @@ export const API_ERROR_CODES = {
    * tenant into a trial. 409; suspend or change the plan instead.
    */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /**
+   * 403 body `code` when an operator lacks every feature group the endpoint needs; `groups` lists the groups
+   * that would have opened it. Nothing was written.
+   */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /**
+   * 409 from PUT /users/:id/permissions: the operator's permissions changed since the caller loaded them
+   * (`expectedVersion` is stale). Nothing was written; reload and retry.
+   */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
