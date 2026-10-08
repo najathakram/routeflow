@@ -329,7 +329,7 @@ export class CustomersService {
     const where = { userId: user.sub };
     const customer = await this.prisma.forTenant().customer.findFirst({ where });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    const args = { customerId: customer.id, actorId: user.sub, source: "customers/me" as const };
+    const args = { customerId: customer.id, actor: user, source: "customers/me" as const };
     return this.updateOwnProfile({ ...args, body: dto });
   }
 

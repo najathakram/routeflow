@@ -382,6 +382,20 @@ describe("DriversService", () => {
         noWrites();
       });
 
+      it("re-checks the linked user inside the transaction: a role change between the two reads is refused", async () => {
+        prisma.driver.findUnique.mockResolvedValue(MOCK_DRIVER);
+        prisma.routeRun.count.mockResolvedValue(0);
+        prisma.user.findUnique
+          .mockResolvedValueOnce({ role: "DRIVER" } as any)
+          .mockResolvedValueOnce({ role: "TENANT_ADMIN" } as any);
+        await expect(service.remove("drv-1", UserRole.OPERATOR)).rejects.toThrow(
+          ForbiddenException,
+        );
+        expect(prisma.driver.delete).not.toHaveBeenCalled();
+        expect(prisma.user.delete).not.toHaveBeenCalled();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
       it("lets a TENANT_ADMIN remove an admin's driver record (login kept, flag cleared)", async () => {
         arrange("TENANT_ADMIN");
         await expect(service.remove("drv-1", UserRole.TENANT_ADMIN)).resolves.toEqual({

@@ -1035,7 +1035,7 @@ export class BuyerController {
     // /customers/me and writes the audit row, so the write never depends on the pipe alone.
     return this.customersService.updateOwnProfile({
       customerId: ctx.customerId,
-      actorId: buyer.sub,
+      actor: buyer,
       source: "buyer/me",
       body: dto,
     });

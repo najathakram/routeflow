@@ -29,7 +29,7 @@ import {
 import { BuyerController } from "../buyer/buyer.controller";
 import { getMetadataStorage } from "class-validator";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
-import { ValidationPipe } from "@nestjs/common";
+import { BadRequestException, ValidationPipe } from "@nestjs/common";
 
 describe("customer self-service profile edit keeps seller-controlled fields out", () => {
   let service: CustomersService;
@@ -280,23 +280,24 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     });
     await expect(
       pipe.transform({ [field]: "Renamed" }, { type: "body", metatype: UpdateBuyerProfileDto }),
-    ).rejects.toBeDefined();
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("(s) PATCH /customers/me writes one audit row naming the actor, the customer and the fields", async () => {
     arrange();
     await service.updateMyProfile(
-      { sub: "user-1" } as never,
+      { sub: "user-1", impersonatedBy: "sa-1" } as never,
       { contactName: "Jo B", phone: "555-0100" } as never,
     );
     expect(auditCalls()).toHaveLength(1);
     expect(auditCalls()[0]).toMatchObject({
       tenantId: "test-tenant",
       userId: "user-1",
+      impersonatedBy: "sa-1",
       entityType: "Customer",
       entityId: "cust-1",
       action: "customer.self_service.profile_update",
-      meta: { source: "customers/me", fields: ["contactName", "phone"] },
+      meta: { source: "customers/me", actorType: "USER", fields: ["contactName", "phone"] },
     });
   });
 
@@ -304,15 +305,20 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     arrange();
     const controller = Object.create(BuyerController.prototype) as any;
     controller.customersService = service;
-    await controller.updateMe({ customerId: "cust-1" }, { sub: "buyer-1" }, {
-      email: "jo@example.com",
-    } as never);
+    await controller.updateMe(
+      { customerId: "cust-1" },
+      { sub: "buyer-1", impersonatedBy: "sa-1" },
+      {
+        email: "jo@example.com",
+      } as never,
+    );
     expect(auditCalls()).toHaveLength(1);
     expect(auditCalls()[0]).toMatchObject({
       userId: "buyer-1",
+      impersonatedBy: "sa-1",
       entityId: "cust-1",
       action: "customer.self_service.profile_update",
-      meta: { source: "buyer/me", fields: ["email"] },
+      meta: { source: "buyer/me", actorType: "BUYER_ACCOUNT", fields: ["email"] },
     });
   });
 
@@ -330,7 +336,7 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     prisma.customer.findUnique.mockResolvedValue(stored());
     await expect(
       service.updateMyProfile({ sub: "user-1" } as never, { contactName: "@evil" } as never),
-    ).rejects.toBeDefined();
+    ).rejects.toBeInstanceOf(BadRequestException);
     arrange();
     await service.updateMyProfile({ sub: "user-1" } as never, { notes: "x" } as never);
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
