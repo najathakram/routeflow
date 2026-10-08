@@ -81,34 +81,44 @@ function appliedSummary(applied: { summary?: unknown } | null | undefined): stri
     : undefined;
 }
 
-/** Which form fields a refused create names, with the copy to show under each. */
-function fieldErrorsOf(err: unknown): Partial<Record<FieldKey, string>> {
+/** The create DTO's own rules (create-tenant.dto.ts), checked here so a 400 can name the field without its message. */
+function invalidFields(form: {
+  slug: string;
+  businessName: string;
+  adminEmail: string;
+  adminUsername: string;
+  adminPassword: string;
+}): FieldKey[] {
+  const bad: FieldKey[] = [];
+  if (!/^[a-z0-9][a-z0-9-]{2,29}$/.test(form.slug)) bad.push("slug");
+  if (form.businessName.length < 2 || form.businessName.length > 100) bad.push("businessName");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminEmail)) bad.push("adminEmail");
+  if (form.adminUsername.length < 3 || form.adminUsername.length > 50) bad.push("adminUsername");
+  const pw = form.adminPassword;
+  if (pw && (pw.length < 8 || !/^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/.test(pw))) {
+    bad.push("adminPassword");
+  }
+  return bad;
+}
+
+/**
+ * Which form fields a refused create names, with FIXED copy under each (no server text). By status and code only:
+ * a 409 is the slug (taken or reserved), a refused name carries its field (B956), and a 400 is matched against the
+ * DTO's own rules above. Anything else returns nothing and the page shows its generic banner.
+ */
+function fieldErrorsOf(
+  err: unknown,
+  form: Parameters<typeof invalidFields>[0],
+): Partial<Record<FieldKey, string>> {
   const res = (err as { response?: { status?: number; data?: Record<string, unknown> } })?.response;
-  const data = res?.data ?? {};
   const out: Partial<Record<FieldKey, string>> = {};
-  // B956: a refused formula-led name carries fixed copy (and the field) already.
-  const field = data.field;
+  const field = res?.data?.field;
   if (typeof field === "string" && (FIELD_ORDER as string[]).includes(field)) {
-    const safe = safeTextErrorCopy(err);
-    out[field as FieldKey] = safe ?? FIELD_COPY[field as FieldKey];
+    out[field as FieldKey] = safeTextErrorCopy(err) ?? FIELD_COPY[field as FieldKey];
   }
-  const messages = (Array.isArray(data.message) ? data.message : [data.message]).filter(
-    (m): m is string => typeof m === "string",
-  );
-  if (res?.status === 409) {
-    const taken = messages.find((m) => /slug/i.test(m));
-    if (taken) {
-      out.slug = /reserved/i.test(taken)
-        ? "That slug is reserved. Choose another."
-        : "That slug is taken.";
-    }
-  }
-  for (const m of messages) {
-    const key = FIELD_ORDER.find((f) => m.startsWith(f));
-    if (key && !out[key]) out[key] = FIELD_COPY[key];
-    if (/email or username already in use/i.test(m) && !out.adminEmail) {
-      out.adminEmail = "That email or username is already in use.";
-    }
+  if (res?.status === 409) out.slug = "That slug is taken.";
+  if (res?.status === 400 && !Object.keys(out).length) {
+    for (const f of invalidFields(form)) out[f] = FIELD_COPY[f];
   }
   return out;
 }
@@ -149,7 +159,7 @@ export default function AdminCreateTenantPage() {
   const [profile, setProfile] = React.useState<BusinessProfileKey | "">("");
   const [profileResult, setProfileResult] = React.useState<
     | { status: "applied"; label: string; summary?: string[] }
-    | { status: "failed"; message: string }
+    | { status: "failed"; reason: string }
     | null
   >(null);
   /** A profile that would stop billing is never auto-applied: the admin reviews it here first. */
@@ -332,7 +342,7 @@ export default function AdminCreateTenantPage() {
       );
       setProfileResult({ status: "applied", label, summary: appliedSummary(applied) });
     } catch (applyErr: unknown) {
-      setProfileResult({ status: "failed", message: profileErrorCopy(applyErr, "") });
+      setProfileResult({ status: "failed", reason: profileErrorCopy(applyErr, "") });
     }
     return false;
   }
@@ -364,7 +374,7 @@ export default function AdminCreateTenantPage() {
         const res = await superAdminClient.post("/platform-admin/tenants", payload);
         created = { ...res.data, businessName: form.businessName };
       } catch (err: unknown) {
-        const fields = fieldErrorsOf(err);
+        const fields = fieldErrorsOf(err, form);
         const first = FIELD_ORDER.find((f) => fields[f]);
         if (first) {
           setFieldErrors(fields);
@@ -518,8 +528,8 @@ export default function AdminCreateTenantPage() {
                   >
                     Created {nameForBanner}, but the profile didn&apos;t apply. Open Setup to finish
                     it.
-                    {profileResult.message && (
-                      <span className="font-normal"> {profileResult.message}</span>
+                    {profileResult.reason && (
+                      <span className="font-normal"> {profileResult.reason}</span>
                     )}
                   </p>
                 )}
@@ -660,7 +670,7 @@ export default function AdminCreateTenantPage() {
           onClose={() => {
             setProfileReview(null);
             setReviewError(null);
-            setProfileResult({ status: "failed", message: "" });
+            setProfileResult({ status: "failed", reason: "" });
             void finishAfterReview();
           }}
         />

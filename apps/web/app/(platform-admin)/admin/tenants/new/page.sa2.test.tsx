@@ -477,21 +477,23 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     expect(slug).toHaveAttribute("aria-invalid", "true");
     expect(slug).toHaveValue("acme");
     expect(document.body.textContent).not.toContain("is already taken");
+    expect(document.body.textContent).not.toContain('Slug "acme"');
   });
 
-  it("an invalid email focuses the email field first", async () => {
+  it("an invalid email focuses the email field first (named by the DTO's rules, not the server text)", async () => {
     setPost({
       "/platform-admin/tenants": () =>
         httpError(400, { statusCode: 400, message: ["adminEmail must be an email"] }),
     });
     await renderPage();
     fillForm();
+    fireEvent.change(screen.getByLabelText(/admin email/i), { target: { value: "o@acme" } });
     await createThroughSheet();
     const email = screen.getByLabelText(/admin email/i);
     await waitFor(() => expect(email).toHaveFocus());
     expect(scrollIntoView.mock.instances).toContain(email);
     expect(email).toHaveAttribute("aria-invalid", "true");
-    expect(email).toHaveValue("o@acme.example");
+    expect(email).toHaveValue("o@acme");
   });
 
   it("the success banner is a status region that scrolls into view and takes focus", async () => {
