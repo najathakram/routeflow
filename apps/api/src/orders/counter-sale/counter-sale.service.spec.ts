@@ -1312,6 +1312,8 @@ describe("CounterSaleService.ring", () => {
         orderNumber: "ORD-1",
         lineItems: [storedLine],
       });
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", pricePerUnit: 10, priceTier2: 9.5 }]);
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 2 });
       const imp = { ...(admin as object), impersonatedBy: "plat-1" } as never;
       await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, imp, "k-1");
       expect(audit.log).toHaveBeenCalledTimes(1);
@@ -1328,12 +1330,56 @@ describe("CounterSaleService.ring", () => {
             {
               productId: "p1",
               originalPrice: 10,
+              tierPrice: 9.5,
               unitPrice: 9,
               priceType: "DISCOUNTED",
               reason: "damaged box",
             },
           ],
         },
+      });
+    });
+
+    it("the audit row records the TIER price the edit started from, next to the LIST price (customer tier, per-product override, null when unresolved)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [
+          { ...storedLine, productId: "p1" },
+          { ...storedLine, productId: "p2", originalPrice: 20, unitPrice: 15 },
+          { ...storedLine, productId: "p3", originalPrice: 5, unitPrice: 4 },
+          { ...storedLine, productId: null, originalPrice: null, unitPrice: 3 },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
+      // p2 carries a per-product tier override (tier 2); p1 follows the customer's default tier 3.
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "p2", pricingTier: 2 }]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, priceTier2: 9.5, priceTier3: 9.25 },
+        { id: "p2", pricePerUnit: 20, priceTier2: 18, priceTier3: 17 },
+      ]);
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      const lines = audit.log.mock.calls[0][0].meta.lines;
+      expect(lines.map((l: any) => [l.productId, l.originalPrice, l.tierPrice])).toEqual([
+        ["p1", 10, 9.25],
+        ["p2", 20, 18],
+        ["p3", 5, null],
+        [null, null, null],
+      ]);
+    });
+
+    it("a failed tier-price lookup still writes the audit row, with a null tier price", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      prisma.customerPrice.findMany.mockRejectedValue(new Error("db down"));
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0].meta.lines[0]).toMatchObject({
+        originalPrice: 10,
+        tierPrice: null,
       });
     });
 

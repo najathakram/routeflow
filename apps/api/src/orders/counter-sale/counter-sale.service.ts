@@ -21,6 +21,7 @@ import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-uni
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
 import { canEditPrices } from "./can-edit-prices";
+import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
 import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
@@ -189,7 +190,7 @@ export class CounterSaleService {
         },
       },
     });
-    if (!replayed) await this.auditPriceEdits(user, order);
+    if (!replayed) await this.auditPriceEdits(user, order, customerId);
 
     // 5. The tender, against what is STORED now. The re-read -> "no tender yet" -> record window runs
     // under the shared advisory lock keyed on the order, so two concurrent same-key submits cannot
@@ -240,10 +241,17 @@ export class CounterSaleService {
         overrideReason?: string | null;
       }> | null;
     } | null,
+    customerId: string,
   ): Promise<void> {
     const edited = order?.lineItems ?? [];
     if (!order || edited.length === 0) return;
     try {
+      // The TIER price each edit started from (originalPrice is the LIST price): server-resolved, read-only.
+      const tierPrices = await resolveTierPrices(
+        this.prisma.forTenant(),
+        customerId,
+        edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+      );
       await this.audit.log({
         tenantId: this.prisma.getTenantId() ?? null,
         userId: user.sub,
@@ -256,6 +264,7 @@ export class CounterSaleService {
           lines: edited.map((l) => ({
             productId: l.productId ?? null,
             originalPrice: l.originalPrice == null ? null : Number(l.originalPrice),
+            tierPrice: (l.productId ? tierPrices.get(l.productId) : undefined) ?? null,
             unitPrice: Number(l.unitPrice),
             priceType: l.priceType ?? null,
             reason: l.overrideReason ?? null,
