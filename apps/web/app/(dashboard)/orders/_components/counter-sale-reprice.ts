@@ -1,4 +1,5 @@
 import { getTierPrice, isSpecialTier, withinStaffOverrideTolerance } from "@routeflow/pricing";
+import { resolveCounterPriceEdit } from "@/lib/counter-price-edit";
 import type { SaleLine } from "./counter-sale-scan";
 
 /**
@@ -7,8 +8,9 @@ import type { SaleLine } from "./counter-sale-scan";
  * `getTierPrice` of the line's tier-column snapshot at that tier. The sale request never carries these prices (the server
  * prices at create from the same rule), so nothing here can record a staff price override.
  *
- * A line the clerk priced by hand (`priceEdited`) keeps its NET price (a deliberate discount is never silently undone) while
- * its `tierPrice` (the struck "was" figure) follows the new customer; a net that now equals the new tier price (within 1/2
+ * A line edited by PERCENT or DOLLARS OFF (R17-3) has that same edit re-applied to the new customer's price; a line the
+ * clerk priced by hand (`priceEdited`, mode "set") keeps its NET price as typed (so does an edit the new customer cannot
+ * take) while its `tierPrice` (the struck "was" figure) follows the new customer; a net that now equals the new tier price (within 1/2
  * cent) is no override and the line becomes a plain line again. A line without a snapshot (held before this existed) is left
  * alone. `kept` counts the edited lines whose tier price the customer WOULD have changed; an edited line whose net
  * stands and only whose STANDARD/SPECIAL flag moved is updated silently and is NOT counted as kept.
@@ -32,11 +34,35 @@ export function repriceLines(
     const unitPrice = getTierPrice(l.tierPrices, tier);
     const priceType = isSpecialTier(tier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     if (l.override) {
-      if (withinStaffOverrideTolerance(l.unitPrice, unitPrice)) {
-        // POS-5: the kept net now IS the customer's price: no override, a plain line.
+      // R17-3: a percent or dollars-off edit is RE-APPLIED to the new customer's price; a hand-typed price (mode "set"),
+      // or an edit this customer cannot take (over their price, a special tier with no reason), keeps its net.
+      let net = l.unitPrice;
+      if (l.override.mode !== "set") {
+        const again = resolveCounterPriceEdit(
+          l.override.mode,
+          l.override.value,
+          {
+            tierPrice: unitPrice,
+            listPrice: l.listPrice ?? unitPrice,
+            tier,
+            qty: l.qty,
+            boxes: l.boxes,
+            pieces: l.pieces,
+            unitsPerBox: l.unitsPerBox,
+          },
+          l.override.reason,
+        );
+        if (again.ok) net = again.unitPrice;
+      }
+      if (withinStaffOverrideTolerance(net, unitPrice)) {
+        // POS-5: the net now IS the customer's price: no override, a plain line.
         const { override: _o, tierPrice: _t, priceEdited: _e, ...plain } = l;
         changed += 1;
         return { ...plain, unitPrice, priceType };
+      }
+      if (net !== l.unitPrice) {
+        changed += 1; // the edit followed the customer: updated, not kept
+        return { ...l, unitPrice: net, tierPrice: unitPrice, priceType };
       }
       if ((l.tierPrice ?? l.unitPrice) === unitPrice) {
         if (l.priceType === priceType) return l;
