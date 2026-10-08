@@ -1,5 +1,5 @@
 import { Test } from "@nestjs/testing";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ProductsService } from "../products/products.service";
@@ -160,6 +160,71 @@ describe("VariantResolutionService", () => {
       await expect(
         service.completeSetup("n1", { category: "=LEGACY", pricePerUnit: 5 }),
       ).resolves.toBeDefined();
+    });
+
+    describe("units_v1: the pack it writes must keep the product's levels valid", () => {
+      const lockingTx = (exec: jest.Mock) =>
+        prisma.tenantTransaction.mockImplementationOnce((fn: any) =>
+          fn({
+            ...prisma.forTenant(),
+            $executeRaw: exec,
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        );
+
+      it("a product with a level Crate cannot be completed with unit Crate (409, nothing written)", async () => {
+        prisma.product.findUnique.mockResolvedValue({ id: "n1", unit: "Each", unitsPerBox: 24 });
+        prisma.productUnit.findMany.mockResolvedValue([{ label: "Crate", factorToBase: 12 }]);
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await expect(service.completeSetup("n1", { unit: "crate" })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+
+      it("a size that lands on a level's factor is refused too", async () => {
+        prisma.product.findUnique.mockResolvedValue({ id: "n1", unit: "Box", unitsPerBox: 24 });
+        prisma.productUnit.findMany.mockResolvedValue([{ label: "Case", factorToBase: 12 }]);
+        lockingTx(jest.fn().mockResolvedValue(0));
+        await expect(service.completeSetup("n1", { unitsPerBox: 12 })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it("lock order: tenant units (shared) -> the product's units lock -> product read -> levels read -> write", async () => {
+        prisma.product.findUnique.mockResolvedValue({ id: "n1", unit: "Each", unitsPerBox: 24 });
+        prisma.product.update.mockResolvedValue({ id: "n1" });
+        prisma.productUnit.findMany.mockResolvedValue([]);
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await service.completeSetup("n1", { unit: "Case" });
+        const [s0, ...v0] = exec.mock.calls[0] as [TemplateStringsArray, ...string[]];
+        const [s1, ...v1] = exec.mock.calls[1] as [TemplateStringsArray, ...string[]];
+        expect(s0.join("?")).toContain("pg_advisory_xact_lock_shared(");
+        expect(v0).toEqual(["tenant-units", "test-tenant"]);
+        expect(s1.join("?")).toContain("hashtext('product-units')");
+        expect(v1).toEqual(["n1"]);
+        expect(exec.mock.invocationCallOrder[1]).toBeLessThan(
+          prisma.product.findUnique.mock.invocationCallOrder[0],
+        );
+        expect(prisma.product.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.productUnit.findMany.mock.invocationCallOrder[0],
+        );
+        expect(prisma.productUnit.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+          prisma.product.update.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("a price or category confirmation takes no units lock and reads no levels", async () => {
+        prisma.product.findUnique.mockResolvedValue({ id: "n1" });
+        prisma.product.update.mockResolvedValue({ id: "n1" });
+        const exec = jest.fn().mockResolvedValue(0);
+        lockingTx(exec);
+        await service.completeSetup("n1", { pricePerUnit: 5 });
+        expect(exec.mock.calls.filter(([, ...v]) => v[0] === "tenant-units")).toEqual([]);
+        expect(prisma.productUnit.findMany).not.toHaveBeenCalled();
+      });
     });
 
     it("throws when the product does not exist", async () => {
