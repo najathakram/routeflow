@@ -97,7 +97,7 @@ export class TenantsService {
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
-    if (RESERVED_SLUGS.has(slug) || isApprovedTestTenantSlug(slug)) return false;
+    if (RESERVED_SLUGS.has(slug) || isApprovedTestTenantSlug(slug as unknown)) return false;
     const existing = await this.prisma.tenant.findUnique({ where: { slug } });
     return !existing;
   }
@@ -113,7 +113,8 @@ export class TenantsService {
     // Row 195: the test-tenant slug patterns are reserved for the policy's own test tenants — a real
     // signup can never land on one (the protected-tenant guard and the test-tenant allow-lists key
     // on them). The message is deliberately neutral: it does not say why.
-    if (isApprovedTestTenantSlug(slug)) {
+    // `as unknown`: the predicate would otherwise narrow `slug` to never on the false branch.
+    if (isApprovedTestTenantSlug(slug as unknown)) {
       throw new BadRequestException(`Slug "${slug}" is not available`);
     }
 
