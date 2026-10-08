@@ -18,6 +18,8 @@ export interface RecordReturnActionProps {
    *  dialog's own order picker (customer-detail entry). */
   orderId?: string;
   size?: "sm" | "md" | "lg";
+  /** POS-4b: offer refund-vs-store-credit in the dialog (order detail only; customer detail omits it). */
+  allowRefund?: boolean;
 }
 
 /** Renders nothing when the tenant lacks the orders_inline_returns add-on. */
@@ -26,6 +28,7 @@ export function RecordReturnAction({
   customerName,
   orderId,
   size = "sm",
+  allowRefund = false,
 }: RecordReturnActionProps) {
   const [open, setOpen] = React.useState(false);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
@@ -47,6 +50,7 @@ export function RecordReturnAction({
         customerId={customerId}
         customerName={customerName}
         orderId={orderId}
+        allowRefund={allowRefund}
       />
     </>
   );

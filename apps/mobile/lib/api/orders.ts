@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
+import { creditsPendingFromError } from "../order-credits-pending";
 import type {
   ActiveOrderSummary,
   BatchShipRequest,
@@ -453,6 +454,13 @@ export function useCreateOrderAsDriver() {
         )
         .then((r) => r.data),
     onSuccess: (_, vars) => {
+      if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
+    // B1205: 503 ORDER_SAVED_CREDITS_PENDING means the order WAS saved - refresh like a success.
+    onError: (err, vars) => {
+      if (!creditsPendingFromError(err)) return;
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
       invalidateOrderMoneySideEffects(qc);

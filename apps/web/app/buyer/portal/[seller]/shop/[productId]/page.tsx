@@ -18,7 +18,7 @@ import {
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { deriveTilePrice } from "../_components/tile-pricing";
-import { stockLine } from "@/lib/buyer-backorder";
+import { canOrderOutOfStock, stockLine } from "@/lib/buyer-backorder";
 import { ProductGallery } from "./_components/ProductGallery";
 import { DetailActions } from "./_components/DetailActions";
 
@@ -135,6 +135,9 @@ export default function BuyerProductDetailPage() {
       ? [product.thumbnailUrl]
       : [];
   const stock = stockLine(product); // the tile uses the same helper, so the two cannot disagree
+  // A backorderable item's "Ships when restocked" is rendered by the actions block (tied to the
+  // backorder state); the page's own line would repeat it.
+  const showStockLine = !canOrderOutOfStock(product);
 
   return (
     <div data-testid="product-detail-page" className="p-6 max-w-5xl">
@@ -150,7 +153,7 @@ export default function BuyerProductDetailPage() {
             </h1>
             <button
               onClick={toggleFavorite}
-              className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
+              className={`flex min-h-11 min-w-11 h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border transition-colors ${
                 isFavorite
                   ? "border-danger/30 bg-danger/10 text-danger hover:bg-danger hover:text-white"
                   : "border-surface-border bg-white text-navy/30 hover:text-danger"
@@ -169,7 +172,7 @@ export default function BuyerProductDetailPage() {
             </p>
           )}
 
-          <p className={`text-sm font-medium ${stock.cls}`}>{stock.label}</p>
+          {showStockLine && <p className={`text-sm font-medium ${stock.cls}`}>{stock.label}</p>}
 
           <DetailActions
             product={product}

@@ -147,6 +147,11 @@ import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
+import {
+  savedOrderDestination,
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+} from "../lib/order-credits-pending";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -1855,6 +1860,16 @@ function ProductPickView({
           // The parked draft has become a real order (or a formal DRAFT
           // order, or was merged) — either way it's no longer needed.
           await finalizeBoundDraft();
+          // B1205: a lost-response replay of a create whose credits were never applied (read-only
+          // hint): same copy as web, then open the saved order.
+          const hint = creditsPendingFromOrder(order);
+          if (hint) {
+            showToast(hint.message);
+            // Drivers have no operator order route: back to the stop.
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${hint.orderId}` as any);
+            return;
+          }
           onSaved(order.orderNumber);
         },
         onError: async (err: Error) => {
@@ -1879,6 +1894,19 @@ function ProductPickView({
             await finalizeBoundDraft();
             showToast("Offline — order queued and will sync when you reconnect");
             onBack();
+            return;
+          }
+          // B1205: 503 ORDER_SAVED_CREDITS_PENDING - the order WAS saved, only its credits are
+          // pending. Not a failed save: wind the cart down like success (never retry/resubmit) and
+          // open the saved order, where the credits are applied.
+          const pending = creditsPendingFromError(err);
+          if (pending) {
+            resetOrderSubmitKey(customerId);
+            clearStopCartSnapshot();
+            await finalizeBoundDraft();
+            showToast(pending.message);
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${pending.orderId}` as any);
             return;
           }
           // Release the latch on EVERY failure branch below — each of them
@@ -1945,7 +1973,9 @@ function ProductPickView({
                     // the bound draft before navigating away.
                     resetOrderSubmitKey(customerId);
                     void finalizeBoundDraft();
-                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                    // Drivers have no operator order route: back to the stop.
+                    if (savedOrderDestination(userRole) === "stop") onBack();
+                    else router.replace(`/(operator)/orders/${heldOrderId}` as any);
                   },
                 },
               ],

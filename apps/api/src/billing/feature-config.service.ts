@@ -14,9 +14,22 @@ import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
 import { FLEET_KEYS, isFleetHeld } from "./fulfilment-capability";
 import { FeatureConfigStore } from "./feature-config.store";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isFulfilmentLockedKey, underFulfilmentLock } from "./fulfilment-settings-lock";
 
 export const FEATURE_CONFIG_SET_ACTION = "FEATURE_CONFIG_SET";
 export const FEATURE_CONFIG_CLEARED_ACTION = "FEATURE_CONFIG_CLEARED";
+
+/** The 409 for own delivery (`delivery` / `both`) on an account with neither fleet module: ONE copy, shared
+ *  by `set()` / `setAuditedInTx()` and the tenant Settings preview. */
+export function fleetNeededConflict(key: string, mode: string): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
+    key,
+    mode,
+    missing: [...FLEET_KEYS],
+    message: "Own delivery needs Routes or Order delivery turned on for this account first.",
+  });
+}
 
 export interface FeatureConfigModeState {
   value: string;
@@ -156,18 +169,12 @@ export class FeatureConfigService {
   }
 
   /**
-   * Sets `tenantId`'s mode for `key`. Unknown key/mode -> 400. A mode whose `requires.allOf`
-   * names an entitlement the tenant does NOT hold -> 409 naming the first missing key. Never
-   * touches another tenant's row: `where: { tenantId, featureKey }` is always scoped together
-   * (the compound unique index), never `featureKey` alone.
+   * The checks every writer shares (`set()` and `setAuditedInTx()`): unknown key / mode -> 400, an
+   * unavailable mode -> 400, own delivery without a fleet -> 409, a mode whose `requires.allOf`
+   * names an entitlement the tenant does NOT hold -> 409 naming the first missing key, an unknown
+   * tenant -> 404. Reads only; writes nothing.
    */
-  async set(
-    tenantId: string,
-    key: string,
-    mode: string,
-    reason: string,
-    byUserId: string | null,
-  ): Promise<void> {
+  private async validate(tenantId: string, key: string, mode: string): Promise<void> {
     const row = this.registryRow(key);
     if (!row?.config) {
       throw new BadRequestException(`"${key}" has no config modes`);
@@ -190,13 +197,7 @@ export class FeatureConfigService {
     // allOf-only (lead ruling 2026-10-04), so this OR-group lives here, for this key alone.
     if (key === "fulfilment_model" && (mode === "delivery" || mode === "both")) {
       if (!(await isFleetHeld(this.addons, this.featureOverrides, tenantId))) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
-          key,
-          mode,
-          missing: [...FLEET_KEYS],
-          message: "Own delivery needs Routes or Order delivery turned on for this account first.",
-        });
+        throw fleetNeededConflict(key, mode);
       }
     }
 
@@ -222,6 +223,40 @@ export class FeatureConfigService {
     if (!tenant) {
       throw new NotFoundException(`Tenant "${tenantId}" not found`);
     }
+  }
+
+  /**
+   * Sets `tenantId`'s mode for `key`. Unknown key/mode -> 400. A mode whose `requires.allOf`
+   * names an entitlement the tenant does NOT hold -> 409 naming the first missing key. Never
+   * touches another tenant's row: `where: { tenantId, featureKey }` is always scoped together
+   * (the compound unique index), never `featureKey` alone.
+   *
+   * The two fulfilment keys run under the per-tenant `fulfilment-settings` lock (M2), the same one
+   * the tenant Settings PATCH takes; its audit stays on `AuditService.log`.
+   */
+  async set(
+    tenantId: string,
+    key: string,
+    mode: string,
+    reason: string,
+    byUserId: string | null,
+  ): Promise<void> {
+    if (isFulfilmentLockedKey(key)) {
+      return underFulfilmentLock(tenantId, () =>
+        this.setUnlocked(tenantId, key, mode, reason, byUserId),
+      );
+    }
+    return this.setUnlocked(tenantId, key, mode, reason, byUserId);
+  }
+
+  private async setUnlocked(
+    tenantId: string,
+    key: string,
+    mode: string,
+    reason: string,
+    byUserId: string | null,
+  ): Promise<void> {
+    await this.validate(tenantId, key, mode);
 
     await this.prisma.tenantFeatureConfig.upsert({
       where: { tenantId_featureKey: { tenantId, featureKey: key } },
@@ -240,10 +275,62 @@ export class FeatureConfigService {
     });
   }
 
+  /**
+   * The tenant-Settings writer: validates like `set()`, then upserts the row AND writes the audit
+   * row through the caller's transaction `tx`, awaited, so an audit failure rolls the setting back
+   * (unlike `AuditService.log`, which swallows). It takes NO lock and does NOT invalidate the
+   * store: the caller holds the `fulfilment-settings` lock around its whole transaction and calls
+   * `store.invalidate(tenantId, key)` after the commit.
+   */
+  async setAuditedInTx(
+    tx: {
+      tenantFeatureConfig: { upsert(args: any): Promise<unknown> };
+      auditLog: { create(args: any): Promise<unknown> };
+    },
+    tenantId: string,
+    key: string,
+    mode: string,
+    actor: { userId: string | null; impersonatedBy: string | null; reason: string },
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    await this.validate(tenantId, key, mode);
+
+    await tx.tenantFeatureConfig.upsert({
+      where: { tenantId_featureKey: { tenantId, featureKey: key } },
+      create: { tenantId, featureKey: key, mode, reason: actor.reason, updatedById: actor.userId },
+      update: { mode, reason: actor.reason, updatedById: actor.userId },
+    });
+    await tx.auditLog.create({
+      data: {
+        tenantId,
+        userId: actor.userId,
+        impersonatedBy: actor.impersonatedBy,
+        action: FEATURE_CONFIG_SET_ACTION,
+        entityType: "TenantFeatureConfig",
+        entityId: key,
+        meta: { key, mode, ...meta },
+      },
+    });
+  }
+
   /** Clears `tenantId`'s override for `key`, reverting it to the registry `fallbackMode`. A
    * clear on a key with no existing row is a no-op (still audited, still `where:{tenantId,
    * featureKey}` scoped) — deleteMany rather than delete so it never throws P2025. */
   async clear(
+    tenantId: string,
+    key: string,
+    reason: string,
+    byUserId: string | null,
+  ): Promise<void> {
+    if (isFulfilmentLockedKey(key)) {
+      return underFulfilmentLock(tenantId, () =>
+        this.clearUnlocked(tenantId, key, reason, byUserId),
+      );
+    }
+    return this.clearUnlocked(tenantId, key, reason, byUserId);
+  }
+
+  private async clearUnlocked(
     tenantId: string,
     key: string,
     reason: string,

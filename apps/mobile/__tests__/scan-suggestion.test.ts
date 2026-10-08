@@ -133,3 +133,13 @@ describe("runScanDecision — 2+ fuzzy matches (B1220)", () => {
     expect(flag).toHaveBeenLastCalledWith(false);
   });
 });
+
+describe("B1220 nit — ambiguous with no matches never opens an empty sheet", () => {
+  const base = { product: { id: "p1", name: "Cola" }, ambiguous: true } as any;
+  it("ambiguous + [] -> not-found", () => {
+    expect(decideScanResult({ ...base, matches: [] }, "add")).toEqual({ kind: "not-found" });
+  });
+  it("ambiguous + undefined matches -> not-found", () => {
+    expect(decideScanResult({ ...base }, "stock")).toEqual({ kind: "not-found" });
+  });
+});
