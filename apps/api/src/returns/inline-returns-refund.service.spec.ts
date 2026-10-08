@@ -8,7 +8,14 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { InlineReturnsService } from "./inline-returns.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
-import { canRefundRole, inlineReturnAmount, isRefundPending } from "./inline-return-refund";
+import {
+  canRefundRole,
+  inlineReturnAmount,
+  isRefundPending,
+  loadSourceInvoicesState,
+  sourcesAreRefundable,
+} from "./inline-return-refund";
+import { inlineReturnItemsFingerprint, replayItemsMatch } from "./inline-return-fingerprint";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -86,6 +93,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let row: Record<string, any>;
   let rawCalls: string[];
+  let rawValues: unknown[][];
   let creditNotes: { mintStandaloneInTx: jest.Mock; settleOrderCreditsInTx: jest.Mock };
   let quoteService: { priceInlineReturn: jest.Mock };
   let addonService: { hasAddon: jest.Mock };
@@ -94,12 +102,14 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     prisma = createMockPrisma();
     row = receivedReturn();
     rawCalls = [];
-    // one tx client for every transaction: records the raw lock statements in order
+    rawValues = [];
+    // one tx client for every transaction: records the raw lock statements (and their bound values) in order
     prisma.tenantTransaction.mockImplementation((fn: any) =>
       fn({
         ...prisma,
-        $executeRaw: jest.fn((strings: TemplateStringsArray) => {
+        $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
           rawCalls.push(strings.join("?").replace(/\s+/g, " ").trim());
+          rawValues.push(values);
           return Promise.resolve(0);
         }),
       }),
@@ -205,9 +215,19 @@ describe("InlineReturnsService.refund (SA-727)", () => {
   it("lock order: Return, then the carrying + source Orders in one id-ordered statement, then the source Invoices id-sorted", async () => {
     await service.refund("ret-1", REFUND, OPERATOR);
     expect(rawCalls).toHaveLength(3);
-    expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? FOR UPDATE/);
+    expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/);
     expect(rawCalls[1]).toMatch(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
     expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
+  });
+
+  it("F7: the Return FOR UPDATE carries an explicit, BOUND tenant predicate (never string-built SQL)", async () => {
+    await service.refund("ret-1", REFUND, OPERATOR);
+    expect(rawCalls[0]).toBe(
+      'SELECT id FROM "Return" WHERE id = ? AND (?::text IS NULL OR "tenantId" = ?) FOR UPDATE',
+    );
+    // the id and the tenant (twice: the null-tolerant test and the equality) are parameters, in order
+    expect(rawValues[0]).toEqual(["ret-1", expect.anything(), expect.anything()]);
+    expect(rawValues[0][1]).toBe(rawValues[0][2]);
   });
 
   it("M2: the amount is the server's: a different expectedAmount is 409 REFUND_AMOUNT_CHANGED carrying the real amount, nothing written", async () => {
@@ -281,6 +301,79 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
       "REFUND_NEEDS_PAID_INVOICE",
     );
+  });
+
+  describe("F4: store credit is never turned into cash", () => {
+    it.each(["CREDIT_NOTE", "ADVANCE"])(
+      "an invoice paid (even in part) with a %s payment is 409 REFUND_PAID_WITH_STORE_CREDIT: nothing claimed, no audit row",
+      async (method) => {
+        prisma.invoice.findMany.mockResolvedValue([
+          paidInvoice({
+            payments: [
+              { amount: 10, status: "PAID", method: "CASH" },
+              { amount: 20, status: "PAID", method },
+            ],
+          }),
+        ]);
+        const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+        expect(err.getStatus()).toBe(409);
+        expect(err.getResponse()).toMatchObject({ code: "REFUND_PAID_WITH_STORE_CREDIT" });
+        expect(prisma.return.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("EVERY money tender still refunds: CASH, CHECK, CREDIT_CARD, ACH, ZELLE and OTHER", async () => {
+      for (const method of ["CASH", "CHECK", "CREDIT_CARD", "ACH", "ZELLE", "OTHER"]) {
+        prisma.invoice.findMany.mockResolvedValue([
+          paidInvoice({ payments: [{ amount: 30, status: "PAID", method }] }),
+        ]);
+        await expect(service.refund("ret-1", REFUND, OPERATOR)).resolves.toMatchObject({
+          refundTender: "CASH",
+        });
+      }
+    });
+
+    it("a store-credit payment that is not CONFIRMED (VOID) does not block a cash refund", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice({
+          payments: [
+            { amount: 30, status: "PAID", method: "CASH" },
+            { amount: 5, status: "VOID", method: "CREDIT_NOTE" },
+          ],
+        }),
+      ]);
+      await expect(service.refund("ret-1", REFUND, OPERATOR)).resolves.toBeDefined();
+    });
+
+    it("one store-credit-paid invoice among several blocks the whole refund", async () => {
+      row = receivedReturn({
+        items: [
+          { productId: "p1", qty: 1, sourceOrderId: "o1", sourceInvoiceItemId: "ii-1" },
+          { productId: "p2", qty: 1, sourceOrderId: "o2", sourceInvoiceItemId: "ii-2" },
+        ],
+      });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { id: "ii-1", invoiceId: "inv-1" },
+        { id: "ii-2", invoiceId: "inv-2" },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice(),
+        paidInvoice({ id: "inv-2", payments: [{ amount: 30, status: "PAID", method: "ADVANCE" }] }),
+      ]);
+      expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
+        "REFUND_PAID_WITH_STORE_CREDIT",
+      );
+    });
+
+    it("an invoice still owing wins: REFUND_NEEDS_PAID_INVOICE is reported before the store-credit refusal", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice({ payments: [{ amount: 10, status: "PAID", method: "CREDIT_NOTE" }] }),
+      ]);
+      expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
+        "REFUND_NEEDS_PAID_INVOICE",
+      );
+    });
   });
 
   it("M1: store credit XOR refund: a return already credited (or credit-resolved) is 409 RETURN_ALREADY_RESOLVED, no write", async () => {
@@ -445,7 +538,11 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       const out = await service.storeCreditInstead("ret-1", OPERATOR);
       expect(out).toBeDefined();
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
-      expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? FOR UPDATE/);
+      // F7: the explicit bound tenant predicate on the conversion's Return lock too
+      expect(rawCalls[0]).toBe(
+        'SELECT id FROM "Return" WHERE id = ? AND (?::text IS NULL OR "tenantId" = ?) FOR UPDATE',
+      );
+      expect(rawValues[0]).toEqual(["ret-1", expect.anything(), expect.anything()]);
       expect(rawCalls[1]).toMatch(/FROM "Order" WHERE id IN/);
       expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN/);
       // CAS first (clears the intent), then the credit mint's own link CAS (which needs refundMethod null)
@@ -481,6 +578,67 @@ describe("InlineReturnsService.refund (SA-727)", () => {
           creditNoteId: "cn-1",
           actor: "user-OPERATOR",
         }),
+      });
+    });
+
+    describe("F3: a retry of an already-converted return is a 200 (the same as a refund replay)", () => {
+      const converted = (over: Record<string, unknown> = {}) =>
+        receivedReturn({
+          status: "REFUNDED",
+          refundMethod: "CREDIT_NOTE",
+          creditNoteId: "cn-1",
+          ...over,
+        });
+
+      it("REFUNDED via CREDIT_NOTE with an inline_return.store_credit_instead audit row: 200 with the row, no transaction, no second mint, no second audit row", async () => {
+        row = converted();
+        prisma.auditLog.findFirst.mockResolvedValue({ id: "audit-1" });
+        const out = await service.storeCreditInstead("ret-1", OPERATOR);
+        expect(out).toMatchObject({ id: "ret-1", status: "REFUNDED", creditNoteId: "cn-1" });
+        expect(prisma.auditLog.findFirst).toHaveBeenCalledWith({
+          where: {
+            action: "inline_return.store_credit_instead",
+            entityType: "Return",
+            entityId: "ret-1",
+          },
+          select: { id: true },
+        });
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("a racer converted it while this call waited for the lock: the in-tx re-check is the same 200, still nothing minted or written", async () => {
+        row = converted(); // what the in-lock re-read (and the read-back) sees: the racer's conversion
+        prisma.return.findFirst.mockResolvedValueOnce(receivedReturn()); // the unlocked pre-read still sees it pending
+        prisma.auditLog.findFirst.mockResolvedValue({ id: "audit-1" });
+        const out = await service.storeCreditInstead("ret-1", OPERATOR);
+        expect(out).toMatchObject({ status: "REFUNDED", creditNoteId: "cn-1" });
+        expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+        expect(prisma.return.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("a return resolved SOME OTHER WAY still refuses 409 RETURN_ALREADY_RESOLVED: a plain credit with no conversion audit row, a recorded refund", async () => {
+        prisma.auditLog.findFirst.mockResolvedValue(null);
+        for (const over of [
+          converted(), // credit note, but no store_credit_instead audit row (credited at capture)
+          receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 }), // a recorded refund
+          converted({ refundMethod: "EXTERNAL_REFUND" }), // not the conversion's shape
+        ]) {
+          row = over;
+          expect(await codeOf(service.storeCreditInstead("ret-1", OPERATOR))).toBe(
+            "RETURN_ALREADY_RESOLVED",
+          );
+        }
+        // and a refund row never asks for the audit row at all (only CREDIT_NOTE-resolved rows can be conversions)
+        row = receivedReturn({ status: "REFUNDED", refundedAt: new Date(), refundAmount: 30 });
+        prisma.auditLog.findFirst.mockClear();
+        await codeOf(service.storeCreditInstead("ret-1", OPERATOR));
+        expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
       });
     });
 
@@ -767,6 +925,92 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
+    describe("F6: the capture's resolution is part of the replay fingerprint", () => {
+      it("a REFUND capture stores resolution REFUND in capturePayload; a STORE_CREDIT capture stores no such key (every old payload is unchanged)", async () => {
+        await service.capture({ ...DTO, resolution: "REFUND" } as any, OPERATOR);
+        expect(prisma.return.create.mock.calls[0][0].data.capturePayload).toMatchObject({
+          v: 1,
+          resolution: "REFUND",
+        });
+        prisma.return.create.mockClear();
+        await service.capture(DTO as any, OPERATOR);
+        const payload = prisma.return.create.mock.calls[0][0].data.capturePayload;
+        expect(payload).not.toHaveProperty("resolution");
+        expect(payload).toEqual(inlineReturnItemsFingerprint(DTO.items, undefined));
+      });
+
+      it("the same key replayed with a DIFFERENT resolution is 409 INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS, both ways; nothing minted or created", async () => {
+        const stored = (resolution?: string) => ({
+          ...receivedReturn({ refundMethod: resolution === "REFUND" ? "EXTERNAL_REFUND" : null }),
+          capturePayload: inlineReturnItemsFingerprint(DTO.items, undefined, resolution),
+        });
+        // stored REFUND, replayed as the default (and as an explicit STORE_CREDIT)
+        prisma.return.findFirst.mockImplementation(async () => stored("REFUND"));
+        expect(await codeOf(service.capture(DTO as any, OPERATOR))).toBe(
+          "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+        );
+        expect(
+          await codeOf(service.capture({ ...DTO, resolution: "STORE_CREDIT" } as any, OPERATOR)),
+        ).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
+        // stored STORE_CREDIT, replayed as REFUND
+        prisma.return.findFirst.mockImplementation(async () => stored());
+        expect(
+          await codeOf(service.capture({ ...DTO, resolution: "REFUND" } as any, OPERATOR)),
+        ).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+        expect(prisma.return.create).not.toHaveBeenCalled();
+      });
+
+      it("the IDENTICAL resolution still replays (a REFUND capture replayed as REFUND answers 200 refundPending)", async () => {
+        prisma.return.findFirst.mockImplementation(async () => ({
+          ...receivedReturn(),
+          items: [{ productId: "prod-1", qty: 6, restock: true }],
+          capturePayload: inlineReturnItemsFingerprint(DTO.items, undefined, "REFUND"),
+        }));
+        const out = await service.capture({ ...DTO, resolution: "REFUND" } as any, OPERATOR);
+        expect(out).toMatchObject({ id: "ret-1", refundPending: true });
+        expect(prisma.return.create).not.toHaveBeenCalled();
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      });
+
+      it("replayItemsMatch (pure): an absent stored resolution reads as STORE_CREDIT; REFUND vs STORE_CREDIT is a mismatch both ways; a legacy row (no payload) stays legacy", () => {
+        const items = DTO.items;
+        const refundPayload = inlineReturnItemsFingerprint(items, undefined, "REFUND");
+        const creditPayload = inlineReturnItemsFingerprint(items, undefined, "STORE_CREDIT");
+        expect(creditPayload).not.toHaveProperty("resolution");
+        expect(replayItemsMatch(creditPayload, items, undefined, undefined)).toBe("match");
+        expect(replayItemsMatch(creditPayload, items, undefined, "STORE_CREDIT")).toBe("match");
+        expect(replayItemsMatch(creditPayload, items, undefined, "REFUND")).toBe("mismatch");
+        expect(replayItemsMatch(refundPayload, items, undefined, "REFUND")).toBe("match");
+        expect(replayItemsMatch(refundPayload, items, undefined, undefined)).toBe("mismatch");
+        expect(replayItemsMatch(refundPayload, items, undefined, "STORE_CREDIT")).toBe("mismatch");
+        expect(replayItemsMatch(null, items, undefined, "REFUND")).toBe("legacy");
+      });
+    });
+
+    it("F4: a REFUND capture of goods paid (even in part) with store credit is refused 409 REFUND_PAID_WITH_STORE_CREDIT BEFORE any write", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice({
+          payments: [
+            { amount: 10, status: "PAID", method: "CASH" },
+            { amount: 20, status: "PAID", method: "CREDIT_NOTE" },
+          ],
+        }),
+      ]);
+      expect(await codeOf(service.capture({ ...DTO, resolution: "REFUND" } as any, OPERATOR))).toBe(
+        "REFUND_PAID_WITH_STORE_CREDIT",
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("F4: a STORE_CREDIT capture is unaffected by how the invoice was paid", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice({ payments: [{ amount: 30, status: "PAID", method: "ADVANCE" }] }),
+      ]);
+      await expect(service.capture(DTO as any, OPERATOR)).resolves.toBeDefined();
+    });
+
     it("an unpaid invoice does not matter to a STORE_CREDIT capture", async () => {
       prisma.invoice.findMany.mockResolvedValue([paidInvoice({ payments: [] })]);
       await expect(service.capture(DTO as any, OPERATOR)).resolves.toBeDefined();
@@ -823,6 +1067,7 @@ describe("InlineReturnsQuoteService.quote: the additive refund fields (SA-727)",
       canRefund: true,
       paidInFull: true,
       paidMethods: ["CASH", "CREDIT_CARD"],
+      paidWithStoreCredit: false,
       customerIsWalkIn: true,
     });
   });
@@ -843,6 +1088,82 @@ describe("InlineReturnsQuoteService.quote: the additive refund fields (SA-727)",
     expect((await quote.quote(dto, OPERATOR)).canRefund).toBe(false);
   });
 
+  it("F4: any part paid with store credit (a CONFIRMED CREDIT_NOTE or ADVANCE payment): paidWithStoreCredit = true and canRefund = false, while paidInFull stays the fact about the invoices", async () => {
+    priced([chunk("ii-1")]);
+    for (const method of ["CREDIT_NOTE", "ADVANCE"]) {
+      prisma.invoice.findMany.mockResolvedValue([
+        paidInvoice({
+          payments: [
+            { amount: 10, status: "PAID", method: "CASH" },
+            { amount: 20, status: "PAID", method },
+          ],
+        }),
+      ]);
+      expect(await quote.quote(dto, OPERATOR)).toMatchObject({
+        canRefund: false,
+        paidInFull: true,
+        paidWithStoreCredit: true,
+        paidMethods: ["CASH", method].sort(),
+      });
+    }
+  });
+
+  it("F4: a money-only sale, and a store-credit payment that is VOID/PENDING, report paidWithStoreCredit = false and stay refundable", async () => {
+    priced([chunk("ii-1")]);
+    expect(await quote.quote(dto, OPERATOR)).toMatchObject({
+      canRefund: true,
+      paidWithStoreCredit: false,
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      paidInvoice({
+        payments: [
+          { amount: 30, status: "PAID", method: "ZELLE" },
+          { amount: 5, status: "VOID", method: "CREDIT_NOTE" },
+          { amount: 5, status: "PENDING", method: "ADVANCE" },
+        ],
+      }),
+    ]);
+    expect(await quote.quote(dto, OPERATOR)).toMatchObject({
+      canRefund: true,
+      paidWithStoreCredit: false,
+    });
+  });
+
+  it("F4: paidWithStoreCredit is a fact about the invoices, not the caller: a DRIVER still sees it (canRefund false either way)", async () => {
+    priced([chunk("ii-1")]);
+    prisma.invoice.findMany.mockResolvedValue([
+      paidInvoice({ payments: [{ amount: 30, status: "PAID", method: "CREDIT_NOTE" }] }),
+    ]);
+    const driver = await quote.quote({ ...dto, routeRunStopId: "s" }, DRIVER);
+    expect(driver).toMatchObject({ canRefund: false, paidWithStoreCredit: true });
+  });
+
+  it("F5: canRefund requires a return worth money: a paid sale with a $0.00 (or sub-cent) total is not refundable, whoever asks", async () => {
+    for (const total of [0, 0.001, 0.0005]) {
+      jest.spyOn(quote, "priceInlineReturn").mockResolvedValue({
+        chunks: [chunk("ii-1")],
+        subtotal: total,
+        taxAmount: 0,
+        categoryTax: 0,
+        total,
+        productBreakdown: {},
+      } as any);
+      const out = await quote.quote(dto, OPERATOR);
+      expect(out.canRefund).toBe(false);
+      expect(out.paidInFull).toBe(true); // still a fact about the invoices
+    }
+    // one cent is worth money
+    jest.spyOn(quote, "priceInlineReturn").mockResolvedValue({
+      chunks: [chunk("ii-1")],
+      subtotal: 0.01,
+      taxAmount: 0,
+      categoryTax: 0,
+      total: 0.01,
+      productBreakdown: {},
+    } as any);
+    expect((await quote.quote(dto, OPERATOR)).canRefund).toBe(true);
+  });
+
   it("a customer who is not the walk-in: customerIsWalkIn = false (an ordinary customer, NULL or false column)", async () => {
     priced([chunk("ii-1")]);
     prisma.customer.findFirst.mockResolvedValue({ isWalkIn: null });
@@ -859,6 +1180,65 @@ describe("InlineReturnsQuoteService.quote: the additive refund fields (SA-727)",
         creditCategoryTax: q.categoryTax,
       }),
     ).toBe(q.total);
+  });
+});
+
+describe("loadSourceInvoicesState + sourcesAreRefundable (F4, pure over a mocked client)", () => {
+  const db = (payments: any[], over: Record<string, unknown> = {}) => ({
+    invoiceItem: { findMany: jest.fn().mockResolvedValue([{ id: "ii-1", invoiceId: "inv-1" }]) },
+    invoice: { findMany: jest.fn().mockResolvedValue([paidInvoice({ payments, ...over })]) },
+  });
+
+  it.each([
+    ["CASH", false],
+    ["CHECK", false],
+    ["CREDIT_CARD", false],
+    ["ACH", false],
+    ["ZELLE", false],
+    ["OTHER", false],
+    ["CREDIT_NOTE", true],
+    ["ADVANCE", true],
+  ])("a confirmed %s payment: paidWithStoreCredit = %s", async (method, expected) => {
+    const s = await loadSourceInvoicesState(db([{ amount: 30, status: "PAID", method }]), ["ii-1"]);
+    expect(s.paidInFull).toBe(true);
+    expect(s.paidWithStoreCredit).toBe(expected);
+    expect(sourcesAreRefundable(s)).toBe(!expected);
+  });
+
+  it("only a CONFIRMED, non-zero store-credit payment counts (PENDING, VOID and $0.00 do not)", async () => {
+    const s = await loadSourceInvoicesState(
+      db([
+        { amount: 30, status: "PAID", method: "CASH" },
+        { amount: 5, status: "PENDING", method: "CREDIT_NOTE" },
+        { amount: 5, status: "VOID", method: "ADVANCE" },
+        { amount: 0, status: "PAID", method: "CREDIT_NOTE" },
+      ]),
+      ["ii-1"],
+    );
+    expect(s.paidWithStoreCredit).toBe(false);
+    expect(sourcesAreRefundable(s)).toBe(true);
+  });
+
+  it("the early exits (no lines, no invoices) fail closed with paidWithStoreCredit = false", async () => {
+    expect(await loadSourceInvoicesState(db([]), [])).toEqual({
+      invoiceIds: [],
+      paidInFull: false,
+      paidMethods: [],
+      paidWithStoreCredit: false,
+    });
+    const noInvoices = db([]);
+    noInvoices.invoiceItem.findMany.mockResolvedValue([]);
+    expect(await loadSourceInvoicesState(noInvoices, ["ii-1"])).toMatchObject({
+      paidInFull: false,
+      paidWithStoreCredit: false,
+    });
+  });
+
+  it("sourcesAreRefundable: paid in full AND not paid with store credit, nothing else", () => {
+    expect(sourcesAreRefundable({ paidInFull: true, paidWithStoreCredit: false })).toBe(true);
+    expect(sourcesAreRefundable({ paidInFull: true, paidWithStoreCredit: true })).toBe(false);
+    expect(sourcesAreRefundable({ paidInFull: false, paidWithStoreCredit: false })).toBe(false);
+    expect(sourcesAreRefundable({ paidInFull: false, paidWithStoreCredit: true })).toBe(false);
   });
 });
 

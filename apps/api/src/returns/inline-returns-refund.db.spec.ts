@@ -12,6 +12,7 @@
  * (no DB lane there): first run must be on the compose Postgres.
  */
 import { randomUUID } from "crypto";
+import { Client } from "pg";
 import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -118,9 +119,15 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     await prisma?.$disconnect();
   });
 
-  /** A walk-in customer, one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a CASH payment of $100.00. */
-  async function seed(label: string, opts: { paid?: boolean; walkIn?: boolean } = {}) {
-    const { paid = true, walkIn = true } = opts;
+  /**
+   * A walk-in customer, one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
+   * `method` (CASH unless a case needs another tender, e.g. CREDIT_NOTE for the store-credit rule).
+   */
+  async function seed(
+    label: string,
+    opts: { paid?: boolean; walkIn?: boolean; method?: string } = {},
+  ) {
+    const { paid = true, walkIn = true, method = "CASH" } = opts;
     seq += 1;
     const slug = assertTestTenant(
       `qa-refund-${RUN}-${seq}-${label}`,
@@ -201,7 +208,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
             tenantId,
             invoiceId: invoice.id,
             amount: 100,
-            method: "CASH",
+            method,
             status: "PAID",
           } as any,
         })
@@ -281,6 +288,60 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
         items: [{ invoiceItemId: s.lineId, amount }],
       } as any),
     );
+
+  /**
+   * F8: a DETERMINISTIC race. A raw pg connection takes the Return row lock first; `start()` then launches the competing
+   * service calls; the helper polls pg_stat_activity (a recursive walk of pg_blocking_pids from the holder, so a second
+   * waiter queued behind the first waiter counts too) until ALL of them are queued behind that lock, and only then
+   * releases it. So the calls really do contend for the lock (no timing luck, no call that finished before the other
+   * started), and the winner is whoever Postgres wakes first. Returns what the calls settled to.
+   */
+  async function raceBehindReturnLock(
+    returnId: string,
+    start: () => Array<Promise<any>>,
+  ): Promise<Array<PromiseSettledResult<any>>> {
+    const url = requireLocalDatabaseUrl();
+    const holder = new Client({ connectionString: url });
+    const poller = new Client({ connectionString: url }); // autocommit: a fresh pg_stat_activity snapshot per poll
+    await holder.connect();
+    await poller.connect();
+    let settled: Promise<Array<PromiseSettledResult<any>>> | undefined;
+    try {
+      await holder.query("BEGIN");
+      const locked = await holder.query(`SELECT id FROM "Return" WHERE id = $1 FOR UPDATE`, [
+        returnId,
+      ]);
+      expect(locked.rowCount).toBe(1); // the lock is really held
+      const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const calls = start();
+      settled = Promise.allSettled(calls);
+      let queued = 0;
+      for (let i = 0; i < 200 && queued < calls.length; i++) {
+        const r = await poller.query(
+          `WITH RECURSIVE w(pid) AS (
+             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
+             UNION
+             SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
+           ) SELECT count(*)::int AS n FROM w`,
+          [holderPid],
+        );
+        queued = Number(r.rows[0].n);
+        if (queued < calls.length) await new Promise((res) => setTimeout(res, 50));
+      }
+      if (queued < calls.length) {
+        throw new Error(`only ${queued} of ${calls.length} calls queued behind the Return lock`);
+      }
+      await holder.query("ROLLBACK"); // wrote nothing: release the lock, both calls proceed
+      return await settled;
+    } catch (err) {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      if (settled) await settled; // never leave a call dangling past the test
+      throw err;
+    } finally {
+      await holder.end().catch(() => undefined);
+      await poller.end().catch(() => undefined);
+    }
+  }
 
   it("1. a REFUND capture restocks and records the return RECEIVED but mints NO credit note; a STORE_CREDIT capture is unchanged", async () => {
     const s = await seed("capture");
@@ -384,25 +445,38 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(await auditRows(a)).toHaveLength(0);
     expect(await creditNoteCount(a)).toBe(1);
 
-    // SA-727a: a capture REPLAY of a REFUND capture (default resolution) never mints a credit note, and the refund still works
+    // SA-727a + F6: the capture's resolution is part of the replay fingerprint. The SAME key with the default (STORE_CREDIT)
+    // resolution is refused 409 INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS (never a credit note, never a second Return);
+    // the identical REFUND resolution still replays; and the refund still works
     const b = await seed("xor-b");
     const key = `xor-b-${RUN}`;
     const rb = await capture(b, 4, "REFUND", key);
-    const replayed = await capture(b, 4, undefined, key); // the same key, default resolution
-    expect(replayed).toMatchObject({ id: rb.id, status: "RECEIVED" });
+    const mismatch = await fail(capture(b, 4, undefined, key)); // the same key, another resolution
+    expect(status(mismatch)).toBe(409);
+    expect(codeOf(mismatch)).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
     expect(await creditNoteCount(b)).toBe(0);
+    expect(await prisma.return.count({ where: { tenantId: b.tenantId } })).toBe(1);
     expect((await row(rb.id)).creditNoteId).toBeNull();
+    const replayed = await capture(b, 4, "REFUND", key); // the same key, the SAME resolution
+    expect(replayed).toMatchObject({ id: rb.id, status: "RECEIVED", refundPending: true });
+    expect(await creditNoteCount(b)).toBe(0);
+    expect(await stock(b)).toBe(4); // restocked once, by the first capture
     await expect(refund(b, rb.id, "CASH", 40)).resolves.toMatchObject({ status: "REFUNDED" });
 
-    // refund first, then the STORE_CREDIT replay: no credit is minted on a refunded return
+    // refund first, then a replay: the identical REFUND resolution answers 200 REFUNDED; the other resolution is the 409.
+    // Either way no credit is minted on a refunded return
     const c = await seed("xor-c");
     const keyC = `xor-c-${RUN}`;
     const rc = await capture(c, 4, "REFUND", keyC);
     await refund(c, rc.id, "CHECK", 40);
-    const replay = await capture(c, 4, undefined, keyC);
+    const replay = await capture(c, 4, "REFUND", keyC);
     expect(replay.status).toBe("REFUNDED");
+    expect(codeOf(await fail(capture(c, 4, undefined, keyC)))).toBe(
+      "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+    );
     expect(await creditNoteCount(c)).toBe(0);
     expect((await row(rc.id)).refundMethod).toBe("EXTERNAL_REFUND");
+    expect(await auditRows(c)).toHaveLength(1);
   }, 60_000);
 
   it("5. M3: an unpaid sale is refused 409 REFUND_NEEDS_PAID_INVOICE at the REFUND capture (nothing written) and at the refund (payment voided after capture)", async () => {
@@ -474,7 +548,8 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   it("10. concurrent refunds (two tenders, one return): exactly one 200 and one 409, ONE audit row, the winner's tender stored", async () => {
     const s = await seed("race");
     const r = await capture(s, 4, "REFUND");
-    const outcomes = await Promise.allSettled([
+    // F8: both refunds are queued on the held Return lock before it is released, so exactly one wins and one loses
+    const outcomes = await raceBehindReturnLock(r.id, () => [
       refund(s, r.id, "CASH", 40),
       refund(s, r.id, "CARD", 40),
     ]);
@@ -488,9 +563,27 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(audits).toHaveLength(1);
     expect((audits[0].meta as any).tender).toBe(ok[0].value.refundTender);
     expect(await creditNoteCount(s)).toBe(0);
+    // the loser left no trace: one claim, one refundedAt, the goods restocked once
+    expect(Number((await row(r.id)).refundAmount)).toBe(40);
+    expect(await stock(s)).toBe(4);
   }, 60_000);
 
-  it("11. a refund racing a capture REPLAY (default resolution) on the same return: the refund wins and no credit note is ever minted", async () => {
+  it("11. a refund racing a capture REPLAY on the same return: the identical REFUND replay is a 200; a replay with another resolution is a coded 409; either way the refund wins and the loser leaves no side effect", async () => {
+    // (a) the same key, the SAME resolution: both calls succeed (the replay is idempotent whatever state the refund left;
+    // its pre-read takes no Return lock, so this pair is a plain concurrent run, not a queued one)
+    const a = await seed("race-xor-same");
+    const keyA = `race-xor-a-${RUN}`;
+    const ra = await capture(a, 4, "REFUND", keyA);
+    const same = await Promise.allSettled([
+      refund(a, ra.id, "CASH", 40),
+      capture(a, 4, "REFUND", keyA),
+    ]);
+    expect(same.map((o) => o.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect((same[1] as PromiseFulfilledResult<any>).value.id).toBe(ra.id);
+    expect(await creditNoteCount(a)).toBe(0);
+    expect(await auditRows(a)).toHaveLength(1);
+
+    // (b) the same key, the OTHER resolution (the default): the replay is the 409 mismatch, the refund still wins
     const s = await seed("race-xor");
     const key = `race-xor-${RUN}`;
     const r = await capture(s, 4, "REFUND", key);
@@ -498,14 +591,22 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       refund(s, r.id, "CASH", 40),
       capture(s, 4, undefined, key),
     ]);
-    for (const o of outcomes) {
-      if (o.status === "rejected") expect(status(o.reason)).toBeLessThan(500);
-    }
+    expect(outcomes[0].status).toBe("fulfilled");
+    expect(outcomes[1].status).toBe("rejected");
+    const loser = (outcomes[1] as PromiseRejectedResult).reason;
+    expect(status(loser)).toBe(409);
+    expect(codeOf(loser)).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
     const stored = await row(r.id);
     expect(stored.status).toBe("REFUNDED");
     expect(stored.refundMethod).toBe("EXTERNAL_REFUND");
+    // the loser's side effects: no credit note, no second audit row, no second Return, no second restock
     expect(await creditNoteCount(s)).toBe(0);
     expect(await auditRows(s)).toHaveLength(1);
+    expect(await prisma.return.count({ where: { tenantId: s.tenantId } })).toBe(1);
+    expect(await stock(s)).toBe(4);
+    expect(
+      await prisma.stockMovement.count({ where: { productId: s.productId, type: "RETURN" } }),
+    ).toBe(1);
   }, 60_000);
 
   it("11b. M6: cancelling a PENDING refund (captured, not yet refunded) works and un-restocks the goods; it never counted in net sales", async () => {
@@ -636,7 +737,11 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   it("18. SA-727b: a refund and a store-credit conversion racing in parallel: exactly one wins, the other is 409, never both and never a 500", async () => {
     const s = await seed("race-convert");
     const r = await capture(s, 4, "REFUND");
-    const outcomes = await Promise.allSettled([refund(s, r.id, "CASH", 40), storeCredit(s, r.id)]);
+    // F8: both calls are queued on the held Return lock before it is released: exactly one winner, one 409 loser
+    const outcomes = await raceBehindReturnLock(r.id, () => [
+      refund(s, r.id, "CASH", 40),
+      storeCredit(s, r.id),
+    ]);
     const ok = outcomes.filter((o) => o.status === "fulfilled");
     const bad = outcomes.filter((o) => o.status === "rejected") as PromiseRejectedResult[];
     expect(ok).toHaveLength(1);
@@ -647,6 +752,12 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     const audits = (await auditRows(s)).length;
     expect(credits + audits).toBe(1);
     expect((await row(r.id)).refundMethod).toBe(credits === 1 ? "CREDIT_NOTE" : "EXTERNAL_REFUND");
+    // the loser left no trace: whichever won, the other's audit row does not exist
+    const conversions = await prisma.auditLog.count({
+      where: { tenantId: s.tenantId, action: "inline_return.store_credit_instead" },
+    });
+    expect(conversions).toBe(credits);
+    expect(await stock(s)).toBe(4);
   }, 60_000);
 
   it("19. SA-727b: an audit failure in the conversion rolls back the cleared intent and the mint: the pending refund is intact", async () => {
@@ -687,5 +798,73 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(ids).not.toContain(done.id);
     expect(ids).not.toContain(credited.id);
     expect((data as any[])[0]).toMatchObject({ refundPending: true, refundedAt: null });
+  }, 60_000);
+
+  it("21. F4: store credit is never turned into cash: a sale paid with a CREDIT_NOTE payment is refused 409 REFUND_PAID_WITH_STORE_CREDIT at the REFUND capture, the quote says paidWithStoreCredit, and a payment re-tendered after capture is refused at the refund (the return stays RECEIVED)", async () => {
+    const a = await seed("sc-paid", { method: "CREDIT_NOTE" });
+    const q = await inTenant(a, () =>
+      inline.quoteService.quote(
+        {
+          customerId: a.customerId,
+          items: [{ productId: a.productId, qty: 4, boxes: 0, pieces: 4 }],
+        },
+        staff(a),
+      ),
+    );
+    expect(q).toMatchObject({ canRefund: false, paidInFull: true, paidWithStoreCredit: true });
+    const e = await fail(capture(a, 4, "REFUND"));
+    expect(status(e)).toBe(409);
+    expect(codeOf(e)).toBe("REFUND_PAID_WITH_STORE_CREDIT");
+    expect(await prisma.return.count({ where: { tenantId: a.tenantId } })).toBe(0);
+    expect(await stock(a)).toBe(0);
+    // store credit stays available for that sale
+    const credited = await capture(a, 4);
+    expect(credited).toMatchObject({ status: "REFUNDED", refundMethod: "CREDIT_NOTE" });
+
+    // captured while paid in cash, then the payment is a store-credit one (ADVANCE): the refund endpoint refuses on its own
+    const s = await seed("sc-paid-after");
+    const r = await capture(s, 4, "REFUND");
+    await prisma.invoicePayment.update({
+      where: { id: s.paymentId! },
+      data: { method: "ADVANCE" },
+    });
+    const e2 = await fail(refund(s, r.id, "CASH", 40));
+    expect(status(e2)).toBe(409);
+    expect(codeOf(e2)).toBe("REFUND_PAID_WITH_STORE_CREDIT");
+    expect((await row(r.id)).status).toBe("RECEIVED");
+    expect(await auditRows(s)).toHaveLength(0);
+    // ... and "Give store credit instead" is how it goes back
+    await expect(storeCredit(s, r.id)).resolves.toMatchObject({
+      status: "REFUNDED",
+      refundMethod: "CREDIT_NOTE",
+    });
+  }, 60_000);
+
+  it("22. F3: Give store credit instead is idempotent: a retry of a converted return is a 200 with the same credit note (ONE credit note, ONE conversion audit row); a return credited at capture or refunded still refuses", async () => {
+    const s = await seed("convert-retry");
+    const r = await capture(s, 4, "REFUND");
+    const first = await storeCredit(s, r.id);
+    const again = await storeCredit(s, r.id);
+    expect(again).toMatchObject({ id: r.id, status: "REFUNDED", refundMethod: "CREDIT_NOTE" });
+    expect(again.creditNoteId).toBe(first.creditNoteId);
+    expect(await creditNoteCount(s)).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { tenantId: s.tenantId, action: "inline_return.store_credit_instead" },
+      }),
+    ).toBe(1);
+
+    // credited at capture (no conversion audit row): still the 409
+    const c = await seed("convert-retry-credited");
+    const credited = await capture(c, 4);
+    expect(codeOf(await fail(storeCredit(c, credited.id)))).toBe("RETURN_ALREADY_RESOLVED");
+    expect(await creditNoteCount(c)).toBe(1);
+
+    // refunded: still the 409
+    const f = await seed("convert-retry-refunded");
+    const rf = await capture(f, 4, "REFUND");
+    await refund(f, rf.id, "CASH", 40);
+    expect(codeOf(await fail(storeCredit(f, rf.id)))).toBe("RETURN_ALREADY_RESOLVED");
+    expect(await creditNoteCount(f)).toBe(0);
   }, 60_000);
 });

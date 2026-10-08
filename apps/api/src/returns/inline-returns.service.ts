@@ -151,7 +151,7 @@ export class InlineReturnsService {
   /** #2424: a same-pair replay must carry the same items as the stored capture, else 409. */
   private assertReplaySameItems(
     existing: { id: string; returnNumber?: string | null; capturePayload?: unknown },
-    dto: { items: any[]; reason?: string | null },
+    dto: { items: any[]; reason?: string | null; resolution?: string | null },
   ) {
     assertReplayItems(existing, dto, this.logger);
   }
@@ -352,7 +352,11 @@ export class InlineReturnsService {
             message: "A different return already used this capture key",
           });
         }
-        this.assertReplaySameItems(raced, dto); // #2424
+        // #2424 + F6: the effective resolution of THIS call is the one the caller passed (opts.forRefund)
+        this.assertReplaySameItems(raced, {
+          ...dto,
+          resolution: opts.forRefund ? "REFUND" : "STORE_CREDIT",
+        });
         return {
           replayed: true as const,
           ret: this.withHoldMessage(raced),
@@ -447,7 +451,12 @@ export class InlineReturnsService {
           ? { refundMethod: EXTERNAL_REFUND_METHOD, refundedAt: null, refundAmount: null }
           : {}),
         returnKey: dto.returnKey,
-        capturePayload: inlineReturnItemsFingerprint(dto.items, dto.reason), // #2424: what a replay must match
+        // #2424: what a replay must match (F6: items AND resolution, a REFUND capture says so)
+        capturePayload: inlineReturnItemsFingerprint(
+          dto.items,
+          dto.reason,
+          opts.forRefund ? "REFUND" : "STORE_CREDIT",
+        ),
         capturedById: user.sub,
         capturedRole: user.role,
         routeRunStopId: dto.routeRunStopId,
@@ -582,6 +591,16 @@ export class InlineReturnsService {
           "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
       });
     }
+    if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
+  }
+
+  /** F4: store credit is never turned into cash - any part paid with a CREDIT_NOTE / ADVANCE payment goes back as store credit. */
+  private paidWithStoreCreditRefusal(): ConflictException {
+    return new ConflictException({
+      code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
+      message:
+        "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
+    });
   }
 
   /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (derived from the
@@ -1333,7 +1352,8 @@ export class InlineReturnsService {
     }
 
     const outcome: { replay?: any } = await this.prisma.tenantTransaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
+      // F7: the tenant predicate is explicit (bound), like the Order/Invoice locks right after it
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id, kind: "INLINE" },
         include: { items: true },
@@ -1398,6 +1418,8 @@ export class InlineReturnsService {
             "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
         });
       }
+      // F4: store credit is never turned into cash (read under the same invoice locks)
+      if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
 
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({
@@ -1513,17 +1535,29 @@ export class InlineReturnsService {
 
     const pre = await this.prisma.forTenant().return.findFirst({ where: { id, kind: "INLINE" } });
     if (!pre) throw new NotFoundException("Return not found");
-    if (isResolvedReturn(pre)) throw this.alreadyResolved();
+    // F3: a retry of an already-converted return is a 200 with the row (the same as a refund replay); a return resolved some
+    // other way (a refund, a plain credit, a conversion with no audit row) still refuses
+    if (isResolvedReturn(pre)) {
+      if (await this.isStoreCreditReplay(this.prisma.forTenant(), pre)) {
+        return this.storeCreditResult(this.prisma.forTenant(), id);
+      }
+      throw this.alreadyResolved();
+    }
 
     let minted: any;
     await this.prisma.tenantTransaction(async (tx: any) => {
-      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
+      // F7: the tenant predicate is explicit (bound), like the Order/Invoice locks right after it
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id, kind: "INLINE" },
         include: { items: true },
       });
       if (!fresh) throw new NotFoundException("Return not found");
-      if (isResolvedReturn(fresh)) throw this.alreadyResolved();
+      if (isResolvedReturn(fresh)) {
+        // a racer converted it while this call waited for the lock: the same replay as above
+        if (await this.isStoreCreditReplay(tx, fresh)) return; // nothing minted, nothing to emit
+        throw this.alreadyResolved();
+      }
       if (!isRefundPending(fresh) || fresh.holdReason) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
@@ -1599,9 +1633,25 @@ export class InlineReturnsService {
     });
 
     if (minted) this.emitCreditNoteCreated(tenantId, minted);
-    const after = await this.prisma
-      .forTenant()
-      .return.findUnique({ where: { id }, include: { items: true } });
+    return this.storeCreditResult(this.prisma.forTenant(), id);
+  }
+
+  /** F3: true when the return was converted to store credit by `storeCreditInstead` (REFUNDED via CREDIT_NOTE AND its awaited audit row exists). */
+  private async isStoreCreditReplay(
+    db: any,
+    ret: { id: string; status?: string | null; refundMethod?: string | null },
+  ): Promise<boolean> {
+    if (ret.status !== "REFUNDED" || ret.refundMethod !== "CREDIT_NOTE") return false;
+    const audit = await db.auditLog.findFirst({
+      where: { action: INLINE_STORE_CREDIT_AUDIT_ACTION, entityType: "Return", entityId: ret.id },
+      select: { id: true },
+    });
+    return !!audit;
+  }
+
+  /** The row `storeCreditInstead` answers with (the same read-back for a fresh conversion and a replay). */
+  private async storeCreditResult(db: any, id: string): Promise<any> {
+    const after = await db.return.findUnique({ where: { id }, include: { items: true } });
     if (!after) throw new NotFoundException("Return not found");
     return this.withParkedReversals(after);
   }
