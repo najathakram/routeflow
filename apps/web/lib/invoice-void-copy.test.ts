@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "@routeflow/types";
+import { codedToastCopy } from "./generic-toast-copy";
 import { voidFailureDescription, VOID_FALLBACK_COPY } from "./invoice-void-copy";
 
 /** Row 182: the void toast prefers the fixed coded copy, then the server's own sentence, then a generic fallback. */
@@ -11,8 +12,9 @@ describe("voidFailureDescription", () => {
       },
     };
     const out = voidFailureDescription(err);
+    expect(out).toBe(codedToastCopy(err)); // the fixed copy itself, not the fallback
     expect(out).not.toContain("RAW SERVER TEXT");
-    expect(out.length).toBeGreaterThan(10);
+    expect(out).not.toBe(VOID_FALLBACK_COPY);
   });
 
   it("an uncoded refusal keeps the server's actionable sentence", () => {

@@ -436,6 +436,7 @@ export function RecordInlineReturnDialog({
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
         quoteOverride={serverQuote ?? requoteOverride}
+        totalOnly={!!serverQuote}
         hideBack={!!saved}
         quoteNote={
           showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined
