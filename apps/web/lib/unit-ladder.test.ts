@@ -228,6 +228,13 @@ describe("mapLadderError", () => {
       offerNewUnit: true,
     });
   });
+  it("maps LEVEL_CODES_FULL to the fixed copy, ignoring server text", () => {
+    expect(
+      mapLadderError(err(409, { code: "LEVEL_CODES_FULL", message: "server words" })).text,
+    ).toBe(
+      "Only 4 levels can have their own code. Leave this level's code blank and it will use the code of the level above, or remove a code from another level.",
+    );
+  });
   it("maps a code clash and the lock timeout", () => {
     expect(
       mapLadderError(

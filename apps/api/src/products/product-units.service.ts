@@ -366,7 +366,9 @@ export class ProductUnitsService {
     }
     if (levelCodes.filter((c) => c.barcode).length > LEVEL_BARCODE_SLOTS.length) {
       throw new ConflictException({
-        message: "Give it the same code as another level, or no code.",
+        code: API_ERROR_CODES.LEVEL_CODES_FULL,
+        message:
+          "Only 4 levels can have their own code. Leave this level\'s code blank and it will use the code of the level above, or remove a code from another level.",
         field: "barcode",
       });
     }

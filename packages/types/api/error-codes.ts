@@ -37,6 +37,8 @@
 //                    ARCHIVED (it is never silently restored; pick another unit or restore it in Settings).
 //   UNIT_SIZE_IN_USE — `body.code` of the 409 when a unit level's size would change but an order or invoice line already carries
 //                    it; body `level` names the unit and `message` keeps the long-standing sentence (clients render their own copy).
+//   LEVEL_CODES_FULL — `body.code` of the 409 from PUT /products/:id/units when more than 4 ladder levels carry their own barcode
+//                    (only 4 slots exist); clients render their own copy.
 //   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
 //                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
 //                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
@@ -204,6 +206,7 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   UNIT_ARCHIVED: "UNIT_ARCHIVED",
   UNIT_SIZE_IN_USE: "UNIT_SIZE_IN_USE",
+  LEVEL_CODES_FULL: "LEVEL_CODES_FULL",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",

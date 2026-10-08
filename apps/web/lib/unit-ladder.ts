@@ -479,6 +479,8 @@ export const usedSizeCopy = (label: string) =>
   `"${label}" is already used on an order or invoice at a different size, so its size cannot change. Create a new unit instead.`;
 export const COULDNT_CHECK =
   "Couldn't check that code right now. Your entry is still here. Try again.";
+export const LEVEL_CODES_FULL_COPY =
+  "Only 4 levels can have their own code. Leave this level's code blank and it will use the code of the level above, or remove a code from another level.";
 export const COULDNT_SAVE = "Couldn't save the units. Try again.";
 
 export interface MappedLadderError {
@@ -538,6 +540,9 @@ export function mapLadderError(err: unknown): MappedLadderError {
         ? `That ${kind} is on ${holder}, which is turned off. Turn it back on to change it, or use a different ${kind}.`
         : `That ${kind} is already on ${holder}. One ${kind} can only belong to one product. Use a different one, or change ${holder} first.`,
     };
+  }
+  if (status === 409 && data.code === API_ERROR_CODES.LEVEL_CODES_FULL) {
+    return { field: "barcode", text: LEVEL_CODES_FULL_COPY };
   }
   if (status === 503) return { text: COULDNT_CHECK };
   if (data.code === API_ERROR_CODES.UNIT_ARCHIVED) {

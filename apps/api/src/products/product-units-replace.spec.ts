@@ -615,12 +615,15 @@ describe("PUT /products/:id/units - per-level codes", () => {
     );
   });
 
-  it("a 5th coded level is a 409 with the same-code-or-none copy", async () => {
+  it("a 5th coded level is a 409 LEVEL_CODES_FULL", async () => {
     const { service, state } = setup();
     const levels = [2, 3, 5, 7, 11].map((n, i) => lv(`L${n}`, n, null, { barcode: `BC-${i}` }));
     const err: any = await service.replace("p1", body(levels)).catch((e): any => e);
     expect(err).toBeInstanceOf(ConflictException);
-    expect(err.message).toBe("Give it the same code as another level, or no code.");
+    expect(err.message).toBe(
+      "Only 4 levels can have their own code. Leave this level's code blank and it will use the code of the level above, or remove a code from another level.",
+    );
+    expect(err.getResponse()).toMatchObject({ code: "LEVEL_CODES_FULL" });
     expect(state.productUnit).toHaveLength(0);
     // four coded levels are fine
     await service.replace("p1", body(levels.slice(0, 4)));
