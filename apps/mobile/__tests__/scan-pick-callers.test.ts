@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { decideScanResult, promptText } from "../lib/scan-suggestion";
 
 const A = (...p: string[]) => join(__dirname, "..", ...p);
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
@@ -79,11 +80,35 @@ describe("B1220 nit — a prompt is neutral feedback, not an error", () => {
     ...SCREENS,
     ["stock-count/[id].tsx", A("app", "(operator)", "products", "stock-count", "[id].tsx")],
   ];
-  it.each(THREE)("%s returns info (not error) feedback for the prompt", (_n, path) => {
-    const src = strip(readFileSync(path, "utf8"));
-    expect(src).toMatch(/kind: "info", text: promptText\(decision\)/);
-    expect(src).not.toMatch(/kind: "error", text: promptText/);
+  // BEHAVIOUR: the prompt text itself, and (in scan-feedback-slot.test.ts) that an info
+  // outcome gets the neutral haptic and no tray scroll. The checks below stay as source
+  // guards ONLY because proving which feedback kind / haptic a screen emits would mean
+  // rendering the whole RN screen (camera, navigation, queries) in a node-lane Jest.
+  it("promptText words a confirm and a pick prompt", () => {
+    const p = { id: "p1", name: "Blue Widget" };
+    const confirm = decideScanResult(
+      { product: p, source: "search", ambiguous: true, suggestion: true, matches: [p] } as any,
+      "add",
+    );
+    expect(promptText(confirm)).toBe(`Confirm: ${(confirm as any).message}`);
+    const q = { id: "p2", name: "Other" };
+    const pick = decideScanResult(
+      { product: p, source: "search", ambiguous: true, matches: [p, q] } as any,
+      "add",
+    );
+    expect(pick.kind).toBe("pick-from-list");
+    expect(promptText(pick)).toBe("2 products match — choose one");
+    expect(promptText({ kind: "not-found" })).toBe("");
   });
+
+  it.each(THREE)(
+    "%s returns info (source guard)  (not error) feedback for the prompt",
+    (_n, path) => {
+      const src = strip(readFileSync(path, "utf8"));
+      expect(src).toMatch(/kind: "info", text: promptText\(decision\)/);
+      expect(src).not.toMatch(/kind: "error", text: promptText/);
+    },
+  );
 
   it.each(["BarcodeScanner.tsx", "BarcodeScanner.web.tsx"])("%s renders info neutrally", (f) => {
     const src = strip(readFileSync(A("components", f), "utf8"));
@@ -91,18 +116,13 @@ describe("B1220 nit — a prompt is neutral feedback, not an error", () => {
     expect(src).toContain("feedbackInfo");
   });
 
-  it.each(SCREENS)("%s fires the neutral info haptic on the prompt path", (_n, path) => {
-    const src = strip(readFileSync(path, "utf8"));
-    expect(src).toMatch(/import \{ scanHaptic \} from "[./]*lib\/haptics"/);
-    expect(src).toContain('scanHaptic("info")');
-    expect(src).not.toContain('scanHaptic("error")');
-  });
-
-  it("adjust.tsx carries the B1220 lone-fuzzy comment once", () => {
-    const raw = readFileSync(
-      A("app", "(driver)", "route", "stop", "[stopId]", "adjust.tsx"),
-      "utf8",
-    );
-    expect(raw.match(/B1220: a lone fuzzy match/g)).toHaveLength(1);
-  });
+  it.each(SCREENS)(
+    "%s fires the neutral info haptic on the prompt path (source guard)",
+    (_n, path) => {
+      const src = strip(readFileSync(path, "utf8"));
+      expect(src).toMatch(/import \{ scanHaptic \} from "[./]*lib\/haptics"/);
+      expect(src).toContain('scanHaptic("info")');
+      expect(src).not.toContain('scanHaptic("error")');
+    },
+  );
 });

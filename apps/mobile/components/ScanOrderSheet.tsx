@@ -9,7 +9,7 @@ import { scanHaptic } from "../lib/haptics";
 import {
   INITIAL_SCAN_SLOT,
   reduceScanSlot,
-  scanSlotEffects,
+  runScanSlotEffects,
   type ScanFeedbackSlotState,
 } from "../lib/scan-feedback-slot";
 import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
@@ -129,17 +129,16 @@ export function ScanOrderSheet({
     // Functional update: a burst of scans can settle between renders, and each
     // must fold onto the slot the one before it left.
     setSlot((prev) => reduceScanSlot(prev, { type: "outcome", outcome }));
-    for (const effect of scanSlotEffects(outcome)) {
-      if (effect === "error-cue") scanHaptic("error");
-      if (effect === "close-sheet") onDone();
-      if (effect === "added-cue") {
-        scanHaptic("added");
-        // Web has no haptics (haptics.ts no-ops there) and the app plays no
-        // sound, so without this a mobile-web scan lands with zero confirmation.
-        if (typeof navigator !== "undefined") navigator.vibrate?.(30);
-      }
-      if (effect === "scroll-tray-top") trayRef.current?.scrollToTop();
-    }
+    runScanSlotEffects(outcome, {
+      haptic: scanHaptic,
+      onDone,
+      // Web has no haptics (haptics.ts no-ops there) and the app plays no
+      // sound, so without this a mobile-web scan lands with zero confirmation.
+      vibrate: (ms) => {
+        if (typeof navigator !== "undefined") navigator.vibrate?.(ms);
+      },
+      scrollTrayTop: () => trayRef.current?.scrollToTop(),
+    });
   };
 
   const itemsLabel = `${totalItems} item${totalItems === 1 ? "" : "s"}`;

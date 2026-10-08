@@ -68,6 +68,8 @@ export type ScanSlotAction =
 export type ScanSlotEffect =
   /** Error haptic. */
   | "error-cue"
+  /** Neutral haptic: a prompt (confirm / pick) is waiting — no success cue, no tray scroll. */
+  | "info-cue"
   /** Accept haptic (plus the web vibrate fallback — no haptics on RN Web). */
   | "added-cue"
   /** Bring the newest tray row into view. */
@@ -87,6 +89,7 @@ export function pillTtlMs(feedback: ScanFeedback): number {
 export function scanSlotEffects(outcome: ScanOutcome): readonly ScanSlotEffect[] {
   if (isError(outcome)) return ["error-cue"];
   if (outcome?.close) return ["close-sheet"];
+  if (outcome?.feedback?.kind === "info") return ["info-cue"];
   return ["added-cue", "scroll-tray-top"];
 }
 
@@ -116,5 +119,28 @@ export function reduceScanSlot(
       if (action.nonce !== state.nonce || state.pill === null) return state;
       return { pill: null, ttlMs: null, nonce: state.nonce + 1 };
     }
+  }
+}
+
+/** The host's side-effect handles, injected so the dispatch below runs in the node Jest lane. */
+export interface ScanSlotEffectHandlers {
+  haptic: (kind: "added" | "error" | "info") => void;
+  scrollTrayTop: () => void;
+  /** Web fallback for the missing haptics engine. */
+  vibrate: (ms: number) => void;
+  onDone: () => void;
+}
+
+/** Runs {@link scanSlotEffects} for an outcome against the host's handlers. */
+export function runScanSlotEffects(outcome: ScanOutcome, h: ScanSlotEffectHandlers): void {
+  for (const effect of scanSlotEffects(outcome)) {
+    if (effect === "error-cue") h.haptic("error");
+    if (effect === "info-cue") h.haptic("info");
+    if (effect === "close-sheet") h.onDone();
+    if (effect === "added-cue") {
+      h.haptic("added");
+      h.vibrate(30);
+    }
+    if (effect === "scroll-tray-top") h.scrollTrayTop();
   }
 }

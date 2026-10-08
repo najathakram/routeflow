@@ -20,6 +20,7 @@ import {
   INITIAL_SCAN_SLOT,
   pillTtlMs,
   reduceScanSlot,
+  runScanSlotEffects,
   scanSlotEffects,
   type ScanFeedbackSlotState,
 } from "../lib/scan-feedback-slot";
@@ -134,5 +135,49 @@ describe("reduceScanSlot (REG-SCANPILL)", () => {
     });
     expect(next.pill).toEqual(plainError);
     expect(scanSlotEffects({ close: true, feedback: plainError })).toEqual(["error-cue"]);
+  });
+});
+
+describe("runScanSlotEffects — which side effects actually run", () => {
+  function run(outcome: Parameters<typeof runScanSlotEffects>[0]) {
+    const h = {
+      haptic: jest.fn(),
+      scrollTrayTop: jest.fn(),
+      vibrate: jest.fn(),
+      onDone: jest.fn(),
+    };
+    runScanSlotEffects(outcome, h);
+    return h;
+  }
+
+  it("info: neutral haptic only — no success haptic, no vibrate, no tray scroll", () => {
+    const h = run({ feedback: { kind: "info", text: "Confirm: Widget?" } });
+    expect(h.haptic.mock.calls).toEqual([["info"]]);
+    expect(h.scrollTrayTop).not.toHaveBeenCalled();
+    expect(h.vibrate).not.toHaveBeenCalled();
+    expect(h.onDone).not.toHaveBeenCalled();
+  });
+
+  it("added: success haptic, vibrate and tray scroll, as before", () => {
+    for (const o of [{ feedback: { kind: "added" as const, text: "Added" } }, undefined, {}]) {
+      const h = run(o);
+      expect(h.haptic.mock.calls).toEqual([["added"]]);
+      expect(h.vibrate).toHaveBeenCalledWith(30);
+      expect(h.scrollTrayTop).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("error: error haptic only, no scroll", () => {
+    const h = run({ feedback: plainError });
+    expect(h.haptic.mock.calls).toEqual([["error"]]);
+    expect(h.scrollTrayTop).not.toHaveBeenCalled();
+    expect(h.vibrate).not.toHaveBeenCalled();
+  });
+
+  it("close: hands off without any cue", () => {
+    const h = run({ close: true });
+    expect(h.onDone).toHaveBeenCalledTimes(1);
+    expect(h.haptic).not.toHaveBeenCalled();
+    expect(h.scrollTrayTop).not.toHaveBeenCalled();
   });
 });
