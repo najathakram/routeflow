@@ -194,7 +194,11 @@ describe("CustomerOrderSuggestionsService", () => {
     it("carries the product's CURRENT catalog columns, including the active flag", async () => {
       prisma.orderItem.groupBy.mockResolvedValue([count("p1", 1)]);
       prisma.product.findMany.mockResolvedValue([
-        product("p1", { unitsPerBox: 12, averageCost: D("1.5000"), parent: { name: "Parent" } }),
+        product("p1", {
+          unitsPerBox: 12,
+          averageCost: D("1.5000"),
+          parent: { name: "Parent", tenantId: "test-tenant" },
+        }),
       ]);
       const out = await service.getSuggestions("c1");
       expect(out.products.p1).toMatchObject({
@@ -205,6 +209,21 @@ describe("CustomerOrderSuggestionsService", () => {
         averageCost: 1.5,
         isActive: true,
         parent: { name: "Parent" },
+      });
+    });
+
+    it("returns no parent for a product whose parent belongs to another tenant (B1211)", async () => {
+      prisma.orderItem.groupBy.mockResolvedValue([count("p1", 1), count("p2", 1)]);
+      prisma.product.findMany.mockResolvedValue([
+        product("p1", { parentProductId: "f1", parent: { name: "Foreign", tenantId: "other" } }),
+        product("p2", { parentProductId: "f2", parent: { name: "Own", tenantId: "test-tenant" } }),
+      ]);
+      const out = await service.getSuggestions("c1");
+      expect(out.products.p1.parent).toBeNull();
+      expect(out.products.p2.parent).toEqual({ name: "Own" });
+      expect(JSON.stringify(out)).not.toContain("Foreign");
+      expect(prisma.product.findMany.mock.calls[0][0].select.parent).toEqual({
+        select: { name: true, tenantId: true },
       });
     });
   });

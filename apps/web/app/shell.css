@@ -7,3 +7,11 @@ html[data-shell="1"] [data-google-signin],
 html[data-shell="1"] [data-hide-in-shell] {
   display: none !important;
 }
+
+/* Counter "Today's sales" reprint: print only the receipt, not the sale screen behind the modal.
+   Lives here, not in globals.css, which MKT-PIN T7 pins byte-for-byte. */
+@media print {
+  body.counter-reprint-open [data-counter-screen] {
+    display: none !important;
+  }
+}

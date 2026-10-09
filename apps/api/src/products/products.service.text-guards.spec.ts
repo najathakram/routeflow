@@ -210,7 +210,12 @@ describe("ProductsService name guards (B964-2)", () => {
 
   describe("bulkAssignParent", () => {
     it("rejects the WHOLE request with a CODED 400 naming the row when one variantName is formula-led: 0 writes", async () => {
-      prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "parent-1",
+        isActive: true,
+        kind: "FAMILY",
+        parentProductId: null,
+      });
       const update = jest.spyOn(service, "update").mockResolvedValue({} as any);
       const err = await refused(
         service.bulkAssignParent({

@@ -11,11 +11,11 @@ import {
   Calendar,
   ShoppingCart,
   CheckCircle2,
-  AlertTriangle,
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
+import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,11 +147,15 @@ export default function BuyerTemplatesPage() {
   const sellerSlug = params.seller as string;
 
   const { data: result, isLoading, isError } = useBuyerTemplates();
-  const reorder = useBuyerReorder();
+  const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
+  // The standing order awaiting review: a tap on Reorder Now only OPENS the review sheet; the
+  // order is placed from its "Place order" button, never from the tap itself.
+  const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
   const [successId, setSuccessId] = React.useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+  // Fixed copy only — a server message can carry ids or internals a buyer must never see.
+  const [placeError, setPlaceError] = React.useState<string | null>(null);
 
   // Redirect checks
   React.useEffect(() => {
@@ -166,17 +170,24 @@ export default function BuyerTemplatesPage() {
 
   const handleReorder = async (templateId: string) => {
     setReorderingId(templateId);
-    setErrorMsg(null);
+    setPlaceError(null);
     setSuccessId(null);
     try {
       await reorder.mutateAsync(templateId);
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
-    } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message ?? "Failed to create order from template.");
+      // Close the review only on success; a failure keeps it open so nothing is lost.
+      setReviewing(null);
+    } catch {
+      setPlaceError(REORDER_FAILED_COPY);
     } finally {
       setReorderingId(null);
     }
+  };
+
+  const closeReview = () => {
+    setReviewing(null);
+    setPlaceError(null);
   };
 
   const templates = result?.data ?? [];
@@ -215,14 +226,6 @@ export default function BuyerTemplatesPage() {
         </div>
       )}
 
-      {/* Error */}
-      {errorMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-2.5 text-sm text-danger">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-          {errorMsg}
-        </div>
-      )}
-
       {/* Templates list */}
       {isError ? (
         <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
@@ -244,12 +247,20 @@ export default function BuyerTemplatesPage() {
             <TemplateRow
               key={t.id}
               template={t}
-              onReorder={() => handleReorder(t.id)}
+              onReorder={() => setReviewing(t)}
               isReordering={reorderingId === t.id}
             />
           ))}
         </div>
       )}
+
+      <ReorderReviewSheet
+        template={reviewing}
+        placing={reorderingId != null}
+        onConfirm={() => reviewing && handleReorder(reviewing.id)}
+        error={placeError}
+        onClose={closeReview}
+      />
 
       {/* Summary footer */}
       {templates.length > 0 && (

@@ -371,3 +371,77 @@ test.describe("Operator — Orders list delivery date-range filter, mobile (B506
     await expect(to).toHaveValue("2026-10-15");
   });
 });
+
+// ─── BUG-A (A6): a double click on Create Order writes ONE order ───────────────────────────────
+
+test.describe("Operator — Create Order double click (BUG-A)", () => {
+  for (const [label, size] of [
+    ["1440", { width: 1440, height: 900 }],
+    ["768", { width: 768, height: 1024 }],
+    ["390", { width: 390, height: 844 }],
+  ] as const) {
+    test(`DBL-01 a real double click on Create Order @${label}: ONE POST /orders (<300), ONE new order`, async ({
+      page,
+      context,
+      request,
+    }) => {
+      await setTenantCookie(context, BASE);
+      await page.setViewportSize(size);
+      const note = `UX-F01-${Date.now()}-${label}`;
+      const posts: Array<{ status: number; key: string | undefined }> = [];
+      page.on("response", (resp) => {
+        const req = resp.request();
+        if (req.method() === "POST" && /\/api\/v1\/orders(\?.*)?$/.test(resp.url())) {
+          posts.push({ status: resp.status(), key: req.headers()["idempotency-key"] });
+        }
+      });
+      await page.goto("/orders");
+      await page
+        .getByRole("button", { name: /new order/i })
+        .first()
+        .click();
+      await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
+        timeout: 10_000,
+      });
+      await page.getByPlaceholder("Search by business name…").fill("E2E Fixture Deli Three");
+      await page
+        .locator('input[placeholder="Search by business name…"] ~ ul li button')
+        .first()
+        .click({ timeout: 10_000 });
+      await page.getByPlaceholder("Search by name, SKU or scan barcode…").fill("a");
+      await page
+        .locator(
+          'input[placeholder="Search by name, SKU or scan barcode…"] ~ ul li button, [role="option"]',
+        )
+        .first()
+        .click({ timeout: 10_000 });
+      await page.getByPlaceholder("Special instructions, delivery notes…").fill(note);
+
+      await page.getByRole("button", { name: /^create order$/i }).dblclick();
+      await expect(page.getByText(/order created|merged into order/i).first()).toBeVisible({
+        timeout: 15_000,
+      });
+
+      expect(posts, "exactly one POST /orders").toHaveLength(1);
+      expect(posts[0].status).toBeLessThan(300);
+      expect(posts[0].key, "an Idempotency-Key of 1-128 printable chars").toMatch(
+        /^[\x21-\x7e]{1,128}$/,
+      );
+
+      // One new row carries the note; cancel it so the tenant is left as found.
+      const token = await operatorAccessToken(page);
+      const api = apiBase(page.url());
+      const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+      const list = await request.get(`${api}/api/v1/orders?limit=50`, { headers });
+      const rows = ((await list.json()) as { data?: Array<{ id: string; notes?: string | null }> })
+        .data;
+      const mine = (rows ?? []).filter((o) => o.notes === note);
+      for (const o of mine) {
+        await request
+          .patch(`${api}/api/v1/orders/${o.id}/status`, { headers, data: { status: "CANCELLED" } })
+          .catch(() => {});
+      }
+      expect(mine, "exactly one order with this note").toHaveLength(1);
+    });
+  }
+});

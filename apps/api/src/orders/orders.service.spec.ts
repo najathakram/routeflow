@@ -11,12 +11,12 @@ import {
 } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
-
 // The merge paths now run inside a Postgres advisory lock (`common/db-locks.ts`,
 // R3). These specs exercise the merge FOLD's money math, not the lock, so run
 // the critical section inline — the real helper would open a `pg` pool.
 // `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx (no pool), and the
 // pins below assert the SQL it emits and the 409 it maps 55P03 to.
+jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck").pass()); // B1053
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
@@ -112,11 +112,11 @@ const operatorPayload = {
 };
 
 const customerPayload = {
+  ...operatorPayload,
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
-  status: "ACTIVE" as const,
-  forcePasswordChange: false,
+  tenantId: "test-tenant",
 };
 
 describe("OrdersService", () => {
@@ -542,7 +542,7 @@ describe("OrdersService", () => {
           unitSku: true,
           variantName: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          parent: { select: { name: true, tenantId: true } },
         }),
       );
     });
@@ -1805,7 +1805,7 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      it("an explicit dto.fulfillPath wins over the customer's own default", async () => {
+      it("a buyer's requested dto.fulfillPath is ignored: the customer's own default stands", async () => {
         tierRecord = { pricingTier: 1, fulfillPath: "SHIP" };
 
         await service.create(
@@ -1814,7 +1814,7 @@ describe("OrdersService", () => {
         );
 
         expect(prisma.order.create).toHaveBeenCalledWith(
-          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "ROUTE" }) }),
+          expect.objectContaining({ data: expect.objectContaining({ fulfillPath: "SHIP" }) }),
         );
       });
 
@@ -8082,7 +8082,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 8 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
@@ -8144,7 +8144,7 @@ describe("OrdersService", () => {
           customerPayload,
         ),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-2", available: 3, requested: 4 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
     });
 
@@ -8320,7 +8320,7 @@ describe("OrdersService", () => {
       await expect(
         settle(order, [{ productId: "prod-1", qty: 10 }], customerPayload),
       ).rejects.toMatchObject({
-        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 10 },
+        response: { code: "INSUFFICIENT_STOCK", message: expect.stringMatching(/^Some items/) },
       });
       expect(fakeDb.product.update).not.toHaveBeenCalled();
     });

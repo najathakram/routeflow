@@ -7,15 +7,23 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
 import { OrdersService } from "../orders/orders.service";
+import {
+  BuyerBackorderViewResolver,
+  NO_BACKORDER_VIEW,
+  type BuyerBackorderView,
+} from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 
 // The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
-const VIS = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS);
+// The mock prisma's tenant ("test-tenant") scopes the parent filters (B1211).
+const VIS = buyerVisibleProductWhere(noBuyerRestrictions("test-tenant"));
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
+  let backorderResolve: jest.Mock;
+  const viewIs = (v: BuyerBackorderView) => backorderResolve.mockResolvedValue(v);
   let prisma: ReturnType<typeof createMockPrisma>;
   let products: { findAll: jest.Mock; findOne: jest.Mock };
   let ordersService: { getCustomerPriceHistory: jest.Mock };
@@ -36,6 +44,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     storage = { presignedUrl: jest.fn(), presignedUrls: jest.fn().mockResolvedValue([]) };
     replenishment = { estimates: jest.fn().mockResolvedValue([]) };
     promotions = { activeForCatalog: jest.fn().mockResolvedValue([]) };
+    backorderResolve = jest.fn().mockResolvedValue(NO_BACKORDER_VIEW);
     const mod = await Test.createTestingModule({
       providers: [
         BuyerCatalogService,
@@ -46,6 +55,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: ReplenishmentService, useValue: replenishment },
         { provide: PromotionsService, useValue: promotions },
+        { provide: BuyerBackorderViewResolver, useValue: { resolve: backorderResolve } },
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);
@@ -114,6 +124,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -157,6 +168,50 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     expect(res.variants[0]).toMatchObject({ category: "Snacks", unitsPerBox: 6 });
   });
 
+  describe("OOS PR2: the detail uses the SAME view as the listing (tile <-> detail parity)", () => {
+    const oosProduct = () => ({
+      id: "p1",
+      tenantId: "test-tenant",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
+      name: "Widget",
+      unit: "ea",
+      category: "Snacks",
+      pricePerUnit: 10,
+      unitsPerBox: null,
+      currentStock: 0,
+      lowStockThreshold: 5,
+      isActive: true,
+      trackedCategoryId: null,
+      imageKeys: [],
+      imageUrls: [],
+      variants: [],
+    });
+
+    it.each([
+      [{ canBackorder: true, visibility: "hide" as const }, true, "IN_STOCK", true],
+      [{ canBackorder: true, visibility: "show" as const }, false, "OUT_OF_STOCK", true],
+      [{ canBackorder: false, visibility: "hide" as const }, false, "OUT_OF_STOCK", false],
+    ])(
+      "view %j: inStock=%s status=%s canBackorder=%s, resolved once",
+      async (view, inStock, status, can) => {
+        gated([]);
+        prisma.customerPrice.findMany.mockResolvedValue([]);
+        products.findOne.mockResolvedValue(oosProduct());
+        viewIs(view);
+        const res = (await service.getProductDetail("p1", "c1")) as any;
+        expect([res.inStock, res.stockStatus, res.stockLeft, res.canBackorder]).toEqual([
+          inStock,
+          status,
+          null,
+          can,
+        ]);
+        expect(backorderResolve).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
+
   // A variant with its own CustomerPrice row must price off ITS tier, not the
   // parent's — otherwise the parent's Variants list and the variant's own
   // tile/detail page quote two different prices for the same product.
@@ -166,6 +221,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -204,6 +260,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -392,6 +449,60 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
 
       expect(p3.stockStatus).toBe("IN_STOCK");
       expect(p3.stockLeft).toBeNull();
+    });
+
+    describe("OOS PR2: canBackorder + the seller's backorder visibility (R2/R3)", () => {
+      const stockOf = (r: any) => r.data.map((p: any) => [p.inStock, p.stockStatus, p.stockLeft]);
+
+      it("R2: the view is resolved ONCE for the whole listing (never per product), for THIS customer", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "show" });
+        await service.getCatalog({}, "c1");
+        expect(backorderResolve).toHaveBeenCalledTimes(1);
+        expect(backorderResolve).toHaveBeenCalledWith({
+          tenantId: "test-tenant",
+          customerId: "c1",
+        });
+      });
+
+      it("show + can backorder: stock stays truthful and every row says canBackorder", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "show" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "LOW", 3],
+          [false, "OUT_OF_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+        expect(res.data.map((p: any) => p.canBackorder)).toEqual([true, true, true]);
+      });
+
+      it("hide + can backorder: EVERY row looks in stock and no count leaks (list)", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "hide" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "IN_STOCK", null],
+          [true, "IN_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+      });
+
+      it("a buyer who CANNOT backorder is never masked, whatever the visibility, and canBackorder is false", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: false, visibility: "hide" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "LOW", 3],
+          [false, "OUT_OF_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+        expect(res.data.map((p: any) => p.canBackorder)).toEqual([false, false, false]);
+      });
     });
 
     it("ids filters via andWhere and fetches ALL of them (never a truncated page)", async () => {

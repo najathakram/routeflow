@@ -22,6 +22,14 @@ export const AdminAuditAction = {
   TENANT_PLAN_CHANGED: "TENANT_PLAN_CHANGED",
   TENANT_TRIAL_EXTENDED: "TENANT_TRIAL_EXTENDED",
   TENANT_SUBSCRIPTION_ACTIVATED: "TENANT_SUBSCRIPTION_ACTIVATED",
+  /**
+   * The billing MARKER of a manual activation, written INSIDE its transaction (so it exists exactly when the
+   * activation does). A completed card checkout reads the latest one, under the same tenant row lock, to know
+   * whether the tenant moved to manual invoicing after the checkout session was created. NOT the post-commit
+   * TENANT_SUBSCRIPTION_ACTIVATED trail row, which is best-effort (AuditService swallows write errors) and
+   * lands after the commit.
+   */
+  TENANT_MANUAL_ACTIVATION_MARKER: "TENANT_MANUAL_ACTIVATION_MARKER",
   TENANT_DELETED: "TENANT_DELETED",
   TENANT_CONFIG_UPDATED: "TENANT_CONFIG_UPDATED",
   TENANT_ADMIN_PASSWORD_RESET: "TENANT_ADMIN_PASSWORD_RESET",
@@ -30,6 +38,14 @@ export const AdminAuditAction = {
   ADDON_DISABLED: "ADDON_DISABLED",
   ADDON_COMPED: "ADDON_COMPED",
   ADDON_UNCOMPED: "ADDON_UNCOMPED",
+  /** A duplicate checkout was cancelled; its first invoice was charged and has to be refunded in Stripe. */
+  STRIPE_DUPLICATE_CHECKOUT: "STRIPE_DUPLICATE_CHECKOUT",
+  /** A checkout add-on (its row, or its item) had no usable quantity: any item was removed (or the SKU left off the checkout) and nothing is billed for it. */
+  ADDON_CHECKOUT_ITEM_UNUSABLE: "ADDON_CHECKOUT_ITEM_UNUSABLE",
+  /** A PAID checkout was refused because no Stripe customer / subscription row exists to verify it against. */
+  STRIPE_PAID_CHECKOUT_NOT_APPLIED: "STRIPE_PAID_CHECKOUT_NOT_APPLIED",
+  /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
   ADDON_MANUAL_INVOICE_STOP: "ADDON_MANUAL_INVOICE_STOP",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
@@ -48,6 +64,16 @@ export const AdminAuditAction = {
   // #2159 S2 — the intake link.
   ONBOARDING_LINK_ISSUED: "ONBOARDING_LINK_ISSUED",
   ONBOARDING_LINK_REVOKED: "ONBOARDING_LINK_REVOKED",
+  // Manual invoices due (PR1): the issuer's notices, written in the issuing transaction.
+  RF_INVOICE_ISSUED: "RF_INVOICE_ISSUED",
+  RF_INVOICE_NEEDS_PRICE: "RF_INVOICE_NEEDS_PRICE",
+  RF_INVOICE_STALE_PERIOD: "RF_INVOICE_STALE_PERIOD",
+  // Manual invoices due (PR2): the office's actions on an invoice, written in the action's transaction.
+  RF_INVOICE_MARKED_PAID: "RF_INVOICE_MARKED_PAID",
+  RF_INVOICE_REOPENED: "RF_INVOICE_REOPENED",
+  RF_INVOICE_VOIDED: "RF_INVOICE_VOIDED",
+  RF_INVOICE_IRREGULAR_PERIOD: "RF_INVOICE_IRREGULAR_PERIOD",
+  RF_INVOICE_SENT: "RF_INVOICE_SENT",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -61,6 +87,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_PLAN_CHANGED: "Plan changed",
   TENANT_TRIAL_EXTENDED: "Trial extended",
   TENANT_SUBSCRIPTION_ACTIVATED: "Subscription activated (manual)",
+  TENANT_MANUAL_ACTIVATION_MARKER: "Manual activation recorded (billing marker)",
   TENANT_DELETED: "Tenant deleted",
   TENANT_CONFIG_UPDATED: "Configuration updated",
   TENANT_ADMIN_PASSWORD_RESET: "Admin password reset",
@@ -69,6 +96,10 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_DISABLED: "Add-on disabled",
   ADDON_COMPED: "Add-on granted as a comp (free, not billed)",
   ADDON_UNCOMPED: "Add-on comp removed (now billable)",
+  STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
+  ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on not billed (no usable quantity)",
+  STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
+  ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",
   IMPERSONATION_STARTED: "Impersonation started",
@@ -85,6 +116,14 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ONBOARDING_STEP_WAIVED: "Onboarding step waived",
   ONBOARDING_LINK_ISSUED: "Onboarding intake link issued",
   ONBOARDING_LINK_REVOKED: "Onboarding intake link revoked",
+  RF_INVOICE_ISSUED: "RouteFlow invoice issued",
+  RF_INVOICE_NEEDS_PRICE: "RouteFlow invoice not issued (no price)",
+  RF_INVOICE_STALE_PERIOD: "RouteFlow invoice not issued (stale period)",
+  RF_INVOICE_MARKED_PAID: "RouteFlow invoice marked paid",
+  RF_INVOICE_REOPENED: "RouteFlow invoice reopened",
+  RF_INVOICE_VOIDED: "RouteFlow invoice voided",
+  RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
+  RF_INVOICE_SENT: "RouteFlow invoice emailed",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

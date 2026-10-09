@@ -4,7 +4,8 @@
  *
  *   1. Exact `Product.barcode` / `ProductBarcode` row match — `/products/barcode/<code>`
  *   2. Exact `Product.sku` match (case-insens) — `/products?search=<code>`
- *   3. First name/SKU substring hit             — same search, first row
+ *   3. Name/SKU substring hit                   — same search; ONE hit is a `suggestion`
+ *                                                 (B1219: confirmed, never auto-added)
  *   4. Nothing                                  — caller decides (usually
  *                                                 prompt to create a new
  *                                                 product with the scanned
@@ -44,6 +45,10 @@ export interface BarcodeResolveHit<T = any> {
    *  one click. */
   ambiguous?: boolean;
   matches?: T[];
+  /** B1219: exactly ONE fuzzy (name / substring) hit and NO exact code match. Always arrives with
+   *  `ambiguous: true` + `matches: [product]` so a caller that only knows the picker shows it as
+   *  one; a caller that knows `suggestion` asks "Did you mean <name>?" and never auto-adds. */
+  suggestion?: boolean;
 }
 
 /**
@@ -58,6 +63,7 @@ export interface BarcodeResolveArchived<T = any> {
   notFound?: false;
   ambiguous?: false;
   matches?: undefined;
+  suggestion?: undefined;
 }
 
 export interface BarcodeResolveMiss {
@@ -67,6 +73,7 @@ export interface BarcodeResolveMiss {
   archived?: false;
   ambiguous?: undefined;
   matches?: undefined;
+  suggestion?: undefined;
 }
 
 export type BarcodeResolveResult<T = any> =
@@ -151,7 +158,17 @@ export async function resolveProductByCode<T = any>(
       // and a set that is archived top to bottom is an `archived` outcome.
       const sellable = matches.filter((p) => p?.isActive !== false);
       if (sellable.length === 0) return asHit(matches[0], "search");
-      if (sellable.length === 1) return asHit(sellable[0], "search");
+      // B1219: ONE fuzzy hit with no exact code is still a guess (an unknown code must not add an
+      // unrelated product) - a suggestion the operator confirms, not a hit.
+      if (sellable.length === 1) {
+        return {
+          product: sellable[0],
+          source: "search",
+          ambiguous: true,
+          suggestion: true,
+          matches: sellable,
+        };
+      }
       return { product: sellable[0], source: "search", ambiguous: true, matches: sellable };
     }
   } catch (err: any) {

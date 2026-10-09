@@ -132,6 +132,8 @@ describe("genericToastCopy: codes users rely on", () => {
       "ORDER_WITH_CARRIER_NO_CHANGE_REQUEST",
       /^This order has already shipped\. Contact the seller for changes\.$/,
     ],
+    ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
+    ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
@@ -303,6 +305,7 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
+      ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);

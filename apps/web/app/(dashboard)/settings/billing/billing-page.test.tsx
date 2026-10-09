@@ -538,16 +538,54 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
   });
 
-  // The interim checkout gate (SA-690): a trial tenant with an unbilled add-on cannot add a card
-  // until it is off, so the sheet says so up front. Drop this line when SA-690 Option A lifts the gate.
+  // SA-690 option A: a trial's add-on is billed at the card checkout, so the sheet says WHEN it starts
+  // costing money (the first paid month, once a card is added) and never advises turning it off.
+  const TRIAL_BILLED_LINE = "It is billed from your first paid month, once you add your card.";
+  // The retired interim gate's line: the checkout no longer refuses, so no sheet may say this.
   const CHECKOUT_GATE_LINE =
     "Turn it off before adding your card, or contact support to set it up.";
 
-  it("TRIAL + UNBILLED: the sheet also says to turn it off before adding a card", async () => {
+  it("TRIAL (preview.trial true) + UNBILLED: billed from the first paid month once a card is added, with NO advice to turn it off", async () => {
+    mockSubscriptionView = trialSubscription();
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, trial: true });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText("Free during your trial, then $49.00/mo")).toBeInTheDocument();
+    expect(dialog.getByText(TRIAL_BILLED_LINE)).toBeInTheDocument();
+    expect(dialog.queryByText(CHECKOUT_GATE_LINE)).toBeNull();
+    expect(dialog.queryByText(/turn it off|contact support|before adding your card/i)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeEnabled();
+  });
+
+  it("the PREVIEW's trial flag decides the wording: trial true on a non-TRIAL subscription still reads the trial copy", async () => {
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, trial: true });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(TRIAL_BILLED_LINE)).toBeInTheDocument();
+    expect(dialog.queryByText(NOT_BILLED_COPY)).toBeNull();
+  });
+
+  it("an API without the preview flag falls back to the subscription status (TRIAL still reads the trial copy)", async () => {
     mockSubscriptionView = trialSubscription();
     withPreview({ billing: "UNBILLED", billed: false, proratedToday: null });
     const { dialog } = await openEnableSheet();
-    expect(dialog.getByText(CHECKOUT_GATE_LINE)).toBeInTheDocument();
+    expect(dialog.getByText(TRIAL_BILLED_LINE)).toBeInTheDocument();
+    expect(dialog.queryByText(CHECKOUT_GATE_LINE)).toBeNull();
+  });
+
+  it("NON-trial (preview.trial false) + UNBILLED: the neutral copy only — no trial wording, no gate line", async () => {
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, trial: false });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(NOT_BILLED_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(TRIAL_BILLED_LINE)).toBeNull();
+    expect(dialog.queryByText(CHECKOUT_GATE_LINE)).toBeNull();
+    expect(dialog.queryByText(/free during your trial/i)).toBeNull();
+  });
+
+  it("the preview's trial flag wins over the subscription status (trial false on a TRIAL view reads neutral)", async () => {
+    mockSubscriptionView = trialSubscription();
+    withPreview({ billing: "UNBILLED", billed: false, proratedToday: null, trial: false });
+    const { dialog } = await openEnableSheet();
+    expect(dialog.getByText(NOT_BILLED_COPY)).toBeInTheDocument();
+    expect(dialog.queryByText(TRIAL_BILLED_LINE)).toBeNull();
   });
 
   it("ACTIVE + UNBILLED never shows the card-gate line", async () => {

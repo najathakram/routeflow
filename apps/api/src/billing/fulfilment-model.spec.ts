@@ -15,6 +15,14 @@ import { plainToInstance } from "class-transformer";
 import { CreateOrderDto } from "../orders/dto/create-order.dto";
 import { FULFILMENT_MODE_VALUES, COUNTER_SALES_MODE_VALUES } from "@routeflow/types";
 
+// set() of the two fulfilment keys now runs under the per-tenant advisory lock; this spec has no database,
+// so the lock is the in-process double (the real lock is exercised by feature-config.fulfilment-lock.spec.ts).
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: jest.requireActual("../settings-fulfilment/testing/lock-mock")
+    .fakeWithAdvisoryLock,
+}));
+
 /**
  * Business profiles 1A: `fulfilment_model` is a free configuration row ("how do orders reach
  * your customers?"), shaped like `routes_dispatch`. Unset = today's behaviour exactly.
@@ -38,7 +46,7 @@ describe("fulfilment_model registry row", () => {
     expect(r!.billing).toEqual({ skus: [], selfService: false });
   });
 
-  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship; the pickup modes are NOT available until the counter-sale work (SA-671 M1)", () => {
+  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship; the pickup modes are available now that the counter-sale and pickup flows exist (SA-671 M1 lifted)", () => {
     const modes = row()!.config!.modes;
     expect(Object.keys(modes)).toEqual([
       "unset",
@@ -54,9 +62,12 @@ describe("fulfilment_model registry row", () => {
       expect(modes[m].available).toBe(true);
       expect(modes[m].lifecycle).toBe("ga");
     }
-    // No PICKUP order can be written yet (the enum value is not on master), so a tenant must not
-    // be put in a mode whose only method is PICKUP. The counter-sale work flips these back.
-    for (const m of ["pickup", "pickup_ship"]) expect(modes[m].available).toBe(false);
+    // PICKUP orders can be written (counter sale, order-ahead pickup), so a tenant may be put in a
+    // pickup mode. ONLY `available` flipped: label and lifecycle are unchanged.
+    for (const m of ["pickup", "pickup_ship"]) {
+      expect(modes[m].available).toBe(true);
+      expect(modes[m].lifecycle).toBe("proposed");
+    }
     expect(modes.pickup.label).toBe("In store only");
     expect(modes.pickup_ship.label).toBe("In store + shipping");
   });
@@ -157,21 +168,14 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("pickup and pickup_ship are refused as not available yet (SA-671 M1, SA-666) whatever the fleet — nothing is written", async () => {
+  it("pickup and pickup_ship are accepted whatever the fleet (an in-store business has none) and write", async () => {
     for (const fleet of [false, true]) {
       hasAddon.mockResolvedValue(fleet);
       for (const mode of ["pickup", "pickup_ship"]) {
-        const err = await service.set("t1", "fulfilment_model", mode, "r", "admin-1").then(
-          () => null,
-          (e: unknown) => e,
-        );
-        expect(err).toBeInstanceOf(BadRequestException);
-        expect((err as Error).message).toContain(
-          `"${mode}" is not available for "fulfilment_model"`,
-        );
+        await service.set("t1", "fulfilment_model", mode, "r", "admin-1");
       }
     }
-    expect(upsert).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledTimes(4);
   });
 
   it("an unknown mode is refused", async () => {
@@ -282,11 +286,11 @@ describe("one fleet resolver: the capability and the 409 agree", () => {
   });
 });
 
-describe("F-A: PICKUP is a FulfillPath value that no order write accepts yet", () => {
-  it("the FulfillPath enum includes PICKUP and the order DTO still rejects it", async () => {
+describe("F-A: PICKUP is a FulfillPath value; the order DTO accepts it and the resolver is the refusal", () => {
+  it("the FulfillPath enum includes PICKUP and the order DTO accepts it (fulfil-path-resolver.spec.ts refuses it where it is not offered)", async () => {
     expect(Object.values(FulfillPath)).toEqual(["ROUTE", "SHIP", "PICKUP"]);
-    const bad = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
-    const errs = await validate(bad as object, { skipMissingProperties: true });
-    expect(errs.some((e) => e.property === "fulfillPath")).toBe(true);
+    const ok = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
+    const errs = await validate(ok as object, { skipMissingProperties: true });
+    expect(errs.some((e) => e.property === "fulfillPath")).toBe(false);
   });
 });

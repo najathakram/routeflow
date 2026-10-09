@@ -180,7 +180,7 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
       ]);
       expect(qtyOf(orders.get("ord-open")!)).toBe(5);
       expect(folds).toBe(1);
-      expect(a).toBe(b); // both callers are answered with the one order
+      expect(a).toEqual(b); // both callers are answered with the one order (equal customer-facing copies)
       expect(svc.mergeAllPendingForCustomer).toHaveBeenCalledTimes(1); // the replay does no sweep
     });
 
@@ -274,6 +274,58 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
       await expect(controller.createOrder(dto() as any, CTX as any, "key-1")).rejects.toMatchObject(
         { response: { reason: "CART_MISMATCH", orderId: "ord-open" } },
       );
+    });
+  });
+
+  describe("BUG-A (#3256): wiring - the fold passes the request's cart to the key lookup (the compare itself lives in OrdersService)", () => {
+    it("hands the lookup the request's own items as the cart to compare, beside the hash", async () => {
+      seedOpenOrder();
+      await controller.createOrder(dto() as any, CTX as any, "key-1");
+      expect(svc.findOrderIdByIdempotencyKey).toHaveBeenCalledWith(
+        "key-1",
+        CTX.customerId,
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+        undefined,
+        { items: dto().items },
+      );
+    });
+
+    it("a column hit whose stored cart differs is the coded CART_MISMATCH 409 carrying the order id - nothing is folded", async () => {
+      seedOpenOrder();
+      // The service's column-hit contract: compare `cart.items` to the order the key made.
+      svc.findOrderIdByIdempotencyKey.mockImplementationOnce(
+        async (_k: string, _c: string, _h: unknown, _x: unknown, cart: { items: Line[] }) => {
+          const stored = orders.get("ord-open")!.lineItems as Line[];
+          const same =
+            JSON.stringify(cart.items.map((i) => i.qty)) ===
+            JSON.stringify(stored.map((i) => i.qty));
+          if (!same) {
+            throw new ConflictException({
+              code: "IDEMPOTENCY_KEY_CONFLICT",
+              reason: "CART_MISMATCH",
+              orderId: "ord-open",
+              message: "different cart",
+            });
+          }
+          return { orderId: "ord-open", verified: true };
+        },
+      );
+      await expect(controller.createOrder(dto() as any, CTX as any, "key-1")).rejects.toMatchObject(
+        { response: { reason: "CART_MISMATCH", orderId: "ord-open" } },
+      );
+      expect(folds).toBe(0);
+      expect(svc.replayMergeReconcile).not.toHaveBeenCalled();
+    });
+
+    it("a column hit on the SAME cart replays that order and reconciles instead of folding", async () => {
+      seedOpenOrder();
+      svc.findOrderIdByIdempotencyKey.mockResolvedValueOnce({
+        orderId: "ord-open",
+        verified: true,
+      });
+      await controller.createOrder(dto() as any, CTX as any, "key-1");
+      expect(folds).toBe(0);
+      expect(svc.replayMergeReconcile).toHaveBeenCalledWith("ord-open", CTX.customerId, undefined);
     });
   });
 

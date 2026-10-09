@@ -35,6 +35,17 @@ import { describeChangeRequest, describeResolution } from "@/lib/change-requests
 import { fmtCalendarDate } from "@/lib/formatting";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
+import { ShipmentCard } from "./_components/ShipmentCard";
+import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import {
+  NO_FLEET_STEP_LABELS,
+  SHIP_STEP_LABELS,
+  buyerOrderStatusLabel,
+  noFleetStepIndex,
+  orderTravelView,
+  shipStepIndex,
+  type BuyerOrderTravelView,
+} from "@/lib/buyer-fulfilment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,20 +154,38 @@ function formatStatus(s: string) {
 
 // ─── Status Timeline ──────────────────────────────────────────────────────────
 
-function OrderTimeline({ status }: { status: string }) {
-  const isCancelled = status === "CANCELLED";
-  const currentIdx = STATUS_STEPS.indexOf(status);
+const ROUTE_TIMELINE = [
+  { icon: Clock, label: "Pending" },
+  { icon: CheckCircle2, label: "Confirmed" },
+  { icon: Truck, label: "Out for Delivery" },
+  { icon: Package, label: "Partial Delivery" },
+  { icon: CheckCircle2, label: "Delivered" },
+];
+// Business profiles 1B: a SHIP order of a configured seller, and any order of a configured seller
+// without a fleet, get a timeline with no route steps (lib/buyer-fulfilment).
+const STEP_ICONS: Record<string, typeof Clock> = {
+  Pending: Clock,
+  Confirmed: CheckCircle2,
+  Shipped: Package,
+  Delivered: CheckCircle2,
+};
+const SHIP_TIMELINE = SHIP_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
+const NO_FLEET_TIMELINE = NO_FLEET_STEP_LABELS.map((label) => ({ icon: STEP_ICONS[label], label }));
 
-  const icons = [
-    { icon: Clock, label: "Pending" },
-    { icon: CheckCircle2, label: "Confirmed" },
-    { icon: Truck, label: "Out for Delivery" },
-    { icon: Package, label: "Partial Delivery" },
-    { icon: CheckCircle2, label: "Delivered" },
-  ];
+function timelineFor(order: BuyerOrder, view: BuyerOrderTravelView) {
+  if (view === "shipment") return { icons: SHIP_TIMELINE, currentIdx: shipStepIndex(order) };
+  if (view === "none") {
+    return { icons: NO_FLEET_TIMELINE, currentIdx: noFleetStepIndex(order.status) };
+  }
+  return { icons: ROUTE_TIMELINE, currentIdx: STATUS_STEPS.indexOf(order.status) };
+}
+
+function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTravelView }) {
+  const isCancelled = order.status === "CANCELLED";
+  const { icons, currentIdx } = timelineFor(order, view);
 
   return (
-    <div className="flex items-center justify-between gap-0">
+    <div data-testid="order-timeline" className="flex items-center justify-between gap-0">
       {icons.map((step, i) => {
         const Icon = step.icon;
         const isComplete = !isCancelled && i <= currentIdx;
@@ -169,7 +198,12 @@ function OrderTimeline({ status }: { status: string }) {
                 className={`flex-1 h-0.5 ${isComplete ? "bg-buyer-500" : "bg-surface-border"}`}
               />
             )}
-            <div className="flex flex-col items-center gap-1">
+            <div
+              data-testid="timeline-step"
+              data-state={isCurrent ? "current" : isComplete ? "complete" : "upcoming"}
+              aria-current={isCurrent ? "step" : undefined}
+              className="flex flex-col items-center gap-1"
+            >
               <div
                 className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
                   isCurrent
@@ -504,6 +538,10 @@ export default function BuyerOrderDetailPage() {
   const orderId = params.id as string;
 
   const { data: order, isLoading, isError } = useBuyerOrder(orderId);
+  const capabilities = useBuyerSellerCapabilities();
+  // Business profiles 1B: unset seller or unreadable capability = today's route view.
+  const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
+  const timelineView = travel === "loading" && order?.fulfillPath !== "SHIP" ? "route" : travel;
   const cancelOrder = useBuyerCancelOrder();
   const updateItems = useBuyerUpdateOrderItems();
 
@@ -673,16 +711,27 @@ export default function BuyerOrderDetailPage() {
             )}
           </p>
         </div>
-        <Badge variant={getStatusVariant(order.status)}>{formatStatus(order.status)}</Badge>
+        <span data-testid="order-status-badge">
+          <Badge variant={getStatusVariant(order.status)}>
+            {buyerOrderStatusLabel(order, capabilities.data, capabilities.isLoading) ??
+              formatStatus(order.status)}
+          </Badge>
+        </span>
       </div>
 
-      {/* Status timeline */}
-      <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
-        <OrderTimeline status={order.status} />
-      </div>
+      {/* Status timeline. While the seller's capability loads, a SHIP order's timeline is held
+          back (no route steps flash for a ship seller); any other order shows today's timeline,
+          so an unset seller's page never has a gap. */}
+      {timelineView !== "loading" && (
+        <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
+          <OrderTimeline order={order} view={timelineView} />
+        </div>
+      )}
 
       {/* #2095: where this delivery stands on its route (driver, stops before you, window) */}
-      <DeliveryTrackingCard order={order} />
+      {travel === "route" && <DeliveryTrackingCard order={order} />}
+      {/* 1B: a SHIP order of a configured seller — carrier + tracking number instead */}
+      {travel === "shipment" && <ShipmentCard order={order} />}
 
       {/* P5-10: change requests filed after dispatch — PENDING (amber) flips to
           Approved (green) / Declined + reason (red) once resolved. */}

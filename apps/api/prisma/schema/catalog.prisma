@@ -89,6 +89,11 @@ model Product {
   retiredSku           String?
   retiredBarcode       String?
   retiredUnitSku       String?
+  // Units rebuild P0a: null baseUnitLabel = "Piece"; null packLabel = legacy (unit text, else "Box");
+  // null invoiceLineCode = follow the tenant policy (see INVOICE_LINE_CODE_MODES).
+  baseUnitLabel        String?
+  packLabel            String?
+  invoiceLineCode      String?
   unit                 String
   pricePerUnit         Decimal       @db.Decimal(10, 2)
   priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
@@ -367,6 +372,8 @@ model PurchaseOrderItem {
   @@index([poId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
@@ -401,13 +408,42 @@ model ProductUnit {
   level        PackagingLevel?
   parentUnitId String?
 
-  product  Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  tenant   Tenant?       @relation(fields: [tenantId], references: [id])
+  // Units rebuild P0a: the tenant-wide unit name this level uses, the entered chain count
+  // (parentUnitId already exists), and this level's own sku (retiredSku = released on deactivate).
+  tenantUnitId String?
+  perParent    Int?
+  sku          String?
+  retiredSku   String?
+
+  product    Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant     Tenant?          @relation(fields: [tenantId], references: [id])
+  tenantUnit TenantUnit?      @relation(fields: [tenantUnitId], references: [id], onDelete: SetNull)
+  barcodes   ProductBarcode[]
   parent   ProductUnit?  @relation("ProductUnitParent", fields: [parentUnitId], references: [id], onDelete: SetNull)
   children ProductUnit[] @relation("ProductUnitParent")
 
   @@unique([productId, label])
   @@unique([productId, factorToBase])
+  @@index([tenantId])
+  @@index([tenantUnitId])
+  @@index([tenantId, sku])
+}
+
+/// Units rebuild P0a: a tenant-wide unit name ("Case", "Pack", ...). `nameKey` = lower(trim(name)), set by the service.
+model TenantUnit {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  nameKey    String
+  plural     String?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  productUnits ProductUnit[]
+
+  @@unique([tenantId, nameKey])
   @@index([tenantId])
 }
 
@@ -427,14 +463,18 @@ model ProductBarcode {
   origin          BarcodeOrigin    @default(ENTERED)
   copiedFromLevel PackagingLevel?
   primaryFor      PackagingLevel?
+  // Units rebuild P0a: the ladder level this barcode belongs to (nullable; legacy rows use `level`).
+  productUnitId   String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productUnit ProductUnit? @relation(fields: [productUnitId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, code, level])
   @@unique([productId, primaryFor])
   @@index([productId, level])
+  @@index([productUnitId])
   @@index([tenantId, code])
 }
 

@@ -154,36 +154,18 @@ describe("unitsPerBox = 1 (a pack of one is a PLAIN line): a box edit never dele
   });
 });
 
-describe("the buyer cart table fits its card and its controls are tappable (B999 layout, PC pixels 10-03)", () => {
+// The stacked-cards-at-every-width layout these used to pin was replaced on master by the mobile cart layout (table from md,
+// cards below); the quantity/box logic and the labels below still hold.
+describe("the buyer cart: boxed labels and accessible names (B999)", () => {
   const page = require("fs").readFileSync(
     require("path").join(__dirname, "..", "app", "buyer", "portal", "[seller]", "cart", "page.tsx"),
     "utf8",
   ) as string;
 
-  it("at 1440 the boxed qty controls are stacked (boxes row, then pieces row) so the Qty column stays 176px (w-44)", () => {
-    expect(page).toMatch(/data-testid="cart-box-controls"\s+className="flex flex-col/);
-    expect(page).toMatch(/<th className="[^"]*w-44[^"]*">Qty<\/th>/);
-    expect(page).not.toMatch(/<th className="[^"]*w-32[^"]*">Qty<\/th>/);
-  });
-
-  it("every box / qty / delete control is at least 40px (h-10 w-10), never a p-1 icon", () => {
-    expect(page.match(/h-10 w-10/g)?.length).toBeGreaterThanOrEqual(6);
-    expect(page).not.toMatch(/rounded p-1 text-navy\/70/);
-    expect(page).not.toMatch(/rounded p-1\.5 text-navy/);
-  });
-
   it("the '= N units' text and the pieces input are not 10px / clipped (text-xs, h-10 w-14 inputs)", () => {
     expect(page).toMatch(/<p className="text-xs text-navy\/70">\s*= \{item\.qty\}/);
     expect(page).not.toMatch(/<p className="text-\[10px\] text-navy\/70">\s*= /);
     expect(page.match(/h-10 w-14/g)?.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it("the items are stacked cards at EVERY width: a real table needed 592px in the 555px card at 1440 (delete clipped)", () => {
-    expect(page).not.toMatch(/min-w-\[\d+px\]/);
-    expect(page).not.toMatch(/md:table|md:min-w|table-cell|table-row/);
-    expect(page).toMatch(/<table className="block w-full ?">/);
-    expect(page).toMatch(/<thead className="hidden">/);
-    expect(page).toMatch(/<tr\s+key=\{item\.productId\}\s+className="block px-4 py-3/);
   });
 
   it("the boxed line reads '= N pcs' (pieces), not the pack unit ('= 47 case')", () => {

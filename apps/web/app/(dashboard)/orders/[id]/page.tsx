@@ -32,13 +32,13 @@ import {
   Button,
   Card,
   Modal,
-  Select,
   cn,
   TAP_TARGET,
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
-import { orderLineName } from "@/lib/product-display";
+import { displayProductName, orderLineName } from "@/lib/product-display";
+import { sellableFlat, type PickerRow } from "@/lib/product-search-groups";
 import { usePageTitle } from "@/lib/page-title-context";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
@@ -61,6 +61,9 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   OrderInlineReturnsSection,
@@ -93,6 +96,8 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
+import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditScanBar } from "./_components/EditScanBar";
@@ -513,6 +518,8 @@ export interface EditItemState {
   /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
    *  mirrors the server's stored `priceType`, not otherwise read on this page. */
   priceType?: PriceType;
+  /** A line ADDED here starts on the product's default selling unit (OrderLineUnitPicker applies it). */
+  startOnDefaultUnit?: boolean;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -941,9 +948,8 @@ function CommissionEditModal({
  * not the replaced product's), and the tier ladder so it can resolve THIS
  * customer's price for the substitute instead of billing list.
  */
-interface SubstituteOption {
-  id: string;
-  name: string;
+interface SubstituteOption extends PickerRow {
+  unit?: string;
   sku?: string;
   pricePerUnit: number;
   unitsPerBox?: number | null;
@@ -968,7 +974,13 @@ function SubstitutePicker({
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data } = useProducts({ search: debouncedSearch || undefined, isActive: true });
+  // includeVariants: a family's name finds its variants; a family is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedSearch || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const options = sellableFlat<SubstituteOption>(data?.data ?? []);
 
   return (
     <div className="mt-2 rounded-lg border border-surface-border bg-white shadow-md">
@@ -983,10 +995,10 @@ function SubstitutePicker({
         />
       </div>
       <div className="max-h-48 overflow-y-auto">
-        {data?.data?.length === 0 && (
+        {data?.data && options.length === 0 && (
           <p className="px-3 py-2 text-sm text-navy/70">No products found.</p>
         )}
-        {data?.data?.map((p: SubstituteOption) => (
+        {options.map((p: SubstituteOption) => (
           <button
             key={p.id}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
@@ -996,8 +1008,9 @@ function SubstitutePicker({
             }}
           >
             <div>
-              <span className="font-medium text-navy">{p.name}</span>
+              <span className="font-medium text-navy">{displayProductName(p)}</span>
               {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+              {p.unit && <span className="ml-2 text-xs text-navy/70">{p.unit}</span>}
             </div>
             <span className="text-xs text-navy">{formatMoney(p.pricePerUnit)}</span>
           </button>
@@ -1091,8 +1104,9 @@ export function EditableLineItems({
     scanCode: addTermIsScanCode ? addSearch.trim() : undefined,
     limit: 20,
     isActive: true,
+    includeVariants: true,
   });
-  const products: any[] = (productsData as any)?.data ?? [];
+  const products: any[] = sellableFlat<any>((productsData as any)?.data ?? []);
 
   // Auto-focus the scan input when the component mounts (edit mode opened) so a
   // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
@@ -1120,7 +1134,12 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any, level?: scan.SellLevel, explicit?: scan.SellLevel) {
+  function addProduct(
+    p: any,
+    level?: scan.SellLevel,
+    explicit?: scan.SellLevel,
+    startOnDefaultUnit?: boolean,
+  ) {
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
@@ -1147,7 +1166,14 @@ export function EditableLineItems({
           : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd(
-        scan.buildNewLine(p, { newId, startPrice, base, unitScan, special: isSpecialTierFor(p) }),
+        scan.buildNewLine(p, {
+          newId,
+          startPrice,
+          base,
+          unitScan,
+          special: isSpecialTierFor(p),
+          startOnDefaultUnit,
+        }),
       );
       setScrollToId(newId);
     }
@@ -1189,7 +1215,11 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product, ...scan.scanArgsForHit(code, result.product));
+        addProduct(
+          result.product,
+          ...scan.scanArgsForHit(code, result.product),
+          scan.scanCodeIsShared(code, result.product),
+        );
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU
@@ -1229,6 +1259,7 @@ export function EditableLineItems({
     if (!current) return;
     update(id, {
       unitLabel: option.value,
+      startOnDefaultUnit: false, // any unit choice consumes the default start
       unit: option.label,
       unitsPerBox: option.factorToBase,
       boxSplit: false,
@@ -1367,7 +1398,7 @@ export function EditableLineItems({
                   value={item.qty}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v > 0) update(item.id, { qty: v });
+                    if (!isNaN(v) && v > 0) update(item.id, { qty: v, startOnDefaultUnit: false });
                   }}
                 />
                 <scan.SplitLineHint item={item} />
@@ -1402,6 +1433,7 @@ export function EditableLineItems({
                     priceEdited: item.priceEdited,
                   }}
                   tier={tierForProductId(item.productId)}
+                  startOnDefaultUnit={item.startOnDefaultUnit}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
                 />
               )}
@@ -1578,7 +1610,7 @@ export function EditableLineItems({
                 update(item.id, {
                   substituteProductId: p.id,
                   productId: p.id,
-                  productName: p.name,
+                  productName: displayProductName(p),
                   // The customer's contracted price for the SUBSTITUTE, over its
                   // list price as the strikethrough base — same split mobile's
                   // buildSubstituteLine stores. Pinning both to list made every
@@ -1641,10 +1673,10 @@ export function EditableLineItems({
                   <button
                     type="button"
                     disabled={!pricingReady}
-                    onMouseDown={() => addProduct(p)}
+                    onMouseDown={() => addProduct(p, undefined, undefined, true)}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2 disabled:opacity-50"
                   >
-                    <span className="font-medium text-navy">{p.name}</span>
+                    <span className="font-medium text-navy">{displayProductName(p)}</span>
                     <span className="text-xs text-navy/70">{p.unit}</span>
                   </button>
                 </li>
@@ -1797,6 +1829,20 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
+  const statusLabel = useOrderStatusLabel();
+  const staffFulfilment = useStaffFulfilment();
+  // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
+  // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
+  const [fulfilRowPinned, setFulfilRowPinned] = React.useState(false);
+  React.useEffect(() => setFulfilRowPinned(false), [id]);
+  const orderFulfillPath = order?.fulfillPath;
+  React.useEffect(() => {
+    if (
+      orderFulfillPath &&
+      !staffFulfilment.formMethods.includes(orderFulfillPath as "ROUTE" | "SHIP")
+    )
+      setFulfilRowPinned(true);
+  }, [orderFulfillPath, staffFulfilment.formMethods]);
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -1860,8 +1906,24 @@ export default function OrderDetailPage() {
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
+  const applyFulfillPath = (fulfillPath: "ROUTE" | "SHIP") =>
+    patchFulfillPath.mutate(
+      { id, fulfillPath },
+      {
+        onSuccess: () => toast({ title: "Fulfillment updated", variant: "success" }),
+        onError: (err: any) =>
+          toast({
+            title: "Could not update fulfillment",
+            description: fulfillPathErrorCopy(err),
+            variant: "error",
+          }),
+      },
+    );
   const [showShipDialog, setShowShipDialog] = React.useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = React.useState(false);
+  // Picked-up dialog + a pending move off pickup: page-level so they outlive the status-gated action rows.
+  const [pickupOpen, setPickupOpen] = React.useState(false);
+  const [pendingPath, setPendingPath] = React.useState<"ROUTE" | "SHIP" | null>(null);
 
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
@@ -2455,7 +2517,10 @@ export default function OrderDetailPage() {
                 Urgent
               </span>
             )}
-            <Badge status={localStatus as BadgeStatus} />
+            <OrderStatusBadge
+              status={localStatus as BadgeStatus}
+              fulfillPath={order?.fulfillPath}
+            />
             <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
@@ -2506,6 +2571,7 @@ export default function OrderDetailPage() {
                 customerId={order.customerId}
                 customerName={order.customer?.businessName}
                 orderId={order.id}
+                allowRefund
               />
             </ActionTier>
           )}
@@ -2516,7 +2582,7 @@ export default function OrderDetailPage() {
           {!canEdit && order?.editWindow?.closedReason && !isEditing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
               {order.editWindow.closedReason === "DISPATCHED"
-                ? "Out for delivery — editing closed"
+                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
                 : "Order cancelled — editing closed"}
             </span>
           )}
@@ -2696,16 +2762,24 @@ export default function OrderDetailPage() {
                     onClick={handleMarkShipped}
                     loading={updateStatus.isPending}
                   >
-                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                    {order.fulfillPath === "SHIP"
+                      ? "Mark shipped"
+                      : order.fulfillPath === "PICKUP"
+                        ? "Ready for pickup"
+                        : "Out for Delivery"}
                   </Button>
                   {order.fulfillPath === "SHIP" && (
                     <p className="text-[11px] text-navy/50">
-                      Sets the order to Out for Delivery — the customer is notified it&apos;s on the
-                      way.
+                      {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
                     </p>
                   )}
                 </div>
               </ActionTier>
+              {order.fulfillPath === "PICKUP" && (
+                <ActionTier tier="secondary">
+                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
+                </ActionTier>
+              )}
               {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
                   reason, so the ONLY path is the DemoteReasonModal. A second
                   "Unconfirm" button used to submit directly (predating the
@@ -2736,14 +2810,18 @@ export default function OrderDetailPage() {
           {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
               <ActionTier tier="primary">
-                <Button
-                  size="sm"
-                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                  onClick={handleDeliver}
-                  loading={updateStatus.isPending}
-                >
-                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-                </Button>
+                {order.fulfillPath === "PICKUP" ? (
+                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
+                ) : (
+                  <Button
+                    size="sm"
+                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                    onClick={handleDeliver}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                  </Button>
+                )}
               </ActionTier>
               <ActionTier tier="secondary">
                 <Button
@@ -3272,49 +3350,18 @@ export default function OrderDetailPage() {
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
-              {access.fulfillmentPath && (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-navy/70">Fulfillment</dt>
-                  <dd className="flex flex-col items-end gap-0.5">
-                    <div className="w-40">
-                      <Select
-                        options={[
-                          { value: "ROUTE", label: "Delivery route" },
-                          { value: "SHIP", label: "Ship via carrier" },
-                        ]}
-                        value={order.fulfillPath}
-                        disabled={fulfillPathLocked || patchFulfillPath.isPending}
-                        title={
-                          fulfillPathLocked
-                            ? "Fulfillment path can only be changed while the order is open"
-                            : undefined
-                        }
-                        onChange={(e) => {
-                          const fulfillPath = e.target.value as "ROUTE" | "SHIP";
-                          patchFulfillPath.mutate(
-                            { id: order.id, fulfillPath },
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Fulfillment updated", variant: "success" }),
-                              onError: (err: any) =>
-                                toast({
-                                  title: "Could not update fulfillment",
-                                  description: codedToastCopy(err) ?? err?.response?.data?.message,
-                                  variant: "error",
-                                }),
-                            },
-                          );
-                        }}
-                      />
-                    </div>
-                    {order.fulfillPath === "SHIP" && (
-                      <span className="text-[11px] text-navy/50">
-                        Ships via carrier — won&apos;t appear on delivery routes.
-                      </span>
-                    )}
-                  </dd>
-                </div>
-              )}
+              {access.fulfillmentPath &&
+                (staffFulfilment.choice ||
+                  fulfilRowPinned ||
+                  !(staffFulfilment.formMethods as string[]).includes(order.fulfillPath)) && (
+                  <OrderFulfilmentRow
+                    orderId={order.id}
+                    fulfillPath={order.fulfillPath}
+                    locked={fulfillPathLocked}
+                    offered={staffFulfilment.formMethods}
+                    onLeavePickup={setPendingPath}
+                  />
+                )}
               {order.orderDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Order date</dt>
@@ -3599,6 +3646,23 @@ export default function OrderDetailPage() {
         loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
       />
 
+      {access.staff && order.fulfillPath === "PICKUP" && (
+        <PickupHandOverDialog
+          order={order}
+          open={pickupOpen}
+          onClose={() => setPickupOpen(false)}
+        />
+      )}
+      <FulfillPathMoveConfirm
+        open={pendingPath !== null}
+        onClose={() => setPendingPath(null)}
+        loading={patchFulfillPath.isPending}
+        onConfirm={() => {
+          if (pendingPath) applyFulfillPath(pendingPath);
+          setPendingPath(null);
+        }}
+      />
+
       <UnmarkShippedConfirm
         open={showUnmarkConfirm}
         onClose={() => setShowUnmarkConfirm(false)}
@@ -3615,6 +3679,7 @@ export default function OrderDetailPage() {
         onConfirm={handleDemote}
         loading={updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
+        fulfillPath={order?.fulfillPath}
       />
 
       {/* Send invoice modal — shown after marking order as delivered */}
