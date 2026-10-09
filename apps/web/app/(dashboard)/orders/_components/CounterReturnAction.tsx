@@ -33,12 +33,17 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
 export function CounterReturnAction({
   orderId,
   onDone,
+  canReturn = true,
 }: {
   orderId: string;
+  /** false hides the Return items button (a fully returned sale) once the dialog is closed, WITHOUT
+   *  unmounting, so a success line shown after a whole-sale return survives the refetch */
+  canReturn?: boolean;
   /** called when the return dialog closes or records (Today's sales refetches its list) */
   onDone?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
   const [recorded, setRecorded] = React.useState<RecordedInfo | null>(null);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const role = useOptionalAuth()?.user?.role;
@@ -46,16 +51,20 @@ export function CounterReturnAction({
   const { data: order } = useOrder(orderId);
   if (!hasInlineReturns || !staff || !order) return null;
 
+  const showButton = canReturn || open;
   return (
     <>
-      <Button
-        variant="secondary"
-        className="min-h-11 w-full sm:w-auto"
-        leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
-        onClick={() => setOpen(true)}
-      >
-        Return items
-      </Button>
+      {showButton ? (
+        <Button
+          ref={buttonRef}
+          variant="secondary"
+          className="min-h-11 w-full sm:w-auto"
+          leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
+          onClick={() => setOpen(true)}
+        >
+          Return items
+        </Button>
+      ) : null}
       <RecordInlineReturnDialog
         open={open}
         onClose={() => {
@@ -68,6 +77,12 @@ export function CounterReturnAction({
         // SA-740: a counter return is from THIS sale; the walk-in is one shared customer, so the server pins the match to it
         sourceOrderId={order.id}
         allowRefund
+        onCloseAutoFocus={(e) => {
+          // no Radix trigger opened the dialog: put focus back on the button that did
+          if (!buttonRef.current) return;
+          e.preventDefault();
+          buttonRef.current.focus();
+        }}
         onRecorded={(_ret, info) => {
           setRecorded(info ?? { resolution: "STORE_CREDIT" });
           onDone?.();

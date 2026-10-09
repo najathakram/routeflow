@@ -1,7 +1,12 @@
 import * as React from "react";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { CommandPalette } from "./CommandPalette";
-import { setCounterCartBusy } from "@/lib/counter-cart-signal";
+import {
+  confirmCounterLeave,
+  getCounterLeaveRequest,
+  setCounterCartBusy,
+  setCounterCartHasLines,
+} from "@/lib/counter-cart-signal";
 
 /** POS-7: a palette selection is one of the ways to leave the counter; it must not while a sale is being recorded. */
 const mockPush = jest.fn();
@@ -21,6 +26,7 @@ beforeEach(() => mockPush.mockClear());
 afterEach(() => {
   cleanup();
   act(() => setCounterCartBusy(false));
+  act(() => setCounterCartHasLines(false));
 });
 
 describe("CommandPalette leave guard", () => {
@@ -41,6 +47,16 @@ describe("CommandPalette leave guard", () => {
   it("navigates normally when not busy", () => {
     render(<CommandPalette open onClose={() => {}} />);
     fireEvent.click(screen.getByText("New Order"));
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("a selection with lines raises the Discard request instead of navigating", () => {
+    render(<CommandPalette open onClose={() => {}} />);
+    act(() => setCounterCartHasLines(true));
+    fireEvent.click(screen.getByText("New Order"));
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(getCounterLeaveRequest()).toBe(true);
+    act(() => confirmCounterLeave());
     expect(mockPush).toHaveBeenCalledTimes(1);
   });
 });

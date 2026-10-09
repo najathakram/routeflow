@@ -12,7 +12,14 @@ export interface CounterSaleItem {
   qty?: number;
   boxes?: number;
   pieces?: number;
+  /**
+   * A one-time NET unit price for the line (a boxed line's is the BOX price). Only a caller who may edit prices
+   * (account admins today, `canEditPrices`) may send a price that differs from the server's own for this customer:
+   * anyone else gets 403 PRICE_EDIT_NOT_PERMITTED with nothing written. A percent or amount off is resolved to this
+   * number by the client; the server stores net price + the list as `originalPrice`, never a separate discount.
+   */
   unitPrice?: number;
+  /** why the price moved (optional; required on a special-priced line) */
   priceReason?: string;
   /** an optional per-line note (max 200, HTML stripped server-side); stored on the order line */
   note?: string;

@@ -125,6 +125,15 @@ describe("receipt golden: live vs reprint", () => {
     expect(b.methodLabel).toBe("Store credit");
     expect(b.dateLabel).toMatch(/11:15/);
   });
+  it("the live receipt reads the sale time in the tenant zone, the same clock as the reprint", () => {
+    // New York is not the runner's zone (the suite pins TZ elsewhere); both must say 11:15 AM.
+    const l = live("CARD", { profile: { ...PROFILE, timezone: "America/New_York" } });
+    const r = reprint([{ method: "CARD", amount: 24.5 }]);
+    expect(l.dateLabel).toMatch(/11:15 AM/);
+    expect(l.dateLabel).toBe(r.dateLabel);
+    const tokyo = live("CARD", { profile: { ...PROFILE, timezone: "Asia/Tokyo" } });
+    expect(tokyo.dateLabel).toMatch(/Oct 8, 2026, 12:15 AM/);
+  });
   it("uses the server's paid and balanceDue as given, whatever the tenders add up to", () => {
     const b = reprint([{ method: "CASH", amount: 9 }], "PARTLY_PAID", { paid: 15, balanceDue: 3 });
     expect(b.paid).toBe(15);

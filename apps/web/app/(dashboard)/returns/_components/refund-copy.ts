@@ -43,6 +43,8 @@ export const REFUND_COPY = {
   /** SA-749r2 #9: the cash refund is more than the cash taken for the sale (less cash already refunded). Not terminal: switch the tender. */
   exceedsCash:
     "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
+  /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
+  quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;

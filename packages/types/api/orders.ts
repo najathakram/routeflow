@@ -153,4 +153,4 @@ export interface PackingSlipsResult {
  * its credit notes were not applied. The server's own text is never shown. Shared by web and mobile.
  */
 export const CREDITS_PENDING_COPY =
-  "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+  "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";
