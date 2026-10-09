@@ -20,8 +20,7 @@ import {
 
 export const SPLIT_RULE = TENDER_RULES.counter;
 
-// The wire codes of the split-payment contract. Every one is a shared API_ERROR_CODES constant except the 409 the API
-// has not registered yet: that literal lives HERE only, and moves to API_ERROR_CODES when the API side lands it.
+// The wire codes of the split-payment contract: every one is the shared API_ERROR_CODES constant.
 export const SPLIT_CODES = {
   COUNTER_TOO_MANY_LEGS: API_ERROR_CODES.COUNTER_TOO_MANY_LEGS,
   TENDER_METHOD_NOT_ALLOWED: API_ERROR_CODES.TENDER_METHOD_NOT_ALLOWED,
@@ -33,7 +32,7 @@ export const SPLIT_CODES = {
   COUNTER_PAYMENT_EXCEEDS_TOTAL: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL,
   COUNTER_TENDER_SHORT: API_ERROR_CODES.COUNTER_TENDER_SHORT,
   COUNTER_PAYMENT_SHAPE_CONFLICT: API_ERROR_CODES.COUNTER_PAYMENT_SHAPE_CONFLICT,
-  COUNTER_TENDER_CHANGED: "COUNTER_TENDER_CHANGED",
+  COUNTER_TENDER_CHANGED: API_ERROR_CODES.COUNTER_TENDER_CHANGED,
 } as const;
 
 /** FIXED copy per code / client problem. The server's own text is never shown. */
