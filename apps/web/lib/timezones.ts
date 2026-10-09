@@ -2,6 +2,9 @@
 
 export const SUGGESTED_TIME_ZONE = "America/New_York";
 
+/** The one line both screens show for a missing or unusable zone. */
+export const TIME_ZONE_REQUIRED_COPY = "Choose a time zone.";
+
 /** Used only when the runtime lacks `Intl.supportedValuesOf` (older browsers, jsdom). */
 const FALLBACK_TIME_ZONES = [
   "America/New_York",

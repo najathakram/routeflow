@@ -25,7 +25,12 @@ import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePr
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { TimeZoneInput } from "@/components/TimeZoneInput";
-import { SUGGESTED_TIME_ZONE, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import {
+  SUGGESTED_TIME_ZONE,
+  TIME_ZONE_REQUIRED_COPY,
+  canonicalTimeZone,
+  isValidTimeZone,
+} from "@/lib/timezones";
 import { CopyButton } from "@/components/CopyButton";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
@@ -73,7 +78,7 @@ const FIELD_ORDER: FieldKey[] = [
 const FIELD_COPY: Record<FieldKey, string> = {
   slug: "Use 3 to 30 lowercase letters, numbers or hyphens.",
   businessName: "Use 2 to 100 characters.",
-  timezone: "Choose a time zone.",
+  timezone: TIME_ZONE_REQUIRED_COPY,
   adminEmail: "Enter a valid email address.",
   adminUsername: "Use 3 to 50 characters.",
   adminPassword:
@@ -305,6 +310,7 @@ export default function AdminCreateTenantPage() {
     businessName: form.businessName,
     slug: form.slug,
     adminEmail: form.adminEmail,
+    timezone: canonicalTimeZone(form.timezone) ?? form.timezone,
     planName: `${planLabel(form.plan)}, ${
       mode === "trial" ? `${trialDaysOf(startAs.trialDays) ?? "?"}-day trial` : "active"
     }`,
@@ -755,6 +761,12 @@ export default function AdminCreateTenantPage() {
                 aria-required="true"
                 value={form.timezone}
                 onChange={onChange("timezone")}
+                onBlur={() => {
+                  // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the submit check.
+                  const zone = canonicalTimeZone(form.timezone);
+                  if (zone && zone !== form.timezone)
+                    setForm((prev) => ({ ...prev, timezone: zone }));
+                }}
                 className={INPUT}
                 {...fieldProps("timezone")}
               />

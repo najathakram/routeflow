@@ -104,4 +104,29 @@ describe("create tenant: time zone", () => {
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
     expect(screen.queryByText("Failed to create tenant")).toBeNull();
   });
+
+  it("canonicalises the spelling when the field loses focus", () => {
+    render(<AdminCreateTenantPage />);
+    const field = screen.getByLabelText("Time zone");
+    fireEvent.change(field, { target: { value: "america/chicago" } });
+    fireEvent.blur(field);
+    expect(field).toHaveValue("America/Chicago");
+  });
+
+  it("leaves text that is not a zone alone on blur (the submit check explains it)", () => {
+    render(<AdminCreateTenantPage />);
+    const field = screen.getByLabelText("Time zone");
+    fireEvent.change(field, { target: { value: "chicago time" } });
+    fireEvent.blur(field);
+    expect(field).toHaveValue("chicago time");
+  });
+
+  it("the review sheet's Account card shows the zone that will be saved", async () => {
+    render(<AdminCreateTenantPage />);
+    fillRest();
+    fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "america/chicago" } });
+    fireEvent.click(createButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/America\/Chicago/)).toBeInTheDocument();
+  });
 });

@@ -93,6 +93,27 @@ describe("Settings: time zone", () => {
     ).toBeInTheDocument();
   });
 
+  it("canonicalises the spelling when the field loses focus", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(field).toHaveValue("America/Chicago"));
+    await user.clear(field);
+    await user.type(field, "america/denver");
+    await user.tab();
+    expect(field).toHaveValue("America/Denver");
+  });
+
+  it("an empty zone reads the same 'Choose a time zone.' line as the create page", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(field).toHaveValue("America/Chicago"));
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText("Choose a time zone.")).toBeInTheDocument();
+  });
+
   it("shows an operator the zone as read-only text with no control", async () => {
     mockRole = "OPERATOR";
     renderWithProviders(<SettingsPage />);
@@ -144,7 +165,7 @@ describe("Settings: time zone", () => {
     await waitFor(() => expect(field).toHaveValue("America/Chicago"));
     await user.clear(field);
     await user.click(screen.getByRole("button", { name: /save/i }));
-    expect(await screen.findByText("Choose a time zone")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a time zone.")).toBeInTheDocument();
     expect(apiClient.patch).not.toHaveBeenCalled();
   });
 

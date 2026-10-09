@@ -95,7 +95,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
-import { canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -116,7 +116,7 @@ const profileSchemaFor = (canEditTimeZone: boolean) =>
   z.object({
     ...profileShape,
     timezone: canEditTimeZone
-      ? z.string().refine((v) => isValidTimeZone(v), "Choose a time zone")
+      ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
       : z.string().optional(),
   });
 type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
@@ -308,7 +308,14 @@ function BusinessProfileTab() {
                 autoComplete="off"
                 id="settings-timezone"
                 aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
-                register={register("timezone")}
+                register={register("timezone", {
+                  onBlur: (e) => {
+                    // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
+                    const zone = canonicalTimeZone(e.target.value);
+                    if (zone && zone !== e.target.value)
+                      setValue("timezone", zone, { shouldDirty: true, shouldValidate: true });
+                  },
+                })}
                 error={errors.timezone?.message}
               />
               <TimeZoneDatalist id="settings-timezone-zones" />
