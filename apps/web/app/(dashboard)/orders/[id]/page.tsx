@@ -97,6 +97,12 @@ import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
+import {
+  PosCutAfterHandOverNote,
+  PosOrderActions,
+  PosProgress,
+} from "./_components/PosOrderActions";
+import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
@@ -2056,6 +2062,9 @@ export default function OrderDetailPage() {
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
 
+  // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale (counter sales keep their own flow).
+  const isPos = isPosOrder(order);
+
   // Fulfillment path can only change while the order is open — mirrors the
   // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
   const fulfillPathLocked =
@@ -2558,7 +2567,7 @@ export default function OrderDetailPage() {
                 leftIcon={<Pencil className="h-4 w-4" />}
                 onClick={enterEditMode}
               >
-                Edit Items
+                {isPos ? "Edit order" : "Edit Items"}
               </Button>
             </ActionTier>
           )}
@@ -2750,32 +2759,45 @@ export default function OrderDetailPage() {
             </>
           )}
 
+          {/* POS mode: one primary per state (Create invoice -> Hand over -> Record payment / Print). */}
+          {isPos && access.staff && !isEditing && (
+            <PosOrderActions
+              order={order}
+              orderId={order.id}
+              status={localStatus}
+              onHandOver={() => setPickupOpen(true)}
+              onSwitchToDelivery={() => setPendingPath("ROUTE")}
+            />
+          )}
+
           {/* CONFIRMED actions */}
           {access.staff && localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <ActionTier tier="primary">
-                <div className="flex flex-col items-start gap-1">
-                  <Button
-                    size="sm"
-                    variant={orderUiV2.enabled ? undefined : "secondary"}
-                    leftIcon={<Truck className="h-4 w-4" />}
-                    onClick={handleMarkShipped}
-                    loading={updateStatus.isPending}
-                  >
-                    {order.fulfillPath === "SHIP"
-                      ? "Mark shipped"
-                      : order.fulfillPath === "PICKUP"
-                        ? "Ready for pickup"
-                        : "Out for Delivery"}
-                  </Button>
-                  {order.fulfillPath === "SHIP" && (
-                    <p className="text-[11px] text-navy/50">
-                      {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
-                    </p>
-                  )}
-                </div>
-              </ActionTier>
-              {order.fulfillPath === "PICKUP" && (
+              {!isPos && (
+                <ActionTier tier="primary">
+                  <div className="flex flex-col items-start gap-1">
+                    <Button
+                      size="sm"
+                      variant={orderUiV2.enabled ? undefined : "secondary"}
+                      leftIcon={<Truck className="h-4 w-4" />}
+                      onClick={handleMarkShipped}
+                      loading={updateStatus.isPending}
+                    >
+                      {order.fulfillPath === "SHIP"
+                        ? "Mark shipped"
+                        : order.fulfillPath === "PICKUP"
+                          ? "Ready for pickup"
+                          : "Out for Delivery"}
+                    </Button>
+                    {order.fulfillPath === "SHIP" && (
+                      <p className="text-[11px] text-navy/50">
+                        {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
+                      </p>
+                    )}
+                  </div>
+                </ActionTier>
+              )}
+              {order.fulfillPath === "PICKUP" && !isPos && (
                 <ActionTier tier="secondary">
                   <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
                 </ActionTier>
@@ -2949,6 +2971,10 @@ export default function OrderDetailPage() {
         </div>
       </div>
 
+      {isPos && access.staff && !["DRAFT", "CANCELLED"].includes(localStatus) && (
+        <PosProgress order={order} status={localStatus} />
+      )}
+
       {/* B1135: a customer's way forward on an order that has shipped (no change request exists for it). */}
       {access.shippedExits && <ShippedOrderExits />}
 
@@ -2975,6 +3001,7 @@ export default function OrderDetailPage() {
             </div>
             {isEditing ? (
               <div className="space-y-4">
+                {isPos && localStatus === "DELIVERED" && <PosCutAfterHandOverNote />}
                 <p className="text-sm text-navy/70">
                   Add new items, adjust quantities, substitute or mark as unavailable.
                   {canEdit && " Change a line's price or apply a per-item discount."} Changes are

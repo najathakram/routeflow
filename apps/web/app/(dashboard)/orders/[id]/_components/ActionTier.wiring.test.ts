@@ -111,7 +111,14 @@ describe("order-detail action bar tiers (page wiring)", () => {
 
   it("SECONDARY holds only reversible, non-destructive actions", () => {
     expect(labels("secondary")).toEqual(
-      new Set(["Edit Items", "Unconfirm", "Unmark shipped", "Return to Confirmed", "Reopen Order"]),
+      new Set([
+        "Edit Items",
+        "Edit order", // the POS-mode label of the same button
+        "Unconfirm",
+        "Unmark shipped",
+        "Return to Confirmed",
+        "Reopen Order",
+      ]),
     );
   });
 

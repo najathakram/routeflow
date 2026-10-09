@@ -26,7 +26,8 @@ export const POS_COPY = {
   createInvoice: "Create invoice",
   handOver: "Hand over",
   recordPayment: "Record payment",
-  viewInvoice: "View invoice",
+  printInvoice: "Print invoice",
+  invoiceCreated: "Invoice created",
   switchToDelivery: "Switch to delivery",
   invoiceFailed: "Couldn't create the invoice. Try again.",
 } as const;
