@@ -1345,6 +1345,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         stub(),
         planTransitionStub(false),
         stub(), // stripe — rollCycles never downgrades
+        stub(), // scheduledPrice
       ).rollCycles();
     };
 

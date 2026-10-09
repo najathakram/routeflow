@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  Optional,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -48,6 +49,7 @@ import {
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
+import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
 import {
   beginStripeFirstPlanChange,
   PLAN_CHANGE_LANDED,
@@ -128,6 +130,8 @@ export class PlatformAdminService {
     private readonly planTransition: PlanTransitionConfigService,
     // SA-733r M7: the Stripe-first plan-change push.
     private readonly stripe: StripeService,
+    // R1 Option B: undoes an early downgrade price push before an admin plan change prorates from it.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
   ) {}
 
   /**
@@ -742,6 +746,7 @@ export class PlatformAdminService {
         // cancellation is armed before it can silently interact with it (see the refusal right
         // below) — this branch was blind to the field entirely before.
         cancelAtPeriodEnd: true,
+        downgradeToPlanKey: true, // R1 Option B: a pre-renewal push may have lowered Stripe's price
       },
     });
 
@@ -896,13 +901,22 @@ export class PlatformAdminService {
     // SA-733r M7: Stripe FIRST (price + retired add-on items in one update); `flow.settle` puts it back if the
     // write below throws. A re-save of the tenant's own plan pushes nothing.
     const isUpgrade = isRankedPlanChange && rankTo > rankFrom;
+    // A move to a HIGHER plan retires the add-ons the target includes even when the target is a custom plan
+    // (GROWTH -> ENTERPRISE); only the proration rule keeps the ranked-and-priced test.
+    const retiresAddons = rankFrom >= 0 && rankTo > rankFrom;
+    // R1 Option B: undo an early pre-renewal downgrade push BEFORE this change prorates from Stripe's price.
+    if (priorSub?.stripeSubId && priorSub.downgradeToPlanKey && fromKey !== targetPlanKey) {
+      await this.scheduledPrice?.restoreIfPushedLocked(id, priorSub.downgradeToPlanKey, {
+        mustBeCleared: false,
+      });
+    }
     const flowArgs = planChangeArgs({
       tenantId: id,
       sub: priorSub,
       version,
       def: definition,
       proration: isUpgrade ? "create_prorations" : "none",
-      retireAddons: isUpgrade,
+      retireAddons: retiresAddons,
       actorId: adminId,
     });
     const manual = await manualPayContext(this.prisma, id, this.stripe.isConfigured, priorSub);
@@ -1030,7 +1044,10 @@ export class PlatformAdminService {
       id: tenant.id,
       slug: tenant.slug,
       plan: tenant.plan,
-      ...(proratedNow != null ? { proratedNow } : {}),
+      // Stripe sends proration none on a trialing / past_due / unpaid subscription: no charge to claim.
+      ...(proratedNow != null
+        ? { proratedNow: flow.ctx.proration === "none" ? 0 : proratedNow }
+        : {}),
       ...(proratedNow != null && override != null ? { note: CUSTOM_FEE_UNCHANGED } : {}),
     };
   }

@@ -83,6 +83,8 @@ export interface PlanChangeCtx {
   settledItemIds: ReadonlySet<string>;
   /** The push's per-attempt idempotency key — recorded on the attempt's ledger event (SA-733r3 N4). */
   idempotencyKey?: string;
+  /** The live Stripe subscription was read though nothing was sent (a price that did not change). */
+  live?: boolean;
   /** The proration behaviour actually SENT (`none` on a trialing / past_due / unpaid subscription). */
   proration?: PlanChangeProration;
 }
@@ -143,7 +145,7 @@ export async function retireIncludedAddonsTx(
   const due = addonsIncludedAtPlan(rows, a.addonSkus, a.toPlanKey);
   for (const row of due) {
     const billedItem = !row.isComp && row.stripeItemId ? row.stripeItemId : null;
-    if (billedItem && a.ctx.pushed && !a.ctx.settledItemIds.has(billedItem)) {
+    if (billedItem && (a.ctx.pushed || a.ctx.live) && !a.ctx.settledItemIds.has(billedItem)) {
       throw planChangeAddonsChanged();
     }
     await tx.tenantAddon.update({

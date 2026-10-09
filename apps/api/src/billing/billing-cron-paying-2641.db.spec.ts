@@ -87,6 +87,7 @@ describeDb(
           invalidateCaches: () => undefined,
         } as any,
         {} as any, // stripe — these tenants carry no stripeSubId
+        {} as any, // scheduledPrice — the backup sweep is not exercised here
       );
     });
 

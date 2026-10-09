@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Logger,
@@ -8,6 +9,7 @@ import { randomUUID } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { prorationAllowedFor } from "./price-override";
 import {
   isLiveStripeSubscriptionStatus,
@@ -103,6 +105,8 @@ export interface PlanChangePush {
   nonce?: string;
   /** Add-on item ids confirmed gone from Stripe: deleted by this push, or already absent. */
   settledItemIds: ReadonlySet<string>;
+  /** True when nothing was sent BUT the live Stripe subscription was read (a custom-fee price that did not change). */
+  live?: boolean;
   newAmountCents?: number;
   /** The Stripe product this push created for the new price — a revert checks the base item still carries it. */
   productId?: string;
@@ -228,7 +232,9 @@ export async function pushPlanChange(
     logger.log(
       `Plan change tenant ${a.tenantId}: base price unchanged, no add-on to delete — no push`,
     );
-    return skipped("price_unchanged");
+    // `live`: the subscription IS live in Stripe and its add-on items were read - the retirement's
+    // unsettled-item check must still apply (a row enabled after this read owns an item nobody deleted).
+    return { ...skipped("price_unchanged"), live: true };
   }
   const nonce = randomUUID();
   const key = `${a.tenantId}:plan-change:${a.targetPlanVersionId}:${nonce}`;
@@ -286,7 +292,38 @@ export async function pushPlanChange(
     logger.error(
       `Plan change tenant ${a.tenantId}: Stripe update failed: ${(err as Error).message}`,
     );
-    throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+    // The update may have been APPLIED although its reply failed (a timeout, a 5xx after the commit). Re-read
+    // Stripe before deciding: an applied push must not be reported as "nothing changed".
+    const live = await stripe
+      .getSubscription(a.stripeSubId, { expand: CHECKOUT_ADDON_EXPAND })
+      .catch(() => null);
+    if (!live) {
+      // Cannot tell whether Stripe moved: it may now be ahead of the database. Alert, and say so distinctly.
+      markNeedsReconcile(logger, {
+        tenantId: a.tenantId,
+        stripeSubId: a.stripeSubId,
+        key,
+        local: a.localState,
+        stripe: { attemptedAmountCents: newAmountCents, proration, outcome: "unknown" },
+        error: err,
+      });
+      throw new BadGatewayException({
+        code: API_ERROR_CODES.PLAN_CHANGE_STRIPE_AHEAD,
+        message:
+          "We could not confirm whether Stripe applied the plan change - reconcile the subscription " +
+          "before changing the plan again.",
+      });
+    }
+    const liveItems: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
+    const baseApplied =
+      !baseChanged ||
+      liveItems.find((i) => i?.id === base.id)?.price?.unit_amount === newAmountCents;
+    const deletesApplied = deletes.every((d) => !liveItems.some((i) => i?.id === d.itemId));
+    if (!(baseApplied && deletesApplied))
+      throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+    logger.warn(
+      `Plan change tenant ${a.tenantId}: the Stripe update reported a failure but Stripe APPLIED it (${key}) - continuing`,
+    );
   }
   for (const d of deletes) settled.add(d.itemId);
   logger.log(

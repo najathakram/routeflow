@@ -1657,9 +1657,33 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       const version = new Date("2026-10-01T12:00:00.000Z");
       await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated", version });
       const [, , options] = stripe.updateSubscription.mock.calls[0];
-      expect(options).toEqual({
-        idempotencyKey: `t1:price-override:15000:create_prorations:v${version.getTime()}:price_old`,
+      // L3: ... plus a per-ATTEMPT nonce (Stripe replays a cached 5xx for 24 h under a repeated key).
+      expect(options.idempotencyKey).toMatch(
+        new RegExp(
+          `^t1:price-override:15000:create_prorations:v${version.getTime()}:price_old:[0-9a-f-]{36}$`,
+        ),
+      );
+    });
+
+    it("L4: the structured push line (tenant, key, prior/new cents, proration) is logged BEFORE the Stripe write", async () => {
+      arrange();
+      const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      const idx = log.mock.calls.findIndex((c) =>
+        String(c[0]).startsWith("billing.price_override.push"),
+      );
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const line = String(log.mock.calls[idx][0]);
+      const [, , options] = stripe.updateSubscription.mock.calls[0];
+      expect(JSON.parse(line.slice(line.indexOf("{")))).toMatchObject({
+        tenantId: "t1",
+        idempotencyKey: options.idempotencyKey,
+        proration: "create_prorations",
       });
+      expect(log.mock.invocationCallOrder[idx]).toBeLessThan(
+        stripe.updateSubscription.mock.invocationCallOrder[0],
+      );
+      log.mockRestore();
     });
 
     it("the key differs for a different amount, mode or row version — a later change is never swallowed", async () => {
@@ -1676,12 +1700,14 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
         keys.push(stripe.updateSubscription.mock.calls.at(-1)![2].idempotencyKey);
       };
       await run({ version: new Date(1000) });
-      await run({ version: new Date(1000) }); // an identical retry repeats the key
+      await run({ version: new Date(1000) }); // an identical retry: same CHANGE, a fresh attempt nonce
       await run({ version: new Date(2000) });
       await run({ version: new Date(1000), effective: "now_prorated" });
       await run({ version: new Date(1000) }, 16000);
-      expect(keys[0]).toBe(keys[1]);
-      expect(new Set(keys).size).toBe(4);
+      const change = (k: string) => k.replace(/:[0-9a-f-]{36}$/, "");
+      expect(change(keys[0])).toBe(change(keys[1]));
+      expect(keys[0]).not.toBe(keys[1]); // L3: never replay a cached 5xx
+      expect(new Set(keys.map(change)).size).toBe(4);
     });
 
     it("the amount sent is whole cents from the shared helper (19.99 dollars -> 1999)", async () => {
@@ -1803,7 +1829,9 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       arrange("past_due");
       await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
       await service.pushResolvedPriceToStripe("t1", { effective: "next_cycle" });
-      const [a, b] = stripe.updateSubscription.mock.calls.map((c) => c[2].idempotencyKey);
+      const [a, b] = stripe.updateSubscription.mock.calls.map((c) =>
+        c[2].idempotencyKey.replace(/:[0-9a-f-]{36}$/, ""),
+      );
       expect(a).toBe(b);
       expect(a).toContain(":none:");
     });

@@ -1,10 +1,5 @@
 import { priceOverrideOf, sameOverride } from "./price-override";
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-} from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -30,6 +25,7 @@ import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { markNeedsReconcile } from "./plan-change-stripe";
 import { stripeBaseItem } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
@@ -66,6 +62,8 @@ export class BillingCronService {
     private readonly planTransition: PlanTransitionConfigService,
     // READ-ONLY (lead R1): verifies the price Stripe bills after a downgrade flips. This sweep never pushes one.
     private readonly stripe: StripeService,
+    // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
+    private readonly scheduledPrice: ScheduledPriceChangeService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -349,10 +347,10 @@ export class BillingCronService {
           ? await this.planTransition.prepare(transition)
           : null;
 
-        // This sweep NEVER pushes a price to Stripe (lead ruling R1): a downgrade reaches Stripe at SCHEDULE time,
-        // so Stripe's own renewal already bills the new price. A push at due time can land AFTER the renewal
-        // invoice was cut at the old price. Here the local row flips, and Stripe is only VERIFIED (read-only)
-        // once the flip has committed.
+        // This 02:00 flip NEVER pushes a price to Stripe (lead ruling R1): it is date-driven and can run AFTER
+        // Stripe cut the renewal invoice at the old price. The price reaches Stripe BEFORE the renewal, from
+        // scheduled-price-change.ts, before the renewal invoice (R1 Option B: the `invoice.upcoming` webhook + the hourly backup below). Here the local
+        // row flips, and Stripe is only VERIFIED (read-only) once the flip has committed.
         const written = this.prisma.$transaction(async (tx) => {
           // Snapshot first, in the same transaction: a failure here throws into the per-row catch
           // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
@@ -511,14 +509,6 @@ export class BillingCronService {
           if (++consecutiveSnapshotFailures >= MAX_CONSECUTIVE_SNAPSHOT_FAILURES) throw err;
           continue;
         }
-        // SA-733r M7: Stripe could not take this tenant's price (unreadable, not live, nothing resolvable): the
-        // schedule stays armed for the next sweep, and ONE tenant never aborts the rest.
-        if (err instanceof ServiceUnavailableException || err instanceof BadRequestException) {
-          this.logger.error(
-            `Scheduled downgrade held back for tenant=${s.tenantId} target="${target}" — ${err.message}`,
-          );
-          continue;
-        }
         if (!this.isUnresolvablePlanKeyError(err)) throw err;
         // B218: log and move on — a cron that dies on tenant N's bad row would silently
         // strand every tenant after it unapplied too, which is worse than the one bad row.
@@ -543,9 +533,23 @@ export class BillingCronService {
   }
 
   /**
+   * Backup for the `invoice.upcoming` webhook (lead R1, option B): push the scheduled downgrade's price to Stripe
+   * for every tenant whose period ends within 48 h and whose price Stripe does not already bill. NEVER after the
+   * period end (those tenants are not candidates), idempotent, one tenant at a time under the tenant-price lock.
+   * The 02:00 flip above stays date-driven and local; THIS is what makes the renewal invoice use the new price.
+   */
+  @LeaderCron(CronExpression.EVERY_HOUR, "billing-cron.pushUpcomingDowngradePrices")
+  async pushUpcomingDowngradePrices(): Promise<void> {
+    const { pushed, held } = await this.scheduledPrice.applyDue();
+    if (pushed || held) {
+      this.logger.log(`Scheduled downgrade prices: pushed ${pushed}, held back ${held}`);
+    }
+  }
+
+  /**
    * READ-ONLY check, after a downgrade's local flip committed: does Stripe's base item bill the downgraded
-   * monthly price? A mismatch means the tenant is still billed the old plan (the schedule-time push that should
-   * have prevented it did not happen), so it is ALERTED (`markNeedsReconcile`), never fixed here. Best-effort:
+   * monthly price? A mismatch means the tenant is still billed the old plan (the pre-renewal push from
+   * scheduled-price-change.ts that should have prevented it did not happen), so it is ALERTED (`markNeedsReconcile`), never fixed here. Best-effort:
    * a Stripe read failure is logged and never fails the sweep; annual items are not compared.
    */
   private async verifyStripeBillsDowngrade(

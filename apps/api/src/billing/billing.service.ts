@@ -3,10 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   BadRequestException,
   ConflictException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -37,6 +39,7 @@ import {
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import {
   CHECKOUT_ADDON_EXPAND,
   CHECKOUT_ADDON_SKUS_KEY,
@@ -192,6 +195,8 @@ export class BillingService {
     // SA-690 option A: the unbilled self-serve add-ons ride the card checkout as line items, and the
     // completion adopts the resulting Stripe items onto their rows (see SubscriptionMutationService).
     private readonly mutations: SubscriptionMutationService,
+    // R1 option B: the `invoice.upcoming` trigger of a scheduled downgrade's Stripe price push.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
   ) {}
 
   /**
@@ -605,6 +610,7 @@ export class BillingService {
       proration, // the mode actually SENT: an active -> past_due flip between attempts must not reuse a key
       version: opts?.version,
       itemPriceId: item.price?.id,
+      attempt: randomUUID(), // a retry after a cached 5xx must really be sent (the lock + the unchanged check make it safe)
     });
     const oldAmount =
       typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
@@ -643,6 +649,19 @@ export class BillingService {
       product: productId,
     };
 
+    // Logged BEFORE the write (until the needsReconcile column lands): if the process dies between Stripe's reply
+    // and the local commit, this line, with its key, is how an operator finds the push to reconcile.
+    this.logger.log(
+      `billing.price_override.push ${JSON.stringify({
+        tenantId,
+        stripeSubId: sub.stripeSubId,
+        idempotencyKey: key,
+        priorAmountCents: item.price?.unit_amount ?? null,
+        basePriceCents: priceData.unit_amount,
+        proration,
+        effective,
+      })}`,
+    );
     try {
       await this.stripe.updateSubscription(
         sub.stripeSubId,
@@ -801,6 +820,10 @@ export class BillingService {
 
       case "invoice.payment_succeeded":
         await this.onPaymentSucceeded(event.data.object);
+        break;
+
+      case "invoice.upcoming":
+        await this.onInvoiceUpcoming(event.data.object);
         break;
 
       case "invoice.payment_failed":
@@ -2223,6 +2246,37 @@ export class BillingService {
       return null;
     }
     return sub;
+  }
+
+  /**
+   * R1 option B: Stripe announces the renewal days ahead. If the tenant has a scheduled downgrade, its price is
+   * pushed NOW, before the invoice is cut. The event rides the existing StripeBillingEvent ledger (a redelivery of
+   * the same event id never reaches here twice) and the push itself is idempotent (Stripe already billing the
+   * target is a no-op). A lock collision or an unreadable Stripe THROWS: the webhook fails and Stripe redelivers,
+   * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
+   * redelivery could never succeed.
+   */
+  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+    if (!this.scheduledPrice) return;
+    const sub = await this.matchStripeSubscription(
+      stripeInvoiceSubscriptionId(invoice),
+      invoice?.customer,
+      "invoice.upcoming",
+    );
+    if (!sub) return;
+    try {
+      const out = await this.scheduledPrice.apply(sub.tenantId);
+      if (out.applied) {
+        this.logger.log(
+          `invoice.upcoming: scheduled downgrade price pushed for tenant ${sub.tenantId} (${out.priorAmountCents} -> ${out.amountCents} cents)`,
+        );
+      }
+    } catch (err) {
+      if (!(err instanceof BadRequestException)) throw err;
+      this.logger.error(
+        `invoice.upcoming: the scheduled downgrade price for tenant ${sub.tenantId} cannot be applied - fix it in Stripe before the renewal: ${err.message}`,
+      );
+    }
   }
 
   private async onPaymentFailed(invoice: any): Promise<void> {

@@ -110,6 +110,8 @@ describe("TenantPricingCard — when the new price takes effect (SA-733 D8)", ()
     await saveWith("80");
 
     expect(await screen.findByText(/not prorated/i)).toBeInTheDocument();
+    // N2: not only past due - a trial or an unpaid subscription takes proration none too.
+    expect(screen.getByText(/isn't active \(trial, past due or unpaid\)/)).toBeInTheDocument();
     expect(screen.getByText(/next invoice/)).toBeInTheDocument();
   });
 

@@ -93,6 +93,8 @@ export function priceOverrideIdempotencyKey(parts: {
   proration: StripeProrationBehavior;
   version?: Date | string | null;
   itemPriceId?: string | null;
+  /** A per-ATTEMPT nonce: Stripe replays a cached 5xx for 24 h under a repeated key, so a retry must differ. */
+  attempt?: string;
 }): string {
   const version =
     parts.version == null ? "v0" : `v${new Date(parts.version as string | Date).getTime()}`;
@@ -103,6 +105,7 @@ export function priceOverrideIdempotencyKey(parts: {
     parts.proration,
     version,
     parts.itemPriceId ?? "-",
+    ...(parts.attempt ? [parts.attempt] : []),
   ].join(":");
 }
 

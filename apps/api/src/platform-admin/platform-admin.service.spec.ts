@@ -32,6 +32,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { StripeService } from "../billing/stripe.service";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -1571,6 +1572,8 @@ describe("PlatformAdminService — audit provenance", () => {
       from: string;
       fromKey: string;
       status?: string;
+      stripeStatus?: string;
+      stripeItems?: any[];
       sub?: Record<string, unknown>;
       addons?: any[];
     }) {
@@ -1591,6 +1594,7 @@ describe("PlatformAdminService — audit provenance", () => {
           { planKey: "STARTER", name: "Starter", monthlyPrice: 99 },
           { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
           { planKey: "SCALE", name: "Scale", monthlyPrice: 499 },
+          { planKey: "ENTERPRISE", name: "Enterprise", monthlyPrice: null, isCustom: true },
         ],
         addonSkus: [
           { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
@@ -1618,10 +1622,10 @@ describe("PlatformAdminService — audit provenance", () => {
         deletedAt: null,
         subscription: { planKey: "SCALE" },
       });
-      stripe = fakeStripeSubscription([
-        ITEM("si_base", 24900, "prod_growth"),
-        ITEM("si_fc", 2500, "prod_fc"),
-      ]);
+      stripe = fakeStripeSubscription(
+        opts.stripeItems ?? [ITEM("si_base", 24900, "prod_growth"), ITEM("si_fc", 2500, "prod_fc")],
+        opts.stripeStatus ?? "active",
+      );
       (service as any).stripe = stripe;
     }
     const forecasting = {
@@ -1701,6 +1705,75 @@ describe("PlatformAdminService — audit provenance", () => {
       const [, revert, rev] = stripe.updateSubscription.mock.calls[1];
       expect(rev.idempotencyKey).toBe(`${fwd.idempotencyKey}:revert`);
       expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
+    });
+
+    it("review M2: GROWTH -> ENTERPRISE (a custom plan) still retires the add-on the higher plan includes", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { priceOverrideMonthly: 300 },
+        addons: [forecasting],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "ENTERPRISE" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const params = stripe.updateSubscription.mock.calls[0][1];
+      expect(params.items).toContainEqual({ id: "si_fc", deleted: true });
+      expect(params.proration_behavior).toBe("none"); // a custom plan is not a ranked-and-priced upgrade
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("review L2: an upgrade on a past_due Stripe subscription claims no prorated charge in the result", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", stripeStatus: "past_due" });
+      prorationService.proratedDiff.mockReturnValue(200);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+      expect(res.proratedNow).toBe(0);
+    });
+
+    it("review L2 control: the same upgrade on an ACTIVE subscription still reports the proration", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      prorationService.proratedDiff.mockReturnValue(200);
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+      expect(res.proratedNow).toBe(200);
+    });
+
+    it("R1 Option B: an early pre-renewal downgrade push is undone FIRST - Stripe is restored to the current price before the plan edit prorates", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { downgradeToPlanKey: "STARTER" },
+        stripeItems: [ITEM("si_base", 9900, "prod_low")],
+      });
+      (service as any).scheduledPrice = new ScheduledPriceChangeService(prisma as any, stripe, {
+        getVersionForTenant: jest.fn(async () => await planCatalogService.getPublishedVersion()),
+        getPublishedVersion: jest.fn().mockResolvedValue(null),
+      } as any);
+
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+      expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
+        24900,
+      );
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+      expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.unit_amount).toBe(
+        49900,
+      );
+      expect(stripe.updateSubscription.mock.calls[1][1].proration_behavior).toBe(
+        "create_prorations",
+      );
     });
 
     it("S4: a lost commit acknowledgement is a SUCCESS - the audit row and the cache invalidation still happen, Stripe is not reverted", async () => {

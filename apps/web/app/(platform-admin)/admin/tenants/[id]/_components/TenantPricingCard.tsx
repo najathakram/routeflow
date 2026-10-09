@@ -23,7 +23,7 @@ function savedMessage(sync: PriceSyncResult, asked: PriceOverrideEffective): str
   if (sync.unchanged)
     return "Saved - Stripe already billed this amount, so nothing was sent to it.";
   if (asked === "now_prorated" && sync.proration === "none") {
-    return "Saved - this subscription is past due, so the change was not prorated: it applies from the next invoice.";
+    return "Saved - this subscription isn't active (trial, past due or unpaid), so the change was not prorated: it applies from the next invoice.";
   }
   if (sync.proration === "create_prorations") {
     return "Saved - the live Stripe subscription was repriced now; the prorated adjustment lands on the next invoice.";

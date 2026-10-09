@@ -1,10 +1,15 @@
 /**
  * SA-733r [M7]: the Stripe half of every price-moving plan write, tested at the StripeService boundary (a
- * mock — no live Stripe). Covers the shapes `upgrade()` / `updatePlan` / a schedule-time downgrade would share:
+ * mock — no live Stripe). Covers the shapes `upgrade()` / `updatePlan` / a future caller would share:
  * `create_prorations` for an upgrade, `none` for a downgrade, the override beating the plan price, fail-closed
  * before any write, and the needs-reconcile seam.
  */
-import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
+import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import {
+  BadGatewayException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import {
   markNeedsReconcile,
   PLAN_CHANGE_SUBSCRIPTION_INACTIVE,
@@ -157,6 +162,50 @@ describe("pushPlanChange", () => {
   });
 });
 
+describe("pushPlanChange - a failed update reply may still have been APPLIED (review M1)", () => {
+  it("the update rejects but Stripe applied it: the push is reported as pushed, with its revert data - never 'nothing changed'", async () => {
+    const stripe = fakeStripeSubscription([BASE as any]);
+    const apply = stripe.updateSubscription.getMockImplementation()!;
+    stripe.updateSubscription.mockImplementationOnce(async (...a: any[]) => {
+      await (apply as any)(...a); // Stripe commits...
+      throw new Error("socket hang up"); // ...but the reply is lost
+    });
+
+    const push = await pushPlanChange({ stripe: stripe as any, logger }, args());
+
+    expect(push.pushed).toBe(true);
+    expect(push.newAmountCents).toBe(24900);
+    expect(push.revert?.baseBefore.unit_amount).toBe(34900);
+    expect(stripe.amountOf("si_base")).toBe(24900);
+  });
+
+  it("the update rejects and Stripe did NOT apply it: a 503, as before", async () => {
+    const stripe = fakeStripeSubscription([BASE as any]);
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("card_declined"));
+    await expect(pushPlanChange({ stripe: stripe as any, logger }, args())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it("the update rejects and Stripe cannot be re-read: unknown outcome = a 502 PLAN_CHANGE_STRIPE_AHEAD plus a needs-reconcile alert", async () => {
+    const stripe = fakeStripeSubscription([BASE as any]);
+    const read = stripe.getSubscription.getMockImplementation()!;
+    stripe.getSubscription.mockImplementationOnce(read).mockRejectedValueOnce(new Error("down"));
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("socket hang up"));
+
+    const err: any = await pushPlanChange({ stripe: stripe as any, logger }, args()).catch(
+      (e) => e,
+    );
+
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
+    const alert = logger.error.mock.calls
+      .map((c) => String(c[0]))
+      .find((m) => m.includes("needs_reconcile"));
+    expect(alert).toBeDefined();
+  });
+});
+
 describe("pushPlanChange — Opus review folds", () => {
   it("S4: the structured push line (tenant, key, target plan/version, base price) is logged BEFORE the Stripe write", async () => {
     const stripe = stripeWith();
@@ -203,7 +252,7 @@ describe("pushPlanChange — Opus review folds", () => {
   });
 });
 
-describe("runStripeFirstPlanChange as a schedule-time downgrade would call it", () => {
+describe("runStripeFirstPlanChange as a plain caller would use it", () => {
   const sub = {
     stripeSubId: "sub_1",
     planKey: "SCALE",

@@ -156,6 +156,7 @@ function make(
     invalidateCaches: jest.fn(),
   } as any;
   const stripe = data.stripe ?? ({ isConfigured: false } as any);
+  const scheduledPrice = { applyDue: jest.fn().mockResolvedValue({ pushed: 0, held: 0 }) } as any;
   const svc = new BillingCronService(
     prisma,
     events,
@@ -166,6 +167,7 @@ function make(
     billingNotification,
     planTransition,
     stripe,
+    scheduledPrice,
   );
   return {
     planTransition,
@@ -179,6 +181,7 @@ function make(
     meters,
     billingNotification,
     stripe,
+    scheduledPrice,
   };
 }
 
@@ -678,7 +681,7 @@ describe("BillingCronService", () => {
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  // Lead ruling R1: a downgrade reaches Stripe at SCHEDULE time, so this 02:00 sweep NEVER pushes a price. It
+  // Lead ruling R1 (option B): a downgrade's price reaches Stripe BEFORE the renewal (scheduled-price-change.ts), so this 02:00 sweep NEVER pushes a price. It
   // flips the local row (from the row re-read UNDER the tenant-price lock) and only VERIFIES Stripe read-only.
   describe("applyScheduledDowngrades - never pushes to Stripe (lead R1)", () => {
     const item = (cents: number) => ({
@@ -728,7 +731,7 @@ describe("BillingCronService", () => {
 
     it("read-only verification: Stripe already bills the downgraded price -> no alert", async () => {
       const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-      const stripe = fakeStripeSubscription([item(5900)]); // the schedule-time push put it here
+      const stripe = fakeStripeSubscription([item(5900)]); // the pre-renewal push put it here
       const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
       withVersionId(catalog);
       await svc.applyScheduledDowngrades();
@@ -834,6 +837,15 @@ describe("BillingCronService", () => {
       await expect(svc.applyScheduledDowngrades()).resolves.not.toThrow();
       expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(2); // both flipped
     });
+  });
+
+  it("R1 option B: the hourly backup sweep delegates to the ONE scheduled-price function and never touches Stripe itself", async () => {
+    const stripe = fakeStripeSubscription([]);
+    const { svc, scheduledPrice } = make({ stripe });
+    scheduledPrice.applyDue.mockResolvedValue({ pushed: 2, held: 1 });
+    await svc.pushUpcomingDowngradePrices();
+    expect(scheduledPrice.applyDue).toHaveBeenCalledTimes(1);
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
   it("N3: applyScheduledDowngrades notifies with the effectiveAt the row carried BEFORE the transaction cleared it", async () => {

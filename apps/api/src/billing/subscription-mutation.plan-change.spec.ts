@@ -39,6 +39,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { PLAN_CHANGE_SUBSCRIPTION_INACTIVE } from "./plan-change-stripe";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { ProrationService } from "./proration.service";
@@ -57,6 +58,7 @@ const CATALOG = {
   definitions: [
     { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, annualPrice: null, isCustom: false },
     { planKey: "SCALE", name: "Scale", monthlyPrice: 499, annualPrice: null, isCustom: false },
+    { planKey: "STARTER", name: "Starter", monthlyPrice: 99, annualPrice: null, isCustom: false },
   ],
   addonSkus: [
     // Bundled free at SCALE and above (the catalog's `includedAtPlan`).
@@ -116,6 +118,8 @@ interface Opts {
   stripeStatus?: string;
   /** The legacy `Tenant.plan` enum the from-plan resolves through when the row has no planKey. */
   tenantPlan?: string;
+  /** Wire the REAL ScheduledPriceChangeService (the pre-renewal downgrade push) into the service. */
+  realScheduledPrice?: boolean;
 }
 
 /** The rows whose fields all equal the (simple) `where` — enough of Prisma's filter for these specs. */
@@ -223,12 +227,14 @@ function make(o: Opts = {}) {
   const entitlements = { invalidate: jest.fn() };
   const notify = { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) };
   const real = new ProrationService({} as any, {} as any);
+  const catalogSvc = {
+    getPublishedCatalog: jest.fn().mockResolvedValue(CATALOG),
+    getVersionForTenant: jest.fn().mockResolvedValue(CATALOG),
+    getPublishedVersion: jest.fn().mockResolvedValue(null),
+  } as any;
   const svc = new SubscriptionMutationService(
     prisma,
-    {
-      getPublishedCatalog: jest.fn().mockResolvedValue(CATALOG),
-      getVersionForTenant: jest.fn().mockResolvedValue(CATALOG),
-    } as any,
+    catalogSvc,
     {
       proratedDiff: (...a: Parameters<ProrationService["proratedDiff"]>) => real.proratedDiff(...a),
     } as any,
@@ -244,6 +250,9 @@ function make(o: Opts = {}) {
       transactionOptions: jest.fn().mockReturnValue(undefined),
       invalidateCaches: jest.fn(),
     } as any,
+    o.realScheduledPrice
+      ? (new ScheduledPriceChangeService(prisma, stripe as any, catalogSvc) as any)
+      : undefined,
   );
   return { svc, prisma, tx, stripe, events, db, entitlements, notify };
 }
@@ -440,6 +449,67 @@ describe("upgrade(): proration follows the subscription's state, and an unchange
     expect(revert.items).toHaveLength(1);
     expect(revert.items[0]).toMatchObject({ metadata: { restoredFromItem: "si_fc" } });
     expect(revert.items[0].id).toBeUndefined();
+  });
+});
+
+describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)", () => {
+  const pushedLow = (cents: number) => ({
+    ...BASE_ITEM,
+    price: { ...BASE_ITEM.price, unit_amount: cents, product: "prod_low" },
+  });
+  const scheduled = {
+    downgradeToPlanKey: "STARTER",
+    downgradeEffectiveAt: new Date(Date.now() + 2 * DAY),
+  };
+
+  it("an early push left Stripe on the lowered price (9900): the upgrade restores the CURRENT price (24900, none) BEFORE it prorates, so the proration is (new - current), not (new - lowered)", async () => {
+    const { svc, stripe, db } = make({
+      realScheduledPrice: true,
+      sub: scheduled,
+      stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
+    });
+    await svc.upgrade("t1", "SCALE", "admin");
+
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+    const [, restore] = stripe.updateSubscription.mock.calls[0];
+    const [, upgrade] = stripe.updateSubscription.mock.calls[1];
+    expect(restore.items[0].price_data.unit_amount).toBe(24900);
+    expect(restore.proration_behavior).toBe("none"); // the restore itself charges nothing
+    expect(upgrade.items[0].price_data.unit_amount).toBe(49900);
+    expect(upgrade.proration_behavior).toBe("create_prorations");
+    // The upgrade push read the RESTORED item, so Stripe prorates 24900 -> 49900, not 9900 -> 49900.
+    expect(stripe.getSubscription.mock.results.length).toBeGreaterThanOrEqual(2);
+    expect(db.sub.planKey).toBe("SCALE");
+    expect(db.sub.downgradeToPlanKey).toBeNull(); // the schedule is disarmed by the upgrade
+    expect(stripe.amountOf("si_base")).toBe(49900);
+  });
+
+  it("no early push (Stripe still on the current price) -> no restore call, only the upgrade push", async () => {
+    const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled });
+    await svc.upgrade("t1", "SCALE", "admin");
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed restore stops the upgrade BEFORE it pushes or writes anything (fail closed: never prorate from the lowered price)", async () => {
+    const { svc, stripe, db, prisma } = make({
+      realScheduledPrice: true,
+      sub: scheduled,
+      stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
+    });
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("stripe down"));
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeDefined();
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(db.sub.planKey).toBe("GROWTH");
+  });
+
+  it("L1: a custom-fee upgrade whose price does not change still guards add-on items it did not settle (a row enabled after Stripe was read)", async () => {
+    const { svc, stripe, tx } = make({
+      sub: { priceOverrideMonthly: 249, basePriceSnapshot: 249 },
+    });
+    tx.tenantAddon.findMany.mockResolvedValue([row({ id: "ta_new", stripeItemId: "si_new" })]);
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(ConflictException);
+    expect(stripe.updateSubscription).not.toHaveBeenCalled(); // nothing was pushed, nothing to revert
   });
 });
 

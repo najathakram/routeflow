@@ -28,8 +28,9 @@ import {
 } from "./plan-change-stripe";
 
 /**
- * SA-733r [M7]: the Stripe-first shape every PRICE-MOVING plan write shares — the tenant upgrade, the admin
- * plan edit. (The scheduled downgrade will use it at SCHEDULE time, never from the 02:00 sweep - lead R1; not wired yet):
+ * SA-733r [M7]: the Stripe-first shape the tenant upgrade and the admin plan edit share. (A scheduled
+ * downgrade's price does NOT use it: it is pushed before the renewal invoice - R1 Option B - by
+ * scheduled-price-change.ts, never from the 02:00 sweep.)
  *
  *   1. `beginStripeFirstPlanChange` pushes the RESOLVED price (override beats the plan price) to Stripe, with
  *      the retired add-on items deleted in the same update (plan-change-stripe.ts);
@@ -151,6 +152,7 @@ export async function beginStripeFirstPlanChange(
     settledItemIds: push.settledItemIds,
     idempotencyKey: push.key,
     proration: push.proration,
+    live: push.live,
   };
   return {
     ctx,

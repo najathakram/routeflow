@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -59,6 +60,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
 import { manualPayContext, readRetiredAddons } from "./addon-retirement";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
@@ -252,6 +254,8 @@ export class SubscriptionMutationService {
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, INSIDE
     // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
+    // R1 option B: `resume()` undoes a pre-renewal downgrade price push.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -1080,6 +1084,14 @@ export class SubscriptionMutationService {
       actor: { id: actorId ?? null },
     };
     const preparedTransition = await this.planTransition.prepare(transition);
+    // R1 Option B: if a pre-renewal push already moved Stripe onto the scheduled DOWNGRADE's lower price, put the
+    // current plan's price back FIRST. Disarming the schedule (below) would otherwise leave Stripe on the lowered
+    // price and the upgrade would prorate from it - an overcharge. Fails closed (throws) before any upgrade push.
+    if (sub.stripeSubId && sub.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreIfPushedLocked(tenantId, sub.downgradeToPlanKey, {
+        mustBeCleared: false,
+      });
+    }
     const { manualPay, tenantLabel } = await manualPayContext(
       this.prisma,
       tenantId,
@@ -1522,6 +1534,11 @@ export class SubscriptionMutationService {
       });
       await this.events.emit(tenantId, BILLING_EVENTS.SUBSCRIPTION_RESUMED, {}, { actorId, tx });
     });
+    // R1 option B: the downgrade this clears may already have had its LOWER price pushed for the renewal
+    // (invoice.upcoming / the 48 h sweep) - put Stripe back on the plan the tenant is keeping.
+    if (sub.stripeSubId && sub.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreAfterScheduleCleared(tenantId, sub.downgradeToPlanKey);
+    }
     return this.subscription.getSubscription(tenantId);
   }
 
