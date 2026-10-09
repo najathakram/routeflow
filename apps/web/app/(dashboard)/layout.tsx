@@ -37,6 +37,7 @@ import { TenantLogo } from "@/components/TenantLogo";
 import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
+import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { useSubscription } from "@/lib/api/billing";
@@ -229,13 +230,14 @@ function NavLink({
   onNavigate?: () => void;
 }) {
   const Icon = item.icon;
+  const router = useRouter();
   return (
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
       onClick={(e) => {
         // POS-7: a rail/drawer link cannot leave the counter while a sale is being recorded.
-        if (guardCounterLeave()) {
+        if (guardCounterLeave(() => router.push(item.href))) {
           e.preventDefault();
           return;
         }
@@ -528,6 +530,7 @@ function HeaderTools({
   const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useGuardedRouter();
+  const rawRouter = useRouter(); // a parked leave (Discard) must not re-ask
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
@@ -575,7 +578,7 @@ function HeaderTools({
       </button>
       <button
         onClick={onOpenPalette}
-        className="flex items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
+        className="flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
         aria-label="Open command palette"
       >
         <Search className="h-5 w-5" />
@@ -589,7 +592,7 @@ function HeaderTools({
       >
         <DropdownMenu.Trigger asChild>
           <button
-            className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+            className="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
             aria-label={bellCount > 0 ? `${bellCount} notifications` : "Notifications"}
           >
             <Bell className="h-5 w-5" />
@@ -720,7 +723,8 @@ function HeaderTools({
                           href={n.href}
                           className="min-w-0 flex-1"
                           onClick={(e) => {
-                            if (guardCounterLeave()) e.preventDefault(); // POS-7: not mid-sale
+                            if (guardCounterLeave(() => rawRouter.push(n.href!)))
+                              e.preventDefault(); // POS-7: not mid-sale
                           }}
                         >
                           <p className="text-sm font-medium text-navy">{n.title}</p>
@@ -802,10 +806,13 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 onSelect={() => {
-                  if (guardCounterLeave()) return;
-                  const next = !driveMode;
-                  setDriveMode(next);
-                  if (next) router.push("/routes/my-runs");
+                  const toggle = () => {
+                    const next = !driveMode;
+                    setDriveMode(next);
+                    if (next) rawRouter.push("/routes/my-runs");
+                  };
+                  if (guardCounterLeave(toggle)) return;
+                  toggle();
                 }}
               >
                 <Truck className="h-4 w-4 text-navy/70" />
@@ -820,7 +827,8 @@ function HeaderTools({
               <PortalSwitchLink
                 to="buyer"
                 onClick={(e) => {
-                  if (guardCounterLeave()) e.preventDefault();
+                  const href = e.currentTarget.href; // resolved by PortalSwitchLink (presence-aware)
+                  if (guardCounterLeave(() => window.location.assign(href))) e.preventDefault();
                 }}
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 iconClassName="h-4 w-4 text-navy/70"
@@ -859,7 +867,7 @@ function HeaderTools({
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => {
-                  if (guardCounterLeave()) return;
+                  if (guardCounterLeave(() => void logout())) return;
                   void logout();
                 }}
               >
@@ -1182,6 +1190,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   useRealtimeUpdates();
 
   const shellRouter = useGuardedRouter();
+  const rawRouter = useRouter(); // the g shortcuts ask the leave guard themselves (a guarded push would ask twice)
   // POS-7: landing at exactly /dashboard with "Open the counter on this device" on opens the counter (once per session).
   useCounterLanding({
     pathname,
@@ -1193,66 +1202,16 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   React.useEffect(() => {
-    let sequence = "";
-    let seqTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const handler = (e: KeyboardEvent) => {
-      // Skip if user is typing in an input/textarea
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        (e.target as HTMLElement)?.isContentEditable
-      )
-        return;
-      // Skip if modifier keys held (except shift for ?)
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      if (e.key === "?") {
-        setShortcutHelpOpen((v) => !v);
-        return;
-      }
-
-      // Sequence shortcuts (g + letter)
-      sequence += e.key.toLowerCase();
-      if (seqTimer) clearTimeout(seqTimer);
-      seqTimer = setTimeout(() => {
-        sequence = "";
-      }, 800);
-
-      if (sequence === "go") {
-        shellRouter.push("/orders");
-        sequence = "";
-      } else if (sequence === "gr") {
-        if (routesAccess) shellRouter.push("/routes");
-        sequence = "";
-      } else if (sequence === "gd") {
-        if (routesAccess) shellRouter.push("/drivers");
-        sequence = "";
-      } else if (sequence === "gc") {
-        shellRouter.push("/customers");
-        sequence = "";
-      } else if (sequence === "gi") {
-        shellRouter.push("/invoices");
-        sequence = "";
-      } else if (sequence === "gf") {
-        shellRouter.push("/finance/dashboard");
-        sequence = "";
-      } else if (sequence === "gs") {
-        shellRouter.push("/settings");
-        sequence = "";
-      } else if (sequence === "gt") {
-        if (counterEnabled) shellRouter.push("/orders/counter-sale");
-        sequence = "";
-      } else if (sequence === "gh") {
-        shellRouter.push("/dashboard");
-        sequence = "";
-      }
-    };
+    // "g" + letter navigation and "?" help; the rules (typing, modifiers, the cart's leave guard) live in lib/nav-shortcuts.
+    const handler = createNavShortcutHandler({
+      push: (href) => rawRouter.push(href),
+      routesAccess,
+      counterEnabled,
+      toggleHelp: () => setShortcutHelpOpen((v) => !v),
+    });
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter, routesAccess, counterEnabled]);
+  }, [rawRouter, routesAccess, counterEnabled]);
 
   const SHORTCUTS = React.useMemo(
     () =>

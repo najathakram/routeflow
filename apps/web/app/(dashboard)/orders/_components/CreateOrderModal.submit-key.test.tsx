@@ -428,7 +428,7 @@ describe("CreateOrderModal - the key already made an order (SA-715)", () => {
 
 describe("CreateOrderModal - saved, credits not applied (B1201)", () => {
   const COPY =
-    "The order was saved, but the credit notes weren't applied. Apply them on the order.";
+    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";
   beforeEach(() => {
     jest.clearAllMocks();
     mockScanV2 = false;
