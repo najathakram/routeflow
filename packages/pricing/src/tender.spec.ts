@@ -1,4 +1,7 @@
 import {
+  centsToDollars,
+  dollarsToCents,
+  isWholeCents,
   TENDER_METHOD_VALUES,
   TENDER_RULES,
   TENDER_SURFACE_VALUES,
@@ -143,5 +146,26 @@ describe("planTenderLegs", () => {
       expect(() => planTenderLegs([inv("a", 1000)], [leg("CARD", bad)])).toThrow();
       expect(() => planTenderLegs([inv("a", bad)], [leg("CARD", 100)])).toThrow();
     }
+  });
+});
+
+describe("dollarsToCents / centsToDollars", () => {
+  it("round-trips EVERY cent from 0.00 to 1000.00 exactly (executed, not sampled)", () => {
+    const bad: number[] = [];
+    for (let c = 0; c <= 100_000; c++) {
+      const d = centsToDollars(c);
+      if (dollarsToCents(d) !== c || !isWholeCents(d)) bad.push(c);
+    }
+    expect(bad).toEqual([]);
+    // the float-unsafe spellings: 19.99 * 100 is 1998.9999999999998
+    expect(dollarsToCents(19.99)).toBe(1999);
+    expect(dollarsToCents(1.1)).toBe(110);
+    expect(dollarsToCents(0.29)).toBe(29);
+  });
+
+  it("refuses a sub-cent or non-finite dollar amount, and a non-integer or unsafe cent count", () => {
+    for (const d of [1.005, 0.001, Number.NaN, Infinity]) expect(() => dollarsToCents(d)).toThrow();
+    for (const c of [1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2])
+      expect(() => centsToDollars(c)).toThrow();
   });
 });

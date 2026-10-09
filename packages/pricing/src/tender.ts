@@ -1,4 +1,5 @@
 import { MoneyInvariantError } from "./money-invariants";
+import { isWholeCents, roundMoney } from "./pricing";
 
 /**
  * Split-payment tender vocabulary and the pure leg-placement plan, in INTEGER CENTS. No clock, no IO.
@@ -123,4 +124,23 @@ export function planTenderLegs(
     changeCents += legs[i].amountCents - place(i, legs[i].amountCents);
   }
   return { placements, changeCents, refusedLegIndexes };
+}
+
+/**
+ * Dollars -> integer cents for a tender amount. The ONE conversion (never `Math.round(x * 100)` inline):
+ * roundMoney snaps the float tail first. Throws on a sub-cent or non-finite amount (refused, never rounded).
+ */
+export function dollarsToCents(dollars: number): number {
+  if (!isWholeCents(dollars)) {
+    throw new MoneyInvariantError(`amount must be whole cents (got ${dollars})`);
+  }
+  return Math.round(roundMoney(dollars) * 100);
+}
+
+/** Integer cents -> dollars (exact: the closest double to the decimal, whole cents by construction). */
+export function centsToDollars(cents: number): number {
+  if (!Number.isSafeInteger(cents)) {
+    throw new MoneyInvariantError(`cents must be a safe integer (got ${cents})`);
+  }
+  return cents / 100;
 }
