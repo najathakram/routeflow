@@ -1,5 +1,3 @@
-import * as fs from "fs";
-import * as path from "path";
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -50,6 +48,7 @@ const PARENT = {
   ],
 };
 let mockProducts: unknown[] = [PLAIN];
+let mockDraft: unknown = undefined;
 
 const CUSTOMERS = [
   {
@@ -107,7 +106,7 @@ jest.mock("@/lib/api/drafts", () => ({
   useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: mockCreateDraft, isPending: false }),
   useUpdateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
   useDeleteDraft: () => ({ mutate: jest.fn() }),
-  useDraft: () => ({ data: undefined, isFetching: false }),
+  useDraft: () => ({ data: mockDraft, isFetching: false }),
 }));
 jest.mock("@/lib/api/margin", () => ({
   useMarginConfig: () => ({ data: undefined }),
@@ -141,6 +140,7 @@ const backdateLink = () => screen.queryByRole("button", { name: "Backdate this o
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDraft = undefined;
   mockProducts = [];
   mockCreateError = null;
 });
@@ -200,10 +200,46 @@ describe("Backdate this order (row 100)", () => {
     expect(mockCreateMutate.mock.calls[0][0].orderDate).toBe("2026-10-01");
   });
 
-  it("a parked draft that already has an order date shows the field straight away", () => {
-    // The hydrated draft path sets orderDate; the field must not hide a date someone already chose.
-    const src = fs.readFileSync(path.join(__dirname, "CreateOrderModal.tsx"), "utf8");
-    expect(src).toMatch(/showOrderDate\s*=\s*backdateOpen\s*\|\|\s*!!orderDate/);
+  it("a resumed draft that already has an order date shows the field straight away", async () => {
+    mockDraft = {
+      id: "d1",
+      kind: "ORDER",
+      payload: { customer: null, lineItems: [], orderDate: "2026-10-01" },
+    };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
+    const field = await waitFor(() => {
+      const el = orderDateInput();
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(field).toHaveValue("2026-10-01");
+    expect(backdateLink()).toBeNull();
+  });
+
+  it("clearing a resumed draft's date from the keyboard keeps the focused field on screen", async () => {
+    mockDraft = {
+      id: "d1",
+      kind: "ORDER",
+      payload: { customer: null, lineItems: [], orderDate: "2026-10-01" },
+    };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} resumeDraftId="d1" />);
+    const field = await waitFor(() => {
+      const el = orderDateInput();
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    field.focus();
+    fireEvent.change(field, { target: { value: "" } });
+    expect(orderDateInput()).toBe(field); // the SAME node: it was not unmounted under the cursor
+    expect(field).toHaveFocus();
+  });
+
+  it("'Use today' hands focus to the Backdate link it folds back to (never <body>)", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(backdateLink()!);
+    await user.click(screen.getByRole("button", { name: "Use today" }));
+    await waitFor(() => expect(backdateLink()).toHaveFocus());
   });
 
   it("reopening the builder folds it back behind the link", async () => {

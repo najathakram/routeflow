@@ -1120,10 +1120,20 @@ export function CreateOrderModal({
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
   const [orderDate, setOrderDate] = React.useState("");
-  // Row 100: the Order date control sits behind a "Backdate this order" link; a date already chosen (a resumed draft) shows it.
+  // Row 100: the Order date control sits behind a "Backdate this order" link. `backdateOpen` is the one switch (a resumed
+  // draft with a date sets it at hydrate), so clearing the date from the keyboard never unmounts the focused input.
   const [backdateOpen, setBackdateOpen] = React.useState(false);
-  const showOrderDate = backdateOpen || !!orderDate;
+  const showOrderDate = backdateOpen;
   const orderDateRef = React.useRef<HTMLInputElement>(null);
+  const backdateLinkRef = React.useRef<HTMLButtonElement>(null);
+  const focusAfterToggle = React.useRef<"date" | "link" | null>(null);
+  React.useEffect(() => {
+    // Focus follows the toggle: the date field when it opens, the link when it folds away (the clicked control unmounts).
+    const target = focusAfterToggle.current;
+    focusAfterToggle.current = null;
+    if (target === "date") orderDateRef.current?.focus();
+    if (target === "link") backdateLinkRef.current?.focus();
+  }, [backdateOpen]);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
 
@@ -1292,6 +1302,7 @@ export function CreateOrderModal({
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setOrderDate(p.orderDate ?? "");
+    setBackdateOpen(!!p.orderDate);
     setCommissionRatePct(p.commissionRatePct ?? null);
     setFloorAcked(new Set(p.floorAcked ?? []));
     // fulfillPath round-trips from the parked draft itself — NOT re-derived from
@@ -2387,6 +2398,7 @@ export function CreateOrderModal({
                       type="button"
                       onClick={() => {
                         setOrderDate("");
+                        focusAfterToggle.current = "link";
                         setBackdateOpen(false);
                       }}
                       className="font-medium text-brand-500 hover:underline"
@@ -2399,9 +2411,10 @@ export function CreateOrderModal({
                 <div className="flex items-end">
                   <button
                     type="button"
+                    ref={backdateLinkRef}
                     onClick={() => {
+                      focusAfterToggle.current = "date";
                       setBackdateOpen(true);
-                      window.setTimeout(() => orderDateRef.current?.focus(), 0);
                     }}
                     className="min-h-10 text-sm font-medium text-brand-500 hover:underline"
                   >
