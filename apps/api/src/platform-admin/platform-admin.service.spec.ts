@@ -1641,7 +1641,7 @@ describe("PlatformAdminService — audit provenance", () => {
       arrange({ from: "GROWTH", fromKey: "GROWTH" });
       await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
       expect(withAdvisoryLock).toHaveBeenCalledWith(
-        { family: "tenant-price", key: TENANT_ID, mode: "wait" },
+        { family: "tenant-price", key: TENANT_ID, mode: "wait", waitMs: 20_000 },
         expect.any(Function),
       );
     });
@@ -1701,6 +1701,60 @@ describe("PlatformAdminService — audit provenance", () => {
       const [, revert, rev] = stripe.updateSubscription.mock.calls[1];
       expect(rev.idempotencyKey).toBe(`${fwd.idempotencyKey}:revert`);
       expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
+    });
+
+    it("S4: a lost commit acknowledgement is a SUCCESS - the audit row and the cache invalidation still happen, Stripe is not reverted", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      const target = { planKey: "SCALE", planVersionId: "v-9" };
+      prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+        await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        // the write committed; the client is told it failed
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue(target);
+        throw new Error("connection lost after commit");
+      });
+      (prisma.tenant as any).findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      });
+
+      const res: any = await service.updatePlan(
+        TENANT_ID,
+        { plan: "PROFESSIONAL" } as any,
+        ADMIN_ID,
+      );
+
+      expect(res).toMatchObject({ id: TENANT_ID, plan: "PROFESSIONAL" });
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // the push only
+      expect(entitlementsService.invalidate).toHaveBeenCalledWith(TENANT_ID);
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "TENANT_PLAN_CHANGED", userId: ADMIN_ID }),
+      );
+    });
+
+    it("S4: a failed revert is a distinct 502 PLAN_CHANGE_STRIPE_AHEAD (not the ordinary 409), with an audit row naming both prices", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+      const applyPush = stripe.updateSubscription.getMockImplementation()!;
+      stripe.updateSubscription
+        .mockImplementationOnce(applyPush)
+        .mockRejectedValueOnce(new Error("stripe down"));
+
+      const err: any = await service
+        .updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID)
+        .catch((e: unknown) => e);
+
+      expect(err.getStatus()).toBe(502);
+      expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
+      expect(err.getResponse().message).toContain("Stripe now bills $499");
+      const created = (prisma as any).auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+      expect(created).toContainEqual(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          userId: ADMIN_ID,
+          meta: expect.objectContaining({ kind: "plan_change_stripe_ahead" }),
+        }),
+      );
     });
 
     it("re-saving the plan the tenant is already on pushes nothing", async () => {

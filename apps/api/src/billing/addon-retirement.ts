@@ -4,7 +4,7 @@ import { emitAddonDelta } from "./addon-ledger";
 import { BillingEventService } from "./billing-event.service";
 import { writeManualInvoiceNotice } from "./manual-invoice-notice";
 import { addonSkuCode, isAddonIncludedAtPlan } from "./plan-catalog.constants";
-import { planChangeAddonsChanged } from "./plan-change-stripe";
+import { planChangeAddonsChanged, type PlanChangeProration } from "./plan-change-stripe";
 
 /**
  * SA-733 D8 / B1103: a plan the catalog bundles an add-on into must not keep BILLING that add-on. On an
@@ -83,6 +83,8 @@ export interface PlanChangeCtx {
   settledItemIds: ReadonlySet<string>;
   /** The push's per-attempt idempotency key — recorded on the attempt's ledger event (SA-733r3 N4). */
   idempotencyKey?: string;
+  /** The proration behaviour actually SENT (`none` on a trialing / past_due / unpaid subscription). */
+  proration?: PlanChangeProration;
 }
 
 /** No Stripe push happened (no subscription, Stripe off, a terminal subscription): nothing to prove. */

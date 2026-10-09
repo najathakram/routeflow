@@ -1,6 +1,6 @@
 /**
  * SA-733r [M7]: the Stripe half of every price-moving plan write, tested at the StripeService boundary (a
- * mock — no live Stripe). Covers the shapes `upgrade()` / `updatePlan` / the scheduled-downgrade cron share:
+ * mock — no live Stripe). Covers the shapes `upgrade()` / `updatePlan` / a schedule-time downgrade would share:
  * `create_prorations` for an upgrade, `none` for a downgrade, the override beating the plan price, fail-closed
  * before any write, and the needs-reconcile seam.
  */
@@ -18,7 +18,7 @@ const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
 const BASE = {
   id: "si_base",
   price: {
-    unit_amount: 24900,
+    unit_amount: 34900,
     currency: "usd",
     recurring: { interval: "month" },
     product: "prod_growth",
@@ -152,7 +152,7 @@ describe("pushPlanChange", () => {
 
     const [, params, opts] = stripe.updateSubscription.mock.calls[1];
     expect(params.proration_behavior).toBe("create_prorations");
-    expect(params.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
+    expect(params.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 34900 } });
     expect(opts.idempotencyKey).toBe(`${push.key}:revert`);
   });
 });
@@ -203,7 +203,7 @@ describe("pushPlanChange — Opus review folds", () => {
   });
 });
 
-describe("runStripeFirstPlanChange as the scheduled-downgrade cron will call it", () => {
+describe("runStripeFirstPlanChange as a schedule-time downgrade would call it", () => {
   const sub = {
     stripeSubId: "sub_1",
     planKey: "SCALE",

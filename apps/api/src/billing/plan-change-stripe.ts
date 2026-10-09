@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
+import { prorationAllowedFor } from "./price-override";
 import {
   isLiveStripeSubscriptionStatus,
   isTerminalStripeSubscriptionStatus,
@@ -80,7 +81,11 @@ interface PriceData {
 }
 
 interface RevertPlan {
-  base: { id: string; price_data: PriceData };
+  baseId: string;
+  /** The base item's price BEFORE this push. */
+  baseBefore: PriceData;
+  /** False when the base item was left out of the update (its amount did not change): a revert leaves it alone. */
+  baseChanged: boolean;
   restore: { oldItemId: string; rowId: string; price_data: PriceData; quantity: number }[];
 }
 
@@ -91,6 +96,7 @@ export interface PlanChangePush {
   reason?: string;
   tenantId: string;
   stripeSubId?: string;
+  /** The proration behaviour actually SENT (a past_due / unpaid subscription downgrades `create_prorations` to `none`). */
   proration: PlanChangeProration;
   /** The per-attempt idempotency key; the revert uses `${key}:revert`. */
   key?: string;
@@ -168,6 +174,10 @@ export async function pushPlanChange(
     );
     throw new ServiceUnavailableException(PLAN_CHANGE_SUBSCRIPTION_INACTIVE);
   }
+  // Same rule as the price override: a mid-period proration on a subscription nobody is paying piles
+  // credit/charge onto an invoice that will not be settled, so a delinquent subscription gets `none`.
+  const proration: PlanChangeProration =
+    a.proration === "create_prorations" && !prorationAllowedFor(sub.status) ? "none" : a.proration;
   if (!a.price) {
     throw new BadRequestException(
       "No price is resolvable for this plan — set the tenant's custom monthly fee first.",
@@ -211,21 +221,32 @@ export async function pushPlanChange(
 
   const interval = basePrior.recurring.interval;
   const newAmountCents = toCents(interval === "year" ? a.price.annual : a.price.monthly);
+  // A custom-fee tenant moves plan but not price: swapping the item's price would only mint a new Price and
+  // net-zero proration lines while the API says "unchanged". Leave the base item out of the update.
+  const baseChanged = newAmountCents !== basePrior.unit_amount;
+  if (!baseChanged && deletes.length === 0) {
+    logger.log(
+      `Plan change tenant ${a.tenantId}: base price unchanged, no add-on to delete — no push`,
+    );
+    return skipped("price_unchanged");
+  }
   const nonce = randomUUID();
   const key = `${a.tenantId}:plan-change:${a.targetPlanVersionId}:${nonce}`;
 
-  let productId: string;
-  try {
-    const product = await stripe.client.products.create(
-      { name: `RouteFlow ${a.planName} — ${interval === "year" ? "annual" : "monthly"}` },
-      { idempotencyKey: `${key}:product` },
-    );
-    productId = product.id;
-  } catch (err) {
-    logger.error(
-      `Plan change tenant ${a.tenantId}: Stripe product failed: ${(err as Error).message}`,
-    );
-    throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+  let productId = basePrior.product;
+  if (baseChanged) {
+    try {
+      const product = await stripe.client.products.create(
+        { name: `RouteFlow ${a.planName} — ${interval === "year" ? "annual" : "monthly"}` },
+        { idempotencyKey: `${key}:product` },
+      );
+      productId = product.id;
+    } catch (err) {
+      logger.error(
+        `Plan change tenant ${a.tenantId}: Stripe product failed: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+    }
   }
 
   const newPriceData: PriceData = {
@@ -244,7 +265,8 @@ export async function pushPlanChange(
       targetPlanVersionId: a.targetPlanVersionId,
       priorAmountCents: basePrior.unit_amount,
       basePriceCents: newAmountCents,
-      proration: a.proration,
+      baseChanged,
+      proration,
       deleteItemIds: deletes.map((d) => d.itemId),
     })}`,
   );
@@ -253,10 +275,10 @@ export async function pushPlanChange(
       a.stripeSubId,
       {
         items: [
-          { id: base.id, price_data: newPriceData },
+          ...(baseChanged ? [{ id: base.id, price_data: newPriceData }] : []),
           ...deletes.map((d) => ({ id: d.itemId, deleted: true })),
         ],
-        proration_behavior: a.proration,
+        proration_behavior: proration,
       },
       { idempotencyKey: key },
     );
@@ -269,21 +291,23 @@ export async function pushPlanChange(
   for (const d of deletes) settled.add(d.itemId);
   logger.log(
     `Plan change pushed tenant ${a.tenantId} (${key}): ${basePrior.unit_amount} -> ${newAmountCents} cents ` +
-      `(${interval}, proration_behavior=${a.proration}, ${deletes.length} add-on item(s) deleted)`,
+      `(${interval}, proration_behavior=${proration}, ${deletes.length} add-on item(s) deleted)`,
   );
 
   return {
     pushed: true,
     tenantId: a.tenantId,
     stripeSubId: a.stripeSubId,
-    proration: a.proration,
+    proration,
     key,
     nonce,
     settledItemIds: settled,
     newAmountCents,
     productId,
     revert: {
-      base: { id: base.id, price_data: basePrior },
+      baseId: base.id,
+      baseBefore: basePrior,
+      baseChanged,
       restore: deletes.map((d) => ({
         oldItemId: d.itemId,
         rowId: d.rowId,
@@ -312,12 +336,12 @@ export async function revertPlanChange(
   push: PlanChangePush,
 ): Promise<RestoredItem[]> {
   if (!push.pushed || !push.revert || !push.key || !push.stripeSubId) return [];
-  const { base, restore } = push.revert;
+  const { baseId, baseBefore, baseChanged, restore } = push.revert;
   const res = await deps.stripe.updateSubscription(
     push.stripeSubId,
     {
       items: [
-        { id: base.id, price_data: base.price_data },
+        ...(baseChanged ? [{ id: baseId, price_data: baseBefore }] : []),
         ...restore.map((r) => ({
           price_data: r.price_data,
           quantity: r.quantity,

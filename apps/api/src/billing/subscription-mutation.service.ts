@@ -53,13 +53,13 @@ import {
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
-import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import { CUSTOM_FEE_UNCHANGED, priceOverrideOf, prorationAllowedFor } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
 import { manualPayContext, readRetiredAddons } from "./addon-retirement";
-import { withTenantPriceLock } from "./tenant-price-lock";
+import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
 export interface SubscribeInput {
@@ -140,6 +140,9 @@ const ADDON_ENABLE_BILLING_FAILED =
   "We couldn't turn this add-on on because billing didn't go through. Nothing was changed. Please try again.";
 const ADDON_DISABLE_BILLING_FAILED =
   "We couldn't turn this add-on off because billing didn't go through. It is still on. Please try again.";
+/** The retryable 409 copy when another change to this account's plan is still in flight. */
+const UPGRADE_BUSY =
+  "Your plan is already being changed. Please wait a moment, then check your plan before trying again.";
 const ADDON_ANNUAL_NOT_SUPPORTED =
   "Add-ons can't be added to an annual plan online yet. Please contact support.";
 
@@ -774,6 +777,7 @@ export class SubscriptionMutationService {
           downgradeToPlanKey: true,
           cancelAtPeriodEnd: true,
           priceOverrideMonthly: true, // #2223: an override row's upgrade quotes 0
+          stripeSubId: true, // R2: a trialing / past_due / unpaid subscription quotes 0
         },
       }),
     ]);
@@ -895,7 +899,7 @@ export class SubscriptionMutationService {
       // #2223 / SA-444a: an override row keeps its negotiated fee — quote 0 and say why.
       const override = priceOverrideOf(priorSub);
       const proratedNow =
-        override != null
+        override != null || !(await this.stripeProrates(priorSub.stripeSubId))
           ? 0
           : this.proration.proratedDiff(
               {
@@ -982,12 +986,31 @@ export class SubscriptionMutationService {
   }
 
   /**
+   * Whether a mid-period upgrade on this Stripe subscription is prorated at all (read-only, best effort). A
+   * trialing, past_due or unpaid subscription takes proration `none` (lead ruling R2), so the preview must not
+   * quote a charge. No subscription, Stripe off or an unreadable Stripe keep the local estimate.
+   */
+  private async stripeProrates(stripeSubId: string | null | undefined): Promise<boolean> {
+    if (!stripeSubId || !this.stripe.isConfigured) return true;
+    try {
+      return prorationAllowedFor((await this.stripe.getSubscription(stripeSubId)).status);
+    } catch {
+      return true;
+    }
+  }
+
+  /**
    * Upgrade to a higher plan — instant, with the prorated price difference charged now. Serialised per tenant on
    * the `tenant-price` lock (SA-733 D8): every read below, the Stripe push, the local write and any revert run
    * inside it, so a second attempt sees the first one's result ("not an upgrade") instead of racing it.
    */
   upgrade(tenantId: string, planKey: string, actorId?: string) {
-    return withTenantPriceLock(tenantId, () => this.upgradeLocked(tenantId, planKey, actorId));
+    // A tenant-facing endpoint: a SHORT wait (a double-click burst must not pin the small tenant-price pool for
+    // the long admin wait) and tenant-safe copy on the retryable 409.
+    return underTenantPriceLock(tenantId, () => this.upgradeLocked(tenantId, planKey, actorId), {
+      waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
+      busyMessage: UPGRADE_BUSY,
+    });
   }
 
   private async upgradeLocked(tenantId: string, planKey: string, actorId?: string) {
@@ -1046,7 +1069,7 @@ export class SubscriptionMutationService {
     // figures re-agree). The prorated CHARGE below still nets against the catalog entitlement.
     const override = priceOverrideOf(sub);
     const newBase = override ?? newMonthly;
-    const proratedNow =
+    const quotedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
     const transition = {
@@ -1074,8 +1097,12 @@ export class SubscriptionMutationService {
         def,
         proration: "create_prorations",
         retireAddons: true,
+        actorId,
       }),
     );
+    // Lead ruling R2 / S1: Stripe sends proration `none` on a trialing, past_due or unpaid subscription, so
+    // there is NO charge to quote - the response, the ledger payload and the email must not claim one.
+    const proratedNow = flow.ctx.proration === "none" ? 0 : quotedNow;
 
     const written = this.prisma.$transaction(async (tx) => {
       // The hook FIRST, exactly like subscribe()/updatePlan()/the cron: every site takes the

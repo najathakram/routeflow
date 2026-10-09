@@ -1711,13 +1711,11 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       },
     );
 
-    it("M7: a trialing subscription is repriced and still honours now_prorated", async () => {
+    it("M7 / lead R2: a trialing subscription is repriced but takes proration none even when now_prorated is asked (no paid period to prorate)", async () => {
       arrange("trialing");
       const result = await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
       expect(result.synced).toBe(true);
-      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe(
-        "create_prorations",
-      );
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
     });
 
     it.each(["canceled", "incomplete", "incomplete_expired", "paused"])(

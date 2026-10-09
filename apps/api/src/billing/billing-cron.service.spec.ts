@@ -30,6 +30,8 @@ function make(
     lockedTenant?: { status?: string; class?: string; deletedAt?: Date | null };
     /** #2641: per-tenant overrides of the subscription row re-read under the lock. */
     lockedSubs?: Record<string, Record<string, unknown>>;
+    /** SA-733 D8: per-tenant overrides of the row as re-read UNDER the tenant-price lock (after the scan). */
+    rereadSubs?: Record<string, Record<string, unknown>>;
     /** SA-733r M7: the StripeService mock (default: not configured, no calls). */
     stripe?: any;
   } = {},
@@ -84,7 +86,18 @@ function make(
       findMany: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
       // The revert's fresh read of the committed row (SA-733r M7).
-      findUnique: jest.fn(async ({ where }: any) => scanned.get(where.tenantId) ?? null),
+      // Also the cron's re-read UNDER the tenant-price lock (SA-733 D8): the committed row, plus the tenant's
+      // status. `data.rereadSubs` lets a test move a column between the scan and the lock.
+      findUnique: jest.fn(async ({ where }: any) => {
+        const row = scanned.get(where.tenantId);
+        return row
+          ? {
+              ...row,
+              ...(data.rereadSubs?.[where.tenantId] ?? {}),
+              tenant: { status: "ACTIVE", deletedAt: null },
+            }
+          : null;
+      }),
     },
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(data.cancelAddons ?? []),
@@ -665,9 +678,9 @@ describe("BillingCronService", () => {
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
-  // SA-733r M7: a scheduled downgrade reaches Stripe too — the downgraded price, proration none, under the
-  // tenant-price lock — and one tenant Stripe cannot take never aborts the sweep.
-  describe("applyScheduledDowngrades — Stripe push (SA-733r M7)", () => {
+  // Lead ruling R1: a downgrade reaches Stripe at SCHEDULE time, so this 02:00 sweep NEVER pushes a price. It
+  // flips the local row (from the row re-read UNDER the tenant-price lock) and only VERIFIES Stripe read-only.
+  describe("applyScheduledDowngrades - never pushes to Stripe (lead R1)", () => {
     const item = (cents: number) => ({
       id: "si_base",
       quantity: 1,
@@ -699,90 +712,127 @@ describe("BillingCronService", () => {
         ],
         addonSkus: [],
       });
+    const alerts = (spy: jest.SpyInstance) =>
+      spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("needs_reconcile"));
 
-    it("pushes the downgraded plan price with proration none, then applies it locally", async () => {
-      const stripe = fakeStripeSubscription([item(34900)]);
+    it("applies the downgrade locally and sends Stripe NOTHING - no update, no product, no schedule", async () => {
+      const stripe = fakeStripeSubscription([item(5900)]);
       const { svc, catalog, tx } = make({ downgrades: [row("t1")], stripe });
       withVersionId(catalog);
       await svc.applyScheduledDowngrades();
 
-      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
-      const [subId, params, opts] = stripe.updateSubscription.mock.calls[0];
-      expect(subId).toBe("sub_1");
-      expect(params.proration_behavior).toBe("none");
-      expect(params.items[0].price_data.unit_amount).toBe(5900);
-      expect(opts.idempotencyKey).toMatch(/^t1:plan-change:v7:/);
       expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(stripe.client.products.create).not.toHaveBeenCalled();
     });
 
-    it("the tenant's price override WINS over the downgraded plan's price", async () => {
+    it("read-only verification: Stripe already bills the downgraded price -> no alert", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const stripe = fakeStripeSubscription([item(5900)]); // the schedule-time push put it here
+      const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+      expect(stripe.getSubscription).toHaveBeenCalledTimes(1);
+      expect(alerts(error)).toHaveLength(0);
+      error.mockRestore();
+    });
+
+    it("read-only verification: Stripe still bills the OLD price -> a needs-reconcile ALERT, still no push", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
       const stripe = fakeStripeSubscription([item(34900)]);
-      const { svc, catalog } = make({
-        downgrades: [row("t1", { priceOverrideMonthly: 180, basePriceSnapshot: 180 })],
+      const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+
+      const [alert] = alerts(error);
+      expect(JSON.parse(alert.slice(alert.indexOf("{")))).toMatchObject({
+        tenantId: "t1",
+        stripeSubId: "sub_1",
+        stripeState: { billedCents: 34900, expectedCents: 5900 },
+      });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      error.mockRestore();
+    });
+
+    it("B1: the fee verified and booked is the one read UNDER the lock, not the stale scanned one", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const stripe = fakeStripeSubscription([item(18000)]);
+      const fee = { priceOverrideMonthly: 180 };
+      const { svc, catalog, tx, events } = make({
+        downgrades: [row("t1")], // the scan saw NO override
+        rereadSubs: { t1: fee }, // the committed row, read under the lock, has one
+        lockedSubs: { t1: fee },
         stripe,
       });
       withVersionId(catalog);
       await svc.applyScheduledDowngrades();
-      expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
-        18000,
+
+      expect(tx.tenantSubscription.update.mock.calls[0][0].data.basePriceSnapshot).toBe(180);
+      const planChanged = events.emit.mock.calls.find(
+        (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
       );
+      expect(planChanged[3].amountDelta).toBe(-169); // 180 - the stored 349, not 59 - 349
+      expect(alerts(error)).toHaveLength(0); // Stripe's 18000 IS the fee: verified against the fresh row
+      error.mockRestore();
     });
 
-    it("pushes nothing for a tenant without a stripeSubId (a manual-pay tenant), and still applies it", async () => {
+    it("B1: a fee that moves between the under-lock read and the transaction is caught by the in-tx check: nothing is written", async () => {
+      const { svc, catalog, tx } = make({
+        downgrades: [row("t1")],
+        lockedSubs: { t1: { priceOverrideMonthly: 180 } }, // committed after the re-read
+      });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("B1: a schedule disarmed between the scan and the lock is skipped before anything is read from Stripe", async () => {
+      const stripe = fakeStripeSubscription([item(34900)]);
+      const { svc, catalog, tx } = make({
+        downgrades: [row("t1")],
+        rereadSubs: { t1: { downgradeToPlanKey: null } },
+        stripe,
+      });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it("a tenant without a stripeSubId (manual-pay) is applied with no Stripe read at all", async () => {
       const stripe = fakeStripeSubscription([item(34900)]);
       const { svc, catalog, tx } = make({ downgrades: [row("t1", { stripeSubId: null })], stripe });
       withVersionId(catalog);
       await svc.applyScheduledDowngrades();
       expect(stripe.getSubscription).not.toHaveBeenCalled();
-      expect(stripe.updateSubscription).not.toHaveBeenCalled();
       expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1);
     });
 
     it("takes the tenant-price advisory lock per tenant (the family the upgrade and the price override take)", async () => {
       const { withAdvisoryLock } = jest.requireMock("../common/db-locks");
       withAdvisoryLock.mockClear();
-      const stripe = fakeStripeSubscription([item(34900)]);
-      const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
+      const { svc, catalog } = make({
+        downgrades: [row("t1")],
+        stripe: fakeStripeSubscription([item(5900)]),
+      });
       withVersionId(catalog);
       await svc.applyScheduledDowngrades();
       expect(withAdvisoryLock).toHaveBeenCalledWith(
-        { family: "tenant-price", key: "t1", mode: "wait" },
+        { family: "tenant-price", key: "t1", mode: "wait", waitMs: 20_000 },
         expect.any(Function),
       );
     });
 
-    it("one tenant Stripe cannot take (unreadable) is held back, still armed, and the NEXT tenant is applied", async () => {
-      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-      const stripe = fakeStripeSubscription([item(34900)]);
+    it("an unreadable Stripe during verification is logged and never fails the sweep or the next tenant", async () => {
+      const stripe = fakeStripeSubscription([item(5900)]);
       stripe.getSubscription.mockRejectedValueOnce(new Error("stripe down"));
       const { svc, catalog, tx } = make({
         downgrades: [row("t1"), row("t2", { stripeSubId: "sub_2" })],
         stripe,
       });
       withVersionId(catalog);
-
       await expect(svc.applyScheduledDowngrades()).resolves.not.toThrow();
-
-      expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(1); // t2 only
-      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
-      expect(stripe.updateSubscription.mock.calls[0][0]).toBe("sub_2");
-      expect(error.mock.calls.map((c) => String(c[0])).join("\n")).toContain("tenant=t1");
-      error.mockRestore();
-    });
-
-    it("overtaken after the push (the schedule changed before the lock): Stripe is put back, the row stays armed", async () => {
-      const stripe = fakeStripeSubscription([item(34900)]);
-      const { svc, catalog, tx } = make({
-        downgrades: [row("t1")],
-        stripe,
-        lockedSubs: { t1: { downgradeToPlanKey: null } },
-      });
-      withVersionId(catalog);
-      await svc.applyScheduledDowngrades();
-
-      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
-      expect(stripe.updateSubscription).toHaveBeenCalledTimes(2); // push + revert
-      expect(stripe.amountOf("si_base")).toBe(34900); // Stripe back on the price it started at
+      expect(tx.tenantSubscription.update).toHaveBeenCalledTimes(2); // both flipped
     });
   });
 

@@ -135,6 +135,7 @@ describeDb(
         noop,
         noop,
         planTransitionStub,
+        {} as any, // stripe - the billing service is a stub; nothing here pushes a plan change
       );
     });
 

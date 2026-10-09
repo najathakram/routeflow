@@ -7,8 +7,8 @@ import {
   prorationAllowedFor,
   prorationBehaviorFor,
   sameOverride,
-  STRIPE_PRICE_PUSH_STATUSES,
 } from "./price-override";
+import { isLiveStripeSubscriptionStatus } from "./stripe-period";
 
 describe("price-override helpers (SA-733 D8 / M7)", () => {
   it("maps the effective mode to the Stripe proration behavior", () => {
@@ -17,11 +17,15 @@ describe("price-override helpers (SA-733 D8 / M7)", () => {
   });
 
   it("pushes to every live status including past_due / unpaid, never canceled / incomplete*", () => {
-    expect([...STRIPE_PRICE_PUSH_STATUSES].sort()).toEqual(
-      ["active", "past_due", "trialing", "unpaid"].sort(),
-    );
+    // The one live-status rule (stripe-period.ts): the price push no longer keeps its own copy of the list.
+    for (const live of ["active", "past_due", "trialing", "unpaid"]) {
+      expect(isLiveStripeSubscriptionStatus(live)).toBe(true);
+    }
+    for (const dead of ["canceled", "incomplete", "incomplete_expired", "paused"]) {
+      expect(isLiveStripeSubscriptionStatus(dead)).toBe(false);
+    }
     expect(prorationAllowedFor("active")).toBe(true);
-    expect(prorationAllowedFor("trialing")).toBe(true);
+    expect(prorationAllowedFor("trialing")).toBe(false); // lead R2: nothing is prorated during a trial
     expect(prorationAllowedFor("past_due")).toBe(false);
     expect(prorationAllowedFor("unpaid")).toBe(false);
   });

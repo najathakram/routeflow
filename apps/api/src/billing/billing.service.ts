@@ -22,7 +22,6 @@ import {
   prorationAllowedFor,
   prorationBehaviorFor,
   itemUnitAmount,
-  STRIPE_PRICE_PUSH_STATUSES,
 } from "./price-override";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
@@ -566,7 +565,7 @@ export class BillingService {
     // SA-733r M7: past_due / unpaid are live — an owner price change must reach their next invoice.
     // A Stripe-side `paused` (or incomplete) subscription is skipped: a price change made while it is
     // paused does NOT reach Stripe, so the resume path (B3) must reconcile the price on resume.
-    if (!STRIPE_PRICE_PUSH_STATUSES.includes(stripeSub.status)) {
+    if (!isLiveStripeSubscriptionStatus(stripeSub.status)) {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 

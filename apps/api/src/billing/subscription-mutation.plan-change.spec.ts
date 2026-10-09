@@ -32,6 +32,7 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Logger,
@@ -202,6 +203,7 @@ function make(o: Opts = {}) {
       }),
     },
     user: { count: jest.fn().mockResolvedValue(0) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn(async (fn: any) => {
       const saved = JSON.parse(JSON.stringify({ sub: db.sub, addons: db.addons }));
       try {
@@ -218,6 +220,8 @@ function make(o: Opts = {}) {
     o.stripeStatus ?? "active",
   );
   const events: any = { emit: jest.fn().mockResolvedValue({}) };
+  const entitlements = { invalidate: jest.fn() };
+  const notify = { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) };
   const real = new ProrationService({} as any, {} as any);
   const svc = new SubscriptionMutationService(
     prisma,
@@ -229,11 +233,11 @@ function make(o: Opts = {}) {
       proratedDiff: (...a: Parameters<ProrationService["proratedDiff"]>) => real.proratedDiff(...a),
     } as any,
     { getSubscription: jest.fn().mockResolvedValue({}) } as any,
-    { invalidate: jest.fn() } as any,
+    entitlements as any,
     events,
     { invalidate: jest.fn() } as any,
     stripe as any,
-    { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) } as any,
+    notify as any,
     {
       prepare: jest.fn().mockResolvedValue({}),
       onPlanChange: jest.fn().mockResolvedValue({}),
@@ -241,7 +245,7 @@ function make(o: Opts = {}) {
       invalidateCaches: jest.fn(),
     } as any,
   );
-  return { svc, prisma, tx, stripe, events, db };
+  return { svc, prisma, tx, stripe, events, db, entitlements, notify };
 }
 
 const typesOf = (events: any, type: string) =>
@@ -323,13 +327,119 @@ describe("upgrade(): the plan change reaches Stripe, Stripe-first (B1104)", () =
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("runs under the tenant-price advisory lock, the family the price override takes (wait mode, keyed on the tenant)", async () => {
+  it("S5: a double-click burst that times out on the short wait is a coded retryable 409 with tenant-safe copy, and nothing ran", async () => {
+    const { LockTimeoutError } = jest.requireMock("../common/db-locks");
+    mockWithAdvisoryLock.mockRejectedValueOnce(new LockTimeoutError("tenant-price", "t1", 2500));
+    const { svc, stripe, prisma } = make();
+
+    const err: any = await svc.upgrade("t1", "SCALE", "admin").catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe("CONCURRENT_UPDATE");
+    expect(err.getResponse().message).toMatch(/plan is already being changed/i);
+    expect(err.getResponse().message).not.toMatch(/tenant|stripe|lock/i);
+    expect(stripe.getSubscription).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("runs under the tenant-price advisory lock, the family the price override takes, with the SHORT self-serve wait", async () => {
     const { svc } = make();
     await svc.upgrade("t1", "SCALE", "admin");
     expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
-      { family: "tenant-price", key: "t1", mode: "wait" },
+      { family: "tenant-price", key: "t1", mode: "wait", waitMs: 2_500 },
       expect.any(Function),
     );
+  });
+});
+
+describe("upgrade(): proration follows the subscription's state, and an unchanged price is not re-sent", () => {
+  it("S1: a past_due subscription is pushed with proration none (the same rule as the price override), and the revert reuses it", async () => {
+    const { svc, stripe, tx } = make({ stripeStatus: "past_due" });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(ConflictException);
+
+    expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+    expect(stripe.updateSubscription.mock.calls[1][1].proration_behavior).toBe("none"); // the revert
+  });
+
+  it("R2: an upgrade on a TRIALING Stripe subscription sends proration none and claims NO charge - not in the response, the ledger event or the email", async () => {
+    const { svc, stripe, events, notify } = make({ stripeStatus: "trialing" });
+    const res = await svc.upgrade("t1", "SCALE", "admin");
+
+    expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+    expect(res.proratedNow).toBe(0); // the local estimate would have been > 0 on an active sub
+    expect(typesOf(events, BILLING_EVENTS.PLAN_CHANGED)[0][2].prorated).toBe(0);
+    expect(notify.notifyUpgradeConfirmed.mock.calls[0][3]).toBe(0);
+  });
+
+  it("R2: the same upgrade on an ACTIVE subscription still quotes and sends create_prorations (the control)", async () => {
+    const { svc, stripe, notify } = make();
+    const res = await svc.upgrade("t1", "SCALE", "admin");
+    expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("create_prorations");
+    expect(res.proratedNow).toBeGreaterThan(0);
+    expect(notify.notifyUpgradeConfirmed.mock.calls[0][3]).toBe(res.proratedNow);
+  });
+
+  it("R2: the choose-plan preview quotes 0 for a trialing (or past_due) Stripe subscription, and a positive estimate for an active one", async () => {
+    for (const [status, positive] of [
+      ["trialing", false],
+      ["past_due", false],
+      ["active", true],
+    ] as const) {
+      const { svc } = make({ stripeStatus: status });
+      const p = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+      expect(p.action).toBe("UPGRADE");
+      expect(p.proratedNow! > 0).toBe(positive);
+    }
+  });
+
+  it("R2: an unreadable Stripe leaves the local estimate in the preview (best effort, never an error)", async () => {
+    const { svc, stripe } = make();
+    stripe.getSubscription.mockRejectedValue(new Error("stripe down"));
+    const p = await svc.planChangePreview("t1", "SCALE", "MONTHLY");
+    expect(p.proratedNow).toBeGreaterThan(0);
+  });
+
+  it("S2: a custom-fee tenant whose resolved amount equals the item's amount sends NO Stripe update at all (no net-zero proration noise)", async () => {
+    // The fee 249 is already what the base item bills (24900); the upgrade moves the plan, not the price.
+    const { svc, stripe, tx } = make({
+      sub: { priceOverrideMonthly: 249, basePriceSnapshot: 249 },
+    });
+    await svc.upgrade("t1", "SCALE", "admin");
+
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(stripe.client.products.create).not.toHaveBeenCalled();
+    expect(tx.tenantSubscription.updateMany).toHaveBeenCalled(); // the local plan change still lands
+  });
+
+  it("S2: unchanged price WITH an add-on to delete: the base item is left out of the update, the delete rides alone", async () => {
+    const { svc, stripe } = make({
+      sub: { priceOverrideMonthly: 249, basePriceSnapshot: 249 },
+      addons: [row()],
+    });
+    await svc.upgrade("t1", "SCALE", "admin");
+
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    const params = stripe.updateSubscription.mock.calls[0][1];
+    expect(params.items).toEqual([{ id: "si_fc", deleted: true }]);
+    expect(stripe.client.products.create).not.toHaveBeenCalled(); // no new product/price minted
+    expect(stripe.amountOf("si_base")).toBe(24900);
+  });
+
+  it("S2: ... and its revert re-creates the add-on item without touching the untouched base item", async () => {
+    const { svc, stripe, tx } = make({
+      sub: { priceOverrideMonthly: 249, basePriceSnapshot: 249 },
+      addons: [row()],
+    });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(ConflictException);
+
+    const revert = stripe.updateSubscription.mock.calls[1][1];
+    expect(revert.items).toHaveLength(1);
+    expect(revert.items[0]).toMatchObject({ metadata: { restoredFromItem: "si_fc" } });
+    expect(revert.items[0].id).toBeUndefined();
   });
 });
 
@@ -468,9 +578,9 @@ describe("upgrade(): a failed local write puts Stripe back (SA-733r M7)", () => 
     expect(keys[2]).toMatch(/^t1:plan-change:v8:/);
   });
 
-  it("when the revert ALSO fails: the original error is rethrown and an ERROR-level needs-reconcile alert names the tenant and both states", async () => {
+  it("when the revert ALSO fails: a distinct 502 PLAN_CHANGE_STRIPE_AHEAD names both prices, an audit row is written, and an ERROR alert names the tenant and both states", async () => {
     const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-    const { svc, stripe, tx } = make();
+    const { svc, stripe, tx, prisma } = make();
     tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
     // The push goes through the fake; only the REVERT is refused.
     const applyPush = stripe.updateSubscription.getMockImplementation()!;
@@ -478,7 +588,21 @@ describe("upgrade(): a failed local write puts Stripe back (SA-733r M7)", () => 
       .mockImplementationOnce(applyPush)
       .mockRejectedValueOnce(new Error("stripe down"));
 
-    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toBeInstanceOf(ConflictException);
+    const err: any = await svc.upgrade("t1", "SCALE", "admin").catch((e: unknown) => e);
+
+    // NOT the ordinary original 409: Stripe now bills a price the database does not hold.
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
+    expect(err.getResponse().message).toContain("Stripe now bills $499");
+    expect(err.getResponse().message).toContain("the database still says $249");
+    const audit = prisma.auditLog.create.mock.calls[0][0].data;
+    expect(audit).toMatchObject({ tenantId: "t1", userId: "admin" });
+    expect(audit.meta).toMatchObject({
+      kind: "plan_change_stripe_ahead",
+      targetPlanKey: "SCALE",
+      pushedAmountCents: 49900,
+      priorAmountCents: 24900,
+    });
 
     const alert = error.mock.calls
       .map((c) => String(c[0]))
@@ -528,24 +652,37 @@ describe("upgrade(): the compensating revert never clobbers a newer price (SA-73
     expect(stripe.amountOf("si_base")).toBe(49900); // Stripe bills what the database says
   });
 
-  it("an ambiguous commit failure (the write landed, the reply did not) does NOT revert: local already shows the target, so it alerts", async () => {
-    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-    const { svc, stripe, tx, db, prisma } = make();
+  it("an ambiguous commit failure (the write landed, the reply did not) is a SUCCESS: no revert, and the upgrade's side effects still run", async () => {
+    const { svc, stripe, tx, db, prisma, entitlements, notify } = make();
     // The transaction COMMITS (no rollback) and then the client is told it failed.
     prisma.$transaction.mockImplementationOnce(async (fn: any) => {
       await fn(tx);
       throw new Error("connection lost after commit");
     });
 
-    await expect(svc.upgrade("t1", "SCALE", "admin")).rejects.toThrow("connection lost");
+    const res = await svc.upgrade("t1", "SCALE", "admin");
 
+    expect(res.proratedNow).toBeGreaterThan(0); // resolved like any upgrade
     expect(db.sub.planKey).toBe("SCALE");
-    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // the push only — never a revert
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // the push only - never a revert
     expect(stripe.amountOf("si_base")).toBe(49900); // Stripe == the database
-    const alert = error.mock.calls
-      .map((c) => String(c[0]))
-      .find((m) => m.includes("needs_reconcile"));
-    expect(alert).toContain("already shows the target plan");
+    expect(entitlements.invalidate).toHaveBeenCalledWith("t1"); // caches invalidated
+    expect(notify.notifyUpgradeConfirmed).toHaveBeenCalledTimes(1); // the confirmation still goes out
+  });
+
+  it("Stripe unreadable when the revert would verify it: nothing is overwritten blind, and it is the same 502 STRIPE_AHEAD", async () => {
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, stripe, tx, prisma } = make();
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    const read = stripe.getSubscription.getMockImplementation()!;
+    // push read OK, the revert-time verification read fails
+    stripe.getSubscription.mockImplementationOnce(read).mockRejectedValueOnce(new Error("timeout"));
+
+    const err: any = await svc.upgrade("t1", "SCALE", "admin").catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // no blind revert
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     error.mockRestore();
   });
 

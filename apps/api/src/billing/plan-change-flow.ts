@@ -1,5 +1,10 @@
 import { PrismaService } from "../prisma/prisma.service";
 import type { Prisma } from "@prisma/client";
+import { BadGatewayException } from "@nestjs/common";
+import { fromCents } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { writeAdminNotice } from "./manual-invoice-notice";
 import { normalizePlanKey } from "./plan-catalog.constants";
 import { stripeRefId } from "./stripe-period";
 import { resolvePlanPrice } from "./plan-price";
@@ -24,7 +29,7 @@ import {
 
 /**
  * SA-733r [M7]: the Stripe-first shape every PRICE-MOVING plan write shares — the tenant upgrade, the admin
- * plan edit, and (wired by the cron's owner) the scheduled downgrade:
+ * plan edit. (The scheduled downgrade will use it at SCHEDULE time, never from the 02:00 sweep - lead R1; not wired yet):
  *
  *   1. `beginStripeFirstPlanChange` pushes the RESOLVED price (override beats the plan price) to Stripe, with
  *      the retired add-on items deleted in the same update (plan-change-stripe.ts);
@@ -46,6 +51,8 @@ export interface PlanChangeFlowDeps extends Omit<PlanChangeDeps, "stripe"> {
 export interface PlanChangeFlowArgs {
   tenantId: string;
   stripeSubId: string | null | undefined;
+  /** Who asked (the audit row of a stripe-ahead outcome carries it); null for the system (the cron). */
+  actorId?: string | null;
   targetPlanKey: string;
   targetPlanVersionId: string;
   targetPlanName: string;
@@ -57,6 +64,9 @@ export interface PlanChangeFlowArgs {
   addonSkus: readonly AddonSkuDef[];
   localState?: Record<string, unknown>;
 }
+
+/** `settle`'s outcome when the local write reported failure but the row is already on the target plan. */
+export const PLAN_CHANGE_LANDED: unique symbol = Symbol("plan-change-landed");
 
 /** A plan change whose Stripe half has run: the context for the local write, and its compensation. */
 export interface StripeFirstPlanChange {
@@ -72,10 +82,12 @@ export interface StripeFirstPlanChange {
     o: { manualPay: boolean; tenantLabel: string; actorId?: string | null },
   ): Promise<unknown>;
   /**
-   * Await the local write through this. If it rejects (for ANY reason) and Stripe was pushed, Stripe is put
+   * Await the local write through this. Resolves {@link PLAN_CHANGE_LANDED} (not the write's value) when the
+   * write threw but the row is verifiably ON the target plan (a lost commit acknowledgement): the caller must
+   * carry on as if it succeeded. If it rejects (for ANY reason) and Stripe was pushed, Stripe is put
    * back before the SAME error is rethrown. The write is started by the caller, so its code keeps its shape.
    */
-  settle<T>(write: Promise<T>): Promise<T>;
+  settle<T>(write: Promise<T>): Promise<T | typeof PLAN_CHANGE_LANDED>;
 }
 
 export async function beginStripeFirstPlanChange(
@@ -138,6 +150,7 @@ export async function beginStripeFirstPlanChange(
     pushed: push.pushed,
     settledItemIds: push.settledItemIds,
     idempotencyKey: push.key,
+    proration: push.proration,
   };
   return {
     ctx,
@@ -146,7 +159,10 @@ export async function beginStripeFirstPlanChange(
       try {
         return await write;
       } catch (err) {
-        if (push.pushed) await compensate({ prisma, stripe, logger }, push, a, err);
+        if (push.pushed) {
+          const outcome = await compensate({ prisma, stripe, logger }, push, a, err);
+          if (outcome === "landed") return PLAN_CHANGE_LANDED;
+        }
         throw err;
       }
     },
@@ -160,7 +176,10 @@ export async function runStripeFirstPlanChange<T>(
   commit: (ctx: PlanChangeCtx) => Promise<T>,
 ): Promise<T> {
   const flow = await beginStripeFirstPlanChange(deps, a);
-  return flow.settle(commit(flow.ctx));
+  const out = await flow.settle(commit(flow.ctx));
+  if (out === PLAN_CHANGE_LANDED)
+    throw new Error("plan change landed; its value is not recoverable here");
+  return out;
 }
 
 async function compensate(
@@ -168,7 +187,7 @@ async function compensate(
   push: PlanChangePush,
   a: PlanChangeFlowArgs,
   cause: unknown,
-): Promise<void> {
+): Promise<"landed" | "reverted" | "skipped"> {
   const { prisma, stripe, logger } = deps;
   const alert = (error: unknown) =>
     markNeedsReconcile(logger, {
@@ -188,24 +207,55 @@ async function compensate(
   // A revert is only safe if Stripe still holds exactly what THIS push wrote and the local row did not land on
   // the target. Both are re-read now — never trusted from before the write — and anything unverifiable or
   // already moved on is ALERTED, not overwritten: a stale snapshot must never clobber a newer price.
+  // Stripe is AHEAD of the database and could not be brought back (or checked): alert, leave an audit row, and
+  // tell the caller with a distinct 502 - never the ordinary original error, which would read as "nothing happened".
+  const stripeAhead = async (error: unknown): Promise<never> => {
+    alert(error);
+    const was = push.revert?.baseBefore.unit_amount;
+    const message = push.revert?.baseChanged
+      ? `Stripe now bills $${fromCents(push.newAmountCents ?? 0)}, the database still says $${was == null ? "?" : fromCents(was)} - ` +
+        `reconcile the subscription before changing the plan again.`
+      : "Stripe no longer bills the add-ons the new plan includes, but the database still lists them - " +
+        "reconcile the subscription before changing the plan again.";
+    await writeAdminNotice(prisma, {
+      tenantId: a.tenantId,
+      actorId: a.actorId,
+      action: AdminAuditAction.TENANT_CONFIG_UPDATED,
+      message,
+      meta: {
+        kind: "plan_change_stripe_ahead",
+        idempotencyKey: push.key,
+        targetPlanKey: a.targetPlanKey,
+        pushedAmountCents: push.newAmountCents,
+        priorAmountCents: was ?? null,
+        proration: push.proration,
+      },
+    }).catch(() => undefined);
+    throw new BadGatewayException({ code: API_ERROR_CODES.PLAN_CHANGE_STRIPE_AHEAD, message });
+  };
   let toRevert: PlanChangePush;
   try {
     const verdict = await revertVerdict({ prisma, stripe }, push, a);
     if ("skip" in verdict) {
+      if (verdict.landed) {
+        // The write DID commit (the client was told it failed): Stripe and the row agree on the target.
+        logger.warn(
+          `Plan change tenant ${a.tenantId}: the local write reported a failure but the row is already on the target plan; Stripe left as pushed (${push.key})`,
+        );
+        return "landed";
+      }
       alert(new Error(`revert skipped: ${verdict.skip}`));
-      return;
+      return "skipped";
     }
     toRevert = verdict.push;
   } catch (readErr) {
-    alert(readErr);
-    return;
+    return stripeAhead(readErr); // could not verify, so did not revert: Stripe stays ahead
   }
   let restored;
   try {
     restored = await revertPlanChange({ stripe, logger }, toRevert);
   } catch (revertErr) {
-    alert(revertErr);
-    return;
+    return stripeAhead(revertErr);
   }
   logger.warn(
     `Plan change tenant ${a.tenantId}: the local write failed after Stripe applied it — Stripe restored (${push.key}:revert)`,
@@ -223,6 +273,7 @@ async function compensate(
   } catch (pointerErr) {
     alert(pointerErr);
   }
+  return "reverted";
 }
 
 /**
@@ -235,7 +286,7 @@ async function revertVerdict(
   deps: { prisma: PrismaService; stripe: PlanChangeDeps["stripe"] },
   push: PlanChangePush,
   a: PlanChangeFlowArgs,
-): Promise<{ skip: string } | { push: PlanChangePush }> {
+): Promise<{ skip: string; landed?: boolean } | { push: PlanChangePush }> {
   const { prisma, stripe } = deps;
   const local = await prisma.tenantSubscription.findUnique({
     where: { tenantId: a.tenantId },
@@ -246,13 +297,16 @@ async function revertVerdict(
     normalizePlanKey(local.planKey) === normalizePlanKey(a.targetPlanKey) &&
     local.planVersionId === a.targetPlanVersionId
   ) {
-    return { skip: "the local row already shows the target plan; Stripe is left as pushed" };
+    return {
+      skip: "the local row already shows the target plan; Stripe is left as pushed",
+      landed: true,
+    };
   }
   const revert = push.revert;
   if (!revert || !push.stripeSubId) return { skip: "nothing to restore" };
   const live = await stripe.getSubscription(push.stripeSubId);
   const items: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
-  const base = items.find((i) => i?.id === revert.base.id);
+  const base = items.find((i) => i?.id === revert.baseId);
   if (
     !base ||
     base.price?.unit_amount !== push.newAmountCents ||
@@ -293,6 +347,7 @@ export function planChangeArgs(p: {
   def: { planKey: string; name: string; monthlyPrice?: unknown; annualPrice?: unknown };
   proration: PlanChangeProration;
   retireAddons: boolean;
+  actorId?: string | null;
 }): PlanChangeFlowArgs {
   const price = resolvePlanPrice(p.def, {
     monthly: p.sub?.priceOverrideMonthly,
@@ -300,6 +355,7 @@ export function planChangeArgs(p: {
   });
   return {
     tenantId: p.tenantId,
+    actorId: p.actorId,
     stripeSubId: p.sub?.stripeSubId,
     targetPlanKey: p.def.planKey,
     targetPlanVersionId: p.version.id,

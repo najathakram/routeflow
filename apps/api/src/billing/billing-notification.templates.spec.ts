@@ -196,7 +196,10 @@ describe("billing-notification.templates", () => {
         toPlanName: "Growth",
         proratedAmount: 0,
       });
-      expect(t.html).toContain("$0.00");
+      // No charge applies: the email must not claim a prorated charge of $0.00.
+      expect(t.html).toContain("No prorated charge applies now");
+      expect(t.text).toContain("No prorated charge applies now");
+      expect(t.html).not.toContain("estimate");
     });
   });
 

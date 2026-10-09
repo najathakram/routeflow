@@ -48,9 +48,12 @@ import {
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
-import { beginStripeFirstPlanChange, planChangeArgs } from "../billing/plan-change-flow";
+import {
+  beginStripeFirstPlanChange,
+  PLAN_CHANGE_LANDED,
+  planChangeArgs,
+} from "../billing/plan-change-flow";
 import { manualPayContext } from "../billing/addon-retirement";
-import { withTenantPriceLock } from "../billing/tenant-price-lock";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
@@ -697,7 +700,7 @@ export class PlatformAdminService {
 
   /** Serialised per tenant on the `tenant-price` lock (SA-733 D8): every read and write below runs inside it. */
   updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
-    return withTenantPriceLock(id, () => this.updatePlanLocked(id, dto, adminId));
+    return underTenantPriceLock(id, () => this.updatePlanLocked(id, dto, adminId));
   }
 
   private async updatePlanLocked(id: string, dto: UpdateTenantPlanDto, adminId: string | null) {
@@ -900,6 +903,7 @@ export class PlatformAdminService {
       def: definition,
       proration: isUpgrade ? "create_prorations" : "none",
       retireAddons: isUpgrade,
+      actorId: adminId,
     });
     const manual = await manualPayContext(this.prisma, id, this.stripe.isConfigured, priorSub);
     const flow = await beginStripeFirstPlanChange(
@@ -1007,7 +1011,13 @@ export class PlatformAdminService {
       await flow.retireAddons(tx, this.billingEventService, { ...manual, actorId: adminId });
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
-    const tenant = await flow.settle(written);
+    const settled = await flow.settle(written);
+    // A lost commit acknowledgement: the write LANDED, so carry on exactly as a success (audit row, caches) and
+    // re-read the row the transaction would have returned.
+    const tenant =
+      settled === PLAN_CHANGE_LANDED
+        ? await this.prisma.tenant.findUniqueOrThrow({ where: { id } })
+        : settled;
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     this.entitlementsService.invalidate(id);
@@ -1774,8 +1784,9 @@ export class PlatformAdminService {
           },
         },
       });
-      // D8: Stripe was repriced from the pre-tx read - a fee that moved since (a writer outside the price
-      // lock, e.g. a plan change) is refused here; the catch below re-syncs Stripe from the committed row.
+      // D8: Stripe was repriced from the pre-tx read - a fee that moved since (a stray writer that skipped the
+      // price lock: a direct SQL edit, a script, or a code path that forgot it) is refused here; the catch below
+      // re-syncs Stripe from the committed row.
       if (!sameOverride(row.subscription, existing)) {
         throw new ConflictException(
           "The tenant's price override changed while this update was in flight — reload and retry.",

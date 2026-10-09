@@ -190,10 +190,13 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
-  // `tenant-price` (SA-733 D8): every writer of a tenant's Stripe price (the super-admin price override,
-  // admin updatePlan, upgrade(), the scheduled-downgrade cron, the plan-price fan-out), keyed on the tenant
-  // id. The lock is held ACROSS the Stripe calls (seconds), but these are rare admin/cron actions: a small
-  // pool, like `billing`.
+  // `tenant-price` (SA-733 D8): every writer that moves a tenant's Stripe price serialises per tenant on
+  // this one family — the tenant-facing in-app upgrade, the admin plan edit, the price override, the
+  // catalog fan-out and the scheduled-downgrade sweep (which holds ONE slot at a time). A holder pins its
+  // slot across Stripe calls (seconds), and a WAITER pins one too, so the size is a deliberate bound, not
+  // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
+  // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
+  // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
   "tenant-price": 4,
 };
 const DEFAULT_POOL_MAX = 8;

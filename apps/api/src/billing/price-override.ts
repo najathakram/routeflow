@@ -54,21 +54,12 @@ export function prorationBehaviorFor(effective: PriceOverrideEffective): StripeP
 }
 
 /**
- * Stripe statuses whose NEXT invoice a price change can still reach. past_due / unpaid are included
- * (SA-733r M7): a paused or delinquent tenant that is later reinstated must be billed the price the
- * owner set, so an owner cut on a paused tenant is not silently dropped. canceled, incomplete and
- * incomplete_expired are not live subscriptions — they stay skipped (as does a Stripe-side `paused`).
+ * Only an `active` subscription takes a mid-period proration. past_due / unpaid pile credit or charge onto an
+ * invoice nobody is paying, and a `trialing` one has no paid period to prorate against (lead ruling R2: an
+ * upgrade during a trial charges nothing). Those get proration `none`.
  */
-export const STRIPE_PRICE_PUSH_STATUSES: readonly string[] = [
-  "active",
-  "trialing",
-  "past_due",
-  "unpaid",
-];
-
-/** Statuses where a mid-period proration would pile credit/charge onto an invoice nobody is paying. */
 export function prorationAllowedFor(status: string): boolean {
-  return status === "active" || status === "trialing";
+  return status === "active";
 }
 
 /** Skip reasons that mean "nothing live to update" — the local write may proceed. Everything else
