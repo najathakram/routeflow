@@ -2,6 +2,12 @@ import * as React from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within, act } from "@/test-utils/render";
 import { useCreateCounterSale } from "@/lib/api/counter-sale";
 import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
+import {
+  cancelCounterLeave,
+  confirmCounterLeave,
+  getCounterLeaveRequest,
+  setCounterCartHasLines,
+} from "@/lib/counter-cart-signal";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 /**
@@ -10,6 +16,11 @@ import { CounterTodaysSales } from "./CounterTodaysSales";
  */
 const get = jest.fn();
 const post = jest.fn();
+const push = jest.fn();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ push }),
+}));
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: (...a: unknown[]) => get(...a),
@@ -36,9 +47,15 @@ const ORDER = {
 };
 jest.mock("@/lib/api/orders", () => ({ useOrder: () => ({ data: ORDER }) }));
 let closeDialog: (() => void) | undefined;
+let recordReturn: ((r: unknown, info?: unknown) => void) | undefined;
 jest.mock("@/app/(dashboard)/returns/_components/RecordInlineReturnDialog", () => ({
-  RecordInlineReturnDialog: (p: { open: boolean; onClose: () => void }) => {
+  RecordInlineReturnDialog: (p: {
+    open: boolean;
+    onClose: () => void;
+    onRecorded?: (r: unknown, info?: unknown) => void;
+  }) => {
     closeDialog = p.onClose;
+    recordReturn = p.onRecorded;
     return p.open ? <div data-testid="return-dialog" /> : null;
   },
 }));
@@ -102,6 +119,11 @@ const open = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Today's sales" }));
   return r;
 };
+
+afterEach(() => {
+  cancelCounterLeave();
+  setCounterCartHasLines(false);
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -238,6 +260,22 @@ describe("CounterTodaysSales", () => {
     expect(root.textContent).not.toMatch(/Tendered|Change/);
     fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
+  });
+
+  it("while a reprint is open the page prints only the receipt; closing it undoes that", async () => {
+    await open();
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(true);
+    const dialog = screen.getByRole("dialog");
+    // the modal's own title row is print-hidden; the receipt body is not
+    expect(dialog.className).toContain("print:[&>div:first-child]:hidden");
+    expect(root.closest(".print\\:hidden")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
+    await screen.findByTestId("today-row-o1");
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(false);
+    expect(screen.getByRole("dialog").className).not.toContain("print:[&>div:first-child]:hidden");
   });
 
   it("a reprint credits the reprinter, never a Cashier line", async () => {
@@ -407,5 +445,101 @@ describe("CounterTodaysSales", () => {
       screen.getByRole("link", { name: "View order" }),
     ])
       expect(el.className).toMatch(/min-h-11/);
+  });
+
+  it("W21b: a fully returned sale offers no Return items; a partly returned one still does", async () => {
+    serve({
+      1: page1([
+        row({ orderId: "o1", returned: { amount: 22.5, state: "FULL", returns: [] } }),
+        row({
+          orderId: "o2",
+          orderNumber: "ORD-2",
+          returned: { amount: 5, state: "PARTLY", returns: [] },
+        }),
+      ]),
+    });
+    await open();
+    const full = await screen.findByTestId("today-row-o1");
+    const partly = screen.getByTestId("today-row-o2");
+    expect(within(full).queryByRole("button", { name: "Return items" })).toBeNull();
+    expect(within(partly).getByRole("button", { name: "Return items" })).toBeInTheDocument();
+  });
+
+  it("W21b: a whole-sale return keeps its hand-back line after the refetch marks the row FULL", async () => {
+    serve({
+      1: page1([row({ orderId: "o1", returned: { amount: 0, state: "NONE", returns: [] } })]),
+    });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    fireEvent.click(within(r).getByRole("button", { name: "Return items" }));
+    act(() => recordReturn?.({}, { resolution: "REFUND", tender: "CASH", amount: 22.5 }));
+    serve({
+      1: page1([row({ orderId: "o1", returned: { amount: 22.5, state: "FULL", returns: [] } })]),
+    });
+    act(() => closeDialog?.());
+    await waitFor(() => expect(todayCalls().length).toBeGreaterThan(1));
+    const after = await screen.findByTestId("today-row-o1");
+    expect(within(after).getByRole("status")).toHaveTextContent(
+      "Hand $22.50 back to the customer.",
+    );
+  });
+
+  it("W21b: one Escape on the reprint view goes back to the list; a second closes the sheet", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    await screen.findByTestId("receipt-print-root");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("W21b: Escape back from the reprint refocuses that row's Reprint button", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    await screen.findByTestId("receipt-print-root");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    const again = within(await screen.findByTestId("today-row-o1")).getByRole("button", {
+      name: "Reprint",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(again));
+  });
+
+  it("W21b: the sheet's Close X is a 44 px target", async () => {
+    await open();
+    await screen.findByTestId("today-row-o1");
+    const x = within(screen.getByRole("dialog")).getByRole("button", { name: "Close" });
+    expect(x.className).toMatch(/min-h-11/);
+    expect(x.className).toMatch(/min-w-11/);
+  });
+
+  it("W21b: closing the sheet with Escape returns focus to the Today's sales button", async () => {
+    await open();
+    await screen.findByTestId("today-row-o1");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Today's sales" })),
+    );
+  });
+  it("View order with lines in the cart asks to discard first; Discard then opens the order", async () => {
+    setCounterCartHasLines(true);
+    await open();
+    const link = await screen.findByRole("link", { name: "View order" });
+    // fireEvent returns false when the click's default (the navigation) was prevented
+    expect(fireEvent.click(link)).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+    expect(getCounterLeaveRequest()).toBe(true);
+    act(() => confirmCounterLeave());
+    expect(push).toHaveBeenCalledWith("/orders/o1");
+  });
+
+  it("View order with an empty cart is a plain link: not intercepted, nothing parked", async () => {
+    await open();
+    const link = await screen.findByRole("link", { name: "View order" });
+    expect(fireEvent.click(link)).toBe(true);
+    expect(getCounterLeaveRequest()).toBe(false);
+    expect(push).not.toHaveBeenCalled();
   });
 });

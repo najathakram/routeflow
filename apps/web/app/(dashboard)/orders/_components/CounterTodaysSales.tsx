@@ -3,6 +3,7 @@
 // POS-7b-2: the counter's "Today's sales" sheet. Own file so CounterSaleScreen takes one mount line.
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
@@ -11,6 +12,7 @@ import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@route
 import { COUNTER_SALE_TODAY_KEY, useCounterSaleToday } from "@/lib/api/counter-sale-today";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
   formatSaleTime,
@@ -119,6 +121,12 @@ function Reprint({
   onBack: () => void;
 }) {
   const { branding } = useTenant();
+  // While this view is open the page prints ONLY the receipt: app/shell.css hides the counter screen
+  // (`[data-counter-screen]`) under `@media print` for as long as this body class is set.
+  React.useEffect(() => {
+    document.body.classList.add("counter-reprint-open");
+    return () => document.body.classList.remove("counter-reprint-open");
+  }, []);
   const reprintedBy = useOptionalAuth()?.user?.username ?? null;
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
@@ -199,6 +207,7 @@ function SaleRow({
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
   const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
+  const router = useRouter();
   return (
     <li className="space-y-2 py-3" data-testid={`today-row-${row.orderId}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -229,10 +238,21 @@ function SaleRow({
                 Reprint
               </button>
             ) : null}
-            <CounterReturnAction orderId={row.orderId} onDone={onDone} />
+            <CounterReturnAction
+              orderId={row.orderId}
+              onDone={onDone}
+              canReturn={row.returned.state !== "FULL"}
+            />
           </>
         )}
-        <Link href={`/orders/${row.orderId}`} className={cn(TAP, "text-brand-700")}>
+        <Link
+          href={`/orders/${row.orderId}`}
+          className={cn(TAP, "text-brand-700")}
+          onClick={(e) => {
+            // a cart with lines asks "Discard this sale?" first; Discard runs the raw push (no second ask)
+            if (guardCounterLeave(() => router.push(`/orders/${row.orderId}`))) e.preventDefault();
+          }}
+        >
           View order
         </Link>
       </div>
@@ -246,6 +266,7 @@ export function CounterTodaysSales() {
   // the row whose Reprint button gets focus back after "Back to sales"
   const [refocusId, setRefocusId] = React.useState<string | null>(null);
   const clearRefocus = React.useCallback(() => setRefocusId(null), []);
+  const openerRef = React.useRef<HTMLButtonElement>(null);
   const qc = useQueryClient();
   const q = useCounterSaleToday(open);
   const refetchList = React.useCallback(
@@ -258,7 +279,12 @@ export function CounterTodaysSales() {
 
   return (
     <>
-      <Button className="min-h-[44px]" variant="secondary" onClick={() => setOpen(true)}>
+      <Button
+        ref={openerRef}
+        className="min-h-[44px]"
+        variant="secondary"
+        onClick={() => setOpen(true)}
+      >
         Today&apos;s sales
       </Button>
       <Modal
@@ -267,9 +293,26 @@ export function CounterTodaysSales() {
           setOpen(false);
           setReprint(null);
         }}
+        onEscapeKeyDown={(e) => {
+          // Escape closes only the top layer: the reprint view goes back to the list first
+          if (!reprint) return;
+          e.preventDefault();
+          setRefocusId(reprint.orderId);
+          setReprint(null);
+        }}
+        onCloseAutoFocus={(e) => {
+          if (!openerRef.current) return;
+          e.preventDefault();
+          openerRef.current.focus();
+        }}
+        closeClassName="min-h-11 min-w-11 flex items-center justify-center"
         title={reprint ? "Reprint receipt" : "Today's sales"}
         scroll
-        className="max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none"
+        className={cn(
+          "max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none",
+          // the modal's title row is not part of the receipt
+          reprint && "print:[&>div:first-child]:hidden",
+        )}
       >
         {reprint ? (
           <Reprint

@@ -7,7 +7,6 @@ import { setCounterCartBusy, setCounterCartHasLines } from "@/lib/counter-cart-s
 import { resetCounterLandingForTests } from "@/lib/counter-device-pref";
 import { setImpersonation, clearImpersonation } from "@/lib/impersonation";
 import DashboardLayout from "./layout";
-import { RegisterHeader } from "@/components/RegisterHeader";
 
 /**
  * POS-7: the counter "register look" and the per-device "open the counter" preference, proven on the REAL
@@ -499,34 +498,34 @@ describe("every other way to leave is blocked while a sale is being recorded", (
   });
 });
 
-describe("header actions slot", () => {
-  it("exists after the store name, is empty by default, and Exit is still first", () => {
+describe("narrow header (390 px)", () => {
+  it("keeps the store name a min width with truncation and a title", () => {
     mount(COUNTER);
-    const slot = screen.getByTestId("register-header-actions");
-    expect(slot).toBeEmptyDOMElement();
-    const header = registerHeader();
     const store = screen.getByTestId("register-store");
-    expect(store.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(header.querySelector(FOCUSABLE)).toBe(
-      screen.getByRole("button", { name: "Exit counter" }),
+    expect(store.className).toMatch(/min-w-\[?\d/);
+    expect(store.className).toContain("truncate");
+    expect(store).toHaveAttribute("title", "Acme Wholesale");
+  });
+
+  it("keeps Exit on one line", () => {
+    mount(COUNTER);
+    expect(screen.getByRole("button", { name: "Exit counter" }).className).toContain(
+      "whitespace-nowrap",
     );
   });
 
-  it("renders what is mounted into it, after Exit in focus order", () => {
-    render(
-      <RegisterHeader
-        onOpenMobileNav={() => undefined}
-        actions={<button type="button">Today&apos;s sales</button>}
-      />,
-    );
-    expect(
-      within(screen.getByTestId("register-header-actions")).getByRole("button", {
-        name: "Today's sales",
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("register-header").querySelector(FOCUSABLE)).toBe(
-      screen.getByRole("button", { name: "Exit counter" }),
-    );
+  it("gives the bell and the palette triggers 44 px targets", () => {
+    mount(COUNTER);
+    const targets = [
+      ...within(registerHeader())
+        .getAllByLabelText("Open command palette")
+        .filter((el) => el.className.includes("md:hidden")),
+      within(registerHeader()).getByLabelText("Notifications"),
+    ];
+    for (const el of targets) {
+      expect(el.className).toContain("min-h-11");
+      expect(el.className).toContain("min-w-11");
+    }
   });
 });
 
@@ -575,6 +574,16 @@ describe("discard guard", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("Escape returns focus to the Exit button", async () => {
+    withLines();
+    await screen.findByText("Discard this sale?");
+    fireEvent.keyDown(screen.getByRole("button", { name: "Keep selling" }), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Exit counter" })),
+    );
+  });
+
   it("Keep selling closes the dialog and stays on the counter", async () => {
     withLines();
     fireEvent.click(await screen.findByRole("button", { name: "Keep selling" }));
@@ -597,13 +606,157 @@ describe("discard guard", () => {
     expect(mockPush).toHaveBeenCalledWith("/dashboard");
   });
 
-  it("guards only the header Exit: nav links never open the dialog", () => {
+  const openMenu = () => {
+    const trigger = within(registerHeader()).getByLabelText("Open user menu");
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+  };
+
+  it("a rail link with lines asks first instead of navigating; Discard then goes there", async () => {
     mount(COUNTER);
     act(() => setCounterCartHasLines(true));
     const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
-    expect(link).not.toBeNull();
-    fireEvent.click(link);
+    expect(fireEvent.click(link)).toBe(false);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledWith("/customers");
+  });
+
+  it("Keep selling after a rail link leaves the cart and the route alone", async () => {
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    fireEvent.click(aside().querySelector('a[href="/customers"]') as HTMLAnchorElement);
+    fireEvent.click(await screen.findByRole("button", { name: "Keep selling" }));
+    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("a bell notification link with lines asks first; Discard navigates once and the dialog stays closed", async () => {
+    mockNotifications = [
+      {
+        id: "n1",
+        type: "order",
+        title: "New order",
+        description: "d",
+        timestamp: Date.now(),
+        read: true,
+        href: "/orders/1",
+      },
+    ];
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    const bell = within(registerHeader()).getByRole("button", { name: /notifications/i });
+    fireEvent.pointerDown(bell, { button: 0, ctrlKey: false });
+    fireEvent.keyDown(bell, { key: "Enter" });
+    const link = (await screen.findByText("New order")).closest("a") as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(false);
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/orders/1");
+    await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
+  });
+
+  it("a rail link with an empty cart leaves directly", () => {
+    mount(COUNTER);
+    const link = aside().querySelector('a[href="/customers"]') as HTMLAnchorElement;
+    expect(fireEvent.click(link)).toBe(true);
     expect(screen.queryByText("Discard this sale?")).toBeNull();
+  });
+
+  it("Profile & Settings with lines asks first; Discard then goes to /settings", async () => {
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    openMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Profile/i }));
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(mockPush).toHaveBeenCalledWith("/settings");
+  });
+
+  it("a g shortcut with lines asks first", async () => {
+    mount(COUNTER);
+    act(() => setCounterCartHasLines(true));
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "c" });
+    expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  describe("browser Back", () => {
+    let go: jest.SpyInstance;
+    let pushState: jest.SpyInstance;
+    beforeEach(() => {
+      go = jest.spyOn(window.history, "go").mockImplementation(() => undefined);
+      pushState = jest.spyOn(window.history, "pushState");
+      Object.defineProperty(window.history, "length", { value: 5, configurable: true });
+    });
+    afterEach(() => {
+      delete (window.history as { length?: number }).length;
+      window.history.replaceState(null, "");
+    });
+    // Real Back lands on the entry BEFORE the sentinel, which carries no marker.
+    const back = () =>
+      act(() => {
+        window.history.replaceState(null, "");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+
+    it("with lines asks first, re-pushes state, and Discard leaves", async () => {
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      const before = pushState.mock.calls.length;
+      back();
+      expect(await screen.findByText("Discard this sale?")).toBeInTheDocument();
+      expect(pushState.mock.calls.length).toBeGreaterThan(before);
+      expect(go).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+      expect(go).toHaveBeenCalledWith(-2);
+    });
+
+    it("a second sale after a completed one reuses the one sentinel (Back + Discard still leaves)", async () => {
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      back(); // a Back during the first sale: Keep selling re-pushes the one sentinel
+      fireEvent.click(await screen.findByRole("button", { name: "Keep selling" }));
+      const after1 = pushState.mock.calls.length;
+      act(() => setCounterCartHasLines(false)); // sale completed
+      act(() => setCounterCartHasLines(true)); // second sale
+      expect(pushState.mock.calls.length).toBe(after1);
+      back();
+      fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+      expect(go).toHaveBeenCalledTimes(1);
+      expect(go).toHaveBeenCalledWith(-2);
+    });
+
+    it("a deep link / new tab (no earlier page) falls back to the exit target on Discard", async () => {
+      Object.defineProperty(window.history, "length", { value: 2, configurable: true });
+      sessionStorage.setItem("rf-register-prev", "/invoices");
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      back();
+      fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+      expect(go).not.toHaveBeenCalled();
+      expect(mockPush).toHaveBeenCalledWith("/invoices");
+    });
+
+    it("Keep selling stays", async () => {
+      mount(COUNTER);
+      act(() => setCounterCartHasLines(true));
+      back();
+      fireEvent.click(await screen.findByRole("button", { name: "Keep selling" }));
+      await waitFor(() => expect(screen.queryByText("Discard this sale?")).toBeNull());
+      expect(go).not.toHaveBeenCalled();
+    });
+
+    it("with an empty cart does not ask", () => {
+      mount(COUNTER);
+      back();
+      expect(screen.queryByText("Discard this sale?")).toBeNull();
+      expect(go).not.toHaveBeenCalled();
+    });
   });
 });
 
