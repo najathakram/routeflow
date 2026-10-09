@@ -4,7 +4,7 @@
  * Key = `(hashtext('counter-close'), hashtext(tenantId || ':' || registerKey))`. The end-of-day close takes the EXCLUSIVE form
  * (`pg_advisory_xact_lock`) and reads its cutoff from the clock AFTER the lock is granted; the tender, the pickup and the
  * refunds take the SHARED form (`pg_advisory_xact_lock_shared`) around their write, so the close waits for every write in
- * flight (a refund's `refundedAt` is the app clock) while the writes never serialize with each other. A refund takes it as
+ * flight (a refund's `refundedAt` is the database clock, `dbClockNow`) while the writes never serialize with each other. A refund takes it as
  * the FIRST statement of its transaction, before the Return row lock: counter-close -> Return -> Orders -> Invoices.
  */
 

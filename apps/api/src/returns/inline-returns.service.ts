@@ -1372,7 +1372,7 @@ export class InlineReturnsService {
 
     // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
     // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
-    // for refunds in flight and a refund's `refundedAt` (the app clock) can never land behind a close's cutoff.
+    // for refunds in flight and a refund's `refundedAt` (the database clock, dbClockNow) can never land behind a close's cutoff.
     const registerKey = registerKeyOfOrder(
       await this.prisma.forTenant().order.findFirst({
         where: { id: pre.orderId },
@@ -1449,7 +1449,8 @@ export class InlineReturnsService {
       await assertCashRefundWithinCap(tx, {
         returnId: id,
         tender: dto.tender,
-        perOrder: refundAmountsBySale(fresh.items as any[], amount),
+        counterOrder: registerKey != null,
+        perOrder: refundAmountsBySale(fresh.items as any[], amount, fresh.orderId),
       });
 
       // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)

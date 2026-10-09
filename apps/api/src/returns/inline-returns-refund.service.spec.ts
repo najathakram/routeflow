@@ -300,6 +300,21 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 
+    it("N3: a COUNTER order with the tender somehow absent is capped as cash (counterOrder is passed)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 10, invoice: { orderId: "src-order-1" } },
+      ]);
+      const err: any = await service
+        .refund("ret-1", { expectedAmount: 30 } as any, OPERATOR)
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 10,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
     it("the same refund by CARD or CHECK is not capped (card and check limits wait for their own reports)", async () => {
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       for (const tender of ["CARD", "CHECK"]) {

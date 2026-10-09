@@ -28,6 +28,7 @@ import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
 import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   allocateReturnedPieces,
   applyCreditOverride,
@@ -577,7 +578,7 @@ export class InlineReturnsQuoteService {
       }
     }
     if (need.length === 0) return { returned, unknown };
-    const notDead = { notIn: ["REJECTED", "CANCELLED"] };
+    const notDead = { notIn: DEAD_RETURN_STATUSES };
     const [standardItems, inlineItems] = await Promise.all([
       db.returnItem.findMany({
         where: {
@@ -775,7 +776,7 @@ export class InlineReturnsQuoteService {
       (await db.returnItem.findMany({
         where: {
           sourceInvoiceItemId: { in: lines.map((l) => l.sourceInvoiceItemId) },
-          return: { kind: "INLINE", status: { notIn: ["REJECTED", "CANCELLED"] } },
+          return: { kind: "INLINE", status: { notIn: DEAD_RETURN_STATUSES } },
         },
         select: { sourceInvoiceItemId: true, qty: true },
       })) ?? [];

@@ -46,14 +46,24 @@ export function amountsBySourceOrder(
 
 /**
  * What THIS refund takes from each sale. A return from ONE sale takes exactly its refund `total` (the server's figure, so the
- * cap and the amount can never disagree by a rounding cent); a return spanning several sales is split by its items' own money.
+ * cap and the amount can never disagree by a rounding cent); a return spanning several sales is split by its items' own money,
+ * and whatever the total holds beyond that (unreferenced chunks) is the carrying order's.
  */
 export function refundAmountsBySale(
   items: Parameters<typeof amountsBySourceOrder>[0],
   total: number,
+  /**
+   * The carrying order. Money on chunks with NO source sale (unreferenced goods) has no sale of its own; it is attributed to
+   * the carrying order, fail closed, so it cannot slip past the cap when a multi-sale return spreads the rest across sales.
+   */
+  carryingOrderId?: string,
 ): Map<string, number> {
   const bySale = amountsBySourceOrder(items);
   if (bySale.size === 1) return new Map([[[...bySale.keys()][0], roundMoney(total)]]);
+  const rest = roundMoney(total - [...bySale.values()].reduce((n, v) => n + v, 0));
+  if (carryingOrderId && rest > 0.001) {
+    bySale.set(carryingOrderId, roundMoney((bySale.get(carryingOrderId) ?? 0) + rest));
+  }
   return bySale;
 }
 

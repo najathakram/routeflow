@@ -220,8 +220,57 @@ describe("refundAmountsBySale", () => {
       ["o2", 5],
     ]);
   });
-  it("no source order at all is an empty split (nothing to cap; the paid-in-full gate already refused it)", () => {
+  it("no source order at all and no carrying order is an empty split", () => {
     expect(refundAmountsBySale([item(null, 5)], 5).size).toBe(0);
+  });
+
+  it("N2: money on chunks with NO source sale (unreferenced) is not lost from the cap: it falls on the carrying order, fail closed", () => {
+    // two sales + an unreferenced 7.00 chunk: the total (22) exceeds what the sourced items explain (15)
+    const m = refundAmountsBySale([item("o1", 10), item("o2", 5), item(null, 7)], 22, "carry");
+    expect([...m]).toEqual([
+      ["o1", 10],
+      ["o2", 5],
+      ["carry", 7],
+    ]);
+    // and with only unreferenced chunks the whole total is the carrying order's
+    expect([...refundAmountsBySale([item(null, 5)], 5, "carry")]).toEqual([["carry", 5]]);
+  });
+
+  it("a rounding remainder of a cent or less is not attributed", () => {
+    expect([...refundAmountsBySale([item("o1", 10), item("o2", 5)], 15.001, "carry")]).toEqual([
+      ["o1", 10],
+      ["o2", 5],
+    ]);
+  });
+});
+
+describe("an unreferenced chunk of a multi-sale return cannot escape the cap", () => {
+  it("2 sales within their cash, but 7.00 of unreferenced goods on a carrying order with 0 cash: refused", async () => {
+    const f = fakeTx({
+      pay: [
+        { amount: 10, invoice: { orderId: "o1" } },
+        { amount: 5, invoice: { orderId: "o2" } },
+      ],
+    });
+    const perOrder = refundAmountsBySale(
+      [
+        { sourceOrderId: "o1", subtotal: 10, taxAmount: 0, categoryTax: 0 },
+        { sourceOrderId: "o2", subtotal: 5, taxAmount: 0, categoryTax: 0 },
+        { sourceOrderId: null, subtotal: 7, taxAmount: 0, categoryTax: 0 },
+      ],
+      22,
+      "carry",
+    );
+    const err: any = await assertCashRefundWithinCap(f.tx, {
+      returnId: "ret-now",
+      tender: "CASH",
+      perOrder,
+    }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "REFUND_EXCEEDS_CASH_PAID",
+      maxCashRefund: 0,
+      requested: 7,
+    });
   });
 });
 
