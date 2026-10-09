@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  Optional,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -45,6 +46,8 @@ import {
   withAddonLocks,
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
+import { StripeService } from "../billing/stripe.service";
+import { beginStripeFirstPlanChange, planChangeArgs } from "../billing/plan-change-flow";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
@@ -106,6 +109,8 @@ export class PlatformAdminService {
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, in
     // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
+    // SA-733r M7: the Stripe-first plan-change push. Optional so a wiring without Stripe still builds.
+    @Optional() private readonly stripe?: StripeService,
   ) {}
 
   /**
@@ -704,6 +709,9 @@ export class PlatformAdminService {
         planKey: true,
         basePriceSnapshot: true,
         priceOverrideMonthly: true,
+        priceOverrideAnnual: true,
+        stripeSubId: true,
+        externalPayment: true,
         discount: true,
         cycle: true,
         periodStart: true,
@@ -863,7 +871,22 @@ export class PlatformAdminService {
     };
     const preparedTransition = await this.planTransition.prepare(transition);
 
-    const tenant = await this.prisma.$transaction(async (tx) => {
+    // SA-733r M7: Stripe FIRST (the new price in one update); `flow.settle` puts it back if the
+    // write below throws. A re-save of the tenant's own plan pushes nothing.
+    const isUpgrade = isRankedPlanChange && rankTo > rankFrom;
+    const flowArgs = planChangeArgs({
+      tenantId: id,
+      sub: priorSub,
+      version,
+      def: definition,
+      proration: isUpgrade ? "create_prorations" : "none",
+      retireAddons: false,
+    });
+    const flow = await beginStripeFirstPlanChange(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      fromKey === targetPlanKey ? { ...flowArgs, stripeSubId: null } : flowArgs,
+    );
+    const written = this.prisma.$transaction(async (tx) => {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // Hook FIRST (house lock order: snapshot/config rows before tenant rows, as upgrade() does).
       // #2470 / SA-485b (i): priorSub, `before` and everything derived from them were read BEFORE this
@@ -957,11 +980,13 @@ export class PlatformAdminService {
           fromPlan: priorSub?.planKey ?? null,
           toPlan: definition.planKey,
           platformAdmin: true,
+          ...(flow.ctx.idempotencyKey ? { stripeIdempotencyKey: flow.ctx.idempotencyKey } : {}),
         },
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
+    const tenant = await flow.settle(written);
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     this.entitlementsService.invalidate(id);
