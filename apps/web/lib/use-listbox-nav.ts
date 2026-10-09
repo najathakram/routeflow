@@ -72,7 +72,8 @@ export function useListboxNav<T>({
   const inputProps = {
     role: "combobox" as const,
     "aria-expanded": open,
-    "aria-controls": listId,
+    // Only while the list exists: a closed combobox must not point at a listbox that is not in the DOM.
+    "aria-controls": open ? listId : undefined,
     "aria-autocomplete": "list" as const,
     "aria-activedescendant": open && highlight >= 0 ? optionId(highlight) : undefined,
   };
