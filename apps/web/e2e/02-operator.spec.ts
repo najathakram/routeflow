@@ -466,11 +466,7 @@ test.describe("Operator — Tenant Dashboard", () => {
     ).toHaveValue("26.00");
     await expect(page.getByText(/suggested from invoice cost/i)).toBeVisible();
     // Close without creating (don't pollute the seeded catalog).
-    await page
-      .getByRole("heading", { name: "New Product" })
-      .locator("xpath=..")
-      .locator("button")
-      .click();
+    await page.getByRole("dialog").getByRole("button", { name: /close/i }).click();
 
     // Creating the bill with unmatched lines requires an EXPLICIT confirm —
     // dismissing it must abort before any bill is created.

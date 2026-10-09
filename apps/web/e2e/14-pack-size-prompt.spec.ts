@@ -41,7 +41,7 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
 
   /** Closes via the header's ✕ button (same as 02-operator's quick-create close) — never saves. */
   async function closeCreateModal(page: Page, heading: Locator) {
-    await heading.locator("xpath=..").locator("button").click();
+    await page.getByRole("dialog").getByRole("button", { name: /close/i }).click();
     await expect(heading).toBeHidden({ timeout: 10_000 });
   }
 
