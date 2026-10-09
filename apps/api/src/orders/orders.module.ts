@@ -37,6 +37,10 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+// SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
+import { CounterParkController } from "./counter-sale/counter-park.controller";
+import { CounterParkService } from "./counter-sale/counter-park.service";
+import { CounterParkSweepService } from "./counter-sale/counter-park.sweep";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -77,7 +81,12 @@ import { StorageModule } from "../storage/storage.module";
     BillingModule,
     StorageModule,
   ],
-  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
+  controllers: [
+    OrdersController,
+    CounterSaleController,
+    CounterParkController,
+    PickupCompleteController,
+  ],
   providers: [
     OrdersService,
     ChangeRequestsService,
@@ -85,6 +94,8 @@ import { StorageModule } from "../storage/storage.module";
     BuyerBackorderViewResolver,
     CounterSaleService,
     CounterSaleTodayService,
+    CounterParkService,
+    CounterParkSweepService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
