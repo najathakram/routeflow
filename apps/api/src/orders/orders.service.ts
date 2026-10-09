@@ -221,6 +221,7 @@ import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import { markSaleDelivered } from "./delivered-stamp";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -2267,12 +2268,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
     //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
-    //    No deliveredQty stamp (B1050): a correction goes through a return/credit until that lands.
+    //    SA-763r: the stamp (deliveredQty = qty on no-evidence lines) shares the status write's tx.
     if (deliveredNow && !(replay && order.status === OrderStatus.DELIVERED)) {
-      await this.prisma.forTenant().order.update({
-        where: { id: order.id },
-        data: { status: OrderStatus.DELIVERED, deliveredAt: deliveredAt ?? new Date() },
-      });
+      await markSaleDelivered(this.prisma, order.id, deliveredAt ?? new Date());
     }
 
     // 3. Generate the invoice from the order — sets Invoice.orderId and increments

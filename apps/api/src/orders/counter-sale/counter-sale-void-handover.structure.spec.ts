@@ -1,20 +1,24 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 
-// SA-762r: the void restocks in full ONLY because it undoes the hand-over before the cancel. Today's counter sale
-// (createSale) stamps no deliveredQty (B1050), so the reset is a no-op now and the safety net for a DELIVERED write that
-// does stamp it (POS mode). If createSale ever starts stamping, this spec tells whoever does it that the void depends
-// on the reset; the real-DB case "(i)" in counter-sale-void.db.spec.ts seeds deliveredQty = qty and proves the restock.
+// SA-762r: the void restocks in full ONLY because it undoes the hand-over before the cancel. SA-763r: createSale's
+// DELIVERED write now stamps deliveredQty = qty (markSaleDelivered -> stampDeliveredInFull, in one tx), so the void's
+// reset is no longer a no-op: it is what makes a counter-sale void restock. This spec pins that coupling; the real-DB
+// case "(i)" in counter-sale-void.db.spec.ts seeds deliveredQty = qty and proves the restock.
 const read = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
 
 describe("the counter void and the DELIVERED write (structure)", () => {
-  it("createSale's DELIVERED write sets a status and a date, never a deliveredQty (so the void's reset is the net)", () => {
+  it("createSale's DELIVERED write goes through markSaleDelivered (status, date and the stamp in one tx), so the void's reset is the net", () => {
     const src = read("../orders.service.ts");
     const start = src.indexOf("async createSale(");
     expect(start).toBeGreaterThan(-1);
-    const body = src.slice(start, src.indexOf("\n  async ", start + 1)).replace(/\/\/.*$/gm, ""); // comments name B1050; only code counts
-    expect(body).toMatch(/status:\s*OrderStatus\.DELIVERED,\s*deliveredAt/);
-    expect(body).not.toMatch(/deliveredQty/);
+    const body = src.slice(start, src.indexOf("\n  async ", start + 1)).replace(/\/\/.*$/gm, ""); // comments only name the rule
+    expect(body).toMatch(/markSaleDelivered\(this\.prisma, order\.id,/);
+    expect(body).not.toMatch(/deliveredQty/); // the stamp lives in delivered-stamp.ts, not inline
+    const stamp = read("../delivered-stamp.ts");
+    expect(stamp).toMatch(
+      /export async function markSaleDelivered[\s\S]*?status: OrderStatus\.DELIVERED, deliveredAt[\s\S]*?stampDeliveredInFull\(tx, orderId, "entry"\)/,
+    );
   });
 
   it("the void resets the hand-over under the order lock, after the tender voids and BEFORE the cancel unwind", () => {

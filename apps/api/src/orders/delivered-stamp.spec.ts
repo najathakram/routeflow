@@ -1,4 +1,11 @@
-import { clearUnevidencedDelivered, hasDeliveryEvidence } from "./delivered-stamp";
+import { makeStampDb } from "../common/testing/delivered-stamp-fake-db";
+import {
+  captureRecreatedCarry,
+  clearUnevidencedDelivered,
+  hasDeliveryEvidence,
+  markSaleDelivered,
+  stampDeliveredInFull,
+} from "./delivered-stamp";
 
 // SA-762r: the counter-sale void's hand-over reset. Pure logic over a stand-in tx; the real-DB twin is case (i) of
 // counter-sale/counter-sale-void.db.spec.ts.
@@ -94,5 +101,280 @@ describe("hasDeliveryEvidence", () => {
     const basis = { hasMutations: true, byLineId: new Map([["l1", 2]]) };
     expect(hasDeliveryEvidence(basis, "l1")).toBe(true);
     expect(hasDeliveryEvidence(basis, "l2")).toBe(false);
+  });
+});
+
+/**
+ * SA-763r R6 / M2 (red rows 4, 5): the evidence-safe stamp. Entry mode raises a DELIVERED order's
+ * deliveredQty to qty on lines with NO qualifying DeliveryMutation row, and touches nothing else.
+ */
+const stamp = (db: ReturnType<typeof makeStampDb>) =>
+  db.prisma.tenantTransaction((tx: any) => stampDeliveredInFull(tx, "o1", "entry"));
+
+describe("stampDeliveredInFull — entry", () => {
+  it("raises every no-row active line to its qty (0 -> qty)", async () => {
+    const db = makeStampDb({
+      lines: [
+        { id: "a", qty: 10, deliveredQty: 0 },
+        { id: "b", qty: 2.5, deliveredQty: 0 },
+      ],
+    });
+    expect(await stamp(db)).toBe(2);
+    expect(db.line("a").deliveredQty).toBe(10);
+    expect(db.line("b").deliveredQty).toBe(2.5);
+  });
+
+  it("never lowers a recorded delivery (qty < delivered stays)", async () => {
+    const db = makeStampDb({ lines: [{ id: "a", qty: 4, deliveredQty: 10 }] });
+    expect(await stamp(db)).toBe(0);
+    expect(db.line("a").deliveredQty).toBe(10);
+    expect(db.calls.lineWrites).toBe(0);
+  });
+
+  it("keeps a larger recorded delivery and raises only a smaller one (max)", async () => {
+    const db = makeStampDb({
+      lines: [
+        { id: "a", qty: 10, deliveredQty: 3 },
+        { id: "b", qty: 10, deliveredQty: 12 },
+      ],
+    });
+    await stamp(db);
+    expect(db.line("a").deliveredQty).toBe(10);
+    expect(db.line("b").deliveredQty).toBe(12);
+  });
+
+  it("leaves a short-delivered route line (it has rows) exactly as the evidence left it", async () => {
+    const db = makeStampDb({
+      lines: [
+        { id: "route", qty: 10, deliveredQty: 6 },
+        { id: "manual", qty: 5, deliveredQty: 0 },
+      ],
+      mutations: [{ orderItemId: "route", type: "PARTIAL", quantityDelivered: 6 }],
+    });
+    await stamp(db);
+    expect(db.line("route").deliveredQty).toBe(6); // evidence line: untouched
+    expect(db.line("manual").deliveredQty).toBe(5); // no rows: stamped
+  });
+
+  it("a REFUSED row (quantityDelivered 0) is evidence too: that line stays at 0", async () => {
+    const db = makeStampDb({
+      lines: [{ id: "refused", qty: 3, deliveredQty: 0 }],
+      mutations: [{ orderItemId: "refused", type: "REFUSED", quantityDelivered: 0 }],
+    });
+    await stamp(db);
+    expect(db.line("refused").deliveredQty).toBe(0);
+  });
+
+  it("a row with no delivered quantity (a change-request tag) is not evidence", async () => {
+    const db = makeStampDb({
+      lines: [{ id: "a", qty: 3, deliveredQty: 0 }],
+      mutations: [{ orderItemId: "a", type: "ADD_ON", quantityDelivered: null }],
+    });
+    await stamp(db);
+    expect(db.line("a").deliveredQty).toBe(3);
+  });
+
+  it("never touches an order with a routeRunStopId", async () => {
+    const db = makeStampDb({
+      routeRunStopId: "stop-1",
+      lines: [{ id: "a", qty: 10, deliveredQty: 0 }],
+    });
+    expect(await stamp(db)).toBe(0);
+    expect(db.line("a").deliveredQty).toBe(0);
+  });
+
+  it("skips CANCELLED lines", async () => {
+    const db = makeStampDb({
+      lines: [
+        { id: "live", qty: 2, deliveredQty: 0 },
+        { id: "dead", qty: 9, deliveredQty: 0, status: "CANCELLED" },
+      ],
+    });
+    await stamp(db);
+    expect(db.line("live").deliveredQty).toBe(2);
+    expect(db.line("dead").deliveredQty).toBe(0);
+  });
+
+  it("is idempotent: a second run writes nothing", async () => {
+    const db = makeStampDb({ lines: [{ id: "a", qty: 7, deliveredQty: 0 }] });
+    await stamp(db);
+    db.calls.lineWrites = 0;
+    expect(await stamp(db)).toBe(0);
+    expect(db.calls.lineWrites).toBe(0);
+  });
+});
+
+describe("markSaleDelivered — the counter sale's DELIVERED write", () => {
+  it("writes status, deliveredAt and the stamp in one transaction", async () => {
+    const db = makeStampDb({ lines: [{ id: "a", qty: 3, deliveredQty: 0 }] });
+    const at = new Date("2026-10-01T10:00:00Z");
+    await markSaleDelivered(db.prisma, "o1", at);
+    expect(db.committed.order).toMatchObject({ status: "DELIVERED", deliveredAt: at });
+    expect(db.line("a").deliveredQty).toBe(3);
+    expect(db.calls.txCount).toBe(1);
+  });
+
+  it("a failure after the status write rolls the status back too", async () => {
+    const db = makeStampDb({
+      lines: [{ id: "a", qty: 3, deliveredQty: 0 }],
+      failAfterStatusWrite: true,
+    });
+    await expect(markSaleDelivered(db.prisma, "o1", new Date())).rejects.toThrow("boom");
+    expect(db.committed.order.status).toBe("CONFIRMED");
+    expect(db.line("a").deliveredQty).toBe(0);
+  });
+});
+
+describe("stampDeliveredInFull — edit (per-line increase of a DELIVERED order)", () => {
+  const edit = (db: ReturnType<typeof makeStampDb>, held: Array<{ id: string; qty: number }>) =>
+    db.prisma.tenantTransaction((tx: any) =>
+      stampDeliveredInFull(
+        tx,
+        "o1",
+        "edit",
+        held.map((h) => ({ ...h, productId: "p" })),
+      ),
+    );
+
+  it("raises d by exactly the edit's own increase (+2)", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "a", qty: 12, deliveredQty: 10 }],
+    });
+    await edit(db, [{ id: "a", qty: 10 }]);
+    expect(db.line("a").deliveredQty).toBe(12);
+  });
+
+  it("a cut or an unchanged qty books nothing", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [
+        { id: "a", qty: 8, deliveredQty: 10 },
+        { id: "b", qty: 5, deliveredQty: 5 },
+      ],
+    });
+    expect(
+      await edit(db, [
+        { id: "a", qty: 10 },
+        { id: "b", qty: 5 },
+      ]),
+    ).toBe(0);
+    expect(db.line("a").deliveredQty).toBe(10);
+  });
+
+  it("an added line (not held) is delivered in full", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "new", qty: 3, deliveredQty: 0 }],
+    });
+    await edit(db, []);
+    expect(db.line("new").deliveredQty).toBe(3);
+  });
+
+  it("a route short line that is edited stays exactly as its evidence left it", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "route", qty: 12, deliveredQty: 6 }],
+      mutations: [{ orderItemId: "route", type: "PARTIAL", quantityDelivered: 6 }],
+    });
+    await edit(db, [{ id: "route", qty: 10 }]);
+    expect(db.line("route").deliveredQty).toBe(6);
+  });
+
+  it("does nothing unless the order is DELIVERED (read under the caller's lock)", async () => {
+    const db = makeStampDb({ status: "CONFIRMED", lines: [{ id: "a", qty: 12, deliveredQty: 0 }] });
+    expect(await edit(db, [{ id: "a", qty: 10 }])).toBe(0);
+    expect(db.line("a").deliveredQty).toBe(0);
+  });
+});
+
+describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
+  const held = (rows: Array<[string, string | null, number, number]>) =>
+    rows.map(([id, productId, qty, deliveredQty]) => ({ id, productId, qty, deliveredQty }));
+  const recreate = async (
+    db: ReturnType<typeof makeStampDb>,
+    pre: ReturnType<typeof held>,
+    evidence: string[] = [],
+  ) => {
+    const carry = await captureRecreatedCarry(
+      {
+        order: { findFirst: async () => ({ ...db.committed.order }) },
+        deliveryMutation: {
+          findMany: async () =>
+            evidence.map((orderItemId) => ({
+              orderItemId,
+              type: "PARTIAL",
+              quantityDelivered: 1,
+            })),
+        },
+      } as never,
+      "o1",
+      pre,
+    );
+    return db.prisma.tenantTransaction((tx: any) =>
+      stampDeliveredInFull(tx, "o1", "recreated", carry!),
+    );
+  };
+
+  it("carries the per-product delivered sum onto the recreated row, then max(carried, qty)", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n1", productId: "p1", qty: 12, deliveredQty: 0 }],
+    });
+    await recreate(db, held([["old1", "p1", 10, 10]]));
+    expect(db.line("n1").deliveredQty).toBe(12);
+  });
+
+  it("a product cut below what was delivered keeps the carried value (never lowered)", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n1", productId: "p1", qty: 6, deliveredQty: 0 }],
+    });
+    await recreate(db, held([["old1", "p1", 10, 10]]));
+    expect(db.line("n1").deliveredQty).toBe(10);
+  });
+
+  it("a product whose old lines had evidence keeps its carried value and is not raised to qty", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "n1", productId: "p1", qty: 10, deliveredQty: 0 }],
+    });
+    await recreate(db, held([["old1", "p1", 10, 6]]), ["old1"]);
+    expect(db.line("n1").deliveredQty).toBe(6);
+  });
+
+  it("splits the carried sum over a product's recreated rows, in order, losing none of it", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [
+        { id: "n1", productId: "p1", qty: 4, deliveredQty: 0 },
+        { id: "n2", productId: "p1", qty: 4, deliveredQty: 0 },
+      ],
+    });
+    await recreate(db, held([["old1", "p1", 8, 8]]), ["old1"]);
+    expect(db.line("n1").deliveredQty + db.line("n2").deliveredQty).toBe(8);
+  });
+
+  it("a product that is new in the edit is delivered in full; an unlisted line too", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [
+        { id: "n1", productId: "p9", qty: 3, deliveredQty: 0 },
+        { id: "u1", productId: null, qty: 2, deliveredQty: 0 },
+      ],
+    });
+    await recreate(db, held([["old1", "p1", 10, 10]]));
+    expect(db.line("n1").deliveredQty).toBe(3);
+    expect(db.line("u1").deliveredQty).toBe(2);
+  });
+
+  it("captures nothing for an order that is not DELIVERED", async () => {
+    const db = makeStampDb({ status: "CONFIRMED", lines: [] });
+    const carry = await captureRecreatedCarry(
+      { order: { findFirst: async () => ({ ...db.committed.order }) } } as never,
+      "o1",
+      [],
+    );
+    expect(carry).toBeNull();
   });
 });
