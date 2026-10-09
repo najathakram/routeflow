@@ -4,6 +4,7 @@ import {
   defaultSellingLabel,
   resolveLadderLevel,
   resolveUnitPrice,
+  unitNameKey,
   roundMoney,
   type LadderProduct,
   type LadderUnit,
@@ -32,7 +33,8 @@ export interface UnitOption {
   listPrice: number;
 }
 
-const norm = (s: string) => s.trim().toLowerCase();
+// The shared label key (NFC, trim, case-fold): the same one the server ladder compares by.
+const norm = unitNameKey;
 
 /** The API returns Decimal strings; the pricing ladder takes them as-is. */
 const toLadderUnit = (u: ProductUnitLevel): LadderUnit => ({

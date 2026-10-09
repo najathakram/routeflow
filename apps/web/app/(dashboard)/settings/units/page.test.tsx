@@ -234,6 +234,15 @@ describe("Units page: add", () => {
     expect(screen.queryByText(/is archived\. Restore it instead/)).toBeNull();
   });
 
+  it("adding the NFD spelling of an ARCHIVED name is a restore of that unit (one word)", () => {
+    setUnits(u("Caf\u00e9", 3, "2026-10-01T00:00:00Z"));
+    createMutate.mockImplementation((_v, o) => o.onSuccess(u("Caf\u00e9", 3)));
+    render();
+    fireEvent.change(addField(), { target: { value: "Cafe\u0301" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(toastTitles()).toContain("Restored Caf\u00e9.");
+  });
+
   it("a server failure shows the fixed sentence inline, keeps the input, and adds no second toast", () => {
     setUnits(u("Box"));
     createMutate.mockImplementation((_v, o) => o.onError({ response: { status: 500, data: {} } }));

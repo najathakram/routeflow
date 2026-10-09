@@ -5,6 +5,7 @@ import NextLink from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button, Modal, Skeleton, useToast } from "@routeflow/ui/web";
+import { unitNameKey } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { MORE_UNIT_CHIPS, UNIT_CHIPS } from "@/lib/common-units";
 import { useUnitsFlag } from "@/lib/api/product-units";
@@ -35,7 +36,7 @@ const textBtn =
 const fieldCls =
   "h-11 w-full rounded border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 sm:h-10";
 
-const key = (s: string) => s.trim().toLowerCase();
+const key = unitNameKey;
 const usedBy = (n: number) =>
   n === 0 ? "Not used yet" : `Used by ${n} ${n === 1 ? "product" : "products"}`;
 
