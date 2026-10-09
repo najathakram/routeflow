@@ -65,6 +65,7 @@ import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -260,6 +261,23 @@ export function CounterSaleScreen() {
   const saleInFlight = () => submittingRef.current || createSale.isPending;
   const lineLocked = locked || salePosting;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
+  // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
+  // is a scan or the start of one, so it goes to the scan box instead of starting an Enter on "Add note" or a stray shortcut.
+  // Text fields, Ctrl/Meta/Alt combos and open dialogs are never redirected.
+  React.useEffect(() => {
+    if (receipt || locked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      if (!/^[0-9]$/.test(e.key)) return; // digits only: letters are the g-then-x navigation shortcuts
+      const scanEl = scanRef.current;
+      if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      scanEl.focus();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [receipt, locked]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -1021,6 +1039,7 @@ export function CounterSaleScreen() {
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
                 onQtyEnter={refocus}
+                onReturnFocus={refocus}
               />
             ))}
           </ul>

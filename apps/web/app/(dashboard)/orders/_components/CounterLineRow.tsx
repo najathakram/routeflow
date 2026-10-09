@@ -65,12 +65,15 @@ function QtyField({
   locked,
   onCommit,
   onEnter,
+  tabOut = false,
 }: {
   label: string;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
   onEnter?: () => void;
+  /** The LAST quantity field of the line: Tab commits and hands focus to the scan box instead of the next control. */
+  tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => {
@@ -92,7 +95,7 @@ function QtyField({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey)) {
           e.preventDefault();
           commit();
           onEnter?.();
@@ -132,6 +135,7 @@ function LineQtyEditor({
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
         onEnter={onEnter}
+        tabOut
       />
     </span>
   ) : (
@@ -141,6 +145,7 @@ function LineQtyEditor({
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
       onEnter={onEnter}
+      tabOut
     />
   );
 }
@@ -163,6 +168,7 @@ export function CounterLineRow({
   onPriceReset,
   onPriceClosed,
   onQtyEnter,
+  onReturnFocus,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -180,6 +186,8 @@ export function CounterLineRow({
   onPriceClosed?: () => void;
   /** Enter on a typed quantity: the screen hands focus back to the scan field. */
   onQtyEnter?: () => void;
+  /** The note was saved / cleared / left: the screen puts focus back on the scan box (one scan-focus owner). */
+  onReturnFocus?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
   const hasNote = !!l.note?.trim();
@@ -251,6 +259,7 @@ export function CounterLineRow({
             onClick={() => {
               onNote(l.tempId, "");
               setEditing(false);
+              onReturnFocus?.();
             }}
           >
             Clear note
@@ -267,6 +276,21 @@ export function CounterLineRow({
           disabled={locked}
           value={l.note ?? ""}
           onChange={(e) => onNote(l.tempId, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              setEditing(false);
+              onReturnFocus?.();
+            }
+          }}
+          onBlur={(e) => {
+            // Focus lost to nowhere (a click on blank space): save, close, back to the scan box. Moving to another
+            // control on purpose is left alone.
+            if (e.relatedTarget === null) {
+              setEditing(false);
+              onReturnFocus?.();
+            }
+          }}
           data-counter-note=""
           autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut
         />

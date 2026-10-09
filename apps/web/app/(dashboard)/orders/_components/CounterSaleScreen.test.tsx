@@ -201,6 +201,93 @@ describe("CounterSaleScreen", () => {
     expect(alert.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  describe("row 237: one scan-focus owner", () => {
+    const addNoteBtn = () => screen.getByRole("button", { name: /Add a note to Cola/ });
+    const scanField = () => screen.getByLabelText("Scan or search items");
+
+    async function withCola() {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    }
+
+    it("Enter in the note saves it, closes the editor and hands focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      fireEvent.keyDown(note, { key: "Enter" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Clear note hands focus to the scan box (not <body>)", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "cold" } });
+      fireEvent.keyDown(screen.getByLabelText("Note for Cola"), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("button", { name: /Clear the note on Cola/ }));
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(document.body).not.toHaveFocus();
+    });
+
+    it("leaving the note field to nowhere (blur) saves it and returns focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      note.focus();
+      note.blur();
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Tab out of the last quantity field goes to the scan box, not to Add note", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.change(qty, { target: { value: "2" } });
+      fireEvent.keyDown(qty, { key: "Tab" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
+    });
+
+    it("Shift+Tab out of the quantity field is left alone", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "Tab", shiftKey: true });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
+    it("a digit typed while a button holds focus goes to the scan box", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "5" });
+      expect(scanField()).toHaveFocus();
+    });
+
+    it("a letter is left alone (g-then-x navigation shortcuts keep working)", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "g" });
+      expect(addNoteBtn()).toHaveFocus();
+    });
+
+    it("typing in a text field, or with Ctrl, is never redirected", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "5" });
+      expect(qty).toHaveFocus();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "c", ctrlKey: true });
+      expect(addNoteBtn()).toHaveFocus();
+    });
+  });
+
   it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
