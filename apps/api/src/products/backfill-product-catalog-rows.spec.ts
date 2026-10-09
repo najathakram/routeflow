@@ -447,7 +447,11 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
       deletedAt: null,
       class: "PRODUCTION",
     });
-    prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "GROWTH" });
+    // the real row (no select) carries couponFull; isPayingTenant THROWS on a missing flag (b2b: never coerced)
+    prisma.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "GROWTH",
+      couponFull: false,
+    });
     prisma.product.findMany.mockResolvedValueOnce([]);
     const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
