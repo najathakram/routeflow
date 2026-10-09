@@ -1,9 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  COUNTER_DEFAULT_REGISTER,
-  type QuickKeysResponse,
-  type QuickKeysSettings,
-} from "@routeflow/types";
+import { COUNTER_DEFAULT_REGISTER } from "@routeflow/pricing";
+import type { QuickKeysResponse, QuickKeysSettings } from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 /** Query key of the grid answer; the register is part of it so a later per-register grid caches apart. */

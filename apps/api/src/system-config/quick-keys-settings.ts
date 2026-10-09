@@ -1,3 +1,4 @@
+import { COUNTER_DEFAULT_REGISTER } from "@routeflow/pricing";
 import type { QuickKeysRegisterSettings, QuickKeysSettings } from "@routeflow/types";
 
 /**
@@ -7,7 +8,8 @@ import type { QuickKeysRegisterSettings, QuickKeysSettings } from "@routeflow/ty
  * is its own literal here, pinned set-equal to `packages/types/api/counter-quick-keys.ts` by
  * `quick-keys-parity.spec.ts`. Types come in with `import type` only.
  */
-export const COUNTER_DEFAULT_REGISTER = "main";
+/** One source for the whole counter: re-exported so the quick-keys files keep one import path. */
+export { COUNTER_DEFAULT_REGISTER };
 export const QUICK_KEYS_DEFAULT_WINDOW_DAYS = 30;
 export const QUICK_KEYS_DEFAULT_CAP = 12;
 export const QUICK_KEYS_MAX_CAP = 24;

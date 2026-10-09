@@ -7,8 +7,8 @@
 // product row with its active variants and tenant-safe parent, without `scanMatch`), built for the whole grid in ONE query. The
 // GRID never decides a price: the screen adds it through the scan add path and `reprice.tierFor` sets the customer's price.
 
-/** The register a request names when it names none (or an unknown one). One register in v1. */
-export const COUNTER_DEFAULT_REGISTER = "main";
+// The default register and the register-key pattern are shared with every other counter feature: `COUNTER_DEFAULT_REGISTER`
+// and `REGISTER_KEY_PATTERN` in @routeflow/pricing (counter-register.ts).
 
 /** Look-back window for the ranking, in days, when the settings set none. */
 export const QUICK_KEYS_DEFAULT_WINDOW_DAYS = 30;

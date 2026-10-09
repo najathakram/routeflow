@@ -14,6 +14,7 @@ import {
   ValidateNested,
   validateSync,
 } from "class-validator";
+import { REGISTER_KEY_PATTERN } from "@routeflow/pricing";
 import type { QuickKeysRegisterSettings } from "@routeflow/types";
 import {
   COUNTER_DEFAULT_REGISTER,
@@ -76,7 +77,6 @@ export const QUICK_KEYS_INVALID_MESSAGE = "quickKeys is invalid";
 export const QUICK_KEYS_OVER_CAP_MESSAGE = "quickKeys pinned exceeds the cap";
 
 /** A register key is a short slug; the prototype-pollution names are refused outright. */
-const REGISTER_KEY = /^[A-Za-z0-9_-]{1,64}$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_REGISTERS = 20;
 
@@ -105,7 +105,7 @@ export function validateQuickKeysInput(raw: unknown): FilledQuickKeysSettings {
   const rawRegisters = isPlainObject(raw.counter) ? raw.counter.registers : undefined;
   if (isPlainObject(rawRegisters)) {
     for (const key of Object.keys(rawRegisters)) {
-      if (FORBIDDEN_KEYS.has(key) || !REGISTER_KEY.test(key)) throw invalid();
+      if (FORBIDDEN_KEYS.has(key) || !REGISTER_KEY_PATTERN.test(key)) throw invalid();
     }
   }
   const dto = plainToInstance(QuickKeysSettingsDto, raw);
@@ -123,7 +123,7 @@ export function validateQuickKeysInput(raw: unknown): FilledQuickKeysSettings {
     const entries = Object.entries(counter.registers);
     if (entries.length > MAX_REGISTERS) throw invalid();
     for (const [key, value] of entries) {
-      if (FORBIDDEN_KEYS.has(key) || !REGISTER_KEY.test(key) || !isPlainObject(value)) {
+      if (FORBIDDEN_KEYS.has(key) || !REGISTER_KEY_PATTERN.test(key) || !isPlainObject(value)) {
         throw invalid();
       }
       const reg = plainToInstance(QuickKeysRegisterDto, value);

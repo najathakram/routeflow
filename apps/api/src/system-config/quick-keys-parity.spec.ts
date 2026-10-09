@@ -1,5 +1,4 @@
 import {
-  COUNTER_DEFAULT_REGISTER as T_REGISTER,
   QUICK_KEYS_DEFAULT_CAP as T_CAP,
   QUICK_KEYS_DEFAULT_WINDOW_DAYS as T_WINDOW,
   QUICK_KEYS_MAX_CAP as T_MAX_CAP,
@@ -11,7 +10,6 @@ import {
 } from "@routeflow/types";
 import { SELL_LEVEL_VALUES } from "@routeflow/pricing";
 import {
-  COUNTER_DEFAULT_REGISTER,
   QUICK_KEYS_DEFAULT_CAP,
   QUICK_KEYS_DEFAULT_WINDOW_DAYS,
   QUICK_KEYS_MAX_CAP,
@@ -29,7 +27,6 @@ import {
 describe("quick keys constants: api literals === packages/types/api/counter-quick-keys.ts", () => {
   it("every number and string is equal", () => {
     expect({
-      COUNTER_DEFAULT_REGISTER,
       QUICK_KEYS_DEFAULT_CAP,
       QUICK_KEYS_DEFAULT_WINDOW_DAYS,
       QUICK_KEYS_MAX_CAP,
@@ -38,7 +35,6 @@ describe("quick keys constants: api literals === packages/types/api/counter-quic
       QUICK_KEYS_RANK_TAKE,
       QUICK_KEYS_RANK_TTL_MS,
     }).toEqual({
-      COUNTER_DEFAULT_REGISTER: T_REGISTER,
       QUICK_KEYS_DEFAULT_CAP: T_CAP,
       QUICK_KEYS_DEFAULT_WINDOW_DAYS: T_WINDOW,
       QUICK_KEYS_MAX_CAP: T_MAX_CAP,
