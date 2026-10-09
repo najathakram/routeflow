@@ -348,7 +348,7 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
     const label = (key: string) => FEATURE_REGISTRY.find((f) => f.key === key)!.label;
     expect(describeBusinessProfilePlan(plan)).toEqual([
       // apply order: grants → modes → denies (the mode leaves delivery before a fleet goes off)
-      "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+      "Where orders go: Not configured (today's behavior) → Ship by carrier",
       `Turn off ${label("recurring_routes")}`,
       `Turn off ${label("driver_payments")}`,
     ]);
@@ -372,7 +372,7 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
     ]);
     expect(describeBusinessProfilePlan(plan)).toEqual([
       `${label("recurring_routes")} will be switched off and its billing stopped`,
-      "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+      "Where orders go: Not configured (today's behavior) → Ship by carrier",
       `Turn off ${label("order_delivery")}`,
     ]);
   });

@@ -15,9 +15,12 @@ import {
 const TENANT_ID = "tenant-1";
 
 const mockRouterPush = jest.fn();
+const mockRouterReplace = jest.fn();
+let mockSearch = "";
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: TENANT_ID }),
-  useRouter: () => ({ push: mockRouterPush, replace: jest.fn() }),
+  useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
 const mockFetchRegistry = jest.fn();
@@ -165,12 +168,13 @@ beforeEach(() => {
   mockProfilePreview.mockResolvedValue({ data: shippingPreviewWithBilling() });
   mockProfileApply.mockResolvedValue({ data: {} });
   fulfilmentModeValue = "delivery";
+  mockSearch = "";
   tenantOverrides = {};
   mockAdmin = null;
   mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
-describe("Tenant detail page — Feature Console 'Customise' action (brief D test 4)", () => {
+describe("Tenant detail page — Feature Console 'Set override' action (brief D test 4)", () => {
   it("opens #795's drawer prefilled for the clicked feature; submit previews, then Confirm creates — in that order", async () => {
     mockPreview.mockResolvedValueOnce(
       previewFixture({
@@ -181,7 +185,7 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     await gotoSetupTab();
 
     const tobaccoRow = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
-    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Customise/ }));
+    fireEvent.click(within(tobaccoRow).getByRole("button", { name: /^Set override/ }));
 
     // Prefilled: the drawer opens with this feature key already selected.
     const featureSelect = (await screen.findByLabelText("Feature Key")) as HTMLSelectElement;
@@ -309,12 +313,14 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     expect(select.value).toBe("LITE");
   });
 
-  it("pin: an unreadable catalog falls back to every plan the API accepts, with a notice", async () => {
+  it("pin: an unreadable catalog falls back to every selectable plan (never the frozen LITE), with a notice", async () => {
     mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
     tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
     await gotoBillingTab();
     const select = await screen.findByRole("combobox", { name: "Plan" });
-    await waitFor(() => expect(optionValues(select)).toEqual([...PLAN_KEYS]));
+    await waitFor(() =>
+      expect(optionValues(select)).toEqual(PLAN_KEYS.filter((k) => k !== "LITE")),
+    );
     expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
   });
 });
@@ -334,8 +340,8 @@ describe("Tenant detail page — the Setup tab (business profiles)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Counter sales")).toBeInTheDocument();
     expect(await screen.findByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeDisabled();
-    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeDisabled();
+    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
     // The existing feature console is still there, below.
     expect(screen.getByText("compliance")).toBeInTheDocument();
   });
@@ -697,5 +703,78 @@ describe("Tenant detail page — Suspend and Delete ask first (back office P1)",
     fireEvent.click(within(dialog).getByRole("button", { name: "Extend Trial" }));
     expect(await screen.findByText("Couldn't extend the trial. Try again.")).toBeInTheDocument();
     expect(screen.queryByText(/prisma/)).toBeNull();
+  });
+});
+
+describe("SA-1: the tab lives in the URL (?tab=)", () => {
+  it("no ?tab= opens Overview", async () => {
+    render(<TenantDetailPage />);
+    await screen.findByRole("button", { name: "Setup" });
+    expect(screen.queryByText("Current setup")).toBeNull();
+  });
+
+  it("?tab=setup opens the Setup tab without a click", async () => {
+    mockSearch = "tab=setup";
+    render(<TenantDetailPage />);
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+  });
+
+  it("the legacy ?tab=addons resolves to Setup", async () => {
+    mockSearch = "tab=addons";
+    render(<TenantDetailPage />);
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+  });
+
+  it("an unknown ?tab= falls back to Overview", async () => {
+    mockSearch = "tab=nonsense";
+    render(<TenantDetailPage />);
+    await screen.findByRole("button", { name: "Setup" });
+    expect(screen.queryByText("Current setup")).toBeNull();
+  });
+
+  it("clicking a tab shows it AND writes ?tab= with router.replace (never push)", async () => {
+    render(<TenantDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Setup" }));
+    expect(await screen.findByText("Current setup")).toBeInTheDocument();
+    expect(mockRouterReplace).toHaveBeenCalledWith(`/admin/tenants/${TENANT_ID}?tab=setup`, {
+      scroll: false,
+    });
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Billing & Subscription" }));
+    expect(mockRouterReplace).toHaveBeenLastCalledWith(`/admin/tenants/${TENANT_ID}?tab=billing`, {
+      scroll: false,
+    });
+  });
+});
+
+describe("SA-1: the applied business profile is marked 'Current'", () => {
+  it("marks the profile the tenant's stored setup matches, and no other row", async () => {
+    fulfilmentModeValue = "delivery";
+    await gotoSetupTab();
+    const current = await screen.findByTestId("profile-current");
+    expect(current).toHaveTextContent("Current");
+    expect(screen.getAllByTestId("profile-current")).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label")!,
+      ).getByTestId("profile-current"),
+    ).toBeInTheDocument();
+    // Still selectable.
+    expect(screen.getByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
+  });
+
+  it("no profile applied (mode unset) shows no marker", async () => {
+    fulfilmentModeValue = "unset";
+    await gotoSetupTab();
+    await screen.findByRole("radio", { name: /Delivery distributor/ });
+    await screen.findByText(/Not set/);
+    expect(screen.queryByTestId("profile-current")).toBeNull();
+  });
+
+  it("a mode no profile sets ('both') shows no marker", async () => {
+    fulfilmentModeValue = "both";
+    await gotoSetupTab();
+    await screen.findByRole("radio", { name: /Delivery distributor/ });
+    expect(screen.queryByTestId("profile-current")).toBeNull();
   });
 });

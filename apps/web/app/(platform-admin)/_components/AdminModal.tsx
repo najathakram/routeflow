@@ -8,12 +8,24 @@ interface AdminModalProps {
   title: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** Take the initial focus instead of the first focusable (e.g. a confirm dialog's primary action). */
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /** Phone width: a bottom sheet (about 80% height, scrolling inside); from `sm` up it is the usual centred dialog. */
+  sheet?: boolean;
 }
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function AdminModal({ open, onClose, title, children, footer }: AdminModalProps) {
+export function AdminModal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  initialFocusRef,
+  sheet,
+}: AdminModalProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLElement | null>(null);
   const titleId = React.useId();
@@ -33,7 +45,8 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
     triggerRef.current = document.activeElement as HTMLElement | null;
 
     const panel = panelRef.current;
-    const initialFocusable = panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    const initialFocusable =
+      initialFocusRef?.current ?? panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
     (initialFocusable ?? panel)?.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -68,12 +81,14 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
       window.removeEventListener("keydown", handleKeyDown);
       triggerRef.current?.focus?.();
     };
-  }, [open]);
+  }, [open, initialFocusRef]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div
+      className={`fixed inset-0 z-50 flex justify-center ${sheet ? "items-end sm:items-center" : "items-center"}`}
+    >
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         ref={panelRef}
@@ -81,7 +96,9 @@ export function AdminModal({ open, onClose, title, children, footer }: AdminModa
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="relative w-full max-w-lg rounded-xl bg-slate-800 ring-1 ring-white/10 shadow-2xl"
+        className={`relative w-full max-w-lg rounded-xl bg-slate-800 ring-1 ring-white/10 shadow-2xl ${
+          sheet ? "max-h-[80vh] overflow-y-auto rounded-b-none sm:max-h-[90vh] sm:rounded-b-xl" : ""
+        }`}
       >
         <div className="flex items-center justify-between border-b border-slate-700 px-5 py-4">
           <h3 id={titleId} className="text-base font-semibold text-white">

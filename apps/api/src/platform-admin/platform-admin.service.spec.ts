@@ -2068,7 +2068,9 @@ describe("PlatformAdminService — audit provenance", () => {
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeNull();
       expect(args.where.status).toBe("ACTIVE");
-      expect(args.where.plan).toBe("STARTER");
+      // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
+      expect(args.where.plan).toBeUndefined();
+      expect(JSON.stringify(args.where)).toContain('"planKey":{"in":["STARTER"]}');
       expect(args.where.OR).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
@@ -2077,6 +2079,45 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.orderBy).toEqual({ slug: "asc" });
       expect(result.meta.total).toBe(5);
       expect(result.meta.deletedCount).toBe(3);
+    });
+
+    it("SA-1: plan=GROWTH matches a tenant by subscription.planKey, not the legacy Tenant.plan enum", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "GROWTH", search: "acme" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.plan).toBeUndefined();
+      expect(args.where.AND).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([{ subscription: { planKey: { in: ["GROWTH", "TEAM"] } } }]),
+          }),
+        ]),
+      );
+      // The search OR is untouched (the plan clause must not overwrite it).
+      expect(args.where.OR).toHaveLength(3);
+    });
+
+    it("SA-1: a drifted tenant (no subscription.planKey) is still found under the plan its row displays", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
+      expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
+      expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
+    });
+
+    it("review nit: the filter matches every stored key the row normalizes to the chosen plan", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const first = args.where.AND[0].OR[0];
+      // a subscription still pinned to a legacy key (BUSINESS / PROFESSIONAL) displays as SCALE
+      expect([...first.subscription.planKey.in].sort()).toEqual(
+        ["BUSINESS", "PROFESSIONAL", "SCALE"].sort(),
+      );
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {
@@ -2286,6 +2327,16 @@ describe("PlatformAdminService — audit provenance", () => {
         service.createTenant({ ...validCreateDto, businessName: "+SUM(A1)" }),
       ).rejects.toThrow(/businessName must not start with/);
       expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("an email or username already in use is a 400 with the ACCOUNT_IDENTIFIER_IN_USE code (message kept)", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "someone" } as any);
+      const err: any = await service.createTenant(validCreateDto).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "ACCOUNT_IDENTIFIER_IN_USE",
+        message: "Email or username already in use",
+      });
     });
 
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {

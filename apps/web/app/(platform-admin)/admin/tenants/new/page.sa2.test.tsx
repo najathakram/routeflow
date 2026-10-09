@@ -1,0 +1,558 @@
+import * as React from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import AdminCreateTenantPage from "./page";
+import { superAdminClient } from "@/lib/admin-api";
+import { PROFILES_FIXTURE } from "../[id]/_features/__fixtures__/profiles.fixtures";
+
+// SA-2: the Create Tenant page — Plan and start, plain profile choices, Free add-ons, the review sheet,
+// the create chain (tenant -> activate -> profile -> add-ons) and the result banner that scrolls and takes focus.
+
+jest.mock("@/lib/admin-api", () => ({
+  superAdminClient: { post: jest.fn() },
+}));
+
+const mockFetchPlanCatalog = jest.fn();
+const mockFetchProfiles = jest.fn();
+const mockApplyProfile = jest.fn();
+const mockPreviewProfile = jest.fn();
+const mockFetchRegistry = jest.fn();
+
+jest.mock("@/lib/platform-admin/business-profiles", () => ({
+  fetchBusinessProfiles: () => mockFetchProfiles(),
+  previewBusinessProfile: (tenantId: string, profile: string) =>
+    mockPreviewProfile(tenantId, profile),
+  applyBusinessProfile: (tenantId: string, profile: string, planFingerprint: string) =>
+    mockApplyProfile(tenantId, profile, planFingerprint),
+}));
+jest.mock("@/lib/platform-admin/features", () => ({
+  ...jest.requireActual("@/lib/platform-admin/features"),
+  fetchFeatureRegistry: () => mockFetchRegistry(),
+}));
+jest.mock("@/lib/api/platform-pricing", () => ({
+  fetchPlanCatalog: () => mockFetchPlanCatalog(),
+}));
+
+const post = superAdminClient.post as jest.Mock;
+const scrollIntoView = jest.fn();
+
+const ALL_PROFILES = PROFILES_FIXTURE.map((p) => ({ ...p, available: true }));
+
+function planEntry(planKey: string, sortOrder: number, monthlyPrice = "99") {
+  return { planKey, name: planKey, monthlyPrice, annualPrice: null, isCustom: false, sortOrder };
+}
+const CATALOG = {
+  version: 1,
+  effectiveAt: null,
+  plans: [planEntry("LITE", 0, "0"), planEntry("STARTER", 1, "99"), planEntry("GROWTH", 2, "249")],
+};
+const REGISTRY = [
+  {
+    key: "ocr",
+    label: "Receipt scanning",
+    description: "Reads receipts into bills.",
+    lifecycle: "ga",
+  },
+  {
+    key: "tobacco_dealer",
+    label: "Tobacco dealer",
+    description: "Tobacco compliance.",
+    lifecycle: "ga",
+  },
+  {
+    key: "driver_payments",
+    label: "At-door payment collection",
+    description: "Collect at the door.",
+    lifecycle: "ga",
+  },
+  { key: "not_an_addon", label: "Some limit", description: "x", lifecycle: "ga" },
+];
+
+type PostHandler = (body: unknown) => unknown;
+function setPost(over: Record<string, PostHandler> = {}) {
+  post.mockImplementation(async (url: string, body: unknown) => {
+    if (over[url]) {
+      const out = over[url](body);
+      if (out instanceof Error) throw out;
+      return out;
+    }
+    if (url === "/platform-admin/tenants") return { data: { id: "t1", slug: "acme" } };
+    if (url.endsWith("/activate-subscription")) {
+      return { data: { plan: "STARTER", periodEnd: "2026-12-07T00:00:00Z" } };
+    }
+    return { data: {} };
+  });
+}
+function httpError(status: number, data: Record<string, unknown>) {
+  return Object.assign(new Error(`status ${status}`), { response: { status, data } });
+}
+const urls = () => post.mock.calls.map((c) => c[0] as string);
+const bodyOf = (url: string) => post.mock.calls.find((c) => c[0] === url)?.[1];
+
+function fillForm() {
+  fireEvent.change(screen.getByLabelText(/slug/i), { target: { value: "acme" } });
+  fireEvent.change(screen.getByLabelText(/business name/i), { target: { value: "Acme" } });
+  fireEvent.change(screen.getByLabelText(/admin email/i), { target: { value: "o@acme.example" } });
+  fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+}
+const formCreate = () => screen.getByRole("button", { name: /^create tenant$/i });
+async function openSheet() {
+  fireEvent.click(formCreate());
+  return screen.findByRole("dialog");
+}
+async function createThroughSheet() {
+  const dialog = await openSheet();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+}
+const fmt = (d: Date) =>
+  d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  mockFetchPlanCatalog.mockResolvedValue(CATALOG);
+  mockFetchProfiles.mockResolvedValue(ALL_PROFILES);
+  mockFetchRegistry.mockResolvedValue(REGISTRY);
+  mockApplyProfile.mockResolvedValue({ summary: [] });
+  mockPreviewProfile.mockResolvedValue({ planFingerprint: "f".repeat(64) });
+  setPost();
+});
+
+async function renderPage() {
+  render(<AdminCreateTenantPage />);
+  await screen.findByRole("radio", { name: /Shipping only/ });
+  await waitFor(() => expect(screen.getByLabelText("Plan")).toHaveValue("STARTER"));
+}
+
+describe("SA-2 Plan and start", () => {
+  it("(1) a 21-day trial posts trialLengthDays 21; the default start is a 14-day trial", async () => {
+    await renderPage();
+    expect(screen.getByRole("radio", { name: "Start a trial" })).toBeChecked();
+    expect(screen.getByLabelText("Trial length (days)")).toHaveValue(14);
+    fillForm();
+    fireEvent.change(screen.getByLabelText("Trial length (days)"), { target: { value: "21" } });
+    await createThroughSheet();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(bodyOf("/platform-admin/tenants")).toMatchObject({
+      plan: "STARTER",
+      trialLengthDays: 21,
+    });
+  });
+
+  it("shows the plan price line and the trial billing line", async () => {
+    await renderPage();
+    expect(screen.getByTestId("plan-line")).toHaveTextContent("Starter: $99/month.");
+    expect(screen.getByTestId("billing-line")).toHaveTextContent(
+      `No charge now. On ${fmt(inDays(14))} the account becomes read-only unless you activate it.`,
+    );
+  });
+
+  it("(2) Start active shows payment method + period and posts activate-subscription after the create", async () => {
+    await renderPage();
+    expect(screen.queryByLabelText("Payment method")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Start active" }));
+    expect(screen.getByText("You've already been paid, outside Stripe.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Payment method"), { target: { value: "CHECK" } });
+    fireEvent.change(screen.getByLabelText("Billing period (days)"), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText("Reference (optional)"), { target: { value: "R-77" } });
+    expect(screen.getByTestId("billing-line")).toHaveTextContent(
+      `Paid through ${fmt(inDays(90))}. No Stripe charge. You record each payment yourself.`,
+    );
+    fillForm();
+    await createThroughSheet();
+    await waitFor(() =>
+      expect(urls()).toContain("/platform-admin/tenants/t1/activate-subscription"),
+    );
+    expect(urls().indexOf("/platform-admin/tenants")).toBeLessThan(
+      urls().indexOf("/platform-admin/tenants/t1/activate-subscription"),
+    );
+    expect(bodyOf("/platform-admin/tenants/t1/activate-subscription")).toEqual({
+      plan: "STARTER",
+      paymentMethod: "CHECK",
+      paymentRef: "R-77",
+      billingPeriodDays: 90,
+    });
+    expect(bodyOf("/platform-admin/tenants")).not.toHaveProperty("trialLengthDays");
+  });
+
+  it("(3) Lite disables the trial with the reason and preselects Start active", async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "LITE" } });
+    expect(screen.getByRole("radio", { name: "Start a trial" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Start active" })).toBeChecked();
+    expect(screen.getByText(/Lite is invite only and has no trial\./)).toBeInTheDocument();
+    expect(screen.getByLabelText("Payment method")).toBeInTheDocument();
+    // going back to a plan with a trial gives the trial back
+    fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "STARTER" } });
+    expect(screen.getByRole("radio", { name: "Start a trial" })).toBeEnabled();
+  });
+});
+
+describe("SA-2 plain profile choices", () => {
+  it("(8) Custom is the default and nothing is applied, activated or comped", async () => {
+    await renderPage();
+    expect(
+      screen.getByRole("radio", { name: /Custom: I'll choose the features myself/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByText("Starts with the plan's defaults. Nothing else is turned on."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Pick the closest match. You can change it later in Setup."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "What does this business do?" })).toBeInTheDocument();
+    fillForm();
+    await createThroughSheet();
+    await screen.findByText("Tenant created successfully!");
+    expect(urls()).toEqual(["/platform-admin/tenants"]);
+    expect(mockPreviewProfile).not.toHaveBeenCalled();
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+
+  it("only the SELECTED choice expands its bullets and muted profile id", async () => {
+    await renderPage();
+    expect(screen.queryByText("Counter in the menu")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /POS only: counter sales/ }));
+    expect(screen.getByText("What this business will see")).toBeInTheDocument();
+    expect(screen.getByText("Counter in the menu")).toBeInTheDocument();
+    expect(screen.getByText("Orders are in-store pickup only")).toBeInTheDocument();
+    expect(screen.getByText("No routes, delivery or driver payments")).toBeInTheDocument();
+    expect(screen.getByText("Profile ID: in_store_retailer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    expect(screen.queryByText("Counter in the menu")).toBeNull();
+    expect(screen.getByText("Profile ID: shipping_wholesaler")).toBeInTheDocument();
+  });
+});
+
+describe("SA-2 Free add-ons", () => {
+  it("is collapsed with a count badge, lists only add-on keys, and says nothing is billed", async () => {
+    await renderPage();
+    const details = (await screen.findByText("Free add-ons (comped, never billed)")).closest(
+      "details",
+    )!;
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByTestId("addons-count")).toHaveTextContent("0");
+    expect(within(details).getByRole("checkbox", { name: /Receipt scanning/ })).toBeInTheDocument();
+    expect(within(details).getByRole("checkbox", { name: /Tobacco dealer/ })).toBeInTheDocument();
+    expect(within(details).queryByRole("checkbox", { name: /Some limit/ })).toBeNull();
+    expect(
+      within(details).getByText(
+        "These turn on at no charge and never appear on an invoice. Billed add-ons are bought by the business at checkout.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("(7) a ticked free add-on is enabled after the create as a comp", async () => {
+    await renderPage();
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    expect(screen.getByTestId("addons-count")).toHaveTextContent("1");
+    fillForm();
+    const dialog = await openSheet();
+    expect(within(dialog).getByTestId("sheet-addons")).toHaveTextContent("Receipt scanning");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
+    expect(bodyOf("/platform-admin/tenants/t1/addons/enable")).toEqual({
+      addonKey: "ocr",
+      comp: true,
+    });
+  });
+
+  it("a registry that cannot load says so and the form still creates a tenant", async () => {
+    mockFetchRegistry.mockRejectedValue(new Error("down"));
+    await renderPage();
+    expect(await screen.findByText(/Free add-ons could not be loaded/)).toBeInTheDocument();
+    fillForm();
+    await createThroughSheet();
+    await screen.findByText("Tenant created successfully!");
+  });
+});
+
+describe("SA-2 review sheet", () => {
+  it("(4) Create opens the sheet and sends NOTHING until the sheet's Create; Cancel keeps every input", async () => {
+    await renderPage();
+    fillForm();
+    const dialog = await openSheet();
+    expect(within(dialog).getByRole("heading", { name: "Create Acme?" })).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+    expect(within(dialog).getByTestId("sheet-account")).toHaveTextContent("acme");
+    expect(within(dialog).getByTestId("sheet-account")).toHaveTextContent("o@acme.example");
+    expect(within(dialog).getByTestId("sheet-plan")).toHaveTextContent("Starter");
+    expect(within(dialog).getByTestId("sheet-addons")).toHaveTextContent("None");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/slug/i)).toHaveValue("acme");
+    expect(screen.getByLabelText(/admin email/i)).toHaveValue("o@acme.example");
+    // Escape = no request either
+    await openSheet();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+    // and the sheet's Create sends exactly one create
+    await createThroughSheet();
+    await screen.findByText("Tenant created successfully!");
+    expect(urls().filter((u) => u === "/platform-admin/tenants")).toHaveLength(1);
+  });
+
+  it("the sheet's primary button takes the initial focus", async () => {
+    await renderPage();
+    fillForm();
+    const dialog = await openSheet();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Create Tenant" })).toHaveFocus(),
+    );
+  });
+
+  it.each([
+    ["delivery_distributor", ["Orders go out on the business's own trucks", "Delivery routes on"]],
+    ["shipping_wholesaler", ["Orders ship by carrier", "Delivery routes off"]],
+    [
+      "in_store_retailer",
+      ["Counter sales on", "Orders are in-store pickup only", "Delivery routes off"],
+    ],
+    [
+      "in_store_shipping_retailer",
+      ["Counter sales on", "Orders are in-store pickup or carrier shipping", "Delivery routes off"],
+    ],
+  ])("(5) the Setup lines for %s are derived from the profile list", async (key, lines) => {
+    await renderPage();
+    fillForm();
+    fireEvent.click(document.getElementById(`create-tenant-profile-${key}`)!);
+    const dialog = await openSheet();
+    const items = within(within(dialog).getByTestId("sheet-setup")).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual(lines);
+  });
+
+  it("(5b) the lines follow the data: a changed registry changes the lines", async () => {
+    mockFetchProfiles.mockResolvedValue(
+      ALL_PROFILES.map((p) =>
+        p.key === "shipping_wholesaler"
+          ? { ...p, modes: { fulfilment_model: "both" }, grants: ["recurring_routes"], denies: [] }
+          : p,
+      ),
+    );
+    await renderPage();
+    fillForm();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    const dialog = await openSheet();
+    const text = within(dialog).getByTestId("sheet-setup").textContent;
+    expect(text).toContain("Recurring routes on");
+    expect(text).not.toContain("Delivery routes off");
+  });
+
+  it("(9) the native required-field bubble still works: an empty slug opens no sheet", async () => {
+    await renderPage();
+    fireEvent.click(formCreate());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect((screen.getByLabelText(/slug/i) as HTMLInputElement).validity.valueMissing).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe("SA-2 chain and partial failure", () => {
+  it("(6a) an activation that fails after the create names the step, links the tenant's Billing", async () => {
+    setPost({
+      "/platform-admin/tenants/t1/activate-subscription": () => httpError(500, { message: "RAW" }),
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: "Start active" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("partial-banner");
+    expect(banner).toHaveTextContent(
+      "Created Acme, but activation didn't finish. Open Billing to finish it.",
+    );
+    expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
+      "href",
+      "/admin/tenants/t1?tab=billing",
+    );
+    expect(document.body.textContent).not.toContain("RAW");
+    expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+
+  it("(6b) a profile that fails after the create names the step, links the tenant's Setup", async () => {
+    mockApplyProfile.mockRejectedValueOnce(new Error("boom"));
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("partial-banner");
+    expect(banner).toHaveTextContent(
+      "Created Acme, but the profile didn't apply. Open Setup to finish it.",
+    );
+    expect(screen.getByRole("link", { name: "Open Acme" })).toHaveAttribute(
+      "href",
+      "/admin/tenants/t1?tab=setup",
+    );
+  });
+
+  it("an add-on that fails does not hide the tenant that was created", async () => {
+    setPost({ "/platform-admin/tenants/t1/addons/enable": () => httpError(500, {}) });
+    await renderPage();
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("partial-banner");
+    expect(banner).toHaveTextContent("Created Acme, but a free add-on didn't turn on");
+    expect(banner).toHaveTextContent("Receipt scanning");
+  });
+
+  it("the success banner links to the tenant's Overview", async () => {
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    expect(await screen.findByRole("link", { name: "Open Acme" })).toHaveAttribute(
+      "href",
+      "/admin/tenants/t1?tab=overview",
+    );
+  });
+
+  it("the billing-stop confirm still appears, and add-ons wait for it", async () => {
+    mockPreviewProfile.mockResolvedValueOnce({
+      profile: "shipping_wholesaler",
+      plan: {
+        overrides: [],
+        modes: [],
+        billing: [{ featureKey: "driver_payments", action: "disable", manual: false }],
+      },
+      summary: [],
+      changes: [],
+      planFingerprint: "e".repeat(64),
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fillForm();
+    await createThroughSheet();
+    const review = await screen.findByText("Billing stops as soon as you confirm.");
+    expect(review).toBeInTheDocument();
+    expect(urls()).not.toContain("/platform-admin/tenants/t1/addons/enable");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
+    expect(mockApplyProfile).toHaveBeenCalledWith("t1", "shipping_wholesaler", "e".repeat(64));
+  });
+
+  it("while creating, the button reads Creating... and inputs are disabled", async () => {
+    let release: (v: unknown) => void = () => {};
+    post.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    const btn = await screen.findByRole("button", { name: /creating/i });
+    expect(btn).toBeDisabled();
+    expect(screen.getByLabelText(/slug/i)).toBeDisabled();
+    release({ data: { id: "t1", slug: "acme" } });
+    await screen.findByText("Tenant created successfully!");
+  });
+});
+
+describe("SA-2 addendum: the result lands in view and takes focus", () => {
+  it("a failed create scrolls the error banner into view and focuses it", async () => {
+    setPost({ "/platform-admin/tenants": () => httpError(500, {}) });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("create-banner");
+    expect(banner).toHaveAttribute("role", "alert");
+    expect(banner).toHaveTextContent("Failed to create tenant");
+    await waitFor(() => expect(banner).toHaveFocus());
+    expect(scrollIntoView.mock.instances).toContain(banner);
+    // input kept
+    expect(screen.getByLabelText(/slug/i)).toHaveValue("acme");
+  });
+
+  it("a taken slug focuses and scrolls to the slug field, says so inline, and keeps the input", async () => {
+    setPost({
+      "/platform-admin/tenants": () =>
+        httpError(409, { statusCode: 409, message: 'Slug "acme" is already taken' }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    expect(await screen.findByText("That slug isn't available. Try another.")).toBeInTheDocument();
+    const slug = screen.getByLabelText(/slug/i);
+    await waitFor(() => expect(slug).toHaveFocus());
+    expect(scrollIntoView.mock.instances).toContain(slug);
+    expect(slug).toHaveAttribute("aria-invalid", "true");
+    expect(slug).toHaveValue("acme");
+    expect(document.body.textContent).not.toContain("is already taken");
+    expect(document.body.textContent).not.toContain('Slug "acme"');
+  });
+
+  it("an email or username already in use is named by its code, inline on the email field", async () => {
+    setPost({
+      "/platform-admin/tenants": () =>
+        httpError(400, {
+          statusCode: 400,
+          code: "ACCOUNT_IDENTIFIER_IN_USE",
+          message: "Email or username already in use",
+        }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    expect(
+      await screen.findByText("That email or username is already in use."),
+    ).toBeInTheDocument();
+    const email = screen.getByLabelText(/admin email/i);
+    await waitFor(() => expect(email).toHaveFocus());
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(document.body.textContent).not.toContain("Email or username already in use");
+  });
+
+  it("an invalid email focuses the email field first (named by the DTO's rules, not the server text)", async () => {
+    setPost({
+      "/platform-admin/tenants": () =>
+        httpError(400, { statusCode: 400, message: ["adminEmail must be an email"] }),
+    });
+    await renderPage();
+    fillForm();
+    fireEvent.change(screen.getByLabelText(/admin email/i), { target: { value: "o@acme" } });
+    await createThroughSheet();
+    const email = screen.getByLabelText(/admin email/i);
+    await waitFor(() => expect(email).toHaveFocus());
+    expect(scrollIntoView.mock.instances).toContain(email);
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveValue("o@acme");
+  });
+
+  it("the success banner is a status region that scrolls into view and takes focus", async () => {
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("create-banner");
+    expect(banner).toHaveAttribute("role", "status");
+    await waitFor(() => expect(banner).toHaveFocus());
+    expect(scrollIntoView.mock.instances).toContain(banner);
+  });
+
+  it("a partial-failure banner takes focus too", async () => {
+    mockApplyProfile.mockRejectedValueOnce(new Error("boom"));
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("create-banner");
+    await waitFor(() => expect(banner).toHaveFocus());
+    expect(banner).toHaveAttribute("role", "alert");
+  });
+});
+
+describe("SA-1 review nit: the applied-summary list keys are unique", () => {
+  it("two identical summary lines raise no duplicate-key warning", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockApplyProfile.mockResolvedValue({
+      summary: ["Recurring routes: off", "Recurring routes: off"],
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fillForm();
+    await createThroughSheet();
+    const list = await screen.findByTestId("profile-applied-summary");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const keyWarnings = spy.mock.calls.filter((c) => String(c[0]).includes("same key"));
+    spy.mockRestore();
+    expect(keyWarnings).toHaveLength(0);
+  });
+});

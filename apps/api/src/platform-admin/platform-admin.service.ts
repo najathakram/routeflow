@@ -26,8 +26,10 @@ import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService, isPayingRow } from "../billing/mrr.service";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import {
+  LEGACY_PLAN_KEY_ALIASES,
   normalizePlanKey,
   planKeyFromEnum,
+  SELECTABLE_TENANT_PLANS,
   findPlanDefinition,
   planRank,
   BILLING_EVENTS,
@@ -157,7 +159,34 @@ export class PlatformAdminService {
     // Cancelled/soft-deleted tenants are hidden unless explicitly requested.
     if (!filters.includeDeleted) where.deletedAt = null;
     if (filters.status) where.status = filters.status;
-    if (filters.plan) where.plan = filters.plan;
+    if (filters.plan) {
+      // SA-1: filter by the REAL billing plan (subscription.planKey) — the one every list row
+      // displays — not the legacy Tenant.plan enum, which drifts (B556). A tenant with no
+      // resolved planKey is shown under planKeyFromEnum(plan), so it is matched the same way.
+      const legacyPlans = SELECTABLE_TENANT_PLANS.filter(
+        (p) => planKeyFromEnum(p) === filters.plan,
+      );
+      const storedKeys = [
+        filters.plan,
+        ...Object.entries(LEGACY_PLAN_KEY_ALIASES)
+          .filter(([, current]) => current === filters.plan)
+          .map(([legacy]) => legacy),
+      ];
+      where.AND = [
+        {
+          OR: [
+            // every stored key the row would normalize to this plan (a legacy alias shows as its current plan)
+            { subscription: { planKey: { in: storedKeys } } },
+            {
+              AND: [
+                { OR: [{ subscription: null }, { subscription: { planKey: null } }] },
+                { plan: { in: legacyPlans } },
+              ],
+            },
+          ],
+        },
+      ];
+    }
     if (filters.search) {
       const q = filters.search.trim();
       where.OR = [
@@ -363,7 +392,13 @@ export class PlatformAdminService {
       const existingUser = await tx.user.findFirst({
         where: { tenantId: tenant.id, OR: [{ email: adminEmail }, { username: adminUsername }] },
       });
-      if (existingUser) throw new BadRequestException("Email or username already in use");
+      if (existingUser) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.ACCOUNT_IDENTIFIER_IN_USE,
+          message: "Email or username already in use",
+        });
+      }
 
       const user = await tx.user.create({
         data: {

@@ -163,6 +163,7 @@ export * from "./api/checks";
 export * from "./api/features";
 export * from "./api/fulfilment";
 export * from "./api/profiles";
+export * from "./api/external-payment";
 export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
