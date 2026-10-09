@@ -22,6 +22,7 @@ import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { isTestTenantSlug } from "@/lib/test-tenant-slug";
 
 interface CreatedTenant {
   slug: string;
@@ -331,6 +332,11 @@ export default function AdminCreateTenantPage() {
               required
               className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             />
+            {isTestTenantSlug(form.slug) && (
+              <p className="text-xs text-amber-300" role="status" data-testid="test-tenant-notice">
+                This will be a TEST tenant: its slug matches a test-tenant pattern.
+              </p>
+            )}
           </div>
 
           {/* Business Name */}

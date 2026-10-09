@@ -119,7 +119,7 @@ export default function ReturnDetailScreen() {
     );
   }
 
-  const pill = returnPillFor(ret.status);
+  const pill = returnPillFor(ret.status, ret);
   const flags = returnActionFlags(ret.status);
   const anyPending =
     approveMut.isPending ||
