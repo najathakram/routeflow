@@ -15,9 +15,11 @@ import {
   Clock,
   Ban,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
+import { Button, Card, Modal, Select, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import type { InlineRefundTender } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
+import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
@@ -78,7 +80,7 @@ const REASON_LABELS: Record<ReturnReason, string> = {
 
 const REFUND_METHOD_LABELS: Record<RefundMethod, string> = {
   CREDIT_NOTE: "Store credit (credit note)",
-  EXTERNAL_REFUND: "Refunded outside RouteFlow",
+  EXTERNAL_REFUND: "Refunded (cash / card / check)",
 };
 
 function fmtMoney(n: number | null | undefined): string {
@@ -110,15 +112,20 @@ function ResolveReturnModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (method: RefundMethod) => void;
+  onConfirm: (method: RefundMethod, tender?: InlineRefundTender) => void;
   isPending: boolean;
   refundEstimate?: number | null;
   refundEstimateReason?: string | null;
 }) {
   const [method, setMethod] = React.useState<RefundMethod>("CREDIT_NOTE");
+  // SA-740r2: optional ("" = not recorded). Only meaningful for the refund option; reset whenever the modal opens.
+  const [tender, setTender] = React.useState<InlineRefundTender | "">("");
 
   React.useEffect(() => {
-    if (isOpen) setMethod("CREDIT_NOTE");
+    if (isOpen) {
+      setMethod("CREDIT_NOTE");
+      setTender("");
+    }
   }, [isOpen]);
 
   const amountLabel = fmtMoney(refundEstimate);
@@ -139,7 +146,12 @@ function ResolveReturnModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button onClick={() => onConfirm(method)} loading={isPending}>
+          <Button
+            onClick={() =>
+              onConfirm(method, method === "EXTERNAL_REFUND" && tender ? tender : undefined)
+            }
+            loading={isPending}
+          >
             Resolve Return
           </Button>
         </>
@@ -174,13 +186,21 @@ function ResolveReturnModal({
           />
           <span>
             <span className="block text-sm font-medium text-navy">
-              Refunded outside RouteFlow (cash, check, transfer)
+              Refund (cash / card / check)
             </span>
             <span className="block text-xs text-navy/70">
-              Records that {amountLabel} was already returned to the customer. Nothing is minted.
+              Records that {amountLabel} was returned to the customer. Nothing is minted.
             </span>
           </span>
         </label>
+        {method === "EXTERNAL_REFUND" && (
+          <Select
+            label="Refund by"
+            value={tender}
+            onChange={(e) => setTender(e.target.value as InlineRefundTender | "")}
+            options={[{ value: "", label: "Not recorded" }, ...TENDER_OPTIONS]}
+          />
+        )}
       </div>
     </Modal>
   );
@@ -475,9 +495,10 @@ export default function ReturnDetailPage() {
     });
   };
 
-  const handleResolveReturn = (method: RefundMethod) => {
+  const handleResolveReturn = (method: RefundMethod, tender?: InlineRefundTender) => {
     processRefund.mutate(
-      { id: ret.id, method },
+      // SA-740r2: a tender rides only with a recorded refund, and only when the clerk chose one
+      { id: ret.id, method, ...(method === "EXTERNAL_REFUND" && tender ? { tender } : {}) },
       {
         onSuccess: (res) => {
           setIsRefundOpen(false);
