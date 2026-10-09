@@ -1,68 +1,43 @@
 import { roundMoney, toCents } from "@routeflow/pricing";
 import { prorateDaily } from "./billing-math";
-import { ANCHOR_HOUR_UTC, nextCheckoutAnchor } from "./checkout-anchor";
+import { nextCheckoutAnchor } from "./checkout-anchor";
+import {
+  BOUNDARY_HOUR_UTC,
+  boundary,
+  paidThrough as sharedPaidThrough,
+  snapToBoundary,
+} from "./rf-invoice/calendar-windows";
 
 /**
- * SA-733 D7 / SA-733r [M5] / r2 / r3 [N3] / r4: the October CATCH-UP of a manually-invoiced tenant, as a PURE
- * plan. No Stripe, no database, no clock of its own. The caller supplies the tenant's resolved monthly price (the
- * one rule in plan-price.ts: override beats catalog), its billable add-ons and its RfInvoices.
+ * SA-733 D7 / SA-733r [M5] / r2 / r3 [N3] / r4 / r5: the October CATCH-UP of a manually-invoiced tenant, as a
+ * PURE plan. No Stripe, no database, no clock of its own. The caller supplies the tenant's resolved monthly price
+ * (the one rule in plan-price.ts: override beats catalog), its billable add-ons and its RfInvoices.
  *
- *   paid-through   snap(last periodEnd) of the contiguous run of PAID RfInvoices (r4a); with none, the go-live
- *                  boundary (Oct 1 12:00Z). A PAID invoice AFTER a gap is NEEDS RULING (r2).
- *   unpaid span    [paid-through, anchor) - monthly price (+ billable add-ons) x unpaid days / days in month,
- *                  month by month (fractional days allowed, boundary = the 1st at 12:00Z).
- *   shape          which Checkout parameters carry it - and, per Stripe's Checkout documentation, which do NOT:
- *                    - "You can't use one-time prices in Checkout Sessions when proration_behavior is none."
- *                    - "You can't use trials in Checkout Sessions with a billing cycle anchor."
- *                  so the SA-733 D7 shape (one-time October line + anchor + proration none) is NOT creatable.
- *                  See {@link CheckoutShape}.
- *
- * `duplicates billing-b2b`: the 24 h boundary snap below is the same definition as SA-744r2's `nextBillingWindow`
- * snap; it is a tiny pure helper kept HERE because that helper lives in files this slice does not edit. When both
- * land, point this at the shared one.
+ *   paid-through   snap(last periodEnd) of the contiguous run of PAID RfInvoices (r4a), via the ONE shared helper
+ *                  (rf-invoice/calendar-windows.ts: boundary, snap, contiguity, paidThrough - L-167); with none,
+ *                  the go-live boundary (Oct 1 12:00Z). A PAID invoice AFTER a gap is NEEDS RULING (r2).
+ *   unpaid span    [paid-through, A) - monthly price (+ billable add-ons) x unpaid days / days in month, month by
+ *                  month (fractional days allowed, boundary = the 1st at 12:00Z).
+ *   shape          SA-733r5: which Checkout parameters carry it, given Stripe's documented Checkout limits
+ *                  ("a one-time price cannot sit beside proration_behavior none"; "a trial cannot be combined with
+ *                  a billing cycle anchor"). See {@link CheckoutShape} and {@link catchupShape}.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The go-live boundary: billing starts Oct 1 (owner ruling), at the 12:00Z boundary every window uses. */
-export const CATCHUP_GO_LIVE = new Date(Date.UTC(2026, 9, 1, ANCHOR_HOUR_UTC, 0, 0, 0));
+export const CATCHUP_GO_LIVE = boundary(2026, 9);
 
-/** A trial must end at least 48 h out (Stripe); we want a 24 h cushion on top (r3 N3). */
+/** A trial must end at least 48 h out (Stripe); 72 h keeps the floor even if the session completes at its 24 h expiry. */
 export const CATCHUP_TRIAL_MIN_LEAD_MS = 72 * 60 * 60 * 1000;
 
 /** Stripe's smallest chargeable amount in USD (r3 N3: "the stub is skipped under $0.50"). */
 export const STRIPE_MIN_CHARGE_CENTS = 50;
 
-/** B(y, m): the 1st of month m (0-based) at 12:00 UTC. */
-export const boundary = (y: number, m: number): Date =>
-  new Date(Date.UTC(y, m, 1, ANCHOR_HOUR_UTC, 0, 0, 0));
-
-/** B(m) nearest to `d` among the boundaries around it. */
-function nearestBoundary(d: Date): Date {
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth();
-  const cands = [boundary(y, m - 1), boundary(y, m), boundary(y, m + 1)];
-  return cands.reduce((best, c) =>
-    Math.abs(c.getTime() - d.getTime()) < Math.abs(best.getTime() - d.getTime()) ? c : best,
-  );
-}
-
-/** SA-744r: |d - B(m)| <= 24 h (inclusive) snaps to B(m); anything else is returned as is. */
-export function snapToBoundary(d: Date): Date {
-  const b = nearestBoundary(d);
-  return Math.abs(b.getTime() - d.getTime()) <= DAY_MS ? b : d;
-}
-
-/** The first boundary on or after `d` (r3 N3's T for a paid-through date). */
-export function firstBoundaryOnOrAfter(d: Date): Date {
-  let c = boundary(d.getUTCFullYear(), d.getUTCMonth() - 1);
-  while (c.getTime() < d.getTime()) c = boundary(c.getUTCFullYear(), c.getUTCMonth() + 1);
-  return c;
-}
-
-/** Contiguous = the next period starts within the inclusive 24 h snap of the previous period's end (r4a). */
-export function isContiguous(prevEnd: Date, nextStart: Date): boolean {
-  return Math.abs(nextStart.getTime() - snapToBoundary(prevEnd).getTime()) <= DAY_MS;
+/** The first 1st-12:00Z boundary at or AFTER `d` (exact: no snapping - used for "at least 72 h from now"). */
+export function firstBoundaryNotBefore(d: Date): Date {
+  const c = boundary(d.getUTCFullYear(), d.getUTCMonth());
+  return c.getTime() >= d.getTime() ? c : boundary(d.getUTCFullYear(), d.getUTCMonth() + 1);
 }
 
 export interface CatchupInvoice {
@@ -77,29 +52,30 @@ export type PaidThrough =
   | { ok: false; reason: "paid_after_gap" | "paid_invoice_without_period" };
 
 /**
- * Paid-through = snap(last periodEnd) of the contiguous run of PAID invoices from the first one; never before the
- * go-live boundary. A PAID invoice outside the run (after a gap) refuses: NEEDS RULING, never a guess.
+ * Paid-through = the shared `paidThrough` walked forward from the go-live boundary over the PAID invoices; never
+ * before go-live. A PAID invoice the walk could not reach (after a gap) refuses: NEEDS RULING, never a guess.
  */
 export function paidThroughOf(invoices: readonly CatchupInvoice[]): PaidThrough {
   const paid = invoices.filter((i) => i.status === "PAID");
   if (paid.some((i) => !i.periodStart || !i.periodEnd)) {
     return { ok: false, reason: "paid_invoice_without_period" };
   }
-  const sorted = [...paid].sort((a, b) => a.periodStart!.getTime() - b.periodStart!.getTime());
-  if (sorted.length === 0) {
+  if (paid.length === 0) {
     return { ok: true, paidThrough: CATCHUP_GO_LIVE, paidInvoiceIds: [], fromInvoices: false };
   }
-  const run = [sorted[0]];
-  for (const inv of sorted.slice(1)) {
-    const last = run[run.length - 1];
-    if (isContiguous(last.periodEnd!, inv.periodStart!)) run.push(inv);
-    else break;
-  }
-  const outside = sorted.filter((i) => !run.includes(i));
+  const windows = paid.map((i) => ({ periodStart: i.periodStart!, periodEnd: i.periodEnd! }));
+  const reached = sharedPaidThrough(windows, CATCHUP_GO_LIVE) ?? CATCHUP_GO_LIVE;
+  // a PAID period that ends after the run (it started after a gap) was not walked: NEEDS RULING
+  const outside = paid.filter((i) => snapToBoundary(i.periodEnd!).getTime() > reached.getTime());
   if (outside.length > 0) return { ok: false, reason: "paid_after_gap" };
-  const runEnd = snapToBoundary(new Date(Math.max(...run.map((i) => i.periodEnd!.getTime()))));
-  const paidThrough = runEnd.getTime() < CATCHUP_GO_LIVE.getTime() ? CATCHUP_GO_LIVE : runEnd;
-  return { ok: true, paidThrough, paidInvoiceIds: run.map((i) => i.id), fromInvoices: true };
+  return {
+    ok: true,
+    paidThrough: reached,
+    paidInvoiceIds: paid
+      .filter((i) => snapToBoundary(i.periodEnd!).getTime() > CATCHUP_GO_LIVE.getTime())
+      .map((i) => i.id),
+    fromInvoices: true,
+  };
 }
 
 export interface CatchupAddon {
@@ -179,9 +155,12 @@ const MONTHS = [
 /** "Subscription — October 2026" for one whole month; a range or "(from Oct 15)" otherwise. */
 export function describeStub(from: Date, to: Date): string {
   const monthOf = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-  const near = nearestBoundary(from);
-  const startsOnBoundary = Math.abs(near.getTime() - from.getTime()) <= DAY_MS;
-  const first = startsOnBoundary ? near : from;
+  const snapped = snapToBoundary(from);
+  const startsOnBoundary =
+    snapped.getUTCDate() === 1 &&
+    snapped.getUTCHours() === BOUNDARY_HOUR_UTC &&
+    snapped.getUTCMinutes() === 0;
+  const first = startsOnBoundary ? snapped : from;
   // the last billed day is the one before the (snapped) end
   const last = new Date(snapToBoundary(to).getTime() - DAY_MS);
   if (
@@ -196,27 +175,38 @@ export function describeStub(from: Date, to: Date): string {
 }
 
 /**
- * Which Checkout parameters carry the catch-up.
+ * Which Checkout parameters carry the catch-up (SA-733r5). Every shape is one Stripe documents as valid in Checkout;
+ * the two invalid pairings (a one-time line with `proration_behavior`, `trial_end` with `billing_cycle_anchor`) are
+ * never built (catchup-session-params.ts asserts it on everything it returns).
  *
- *  - `trial`          SA-733r3 N3 trial branch: T (the first boundary on/after paid-through) is >= 72 h out. Checkout
- *                     `subscription_data.trial_end = T` ALONE (the anchor follows the trial end; Checkout rejects an
- *                     explicit anchor beside a trial). The stub [paid-through, T) - nothing when paid-through is T
- *                     itself - is charged after completion as a one-off invoice.
- *  - `anchor_no_line` the no-trial branch with a $0 stub (prepaid up to the anchor): anchor + proration `none` and NO
- *                     one-time line, which Checkout accepts.
- *  - `needs_ruling`   the no-trial branch with a stub > $0: SA-733 D7's "one-time line + anchor + proration none".
- *                     Checkout rejects it (see the header). Nothing is created until the owner/SA picks a shape.
+ *  - `trial_one_time` the COMMON case, paid-through <= now (an unpaid October): `trial_end = A` alone (A = the
+ *                     first 1st at 12:00Z that is >= now + 72 h) + the recurring lines + ONE one-time line = the
+ *                     unpaid [paid-through, A). Stripe charges the line at completion; the cycle starts at A.
+ *  - `trial`          prepaid (R16-3), T (the first boundary on/after paid-through) >= now + 72 h: `trial_end = T`
+ *                     alone; the stub [paid-through, T) is a post-completion draft invoice (nothing when T itself).
+ *  - `anchor_no_line` prepaid, T under 72 h away and nothing to bill before the anchor: anchor + `none`, no
+ *                     one-time line.
  */
-export type CheckoutShape = "trial" | "anchor_no_line" | "needs_ruling";
+export type CheckoutShape = "trial_one_time" | "trial" | "anchor_no_line";
+
+/** The selector (SA-733r5): `trial_one_time` iff snap(paid-through) <= now; else `trial` iff T >= now + 72 h. */
+export function catchupShape(i: { paidThrough: Date; now: Date }): CheckoutShape {
+  if (snapToBoundary(i.paidThrough).getTime() <= i.now.getTime()) return "trial_one_time";
+  const t = firstBoundaryNotBefore(i.paidThrough);
+  return t.getTime() - i.now.getTime() >= CATCHUP_TRIAL_MIN_LEAD_MS ? "trial" : "anchor_no_line";
+}
 
 export interface CatchupPlan {
   ok: true;
   now: Date;
   paidThrough: Date;
   paidFromInvoices: boolean;
-  /** The next 1st (12:00Z) under the 90-minute rule. */
+  /** The next 1st (12:00Z) under the 90-minute rule (the anchor_no_line anchor). */
   anchorAt: Date;
-  /** T of r3 N3: the first boundary on/after paid-through. */
+  /**
+   * The trial end the session sends: A for `trial_one_time`, T for `trial`; for `anchor_no_line` T is shown for
+   * reference (no trial is sent).
+   */
   trialEndAt: Date;
   shape: CheckoutShape;
   /** The unpaid span the stub covers and what it comes to. */
@@ -228,7 +218,10 @@ export interface CatchupPlan {
     totalCents: number;
     belowStripeMinimum: boolean;
   };
-  /** OPEN RfInvoices that fall under the lock-and-void rule (period starts at/after paid-through, snap-tolerant). */
+  /**
+   * OPEN RfInvoices superseded at settlement: every one whose (snapped) period END is after paid-through - the card
+   * subscription bills from paid-through on, so such an invoice would be a second charge (SA-744r2 / b2b review).
+   */
   voidInvoiceIds: string[];
   /** OPEN RfInvoices whose period cannot be placed: left alone, reported. */
   unplaceableOpenIds: string[];
@@ -238,6 +231,20 @@ export interface CatchupPlan {
 export type CatchupPlanResult =
   | CatchupPlan
   | { ok: false; reason: "paid_after_gap" | "paid_invoice_without_period" | "no_monthly_price" };
+
+/** The OPEN RfInvoice ids a settlement voids: period end (snapped) after paid-through. */
+export function supersededOpenInvoiceIds(
+  invoices: readonly CatchupInvoice[],
+  paidThrough: Date,
+): { void: string[]; unplaceable: string[] } {
+  const open = invoices.filter((x) => x.status === "OPEN");
+  return {
+    void: open
+      .filter((x) => x.periodEnd && snapToBoundary(x.periodEnd).getTime() > paidThrough.getTime())
+      .map((x) => x.id),
+    unplaceable: open.filter((x) => !x.periodEnd).map((x) => x.id),
+  };
+}
 
 export function planCatchup(i: {
   now: Date;
@@ -250,35 +257,37 @@ export function planCatchup(i: {
   if (!pt.ok) return pt;
 
   const anchorAt = nextCheckoutAnchor(i.now);
-  const trialEndAt = firstBoundaryOnOrAfter(pt.paidThrough);
-  const trialOk = trialEndAt.getTime() - i.now.getTime() >= CATCHUP_TRIAL_MIN_LEAD_MS;
+  const t = firstBoundaryNotBefore(pt.paidThrough);
+  const a = firstBoundaryNotBefore(new Date(i.now.getTime() + CATCHUP_TRIAL_MIN_LEAD_MS));
   const notes: string[] = [];
+  let shape = catchupShape({ paidThrough: pt.paidThrough, now: i.now });
 
-  // The stub ends where billing hands over to the normal cycle: T in the trial branch, the anchor otherwise.
-  const stubTo = trialOk ? trialEndAt : anchorAt;
-  const stubFrom = pt.paidThrough;
-  const lines = stubLines(i.monthly, i.addons, stubFrom, stubTo);
-  const totalCents = lines.reduce((s, l) => s + l.cents, 0);
+  // where the stub ends: A (>= now + 72 h) for trial_one_time, T for the prepaid trial, the anchor otherwise
+  let trialEndAt = shape === "trial_one_time" ? a : t;
+  let stubTo = shape === "trial_one_time" ? a : shape === "trial" ? t : anchorAt;
+  let lines = stubLines(i.monthly, i.addons, pt.paidThrough, stubTo);
+  let totalCents = lines.reduce((s, l) => s + l.cents, 0);
+
+  // prepaid but a real stub before the anchor (paid through mid-month, 1-3 days from a 1st): anchor_no_line would
+  // leave it unbilled, so the one-time-line shape bills it (edge case of the r5 selector)
+  if (shape === "anchor_no_line" && totalCents >= STRIPE_MIN_CHARGE_CENTS) {
+    shape = "trial_one_time";
+    trialEndAt = a;
+    stubTo = a;
+    lines = stubLines(i.monthly, i.addons, pt.paidThrough, stubTo);
+    totalCents = lines.reduce((s, l) => s + l.cents, 0);
+    notes.push("paid through mid-month with under 72 h to the 1st: the stub rides a one-time line");
+  }
   const belowStripeMinimum = totalCents > 0 && totalCents < STRIPE_MIN_CHARGE_CENTS;
   if (belowStripeMinimum) notes.push("stub is under Stripe's $0.50 minimum: it is skipped");
-
-  let shape: CheckoutShape;
-  if (trialOk) shape = "trial";
-  else if (totalCents === 0 || belowStripeMinimum) shape = "anchor_no_line";
-  else shape = "needs_ruling";
-  if (shape === "needs_ruling") {
+  if (shape === "trial_one_time" && a.getTime() > firstBoundaryNotBefore(i.now).getTime()) {
+    // A moved past the next 1st: that month is paid 1-3 days early (R5-2) - the owner can veto
     notes.push(
-      "NEEDS RULING: Stripe Checkout rejects a one-time line with proration_behavior=none, and a trial beside a " +
-        "billing_cycle_anchor. A trial ending at the anchor needs the anchor to be >= 72 h away.",
+      "R5-2: the 1st is under 72 h away, so the line includes the following month (paid 1-3 days early)",
     );
   }
 
-  const tol = pt.paidThrough.getTime() - DAY_MS;
-  const open = i.invoices.filter((x) => x.status === "OPEN");
-  const voidInvoiceIds = open
-    .filter((x) => x.periodStart && x.periodStart.getTime() >= tol)
-    .map((x) => x.id);
-  const unplaceableOpenIds = open.filter((x) => !x.periodStart).map((x) => x.id);
+  const superseded = supersededOpenInvoiceIds(i.invoices, pt.paidThrough);
 
   return {
     ok: true,
@@ -289,15 +298,15 @@ export function planCatchup(i: {
     trialEndAt,
     shape,
     stub: {
-      from: stubFrom,
+      from: pt.paidThrough,
       to: stubTo,
-      label: describeStub(stubFrom, stubTo),
+      label: describeStub(pt.paidThrough, stubTo),
       lines,
       totalCents,
       belowStripeMinimum,
     },
-    voidInvoiceIds,
-    unplaceableOpenIds,
+    voidInvoiceIds: superseded.void,
+    unplaceableOpenIds: superseded.unplaceable,
     notes,
   };
 }

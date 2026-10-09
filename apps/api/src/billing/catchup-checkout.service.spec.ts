@@ -65,7 +65,7 @@ function make(
       skus: (o.addonLines ?? []).map((l) => l.price_data.product_data.metadata.addonSku),
     })),
   };
-  const claim = new CatchupClaimService(prisma, stripe as any);
+  const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
   const billing: any = { ensureStripeCustomer: jest.fn(async () => "cus_1") };
   const svc = new CatchupCheckoutService(prisma, stripe as any, pricing, mutations, claim, billing);
   return { svc, db, stripe, pricing, mutations, billing, prisma, sub: () => db.subs[0] };
@@ -83,18 +83,19 @@ describe("plan() is a read-only dry-run", () => {
     expect(h.sub().catchupState).toBeNull();
   });
 
-  it("reports the October line: nothing paid => the full monthly price, shape needs_ruling, not eligible", async () => {
+  it("reports the October line: nothing paid => the full monthly price as trial_one_time, ELIGIBLE (SA-733r5)", async () => {
     const h = make({ invoices: [OCT_OPEN] });
     const r = await h.svc.plan("t1", NOW);
     expect(r.monthlyCents).toBe(31000);
     expect(r.priceSource).toBe("catalog");
-    expect(r.plan).toMatchObject({ ok: true, shape: "needs_ruling" });
+    expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
     expect(r.plan.ok && r.plan.stub).toMatchObject({
       totalCents: 31000,
       label: "Subscription — October 2026",
     });
-    expect(r.eligible).toBe(false);
-    expect(r.ineligible).toContain("shape_needs_ruling");
+    expect(r.plan.ok && r.plan.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(r.eligible).toBe(true);
+    expect(r.ineligible).toEqual([]);
     expect(r.rfInvoices).toEqual({ open: 1, paid: 0 });
   });
 
@@ -201,8 +202,31 @@ describe("open()", () => {
     expect(h.sub().catchupState).toBeNull();
   });
 
-  it("the shape Checkout rejects: 409 CATCHUP_NEEDS_RULING, no claim, no Stripe call", async () => {
+  it("the common case (unpaid October) opens a trial_one_time session: trial_end = A, ONE one-time line, no anchor, no proration_behavior", async () => {
     const h = make({ invoices: [OCT_OPEN] });
+    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    expect(out).toMatchObject({ shape: "trial_one_time", stubCents: 31000 });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+    expect(params.subscription_data).not.toHaveProperty("billing_cycle_anchor");
+    expect(params.subscription_data).not.toHaveProperty("proration_behavior");
+    expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(1);
+    expect(params.metadata.catchup).toBe("period");
+    expect(h.sub()).toMatchObject({
+      catchupState: "SESSION_OPEN",
+      catchupSessionId: out.sessionId,
+    });
+  });
+
+  it("a non-contiguous PAID gap: 409 CATCHUP_NEEDS_RULING, no claim, no Stripe call", async () => {
+    const gap = {
+      ...OCT_PAID,
+      id: "g",
+      periodKey: "kg",
+      periodStart: new Date("2026-12-01T12:00:00Z"),
+      periodEnd: new Date("2027-01-01T12:00:00Z"),
+    };
+    const h = make({ invoices: [OCT_PAID, gap] });
     await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
@@ -210,10 +234,10 @@ describe("open()", () => {
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 
-  it("a tenant that already has a Stripe subscription is refused (census), before anything is written", async () => {
+  it("a tenant that already has a Stripe subscription is NEEDS RULING (census), before anything is written", async () => {
     const h = make({ sub: { stripeSubId: "sub_x" } });
     await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({
-      response: { code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE },
+      response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
     expect(h.db.locks).toHaveLength(0);
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();

@@ -131,7 +131,7 @@ function formatCensus(c) {
   const k = c.counts;
   const lines = [
     `census: ${k.total} active production tenant(s) · ${k.planned} planned · ${k.failed} failed`,
-    `  eligible ${k.eligible} · trial ${k.trial} · anchor-no-line ${k.anchorNoLine} · needs ruling ${k.needsRuling}`,
+    `  eligible ${k.eligible} · trial+one-time ${k.trialOneTime} · prepaid trial ${k.trial} · anchor-no-line ${k.anchorNoLine} · needs ruling ${k.needsRuling}`,
     `  with a Stripe subscription ${k.withStripeSubscription} · neither manual nor Stripe ${k.neitherManualNorStripe} · claim held ${k.claimHeld}`,
   ];
   if (k.withStripeSubscription > 0) {

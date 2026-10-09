@@ -28,7 +28,7 @@ const report = (over: Record<string, unknown> = {}) => ({
   rfInvoices: { open: 1, paid: 0 },
   plan: {
     ok: true,
-    shape: "trial",
+    shape: "trial_one_time",
     paidThrough: "2026-11-01T12:00:00.000Z",
     paidFromInvoices: true,
     anchorAt: "2026-11-01T12:00:00.000Z",
@@ -144,6 +144,7 @@ describe("the printed report (anonymised)", () => {
           planned: 3,
           failed: 0,
           eligible: 1,
+          trialOneTime: 2,
           trial: 1,
           anchorNoLine: 0,
           needsRuling: 1,
@@ -156,6 +157,7 @@ describe("the printed report (anonymised)", () => {
       })
       .join("\n");
     expect(lines.indexOf("census: 3")).toBe(0);
+    expect(lines).toContain("trial+one-time 2");
     expect(lines).toContain("NEEDS RULING: tenants with a stripeSubId");
   });
 

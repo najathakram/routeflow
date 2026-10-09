@@ -1,10 +1,11 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   CATCHUP_GO_LIVE,
-  firstBoundaryOnOrAfter,
-  isContiguous,
+  catchupShape,
+  firstBoundaryNotBefore,
   paidThroughOf,
   planCatchup,
-  snapToBoundary,
   stubLines,
   type CatchupInvoice,
 } from "./catchup-plan";
@@ -30,42 +31,22 @@ const plan = (over: Partial<Parameters<typeof planCatchup>[0]> = {}) => {
   return p;
 };
 
-describe("snap / contiguity (SA-744r2 item 4, via SA-733r4 r4a)", () => {
-  it("an end within 24 h (inclusive) of a 1st 12:00Z snaps to it; otherwise it is left alone", () => {
-    expect(snapToBoundary(d("2026-11-01T00:00:00Z")).toISOString()).toBe(
-      "2026-11-01T12:00:00.000Z",
-    );
-    expect(snapToBoundary(d("2026-10-31T12:00:00Z")).toISOString()).toBe(
-      "2026-11-01T12:00:00.000Z",
-    ); // exactly 24 h
-    expect(snapToBoundary(d("2026-10-31T11:59:59Z")).toISOString()).toBe(
-      "2026-10-31T11:59:59.000Z",
-    ); // 24 h + 1 s
-    expect(snapToBoundary(d("2026-11-02T12:00:00Z")).toISOString()).toBe(
-      "2026-11-01T12:00:00.000Z",
-    ); // exactly +24 h
-    expect(snapToBoundary(d("2026-10-15T12:00:00Z")).toISOString()).toBe(
-      "2026-10-15T12:00:00.000Z",
-    );
+describe("one helper (L-167): snap, boundary and contiguity come from rf-invoice/calendar-windows", () => {
+  it("catchup-plan.ts defines no snap / contiguity / boundary helper of its own", () => {
+    const src = fs.readFileSync(path.join(__dirname, "catchup-plan.ts"), "utf8");
+    expect(src).toContain('from "./rf-invoice/calendar-windows"');
+    expect(src).not.toMatch(/function (snapToBoundary|isContiguous|nearestBoundary)/);
+    expect(src).not.toMatch(/export (const|function) boundary/);
   });
 
-  it("contiguous = the next start is within the inclusive 24 h snap of the previous end", () => {
-    const end = d("2026-11-01T00:00:00Z"); // legacy 00:00Z end, snaps to Nov 1 12:00Z
-    expect(isContiguous(end, d("2026-11-01T12:00:00Z"))).toBe(true);
-    expect(isContiguous(end, d("2026-11-02T12:00:00Z"))).toBe(true); // exactly 24 h after the snap
-    expect(isContiguous(end, d("2026-11-02T12:00:01Z"))).toBe(false);
-    expect(isContiguous(end, d("2026-10-31T12:00:00Z"))).toBe(true); // 24 h overlap
-    expect(isContiguous(end, d("2026-10-30T12:00:00Z"))).toBe(false);
-  });
-
-  it("firstBoundaryOnOrAfter", () => {
-    expect(firstBoundaryOnOrAfter(d("2026-11-01T12:00:00Z")).toISOString()).toBe(
+  it("firstBoundaryNotBefore is exact (no snapping): 'at least 72 h from now'", () => {
+    expect(firstBoundaryNotBefore(d("2026-11-01T12:00:00Z")).toISOString()).toBe(
       "2026-11-01T12:00:00.000Z",
     );
-    expect(firstBoundaryOnOrAfter(d("2026-11-14T12:00:00Z")).toISOString()).toBe(
+    expect(firstBoundaryNotBefore(d("2026-11-01T12:00:01Z")).toISOString()).toBe(
       "2026-12-01T12:00:00.000Z",
     );
-    expect(firstBoundaryOnOrAfter(d("2026-12-20T00:00:00Z")).toISOString()).toBe(
+    expect(firstBoundaryNotBefore(d("2026-12-20T00:00:00Z")).toISOString()).toBe(
       "2027-01-01T12:00:00.000Z",
     );
   });
@@ -216,15 +197,18 @@ describe("the Checkout shape (r3 N3 + Stripe's documented Checkout limits)", () 
     expect(p.stub.totalCents).toBe(0);
   });
 
-  it("nothing paid (the usual October case): the D7 shape Checkout rejects -> needs_ruling, never silently built", () => {
+  it("nothing paid (the usual October case): trial_one_time (SA-733r5) - A = Nov 1 12:00Z, October 31/31 as the one-time line", () => {
     const p = plan();
-    expect(p.shape).toBe("needs_ruling");
-    expect(p.notes.join(" ")).toMatch(/NEEDS RULING.*one-time line.*proration_behavior=none/);
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.from.toISOString()).toBe("2026-10-01T12:00:00.000Z");
+    expect(p.stub.to.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(31000);
   });
 
-  it("the trial needs 72 h: exactly 72 h out is a trial, 1 minute less is not", () => {
-    const inv72 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")];
-    // T = Dec 1 12:00Z
+  it("the prepaid trial needs 72 h: exactly 72 h out is a trial, 1 minute less is not", () => {
+    // paid through Nov 29 12:00 => T = Dec 1 12:00Z
+    const inv72 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-29T12:00:00Z")];
     expect(plan({ now: d("2026-11-28T12:00:00Z"), invoices: inv72 }).shape).toBe("trial");
     expect(plan({ now: d("2026-11-28T12:01:00Z"), invoices: inv72 }).shape).not.toBe("trial");
   });
@@ -285,5 +269,81 @@ describe("refusals", () => {
       invoices: [OCT("PAID"), inv("dec", "PAID", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z")],
     });
     expect(r).toEqual({ ok: false, reason: "paid_after_gap" });
+  });
+});
+
+describe("SA-733r5 selector rows", () => {
+  it("catchupShape: paid-through <= now => trial_one_time; T >= now + 72 h => trial; else anchor_no_line", () => {
+    const now = d("2026-10-09T10:00:00Z");
+    expect(catchupShape({ paidThrough: d("2026-10-01T12:00:00Z"), now })).toBe("trial_one_time");
+    expect(catchupShape({ paidThrough: d("2026-10-09T10:00:00Z"), now })).toBe("trial_one_time"); // = now
+    expect(catchupShape({ paidThrough: d("2026-11-14T12:00:00Z"), now })).toBe("trial");
+    expect(
+      catchupShape({ paidThrough: d("2026-11-01T12:00:00Z"), now: d("2026-10-30T09:00:00Z") }),
+    ).toBe("anchor_no_line");
+  });
+
+  it("session Oct 30 unpaid since Oct 1: A = Dec 1 12:00Z, ONE line Oct 1 -> Nov 30 (two months)", () => {
+    const p = plan({ now: d("2026-10-30T12:00:00Z"), monthly: 100 });
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(20000);
+    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+  });
+
+  it("R5-2: the last 72 h before a 1st move A to the FOLLOWING 1st (that month is paid 1-3 days early), and say so", () => {
+    const p = plan({ now: d("2026-10-29T12:01:00Z"), monthly: 100 });
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.notes.join(" ")).toMatch(/R5-2.*following month/);
+    // exactly 72 h before the 1st is still the NEXT 1st
+    const q = plan({ now: d("2026-10-29T12:00:00Z"), monthly: 100 });
+    expect(q.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(q.notes.join(" ")).not.toMatch(/R5-2/);
+  });
+
+  it("A is always >= now + 72 h and a 1st at 12:00Z, whatever the instant (the Stripe 48 h trial floor with margin)", () => {
+    for (let h = 0; h < 24 * 62; h += 7) {
+      const now = new Date(Date.UTC(2026, 9, 2, 0, 0, 0) + h * 3600_000 + 17 * 60_000);
+      const p = planCatchup({ now, monthly: 100, addons: [], invoices: [] });
+      if (!p.ok || p.shape !== "trial_one_time") throw new Error("expected trial_one_time");
+      expect(p.trialEndAt.getTime() - now.getTime()).toBeGreaterThanOrEqual(72 * 3600_000);
+      expect(p.trialEndAt.getUTCDate()).toBe(1);
+      expect(p.trialEndAt.getUTCHours()).toBe(12);
+    }
+  });
+
+  it("the one-time line includes add-ons (base + add-on for 31/31)", () => {
+    const p = plan({ addons: [{ sku: "FORECASTING", unitPrice: 31, quantity: 2 }] });
+    expect(p.stub.lines).toEqual([
+      { kind: "PLAN", code: "PLAN", cents: 31000 },
+      { kind: "ADDON", code: "FORECASTING", cents: 6200 },
+    ]);
+  });
+
+  it("paid through mid-month, a 1st under 72 h away (stub >= $0.50): the one-time line bills it rather than leave it free", () => {
+    const p = plan({
+      now: d("2026-10-30T20:00:00Z"),
+      monthly: 310,
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T23:00:00Z")],
+    });
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.stub.from.toISOString()).toBe("2026-10-30T23:00:00.000Z");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("an OPEN invoice is superseded by its PERIOD END (after paid-through), not only by its start", () => {
+    const p = plan({
+      invoices: [
+        inv("overlap", "OPEN", "2026-10-15T12:00:00Z", "2026-11-01T12:00:00Z"),
+        inv("before", "OPEN", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z"),
+      ],
+    });
+    expect(p.voidInvoiceIds).toEqual(["overlap"]);
+  });
+
+  it("the catch-up pays CATCHUP_GO_LIVE-onwards only: history before go-live never lowers paid-through", () => {
+    const r = paidThroughOf([inv("s", "PAID", "2026-08-01T12:00:00Z", "2026-09-01T12:00:00Z")]);
+    expect(r.ok && r.paidThrough.getTime()).toBe(CATCHUP_GO_LIVE.getTime());
+    expect(stubLines(100, [], CATCHUP_GO_LIVE, CATCHUP_GO_LIVE)).toEqual([]);
   });
 });

@@ -155,7 +155,6 @@ export class CatchupCheckoutService {
 
     const plan = planCatchup({ now, monthly, addons, invoices: rows });
     if (!plan.ok) ineligible.push(plan.reason);
-    else if (plan.shape === "needs_ruling") ineligible.push("shape_needs_ruling");
 
     return {
       tenantId,
@@ -212,7 +211,8 @@ export class CatchupCheckoutService {
         withStripeSubscription: count((t) => t.hasStripeSubscription),
         neitherManualNorStripe: count((t) => !t.hasStripeSubscription && !t.externalPayment),
         claimHeld: count((t) => t.claimState != null),
-        needsRuling: count((t) => t.ineligible.includes("shape_needs_ruling")),
+        needsRuling: count((t) => !t.plan.ok || t.hasStripeSubscription),
+        trialOneTime: count((t) => t.plan.ok && t.plan.shape === "trial_one_time"),
         trial: count((t) => t.plan.ok && t.plan.shape === "trial"),
         anchorNoLine: count((t) => t.plan.ok && t.plan.shape === "anchor_no_line"),
       },
@@ -242,15 +242,15 @@ export class CatchupCheckoutService {
       });
     }
     const plan: CatchupPlan = report.plan;
-    if (plan.shape === "needs_ruling") {
+    const blockers = report.ineligible;
+    if (blockers.includes("has_stripe_subscription")) {
+      // r2 / r5: an existing stripeSubId is a census item the owner rules on, never silently converted
       throw new ConflictException({
         code: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
         message:
-          "NEEDS RULING: Stripe Checkout cannot carry this catch-up (a one-time line with proration none, or a " +
-          "trial beside a billing-cycle anchor). Nothing was created.",
+          "NEEDS RULING: this tenant already has a Stripe subscription. Nothing was created.",
       });
     }
-    const blockers = report.ineligible.filter((r) => r !== "shape_needs_ruling");
     if (blockers.length) {
       throw new ConflictException({
         code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,

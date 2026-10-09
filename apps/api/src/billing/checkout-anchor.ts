@@ -1,3 +1,5 @@
+import { BOUNDARY_HOUR_UTC, nextBoundaryAfter } from "./rf-invoice/calendar-windows";
+
 /**
  * SA-733 D6 / SA-733r [M6]: the billing anchor of a NEW Checkout subscription.
  *
@@ -14,8 +16,8 @@
  * a one-time line; `none` cannot be combined with one-time prices in Checkout (see catchup-plan.ts).
  */
 
-/** The anchor's wall-clock hour (UTC) on the 1st. */
-export const ANCHOR_HOUR_UTC = 12;
+/** The anchor's wall-clock hour (UTC) on the 1st: the SAME boundary every billing window uses. */
+export const ANCHOR_HOUR_UTC = BOUNDARY_HOUR_UTC;
 
 /** An anchor closer than this to "now" is skipped for the following 1st (M6). */
 export const MIN_ANCHOR_LEAD_MS = 90 * 60 * 1000;
@@ -36,31 +38,14 @@ export interface CheckoutAnchorPlan {
   prorationBehavior: "create_prorations";
 }
 
-/** The first "1st of a month, 12:00 UTC" strictly after `after`. */
-function firstOfMonthNoonAfter(after: Date): Date {
-  let year = after.getUTCFullYear();
-  let month = after.getUTCMonth();
-  for (let i = 0; i < 3; i++) {
-    const candidate = new Date(Date.UTC(year, month, 1, ANCHOR_HOUR_UTC, 0, 0, 0));
-    if (candidate.getTime() > after.getTime()) return candidate;
-    month += 1;
-    if (month > 11) {
-      month = 0;
-      year += 1;
-    }
-  }
-  /* istanbul ignore next - unreachable: within 3 months some 1st is always after `after` */
-  throw new Error("checkout-anchor: no anchor found");
-}
-
 /**
  * The anchor for a checkout created at `now`: the next 1st at 12:00 UTC; when that is under 90 minutes away, the
  * following 1st. A start ON the 1st still gets an anchor (the next one at least 90 minutes away).
  */
 export function nextCheckoutAnchor(now: Date): Date {
-  const first = firstOfMonthNoonAfter(now);
+  const first = nextBoundaryAfter(now);
   if (first.getTime() - now.getTime() >= MIN_ANCHOR_LEAD_MS) return first;
-  return firstOfMonthNoonAfter(first);
+  return nextBoundaryAfter(first);
 }
 
 /** Everything a new-subscription Checkout session needs for its anchor, from `now`. */
