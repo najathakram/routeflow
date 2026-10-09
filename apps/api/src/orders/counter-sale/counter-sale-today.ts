@@ -17,6 +17,7 @@ import type {
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf } from "./counter-sale-readback";
+import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 
 /**
@@ -44,7 +45,7 @@ export interface DayWindow {
 
 const DEAD_INVOICE_STATUSES = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
 /** Returns that moved no money and never will; shared with the invoice void guard (`CASH_REFUNDED_RETURN_WHERE`). */
-export const DEAD_RETURN_STATUSES = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
+export { DEAD_RETURN_STATUSES };
 
 const isDeadInvoice = (status: string) =>
   (DEAD_INVOICE_STATUSES as readonly string[]).includes(status);

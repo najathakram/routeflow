@@ -13,7 +13,7 @@ import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
-import { DEAD_RETURN_STATUSES } from "../orders/counter-sale/counter-sale-today";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 
 /** The only tenders a counter refund can record. A card refund is RECORDED only; no processor is called. */
 export const REFUND_TENDERS = ["CASH", "CARD", "CHECK"] as const;
