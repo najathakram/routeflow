@@ -74,6 +74,7 @@ import {
   isResolvedReturn,
   loadSourceInvoicesState,
   lockRefundInvoices,
+  refundSourcesRefusal,
   lockRefundOrders,
   type RefundTender,
 } from "./inline-return-refund";
@@ -609,23 +610,9 @@ export class InlineReturnsService {
       tx,
       priced.chunks.map((c) => c.sourceInvoiceItemId),
     );
-    if (!src.paidInFull) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
-        message:
-          "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
-      });
-    }
-    if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
-  }
-
-  /** F4: store credit is never turned into cash - any part paid with a CREDIT_NOTE / ADVANCE payment goes back as store credit. */
-  private paidWithStoreCreditRefusal(): ConflictException {
-    return new ConflictException({
-      code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
-      message:
-        "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
-    });
+    // paid in full AND none of it store credit (F4): the ONE refusal, shared with the STANDARD refund
+    const refusal = refundSourcesRefusal(src);
+    if (refusal) throw refusal;
   }
 
   /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (derived from the
@@ -1441,15 +1428,9 @@ export class InlineReturnsService {
         items.map((i) => i.sourceInvoiceItemId),
         { beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds) },
       );
-      if (!src.paidInFull) {
-        throw new ConflictException({
-          code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
-          message:
-            "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead.",
-        });
-      }
-      // F4: store credit is never turned into cash (read under the same invoice locks)
-      if (src.paidWithStoreCredit) throw this.paidWithStoreCreditRefusal();
+      // paid in full AND none of it store credit (F4, read under the same invoice locks)
+      const refusal = refundSourcesRefusal(src);
+      if (refusal) throw refusal;
 
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({
