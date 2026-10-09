@@ -234,7 +234,11 @@ async function main() {
         planKey: effectivePlanKey,
         bucket,
         hasInactiveRow: inactiveTargetTenantIds.has(tenant.id),
-        paying: isPayingTenant(tenant, tenant.subPlanKey, tenant.subCouponFull === true),
+        // a tenant with no plan is never paying; otherwise the flag is passed raw (undefined THROWS, never coerced)
+        paying:
+          tenant.subPlanKey == null
+            ? false
+            : isPayingTenant(tenant, tenant.subPlanKey, tenant.subCouponFull),
       });
     }
 

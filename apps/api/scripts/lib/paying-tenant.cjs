@@ -51,7 +51,11 @@ function isPayingTenant(tenant, planKey, couponFull) {
  */
 function protectedArm(tenant, sub) {
   // A coupon-unbilled tenant is not "paying" - it still has a stripeSubId, so it stays PROTECTED via the next arm.
-  if (isPayingTenant(tenant, sub?.planKey ?? null, sub?.couponFull === true)) return "paying";
+  // `couponFull` is NOT coerced: a subscription whose select never fetched it THROWS (isPayingTenant). A target
+  // with no subscription row, or no plan, is never paying and needs no flag.
+  if (!sub || sub.planKey == null)
+    return sub?.stripeSubId != null && tenant.deletedAt == null ? "stripe-linked" : null;
+  if (isPayingTenant(tenant, sub.planKey, sub.couponFull)) return "paying";
   if (sub?.stripeSubId != null && tenant.deletedAt == null) return "stripe-linked";
   return null;
 }

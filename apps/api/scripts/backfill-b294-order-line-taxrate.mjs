@@ -124,7 +124,7 @@ const { protectedArm } = payingTenant;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
 const PROTECTION_SQL = `
-  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+  SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
   WHERE t.id = ANY($1::text[])`;
 
@@ -132,9 +132,12 @@ const PROTECTION_SQL = `
 export function protectedTenants(rows) {
   const out = new Map();
   for (const r of rows) {
+    // No plan (a LEFT JOIN miss included) is never paying, so the flag is moot; otherwise it is passed RAW -
+    // an undefined (a select that skipped it) THROWS in isPayingTenant, never coerced.
+    const couponFull = r.planKey == null ? false : r.couponFull;
     const arm = protectedArm(
       { status: r.status, class: r.class, deletedAt: r.deletedAt },
-      { planKey: r.planKey, stripeSubId: r.stripeSubId },
+      { planKey: r.planKey, stripeSubId: r.stripeSubId, couponFull },
     );
     if (arm) out.set(r.id, arm);
   }

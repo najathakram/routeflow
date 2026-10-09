@@ -51,9 +51,23 @@ describe("#2639 scripts/lib/paying-tenant.cjs agrees with mrr.service's isPaying
     expect(() => lib.isPayingTenant(tenant, "STARTER", null)).toThrow(/couponFull/);
   });
 
+  it("SA-736r review: protectedArm does NOT coerce an undefined couponFull - a subscription whose select skipped it throws", () => {
+    const active = { status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
+    expect(() => lib.protectedArm(active, { planKey: "STARTER", stripeSubId: null })).toThrow(
+      /couponFull/,
+    );
+    // no subscription row, or no plan: never paying, nothing to coerce
+    expect(lib.protectedArm(active, null)).toBeNull();
+    expect(lib.protectedArm(active, { planKey: null, stripeSubId: null })).toBeNull();
+  });
+
   it("SA-736r: a coupon tenant stays PROTECTED through its stripe-linked arm", () => {
     const tenant = { status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
-    const sub = { planKey: "STARTER", stripeSubId: "sub_acme", couponFull: true };
+    const sub = {
+      planKey: "STARTER",
+      stripeSubId: "sub_acme",
+      couponFull: true,
+    };
     expect(lib.protectedArm(tenant, sub)).toBe("stripe-linked");
     expect(lib.isProtectedTenant(tenant, sub)).toBe(true);
   });
@@ -62,22 +76,26 @@ describe("#2639 scripts/lib/paying-tenant.cjs agrees with mrr.service's isPaying
 describe("#2639 / SA-547 isProtectedTenant = paying ∨ (Stripe-linked ∧ not deleted)", () => {
   const active = { status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
   it("a paying tenant is protected on the 'paying' arm", () => {
-    expect(lib.protectedArm(active, { planKey: "STARTER" })).toBe("paying");
-    expect(lib.isProtectedTenant(active, { planKey: "STARTER" })).toBe(true);
+    expect(lib.protectedArm(active, { planKey: "STARTER", couponFull: false })).toBe("paying");
+    expect(lib.isProtectedTenant(active, { planKey: "STARTER", couponFull: false })).toBe(true);
   });
   it("the Stripe arm ALONE protects — TEST class, no planKey, not ACTIVE", () => {
     const t = { status: "READ_ONLY", class: "TEST", deletedAt: null };
-    const sub = { planKey: null, stripeSubId: "sub_fake_qa" };
+    const sub = { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false };
     expect(lib.protectedArm(t, sub)).toBe("stripe-linked");
     expect(lib.isProtectedTenant(t, sub)).toBe(true);
   });
   it("a soft-deleted Stripe-linked tenant is NOT protected", () => {
     const t = { status: "ACTIVE", class: "TEST", deletedAt: new Date() };
-    expect(lib.isProtectedTenant(t, { planKey: null, stripeSubId: "sub_fake_qa" })).toBe(false);
+    expect(
+      lib.isProtectedTenant(t, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }),
+    ).toBe(false);
   });
   it("a non-paying, unlinked tenant (or no subscription row) is unprotected", () => {
     const t = { status: "ACTIVE", class: "TEST", deletedAt: null };
-    expect(lib.protectedArm(t, { planKey: "STARTER", stripeSubId: null })).toBeNull();
+    expect(
+      lib.protectedArm(t, { planKey: "STARTER", stripeSubId: null, couponFull: false }),
+    ).toBeNull();
     expect(lib.protectedArm(t, null)).toBeNull();
     expect(lib.protectedArm(active, undefined)).toBeNull();
   });

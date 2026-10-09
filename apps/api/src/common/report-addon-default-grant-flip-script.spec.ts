@@ -241,9 +241,8 @@ describe("#2700 (SA-559(3i)/559a): the LITE row across the v13 publish, and the 
   it("the script decides 'paying' with the shared isPayingTenant, never an inline predicate", () => {
     const code = codeLines().join("\n");
     expect(code).toContain('require_("./lib/paying-tenant.cjs")');
-    expect(code).toContain(
-      "paying: isPayingTenant(tenant, tenant.subPlanKey, tenant.subCouponFull === true)",
-    );
+    expect(code).toContain("isPayingTenant(tenant, tenant.subPlanKey, tenant.subCouponFull)");
+    expect(code).not.toContain("subCouponFull === true");
     expect(code).toContain("payingOnLiteLine(result)");
   });
 });
