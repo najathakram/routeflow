@@ -410,6 +410,8 @@ describe("CounterSaleService.ring: split payments", () => {
         paymentRecorded: false,
         paymentErrorCode: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
       });
+      // the tender was refused: ALL the cash goes back, so no "change" figure (it would read as part-kept)
+      expect(r.change).toBeUndefined();
       expect(recordPayment).not.toHaveBeenCalled();
     });
 

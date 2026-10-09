@@ -85,10 +85,10 @@ export function buildCounterSaleResponse(input: {
 
   // Change is handed back ONLY once the STORED balance is fully covered: this call's cash against what its
   // own leg stored is otherwise money still owed (a replay must never read an unpaid sibling's share as
-  // change). Only the CASH leg's own rows count; sumConfirmed counts PAID rows, so a voided one is out.
+  // change), and never when the tender was refused (all the cash goes back). Only the CASH leg's own rows count; sumConfirmed counts PAID rows, so a voided one is out.
   const cashLeg = legs?.findIndex((l) => l.method === "CASH") ?? -1;
   let change: number | undefined;
-  if (legs && cashLeg >= 0 && legs[cashLeg].amount != null && balanceDue <= 0) {
+  if (legs && settled && cashLeg >= 0 && legs[cashLeg].amount != null && balanceDue <= 0) {
     const cashPaid = sumConfirmed((stored.byLeg.get(cashLeg) ?? []).map((r) => r.payment));
     const owed = roundMoney(legs[cashLeg].amount! - cashPaid);
     if (owed > 0) change = owed;
