@@ -3,15 +3,18 @@ jest.mock("../orders.service", () => ({ OrdersService: class OrdersService {} })
 jest.mock("../../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 // The shared Postgres advisory lock is a pass-through with the same contract (fn runs under the lock).
 const mockLockCalls: Array<{ family: string; key: string }> = [];
+const mockLockFailure: { error: Error | null } = { error: null };
 jest.mock("../../common/db-locks", () => ({
   ...jest.requireActual("../../common/db-locks"),
   withAdvisoryLock: async (opts: any, fn: () => Promise<unknown>) => {
     mockLockCalls.push({ family: opts.family, key: opts.key });
+    if (mockLockFailure.error) throw mockLockFailure.error;
     return { acquired: true, value: await fn() };
   },
 }));
 
 import { Test } from "@nestjs/testing";
+import { LockTimeoutError } from "../../common/db-locks";
 import type { FulfilmentCapability } from "@routeflow/types";
 import { CounterSaleService } from "./counter-sale.service";
 import { WalkInCustomerService } from "./walk-in-customer";
@@ -78,6 +81,7 @@ describe("CounterSaleService.ring: split payments", () => {
 
   beforeEach(async () => {
     mockLockCalls.length = 0;
+    mockLockFailure.error = null;
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 70, 1)];
     written = false;
@@ -478,6 +482,30 @@ describe("CounterSaleService.ring: split payments", () => {
         balanceDue: 0,
         change: 10,
         paymentRecorded: true,
+      });
+    });
+
+    it("the double-submit LOSER: its lock times out after the winner finished; storage shows the balance covered, so it reads RECORDED", async () => {
+      invoices = [
+        inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0), row("p1", 40, "CASH", G1)]),
+      ];
+      replay = true;
+      mockLockFailure.error = new LockTimeoutError("counter-tender", "ord-1", 0);
+      const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ replayed: true, paid: 70, balanceDue: 0, paymentRecorded: true });
+      expect(r.paymentErrorCode).toBeUndefined();
+    });
+
+    it("a lock timeout with the balance STILL owing is not recorded (the split did not finish)", async () => {
+      invoices = [inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0)])];
+      replay = true;
+      mockLockFailure.error = new LockTimeoutError("counter-tender", "ord-1", 0);
+      const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
+      expect(r).toMatchObject({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        balanceDue: 40,
       });
     });
 

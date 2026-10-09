@@ -70,12 +70,14 @@ export function buildCounterSaleResponse(input: {
     // A throw part-way (a sibling invoice's allocation) can leave an EARLIER invoice's tender stored while
     // balance remains: that must never read as recorded, so a planError beats "a tender exists" (paid and
     // balanceDue still come from storage). A balance that storage shows fully covered is recorded regardless
-    // (the loser of a race whose own recordPayment the invoice row lock refused), except for a split: its
-    // refusal (the balance moved under the clerk) stands even when credit has covered everything.
+    // (the loser of a race: its lock timed out or its own recordPayment was refused after the winner finished).
+    // The one exception is a split's over-cover refusal: the balance moved under the clerk, so it stands even
+    // when credit has covered everything.
+    const refusedOverCover =
+      legs.length > 1 && planError === API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL;
     settled =
-      legs.length > 1
-        ? !planError && (balanceDue <= 0 || anyTender)
-        : method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && anyTender);
+      method === "ON_ACCOUNT" ||
+      (!refusedOverCover && (balanceDue <= 0 || (!planError && anyTender)));
   } else {
     settled = method === "ON_ACCOUNT" || balanceDue <= 0;
     if (!settled) error = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
