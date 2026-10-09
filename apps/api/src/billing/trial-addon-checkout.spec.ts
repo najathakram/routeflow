@@ -682,6 +682,8 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       addonSkus: "CUSTOMER_PACK_100,FORECASTING",
     });
     expect(args.subscription_data).toEqual({
+      billing_cycle_anchor: expect.any(Number), // SA-733 D6: always anchored (see the D6 block below)
+      proration_behavior: "create_prorations",
       metadata: { tenantId: "t1", addonSkus: "CUSTOMER_PACK_100,FORECASTING" },
     });
   });
@@ -753,7 +755,10 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       const h = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
       await h.billing.createCheckoutSession("t1", "month");
       await h.billing.createCheckoutSession("t1", "month");
-      await h.billing.createCheckoutSession("t1", "year"); // an annual checkout too: nothing to bill, so no refusal
+      // an annual checkout is refused (SA-733 D6) AFTER the add-on lines were read: still the same one notice
+      await expect(h.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+        status: 400,
+      });
       expect(qtyNotices(h)).toHaveLength(1);
     });
 
@@ -799,10 +804,14 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
     expect(call.line_items[1].price_data.product_data.metadata.addonSku).toBe("FORECASTING");
     expect(call.metadata.addonSkus).toBe("FORECASTING");
 
-    // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is the plan line, not a refusal
+    // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is no longer an ADD-ON refusal
+    // (SA-733 D6 refuses every annual checkout, with its own code)
     const only = make({ rows: [addonRow("CUSTOMER_PACK_100", { qty: 0 })] });
-    await only.billing.createCheckoutSession("t1", "year");
-    expect(only.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    const refused: any = await only.billing.createCheckoutSession("t1", "year").catch((e) => e);
+    expect(refused.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+    });
+    expect(only.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 
   it("NIT: the annual-checkout refusal NAMES the add-ons to switch off (sorted by SKU, comma-joined) and says what else to do", async () => {
@@ -859,12 +868,17 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       planKey: "STARTER",
       interval: "month",
     });
-    expect(m).not.toHaveProperty("subscription_data");
+    // no add-on tags: the subscription_data is the D6 anchor alone (no metadata)
+    expect(m.subscription_data).toEqual({
+      billing_cycle_anchor: expect.any(Number),
+      proration_behavior: "create_prorations",
+    });
 
-    // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then the plan line alone
+    // only a SWITCHED-OFF row means nothing to bill: an annual checkout is then refused by D6 alone
     const annual = make({ rows: [addonRow("CUSTOMER_PACK_100", { active: false })] });
-    await annual.billing.createCheckoutSession("t1", "year");
-    expect(annual.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    await expect(annual.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({
+      status: 400,
+    });
   });
 
   it("a legacy row keyed by addonKey is billed under its canonical SKU, once", async () => {
@@ -3831,13 +3845,18 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
     const args = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(args.line_items).toHaveLength(1); // the plan only
     expect(args.metadata).not.toHaveProperty("addonSkus");
-    expect(args).not.toHaveProperty("subscription_data");
+    expect(args.subscription_data).not.toHaveProperty("metadata"); // the D6 anchor only
   });
 
   it("a comp never makes an ANNUAL checkout refuse (nothing billable), while a billable row beside it still does", async () => {
     const onlyComp = make({ rows: [comp("CUSTOMER_PACK_100", { qty: 3 })] });
-    await onlyComp.billing.createCheckoutSession("t1", "year");
-    expect(onlyComp.client.checkout.sessions.create.mock.calls[0][0].line_items).toHaveLength(1);
+    // nothing billable -> no ADD-ON refusal; the annual checkout is refused by D6 (its own code) instead
+    const noAddonRefusal: any = await onlyComp.billing
+      .createCheckoutSession("t1", "year")
+      .catch((e) => e);
+    expect(noAddonRefusal.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+    });
 
     const both = make({ rows: [comp("CUSTOMER_PACK_100"), addonRow("FORECASTING")] });
     await expect(both.billing.createCheckoutSession("t1", "year")).rejects.toMatchObject({

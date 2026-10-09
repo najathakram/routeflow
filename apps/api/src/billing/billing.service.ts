@@ -47,6 +47,8 @@ import {
   checkoutAddonItems,
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
+import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
 import { writeAdminNotice } from "./manual-invoice-notice";
@@ -463,6 +465,15 @@ export class BillingService {
     // is created.
     const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
 
+    // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
+    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before any Stripe call.
+    if (interval === "year") {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+        message: "Annual checkout is not available. Subscriptions are billed monthly.",
+      });
+    }
+
     const customerId = await this.ensureStripeCustomer(tenantId);
     // Throws BadRequestException when neither an override nor a catalog price
     // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
@@ -470,6 +481,9 @@ export class BillingService {
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
+    // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
+    const anchor = planCheckoutAnchor(new Date());
 
     // Inline price_data line item — bypasses StripeService.createCheckoutSession
     // (which only accepts a pre-created `priceId`) via the underlying client, since
@@ -488,19 +502,19 @@ export class BillingService {
         interval,
         ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
       },
-      // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
-      // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
-      ...(addons.skus.length
-        ? {
-            subscription_data: {
-              metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") },
-            },
-          }
-        : {}),
+      expires_at: anchor.expiresAt,
+      subscription_data: {
+        ...checkoutAnchorParams(anchor),
+        // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+        // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+        ...(addons.skus.length
+          ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
+          : {}),
+      },
     });
 
     this.logger.log(
-      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval})`,
+      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,
     );
     return { checkoutUrl: session.url, sessionId: session.id };
   }
