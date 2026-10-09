@@ -141,11 +141,16 @@ describeDb("tenant units against real Postgres", () => {
   }, 120_000);
 
   afterAll(async () => {
-    for (const t of [A, B].filter(Boolean)) {
-      await raw.auditLog.deleteMany({ where: { tenantId: t } });
+    const tenants = [A, B].filter(Boolean);
+    // Sold lines first, for BOTH tenants: the isolation case seeds a tenant-B line that points at a
+    // tenant-A product, so A's products cannot be deleted while B's lines still exist.
+    for (const t of tenants) {
       await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId: t } } });
-      await raw.invoice.deleteMany({ where: { tenantId: t } });
       await raw.orderItem.deleteMany({ where: { order: { tenantId: t } } });
+    }
+    for (const t of tenants) {
+      await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.invoice.deleteMany({ where: { tenantId: t } });
       await raw.order.deleteMany({ where: { tenantId: t } });
       await raw.customer.deleteMany({ where: { tenantId: t } });
       await raw.user.deleteMany({ where: { tenantId: t } });
