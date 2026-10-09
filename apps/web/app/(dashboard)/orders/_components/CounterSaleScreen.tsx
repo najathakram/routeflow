@@ -280,19 +280,20 @@ export function CounterSaleScreen() {
   }, [receipt, locked]);
   // Row 112: the sticky checkout bar floats over the page below md; the screen reserves its measured height at the bottom so
   // the last cart line and the Cash/Card buttons can always scroll clear of it (the bar grows with an error or a change line).
-  const barRef = React.useRef<HTMLDivElement>(null);
   const [barHeight, setBarHeight] = React.useState(0);
-  React.useEffect(() => {
-    const el = barRef.current;
+  const barObserver = React.useRef<ResizeObserver | null>(null);
+  // A CALLBACK ref: the bar mounts after the gate's loading render and again after the receipt view, so the observer is
+  // attached whenever the element appears and torn down whenever it goes.
+  const barRef = React.useCallback((el: HTMLDivElement | null) => {
+    barObserver.current?.disconnect();
+    barObserver.current = null;
     if (!el) return;
     const measure = () => setBarHeight(el.offsetHeight);
     measure();
     if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // the bar unmounts behind the receipt view and comes back for the next sale: measure again then
-  }, [receipt]);
+    barObserver.current = new ResizeObserver(measure);
+    barObserver.current.observe(el);
+  }, []);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };

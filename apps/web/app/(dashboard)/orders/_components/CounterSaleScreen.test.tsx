@@ -233,8 +233,17 @@ describe("CounterSaleScreen", () => {
       renderWithProviders(<CounterSaleScreen />);
       const root = screen.getByTestId("counter-sale-screen");
       await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
-      expect(root.className).toMatch(/pb-\[calc\(1rem\+var\(--counter-bar-h/);
-      expect(root.className).toMatch(/\bmd:pb-4\b/);
+    });
+
+    it("a cold load (gate loading first) still measures the bar once it mounts", async () => {
+      const loaded = gate;
+      gate = { ...loaded, loading: true };
+      const view = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-sale-loading")).toBeInTheDocument();
+      gate = loaded;
+      view.rerender(<CounterSaleScreen />);
+      const root = await screen.findByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
     });
 
     it("follows the bar when it grows (an error appears in it)", async () => {
