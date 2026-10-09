@@ -109,6 +109,13 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
   });
 
+  it("the screen root carries the marker the reprint print rule hides", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const root = screen.getByTestId("counter-sale-screen");
+    expect(root).toHaveAttribute("data-counter-screen");
+    expect(root).toContainElement(screen.getByLabelText("Scan or search items"));
+  });
+
   it("type a quantity, then scan, to multiply: 3 then a scan = 3 units and the running total", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("3");

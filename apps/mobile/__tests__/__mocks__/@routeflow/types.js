@@ -24,7 +24,7 @@
 module.exports = {
   // Hand copy of packages/types/api/orders.ts CREDITS_PENDING_COPY (B1205); byte-identical.
   CREDITS_PENDING_COPY:
-    "The order was saved, but the credit notes weren't applied. Apply them on the order.",
+    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
   // Hand copy of packages/types/api/orders.ts BATCH_SHIP_MAX_ORDERS; pinned equal by
   // apps/api/src/orders/order-batch-ship.spec.ts (which `require`s THIS file).
   BATCH_SHIP_MAX_ORDERS: 50,
@@ -153,6 +153,9 @@ module.exports = {
     PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
     BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
     INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+    INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+    // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+    ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
     HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
     CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
     CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -266,6 +269,7 @@ module.exports = {
     COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
     COUNTER_SALE_ORDER_CHANGED: "COUNTER_SALE_ORDER_CHANGED",
     COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+    PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
     WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
     COUNTER_SALE_NOT_FOUND: "COUNTER_SALE_NOT_FOUND",
     COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",

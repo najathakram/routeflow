@@ -40,6 +40,7 @@ import type { FulfilmentCapability } from "@routeflow/types";
 import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
+import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 
 /**
@@ -80,6 +81,7 @@ describe("CounterSaleService.ring", () => {
   let findReplayCandidateByKey: jest.Mock;
   let recordPayment: jest.Mock;
   let walkIn: { getOrCreateWalkIn: jest.Mock };
+  let audit: { log: jest.Mock };
   let reader: { get: jest.Mock };
   let invoices: Inv[];
   let replay: boolean;
@@ -129,6 +131,7 @@ describe("CounterSaleService.ring", () => {
     });
     walkIn = { getOrCreateWalkIn: jest.fn().mockResolvedValue("cust-walkin") };
     reader = { get: jest.fn().mockResolvedValue(cap("optional")) };
+    audit = { log: jest.fn().mockResolvedValue(undefined) };
 
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
@@ -151,6 +154,7 @@ describe("CounterSaleService.ring", () => {
         { provide: WalkInCustomerService, useValue: walkIn },
         { provide: PrismaService, useValue: prisma },
         { provide: FULFILMENT_CAPABILITY_READER, useValue: reader },
+        { provide: AuditService, useValue: audit },
       ],
     }).compile();
     service = mod.get(CounterSaleService);
@@ -1261,6 +1265,217 @@ describe("CounterSaleService.ring", () => {
       findReplayCandidateByKey.mockResolvedValue(sale);
       await expect(service.byKey("k1")).rejects.toMatchObject({ status: 403 });
       expect(findReplayCandidateByKey).not.toHaveBeenCalled();
+    });
+  });
+  // ── POS-5: price edit behind canEditPrices ────────────────────────────────
+  describe("price edit (POS-5)", () => {
+    const admin = { sub: "adm-1", role: "TENANT_ADMIN", tenantId: "t-1" } as never;
+    const superAdmin = { sub: "sa-1", role: "SUPER_ADMIN", tenantId: "t-1" } as never;
+    const priced = { productId: "p1", qty: 2, unitPrice: 9, priceReason: "damaged box" };
+    const storedLine = {
+      productId: "p1",
+      unitPrice: 9,
+      originalPrice: 10,
+      priceType: "DISCOUNTED",
+      overrideReason: "damaged box",
+      overriddenBy: "adm-1",
+    };
+    const sendOpts = () => createSale.mock.calls[0][2];
+
+    it.each([
+      ["OPERATOR", staff, false],
+      ["TENANT_ADMIN", admin, true],
+      ["SUPER_ADMIN", superAdmin, true],
+    ])("%s: create() is told priceEditAllowed = %s", async (_r, user, allowed) => {
+      await service.ring(named({ method: "CASH" }) as never, user);
+      expect(sendOpts().priceEditAllowed).toBe(allowed);
+    });
+
+    it("a refusal from create() (403 PRICE_EDIT_NOT_PERMITTED) leaves everything unwritten: no payment, no audit row", async () => {
+      const { ForbiddenException } = jest.requireActual("@nestjs/common");
+      createSale.mockRejectedValue(
+        new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" }),
+      );
+      const e = await errorOf(
+        service.ring(named({ method: "CASH" }, { items: [priced] }) as never, staff, "k-1"),
+      );
+      expect(e.getStatus()).toBe(403);
+      expect(e.getResponse().code).toBe("PRICE_EDIT_NOT_PERMITTED");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+      expect(mockLockCalls).toHaveLength(0);
+    });
+
+    it("an admin sale with an edited line writes exactly ONE counter-sale.price-edited row, from STORED values", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", pricePerUnit: 10, priceTier2: 9.5 }]);
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 2 });
+      const imp = { ...(admin as object), impersonatedBy: "plat-1" } as never;
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, imp, "k-1");
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        userId: "adm-1",
+        impersonatedBy: "plat-1",
+        action: "counter-sale.price-edited",
+        entityType: "Order",
+        entityId: "ord-1",
+        meta: {
+          orderNumber: "ORD-1",
+          lines: [
+            {
+              productId: "p1",
+              originalPrice: 10,
+              tierPrice: 9.5,
+              unitPrice: 9,
+              priceType: "DISCOUNTED",
+              reason: "damaged box",
+            },
+          ],
+        },
+      });
+    });
+
+    it("the audit row records the TIER price the edit started from, next to the LIST price (customer tier, per-product override, null when unresolved)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [
+          { ...storedLine, productId: "p1" },
+          { ...storedLine, productId: "p2", originalPrice: 20, unitPrice: 15 },
+          { ...storedLine, productId: "p3", originalPrice: 5, unitPrice: 4 },
+          { ...storedLine, productId: null, originalPrice: null, unitPrice: 3 },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", pricingTier: 3 });
+      // p2 carries a per-product tier override (tier 2); p1 follows the customer's default tier 3.
+      prisma.customerPrice.findMany.mockResolvedValue([{ productId: "p2", pricingTier: 2 }]);
+      // the first product read is the sale's own existence check (the one item); the second is the tier lookup
+      prisma.product.findMany.mockResolvedValueOnce([{ id: "p1", pricePerUnit: 10 }]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", pricePerUnit: 10, priceTier2: 9.5, priceTier3: 9.25 },
+        { id: "p2", pricePerUnit: 20, priceTier2: 18, priceTier3: 17 },
+      ]);
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      const lines = audit.log.mock.calls[0][0].meta.lines;
+      expect(lines.map((l: any) => [l.productId, l.originalPrice, l.tierPrice])).toEqual([
+        ["p1", 10, 9.25],
+        ["p2", 20, 18],
+        ["p3", 5, null],
+        [null, null, null],
+      ]);
+    });
+
+    it("a failed tier-price lookup still writes the audit row, with a null tier price", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      prisma.customerPrice.findMany.mockRejectedValue(new Error("db down"));
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0].meta.lines[0]).toMatchObject({
+        originalPrice: 10,
+        tierPrice: null,
+      });
+    });
+
+    it("a sale with no edited line writes no audit row", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [],
+      });
+      await service.ring(named({ method: "CASH" }) as never, admin, "k-1");
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it("a replayed sale writes no second audit row", async () => {
+      replay = true;
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      await service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1");
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    it("an audit failure never fails the sale", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [storedLine],
+      });
+      audit.log.mockRejectedValue(new Error("db down"));
+      await expect(
+        service.ring(named({ method: "CASH" }, { items: [priced] }) as never, admin, "k-1"),
+      ).resolves.toMatchObject({ orderId: "ord-1" });
+    });
+
+    describe("replay compares price and discount like any other cart change", () => {
+      const stored = (over: any = {}) => ({
+        id: "ord-1",
+        counterSale: true,
+        lineItems: [
+          {
+            productId: "p1",
+            position: 0,
+            status: "ACTIVE",
+            unitPrice: 9,
+            overriddenBy: "adm-1",
+            ...over,
+          },
+        ],
+      });
+      const ringWith = (item: any, order: any) => {
+        replay = true;
+        replayOrder = order;
+        return service.ring(named({ method: "CASH" }, { items: [item] }) as never, admin, "k-1");
+      };
+
+      it("the same priced body replays (same order, replayed:true)", async () => {
+        await expect(ringWith(priced, stored())).resolves.toMatchObject({
+          orderId: "ord-1",
+          replayed: true,
+        });
+      });
+
+      it("a different price under the same key is 409 IDEMPOTENCY_KEY_CART_MISMATCH carrying the holding order id", async () => {
+        const e = await errorOf(ringWith({ ...priced, unitPrice: 8 }, stored()));
+        expect(e.getStatus()).toBe(409);
+        expect(e.getResponse()).toMatchObject({
+          code: "IDEMPOTENCY_KEY_CART_MISMATCH",
+          orderId: "ord-1",
+        });
+        expect(recordPayment).not.toHaveBeenCalled();
+      });
+
+      it("a price within 1/2 cent of the stored one is the same price (3.335 stores 3.34)", async () => {
+        await expect(
+          ringWith({ ...priced, unitPrice: 3.335 }, stored({ unitPrice: 3.34 })),
+        ).resolves.toMatchObject({ replayed: true });
+      });
+
+      it("an unpriced body against a stored override is a changed cart", async () => {
+        const e = await errorOf(ringWith({ productId: "p1", qty: 2 }, stored()));
+        expect(e.getResponse().code).toBe("IDEMPOTENCY_KEY_CART_MISMATCH");
+      });
+
+      it("an unpriced body against an unpriced stored line is the plain replay of today", async () => {
+        await expect(
+          ringWith({ productId: "p1", qty: 2 }, stored({ unitPrice: 10, overriddenBy: null })),
+        ).resolves.toMatchObject({ replayed: true });
+      });
+
+      it("an order that carries no line detail (older fixture) is not judged", async () => {
+        await expect(ringWith(priced, { id: "ord-1", counterSale: true })).resolves.toBeDefined();
+      });
     });
   });
 });
