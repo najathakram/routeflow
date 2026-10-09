@@ -155,6 +155,8 @@ export function ProductTile({
           // 44px hit area; the visible circle (inner span) keeps its old size.
           className="group/fav absolute top-0.5 right-0.5 flex min-h-11 min-w-11 items-center justify-center"
           title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-pressed={isFavorite}
         >
           <span
             className={`flex items-center justify-center rounded-full shadow-sm transition-colors ${isCompact ? "h-7 w-7" : "h-8 w-8"} ${

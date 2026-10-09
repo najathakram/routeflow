@@ -62,6 +62,40 @@ describe("ProductTile tap targets and Notify me", () => {
     expect(heart.className).toMatch(/\bmin-w-11\b/);
   });
 
+  it("the heart has an accessible name that follows its state, and says whether it is on", () => {
+    const { unmount } = render(
+      <ProductTile
+        product={product()}
+        sellerSlug="acme"
+        cartItem={undefined}
+        promoRules={[]}
+        onAdd={jest.fn()}
+        onUpdateQty={jest.fn()}
+        onToggleFavorite={jest.fn()}
+        onToggleStockAlert={jest.fn()}
+        isFavorite={false}
+      />,
+    );
+    const off = screen.getByRole("button", { name: "Add to favorites" });
+    expect(off).toHaveAttribute("aria-pressed", "false");
+    unmount();
+    render(
+      <ProductTile
+        product={product()}
+        sellerSlug="acme"
+        cartItem={undefined}
+        promoRules={[]}
+        onAdd={jest.fn()}
+        onUpdateQty={jest.fn()}
+        onToggleFavorite={jest.fn()}
+        onToggleStockAlert={jest.fn()}
+        isFavorite
+      />,
+    );
+    const on = screen.getByRole("button", { name: "Remove from favorites" });
+    expect(on).toHaveAttribute("aria-pressed", "true");
+  });
+
   it.each([undefined, "sm" as const])("Add has a 44px hit height (density %s)", (size) => {
     setup(product(), size);
     expect(screen.getByRole("button", { name: /^add$/i }).className).toMatch(/\bmin-h-11\b/);
