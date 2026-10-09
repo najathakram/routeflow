@@ -12,6 +12,27 @@
 
 ## process
 
+### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
+
+- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
+- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
+- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
+- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
+
+### L-288 · 2026-10-09 · process · use one merge strategy end to end: trains merge to master with a MERGE COMMIT, so stacked and train-based branches stay ancestors of master
+
+- **Symptom:** a branch built on a train tip looked 256 commits ahead of master after that train was squash-merged, and merging it would have reverted four later fixes; the same shape threatened a second branch built on an earlier sitting.
+- **Root cause:** members were squashed or rebased while the train itself was squashed, so no branch built on a train tip could ever be an ancestor of the landed master; a mixed strategy made "is this merged?" unanswerable ([[L-197]], [[L-268]]).
+- **Lesson:** **Land a train with a merge commit (no squash, no rebase) so every member and every branch stacked on a train tip remains an ancestor of master. Before opening a PR for a branch built on any train, sitting or stacked base, run `git merge-base --is-ancestor <base> origin/master`; if it fails, cherry-pick the branch's own commits onto fresh master and prove `git diff origin/master...HEAD` lists only the PR's files.**
+- **Guard:** none automatic; the landing checklist's empty-diff proof (the file set of the two-dot and three-dot diffs against master must be identical). Supersedes the rebase-merge rule of [[L-268]].
+
+### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
+
+- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
+- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
+- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
+- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
+
 ### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
 
 - **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
@@ -165,13 +186,6 @@
 - **Root cause:** the replay lookup matched on the key alone, so it did not ask which states a staff action can end; and the "final" flag was inferred from a non-terminal signal instead of a terminal fact.
 - **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
 - **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
-
-### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
-
-- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
-- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
-- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
-- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
 
 ### L-269 · 2026-10-07 · process · re-arm the visibility watchdog on a timer at least 5 minutes before its deadline, and read visibility before every merge (W15)
 
@@ -476,13 +490,6 @@
 - **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
-### L-279 · 2026-10-08 · testing · an undecorated DTO field is an own `undefined` key under ES2023 and the global pipe refuses it (B1224)
-
-- **Symptom:** the New sale screen could not save: every `POST /orders/sell` returned 400 "property idempotencyKey should not exist", although the client never sends that field. Unit specs were green because they called the service and never ran the DTO through the pipe.
-- **Root cause:** the api compiles to ES2023 (class-field define semantics), so an undecorated `idempotencyKey?: string;` is emitted as an own `undefined` property on every class-transformer instance, and the global `ValidationPipe` (`whitelist` plus `forbidNonWhitelisted`) rejects a key without a validator.
-- **Lesson:** **A DTO property that carries no validator (an internal field the server sets in code) must be written `declare x?: T;` so no own key is emitted. Prove a new or changed DTO through the real global pipe options, not only through the service, and keep one guard that instantiates every exported DTO from `{}`.**
-- **Guard:** `apps/api/src/common/dto-no-own-undefined-keys.guard.spec.ts` (every exported `*.dto.ts` class has no own undefined key without a validator) and `apps/api/src/orders/dto/create-sale.dto.pipe.spec.ts` (the exact `main.ts` pipe options accept a body without the key and still refuse a client-sent one).
-
 ## domain
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
@@ -560,13 +567,6 @@
 - **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
 
 ## security
-
-### L-285 · 2026-10-08 · security · a scoping argument is required, never optional (B1211, #3322)
-
-- **Symptom:** a cross-tenant link was followed: the sellable-parent and buyer-visibility predicates took an optional tenant parameter, and every call site that forgot it silently lost the scope.
-- **Root cause:** an optional scope parameter makes "no scope" a valid call, so the check disappears without an error at exactly the sites that omit it.
-- **Lesson:** **Make a tenant (or other scope) parameter required in the type, throw (fail closed) at runtime when it is missing, and let the compiler list every site. Making the two predicates tenant-required surfaced 11 production sites plus the order-write gate, all fixed.**
-- **Guard:** `apps/api/src/buyer/buyer-tenant-required.spec.ts`.
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 

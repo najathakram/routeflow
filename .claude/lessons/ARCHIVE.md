@@ -3791,3 +3791,27 @@ citations, closed-out with its own post-init assertion guard).
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
   (Archived 2026-10-08 whole and verbatim to make room at cap: L-159: guarded by the red-first regression tests on `resolveConfirmedAmounts` in `packages/pricing/src/payment-confirmation.spec.ts` (the double-subtraction case) and its web mirror.)
+
+### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
+
+- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
+- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
+- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
+- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-268: superseded by L-288 (trains merge with a merge commit, not rebase-merge); the empty-diff proof lives on in L-288's Guard.)
+
+### L-279 · 2026-10-08 · testing · an undecorated DTO field is an own `undefined` key under ES2023 and the global pipe refuses it (B1224)
+
+- **Symptom:** the New sale screen could not save: every `POST /orders/sell` returned 400 "property idempotencyKey should not exist", although the client never sends that field. Unit specs were green because they called the service and never ran the DTO through the pipe.
+- **Root cause:** the api compiles to ES2023 (class-field define semantics), so an undecorated `idempotencyKey?: string;` is emitted as an own `undefined` property on every class-transformer instance, and the global `ValidationPipe` (`whitelist` plus `forbidNonWhitelisted`) rejects a key without a validator.
+- **Lesson:** **A DTO property that carries no validator (an internal field the server sets in code) must be written `declare x?: T;` so no own key is emitted. Prove a new or changed DTO through the real global pipe options, not only through the service, and keep one guard that instantiates every exported DTO from `{}`.**
+- **Guard:** `apps/api/src/common/dto-no-own-undefined-keys.guard.spec.ts` (every exported `*.dto.ts` class has no own undefined key without a validator) and `apps/api/src/orders/dto/create-sale.dto.pipe.spec.ts` (the exact `main.ts` pipe options accept a body without the key and still refuse a client-sent one).
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-279: guarded by `apps/api/src/common/dto-no-own-undefined-keys.guard.spec.ts` (every exported `*Dto` field is covered); no outside citation.)
+
+### L-285 · 2026-10-08 · security · a scoping argument is required, never optional (B1211, #3322)
+
+- **Symptom:** a cross-tenant link was followed: the sellable-parent and buyer-visibility predicates took an optional tenant parameter, and every call site that forgot it silently lost the scope.
+- **Root cause:** an optional scope parameter makes "no scope" a valid call, so the check disappears without an error at exactly the sites that omit it.
+- **Lesson:** **Make a tenant (or other scope) parameter required in the type, throw (fail closed) at runtime when it is missing, and let the compiler list every site. Making the two predicates tenant-required surfaced 11 production sites plus the order-write gate, all fixed.**
+- **Guard:** `apps/api/src/buyer/buyer-tenant-required.spec.ts`.
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-285: guarded by `apps/api/src/buyer/buyer-tenant-required.spec.ts`; no outside citation.)
