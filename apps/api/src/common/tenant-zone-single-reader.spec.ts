@@ -30,6 +30,14 @@ const READ_ALLOW_LIST = new Set([
 
 const SELECT_READ = /\btimezone\s*:\s*true\b/;
 const CONFIG_PROPERTY_READ = /\b(?:cfg|config|tenantConfig|tenantCfg)\s*\??\.\s*timezone\b/;
+/** In a file that touches TenantConfig / the zone select: the other ways to pull the column out. */
+const DESTRUCTURED_READ = /\{[^{}]*\btimezone\b[^{}]*\}\s*=(?![=>])/;
+const NON_NULL_READ = /!\s*\.\s*timezone\b/;
+const QUOTED_KEY_READ = /["'`]timezone["'`]/;
+const TOUCHES_TENANT_CONFIG = /\btenantConfig\b|\bTENANT_ZONE_SELECT\b/;
+/** `zoneFromConfig(<row>, {` / `configuredZone(<row>, {`: the row plus a ZoneContext object. */
+const FROM_CONFIG_CALL = /\b(?:zoneFromConfig|configuredZone)\s*\(/g;
+const FROM_CONFIG_OK = /\b(?:zoneFromConfig|configuredZone)\s*\(\s*[\w.?]+\s*,\s*\{/;
 /** `resolveZone(<prisma>, {` is the only accepted call shape. */
 const RESOLVE_ZONE_CALL = /\bresolveZone\s*\(/g;
 const RESOLVE_ZONE_OK = /\bresolveZone\s*\(\s*[\w.]+\s*,\s*\{/;
@@ -49,12 +57,22 @@ function violationsIn(file: string, source: string): string[] {
       out.push(`${file}: selects tenant-config \`timezone: true\` directly`);
     if (CONFIG_PROPERTY_READ.test(code))
       out.push(`${file}: reads \`.timezone\` off a tenant config`);
+    if (TOUCHES_TENANT_CONFIG.test(code)) {
+      if (DESTRUCTURED_READ.test(code)) out.push(`${file}: destructures \`timezone\` off a config`);
+      if (NON_NULL_READ.test(code)) out.push(`${file}: reads \`!.timezone\``);
+      if (QUOTED_KEY_READ.test(code)) out.push(`${file}: reads a quoted "timezone" key`);
+    }
   }
   if (file !== "common/tenant-time-zone.ts") {
     for (const m of code.matchAll(RESOLVE_ZONE_CALL)) {
       const from = code.slice(m.index);
       if (!RESOLVE_ZONE_OK.test(from.slice(0, 120))) {
         out.push(`${file}: resolveZone called without a context object`);
+      }
+    }
+    for (const m of code.matchAll(FROM_CONFIG_CALL)) {
+      if (!FROM_CONFIG_OK.test(code.slice(m.index, m.index + 120))) {
+        out.push(`${file}: zoneFromConfig/configuredZone called without a ZoneContext object`);
       }
     }
     if (POSITIONAL_TENANT_ID.test(code)) {
@@ -107,6 +125,19 @@ describe("SA-738r: the tenant time zone has ONE reader (common/tenant-time-zone.
     );
   });
 
+  it("the raw-config call sites pass a ZoneContext object too (the low-stock digest is the documented batched-read exception)", () => {
+    const callers = FILES.filter((f) =>
+      /\b(?:zoneFromConfig|configuredZone)\s*\(/.test(fs.readFileSync(f, "utf8")),
+    )
+      .map(rel)
+      .filter((f) => f !== "common/tenant-time-zone.ts");
+    expect(callers.sort()).toEqual([
+      "inventory/low-stock-digest.service.ts",
+      "invoices/invoices.service.ts",
+      "system-config/settings.controller.ts",
+    ]);
+  });
+
   it("the allow-list is exactly the resolver and the writer (it never grows by accident)", () => {
     expect([...READ_ALLOW_LIST].sort()).toEqual([
       "common/tenant-time-zone.ts",
@@ -132,7 +163,7 @@ describe("the scanner itself (planted violations)", () => {
     const src = [
       "// reads timezone: true once",
       "select: { ...TENANT_ZONE_SELECT, businessName: true },",
-      "const { zone } = zoneFromConfig(config, tenantId);",
+      "const { zone } = zoneFromConfig(config, { tenantId });",
     ].join("\n");
     expect(violationsIn("x/y.service.ts", src)).toEqual([]);
   });
@@ -152,6 +183,28 @@ describe("the scanner itself (planted violations)", () => {
     expect(
       violationsIn("x/y.service.ts", "await tenantTimeZone(this.prisma, { tenantId });"),
     ).toEqual([]);
+  });
+
+  it("flags destructuring, a non-null read and a quoted key in a file that touches TenantConfig", () => {
+    const touch = "const c = await prisma.tenantConfig.findUnique({ where });\n";
+    expect(violationsIn("x/y.service.ts", touch + "const { timezone } = c;")).toHaveLength(1);
+    expect(violationsIn("x/y.service.ts", touch + "const { a, timezone: z } = c!;")).toHaveLength(
+      1,
+    );
+    expect(violationsIn("x/y.service.ts", touch + "const z = c!.timezone;")).toHaveLength(1);
+    expect(violationsIn("x/y.service.ts", touch + 'const z = c["timezone"];')).toHaveLength(1);
+    expect(violationsIn("x/y.service.ts", touch + "const z = c['timezone'];")).toHaveLength(1);
+  });
+
+  it("does not flag those shapes in a file that never touches TenantConfig", () => {
+    expect(violationsIn("x/y.service.ts", "const { timezone } = messagingRow;")).toEqual([]);
+  });
+
+  it("flags zoneFromConfig / configuredZone without a context object, allows the object form", () => {
+    expect(violationsIn("x/y.service.ts", "zoneFromConfig(cfg, tenantId);")).toHaveLength(1);
+    expect(violationsIn("x/y.service.ts", "configuredZone(cfg);")).toHaveLength(1);
+    expect(violationsIn("x/y.service.ts", "zoneFromConfig(cfg, { tenantId });")).toEqual([]);
+    expect(violationsIn("x/y.service.ts", "configuredZone(cfg, { tenantId });")).toEqual([]);
   });
 
   it("allows the allow-listed files to read the column", () => {
