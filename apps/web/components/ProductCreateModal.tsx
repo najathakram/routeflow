@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import { ImagePlus, X as XIcon } from "lucide-react";
-import { Button, useToast } from "@routeflow/ui/web";
+import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
 import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
+import { isPackUnit, priceUnitWord } from "@/lib/product-unit-label";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
@@ -28,6 +29,8 @@ import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
  * unitsPerBox/parentProductId/variantName/parent to drive the Boxes+Pcs
  * editor and the `displayProductName` label for a just-created product.
  */
+const FORM_ID = "product-create-form";
+
 interface CreatedProduct {
   id: string;
   name: string;
@@ -121,6 +124,7 @@ export function ProductCreateModal({
   const [form, setForm] = React.useState({
     name: initialName ?? "",
     sku: initialSku ?? "",
+    barcode: "",
     unitSku: "",
     unit: "",
     pricePerUnit: initialPrice != null ? initialPrice.toFixed(2) : "",
@@ -249,6 +253,7 @@ export function ProductCreateModal({
     setForm({
       name: "",
       sku: "",
+      barcode: "",
       unitSku: "",
       unit: "",
       pricePerUnit: "",
@@ -290,6 +295,7 @@ export function ProductCreateModal({
       product = await createProduct.mutateAsync({
         name: productName,
         sku: form.sku || undefined,
+        barcode: form.barcode.trim() || undefined,
         unitSku: form.unitSku.trim() || undefined,
         unit: form.unit,
         pricePerUnit: form.pricePerUnit,
@@ -337,195 +343,265 @@ export function ProductCreateModal({
 
   const busy = createProduct.isPending || isUploading;
 
+  const packUnit = isPackUnit(form.unit);
+  const unitWord = priceUnitWord(form.unit);
+  const unitsPerField = (
+    <div>
+      <label htmlFor="product-units-per" className="mb-1 block text-sm font-medium text-navy">
+        {`Units per ${w.pack.lower}`}
+      </label>
+      <input
+        id="product-units-per"
+        type="number"
+        min="1"
+        step="1"
+        placeholder="e.g. 12"
+        value={form.unitsPerBox}
+        onChange={(e) => set("unitsPerBox", e.target.value)}
+        className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+      />
+      <p className="mt-0.5 text-xs text-navy/70">
+        How many individual units are in one {w.pack.lower} (optional)
+      </p>
+      {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
+        form.unitsPerBox === String(initialUnitsPerBox) && (
+          <p className="mt-0.5 text-[11px] text-navy/70">
+            Suggested from the invoice line ({initialUnitsPerBox} per {w.pack.lower}) — verify
+            before saving.
+          </p>
+        )}
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">New Product</h2>
-          <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
-            ✕
-          </button>
-        </div>
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="New Product"
+      scroll
+      className="max-w-lg"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="submit" form={FORM_ID} loading={busy}>
+            {isUploading ? "Uploading photos…" : "Create Product"}
+          </Button>
+        </>
+      }
+    >
+      <form id={FORM_ID} onSubmit={handleSubmit}>
+        <div className="space-y-4">
+          {/* ── Photos ── */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy">Photos</label>
 
-        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
-          <div className="space-y-4 p-6">
-            {/* ── Photos ── */}
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">Photos</label>
-
-              {/* Previews */}
-              {previews.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  {previews.map((src, i) => (
-                    <div
-                      key={i}
-                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-surface-border"
+            {/* Previews */}
+            {previews.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {previews.map((src, i) => (
+                  <div
+                    key={i}
+                    className="relative h-16 w-16 overflow-hidden rounded-lg border border-surface-border"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt={`preview ${i + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(i)}
+                      className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-danger transition-colors"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={src}
-                        alt={`preview ${i + 1}`}
-                        className="h-full w-full object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(i)}
-                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-danger transition-colors"
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-              {/* Drop zone / add button */}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-raised py-3 text-sm text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors"
-              >
-                <ImagePlus className="h-4 w-4" />
-                {previews.length === 0 ? "Add photos" : "Add more photos"}
-              </button>
+            {/* Drop zone / add button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-raised py-3 text-sm text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors"
+            >
+              <ImagePlus className="h-4 w-4" />
+              {previews.length === 0 ? "Add photos" : "Add more photos"}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => addImages(e.target.files)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Variant of — optional parent selector */}
+            {allProducts.filter((p) => !p.parentProductId).length > 0 && (
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Variant of <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <div className="flex items-stretch gap-2">
+                  <SearchableProductPicker
+                    value={form.parentProductId}
+                    onChange={(id) => set("parentProductId", id)}
+                    products={allProducts.filter((p) => !p.parentProductId)}
+                    placeholder="Standalone product (type to search)…"
+                    className="flex-1"
+                  />
+                  <BarcodeScannerButton
+                    onScan={handleVariantOfScan}
+                    title="Scan a variant's barcode to auto-select its parent"
+                  />
+                </div>
+                {variantOfScanLoading && (
+                  <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
+                )}
+                {form.parentProductId && (
+                  <p className="mt-0.5 text-xs text-navy/70">
+                    Fields below have been pre-filled from the parent. Adjust as needed.
+                  </p>
+                )}
+              </div>
+            )}
+            {form.parentProductId && (
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Flavor / variety <span className="text-danger">*</span>
+                </label>
+                <input
+                  required={!!form.parentProductId}
+                  autoFocus
+                  placeholder='e.g. "Chocolate", "Large", "500ml"'
+                  value={form.variantName}
+                  onChange={(e) => set("variantName", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                {form.variantName.trim() &&
+                  allProducts.find((p) => p.id === form.parentProductId) && (
+                    <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/70">
+                      Will appear as:{" "}
+                      <span className="font-medium text-navy">
+                        {allProducts.find((p) => p.id === form.parentProductId)!.name}
+                      </span>
+                      <span className="text-navy/70">{PRODUCT_NAME_SEPARATOR}</span>
+                      <span className="font-medium text-navy">{form.variantName.trim()}</span>
+                    </p>
+                  )}
+              </div>
+            )}
+            {/* Name — only for standalone products; variants use auto-composed name */}
+            {!form.parentProductId && (
+              <div className="col-span-2">
+                <label htmlFor="product-name" className="mb-1 block text-sm font-medium text-navy">
+                  Name *
+                </label>
+                <input
+                  id="product-name"
+                  required
+                  value={form.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            )}
+            <div className="col-span-2">
+              <label htmlFor="product-barcode" className="mb-1 block text-sm font-medium text-navy">
+                Barcode
+              </label>
               <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => addImages(e.target.files)}
+                id="product-barcode"
+                value={form.barcode}
+                onChange={(e) => set("barcode", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                placeholder="Scan or enter the barcode"
+              />
+            </div>
+            <div className="col-span-2">
+              <label htmlFor="product-sku" className="mb-1 block text-sm font-medium text-navy">
+                {`SKU (${w.pack.lower} code)`}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="product-sku"
+                  ref={barcodeInputRef}
+                  value={form.sku}
+                  onChange={(e) => set("sku", e.target.value)}
+                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="Scan or enter the SKU"
+                />
+                <BarcodeScannerButton
+                  inputRef={barcodeInputRef}
+                  onScan={(code) => set("sku", code)}
+                  title="Scan SKU"
+                />
+              </div>
+            </div>
+
+            <div className="col-span-2">
+              <label
+                htmlFor="product-unit-sku"
+                className="mb-1 block text-sm font-medium text-navy"
+              >
+                Unit code
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="product-unit-sku"
+                  ref={unitSkuInputRef}
+                  value={form.unitSku}
+                  onChange={(e) => set("unitSku", e.target.value)}
+                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="Scan or enter the unit's own code"
+                />
+                <BarcodeScannerButton
+                  inputRef={unitSkuInputRef}
+                  onScan={(code) => set("unitSku", code)}
+                  title="Scan unit code"
+                />
+              </div>
+              <p className="mt-0.5 text-xs text-navy/70">
+                Code on the individual unit — printed on customer invoices. Leave blank if it
+                matches the case code.
+              </p>
+            </div>
+
+            {/* Unit — combobox (pick from list OR type a custom value) */}
+            <div>
+              <label htmlFor="product-unit" className="mb-1 block text-sm font-medium text-navy">
+                Unit *
+              </label>
+              <UnitCombobox
+                id="product-unit"
+                required
+                value={form.unit}
+                onChange={(v) => set("unit", v)}
+                extraUnits={units}
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              {/* Variant of — optional parent selector */}
-              {allProducts.filter((p) => !p.parentProductId).length > 0 && (
-                <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">
-                    Variant of <span className="font-normal text-navy/70">(optional)</span>
-                  </label>
-                  <div className="flex items-stretch gap-2">
-                    <SearchableProductPicker
-                      value={form.parentProductId}
-                      onChange={(id) => set("parentProductId", id)}
-                      products={allProducts.filter((p) => !p.parentProductId)}
-                      placeholder="Standalone product (type to search)…"
-                      className="flex-1"
-                    />
-                    <BarcodeScannerButton
-                      onScan={handleVariantOfScan}
-                      title="Scan a variant's barcode to auto-select its parent"
-                    />
-                  </div>
-                  {variantOfScanLoading && (
-                    <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
-                  )}
-                  {form.parentProductId && (
-                    <p className="mt-0.5 text-xs text-navy/70">
-                      Fields below have been pre-filled from the parent. Adjust as needed.
-                    </p>
-                  )}
-                </div>
-              )}
-              {form.parentProductId && (
-                <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">
-                    Flavor / variety <span className="text-danger">*</span>
-                  </label>
-                  <input
-                    required={!!form.parentProductId}
-                    autoFocus
-                    placeholder='e.g. "Chocolate", "Large", "500ml"'
-                    value={form.variantName}
-                    onChange={(e) => set("variantName", e.target.value)}
-                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  {form.variantName.trim() &&
-                    allProducts.find((p) => p.id === form.parentProductId) && (
-                      <p className="mt-1 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/70">
-                        Will appear as:{" "}
-                        <span className="font-medium text-navy">
-                          {allProducts.find((p) => p.id === form.parentProductId)!.name}
-                        </span>
-                        <span className="text-navy/70">{PRODUCT_NAME_SEPARATOR}</span>
-                        <span className="font-medium text-navy">{form.variantName.trim()}</span>
-                      </p>
-                    )}
-                </div>
-              )}
-              {/* Name — only for standalone products; variants use auto-composed name */}
-              {!form.parentProductId && (
-                <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">Name *</label>
-                  <input
-                    required
-                    value={form.name}
-                    onChange={(e) => set("name", e.target.value)}
-                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              )}
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">
-                  {w.pack.one} code (SKU / barcode)
+            <div
+              data-price-row
+              className={packUnit ? "col-span-2 grid grid-cols-2 items-start gap-4" : undefined}
+            >
+              <div>
+                <label htmlFor="product-price" className="mb-1 block text-sm font-medium text-navy">
+                  {`Price per ${unitWord} *`}
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    ref={barcodeInputRef}
-                    value={form.sku}
-                    onChange={(e) => set("sku", e.target.value)}
-                    className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    placeholder="Scan or enter SKU / barcode"
-                  />
-                  <BarcodeScannerButton
-                    inputRef={barcodeInputRef}
-                    onScan={(code) => set("sku", code)}
-                    title="Scan barcode"
-                  />
-                </div>
-              </div>
-
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">Unit code</label>
-                <div className="flex gap-2">
-                  <input
-                    ref={unitSkuInputRef}
-                    value={form.unitSku}
-                    onChange={(e) => set("unitSku", e.target.value)}
-                    className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    placeholder="Scan or enter the unit's own code"
-                  />
-                  <BarcodeScannerButton
-                    inputRef={unitSkuInputRef}
-                    onScan={(code) => set("unitSku", code)}
-                    title="Scan unit code"
-                  />
-                </div>
-                <p className="mt-0.5 text-xs text-navy/70">
-                  Code on the individual unit — printed on customer invoices. Leave blank if it
-                  matches the case code.
-                </p>
-              </div>
-
-              {/* Unit — combobox (pick from list OR type a custom value) */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Unit *</label>
-                <UnitCombobox
-                  required
-                  value={form.unit}
-                  onChange={(v) => set("unit", v)}
-                  extraUnits={units}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Price per unit *</label>
                 <div className="flex items-center">
                   <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
                     $
                   </span>
                   <input
+                    id="product-price"
                     required
                     type="number"
                     min="0"
@@ -549,115 +625,138 @@ export function ProductCreateModal({
                   </p>
                 )}
               </div>
+              {packUnit && unitsPerField}
+            </div>
 
-              {/* Category — ONE axis. Free-text for non-regulated products;
+            {/* Category — ONE axis. Free-text for non-regulated products;
                   once a regulated type is chosen this slot switches to that
                   type's structured, type-ahead Category picker instead. */}
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">Category</label>
-                {form.trackedCategoryId ? (
-                  <>
-                    <SubcategoryCombobox
-                      sectionId={form.trackedCategoryId || null}
-                      value={form.trackedSubcategoryId}
-                      onChange={(id) => set("trackedSubcategoryId", id)}
-                    />
-                    <p className="mt-0.5 text-xs text-navy/70">
-                      Categories for this regulated type — type to create.
-                    </p>
-                  </>
-                ) : (
-                  <CategoryCombobox
-                    value={form.category}
-                    onChange={(v) => set("category", v)}
-                    placeholder="Select or type a new category"
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium text-navy">Category</label>
+              {form.trackedCategoryId ? (
+                <>
+                  <SubcategoryCombobox
+                    sectionId={form.trackedCategoryId || null}
+                    value={form.trackedSubcategoryId}
+                    onChange={(id) => set("trackedSubcategoryId", id)}
                   />
-                )}
-              </div>
-
-              {/* Regulated type (optional) — see /settings?tab=regulated */}
-              {sectionOptions.length > 0 && (
-                <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-navy">Regulated type</label>
-                  <select
-                    value={form.trackedCategoryId}
-                    onChange={(e) => {
-                      const trackedCategoryId = e.target.value;
-                      setForm((f) => ({
-                        ...f,
-                        trackedCategoryId,
-                        trackedSubcategoryId: "",
-                        // Selecting a type replaces the free-text Category
-                        // field with the structured combobox above — clear any
-                        // typed value so a stale one can't be submitted.
-                        category: trackedCategoryId ? "" : f.category,
-                        // Regulatory reporting config is scoped to the
-                        // section's report template — clear it whenever the
-                        // section changes (including cleared entirely) so a
-                        // stale code from a different vocabulary can never be
-                        // submitted.
-                        regItemType: "",
-                        regUomCase: "",
-                        regUomUnit: "",
-                      }));
-                    }}
-                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    <option value="">None (not regulated)</option>
-                    {sectionOptions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                        {s.inactive ? " (inactive)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  <p className="mt-0.5 text-xs text-navy/70">
+                    Categories for this regulated type — type to create.
+                  </p>
+                </>
+              ) : (
+                <CategoryCombobox
+                  value={form.category}
+                  onChange={(v) => set("category", v)}
+                  placeholder="Select or type a new category"
+                />
               )}
+            </div>
 
-              {/* Regulatory reporting (per-product) — Item type / Unit of measure /
+            {/* Regulated type (optional) — see /settings?tab=regulated */}
+            {sectionOptions.length > 0 && (
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">Regulated type</label>
+                <select
+                  value={form.trackedCategoryId}
+                  onChange={(e) => {
+                    const trackedCategoryId = e.target.value;
+                    setForm((f) => ({
+                      ...f,
+                      trackedCategoryId,
+                      trackedSubcategoryId: "",
+                      // Selecting a type replaces the free-text Category
+                      // field with the structured combobox above — clear any
+                      // typed value so a stale one can't be submitted.
+                      category: trackedCategoryId ? "" : f.category,
+                      // Regulatory reporting config is scoped to the
+                      // section's report template — clear it whenever the
+                      // section changes (including cleared entirely) so a
+                      // stale code from a different vocabulary can never be
+                      // submitted.
+                      regItemType: "",
+                      regUomCase: "",
+                      regUomUnit: "",
+                    }));
+                  }}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">None (not regulated)</option>
+                  {sectionOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.inactive ? " (inactive)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Regulatory reporting (per-product) — Item type / Unit of measure /
                   Case unit of measure. Gated on the section's report template
                   needing per-product config (e.g. TX Comptroller). */}
-              {productConfig && (
-                <div className="col-span-2 space-y-3 rounded-lg border border-surface-border bg-surface-raised/40 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/60">
-                    Regulatory reporting
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-navy">Item type</label>
-                      <select
-                        value={form.regItemType}
-                        onChange={(e) => {
-                          const regItemType = e.target.value;
-                          setForm((f) => {
-                            const validUoms = uomsForItemType(productConfig, regItemType).map(
-                              (u) => u.code,
-                            );
-                            return {
-                              ...f,
-                              regItemType,
-                              regUomUnit: validUoms.includes(f.regUomUnit) ? f.regUomUnit : "",
-                              regUomCase: validUoms.includes(f.regUomCase) ? f.regUomCase : "",
-                            };
-                          });
-                        }}
-                        className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      >
-                        <option value="">Select…</option>
-                        {productConfig.itemTypes.map((t) => (
-                          <option key={t.code} value={t.code}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
+            {productConfig && (
+              <div className="col-span-2 space-y-3 rounded-lg border border-surface-border bg-surface-raised/40 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-navy/60">
+                  Regulatory reporting
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">Item type</label>
+                    <select
+                      value={form.regItemType}
+                      onChange={(e) => {
+                        const regItemType = e.target.value;
+                        setForm((f) => {
+                          const validUoms = uomsForItemType(productConfig, regItemType).map(
+                            (u) => u.code,
+                          );
+                          return {
+                            ...f,
+                            regItemType,
+                            regUomUnit: validUoms.includes(f.regUomUnit) ? f.regUomUnit : "",
+                            regUomCase: validUoms.includes(f.regUomCase) ? f.regUomCase : "",
+                          };
+                        });
+                      }}
+                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">Select…</option>
+                      {productConfig.itemTypes.map((t) => (
+                        <option key={t.code} value={t.code}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">
+                      Unit of measure (per {w.base.lower})
+                    </label>
+                    <select
+                      value={form.regUomUnit}
+                      onChange={(e) => set("regUomUnit", e.target.value)}
+                      disabled={!form.regItemType}
+                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                    >
+                      <option value="">
+                        {form.regItemType ? "Select…" : "Select item type first"}
+                      </option>
+                      {uomsForItemType(productConfig, form.regItemType).map((u) => (
+                        <option key={u.code} value={u.code}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {productConfig.caseUomSupported && Number(form.unitsPerBox) > 1 && (
+                    <div className="col-span-2">
                       <label className="mb-1 block text-sm font-medium text-navy">
-                        Unit of measure (per {w.base.lower})
+                        Case unit of measure
                       </label>
                       <select
-                        value={form.regUomUnit}
-                        onChange={(e) => set("regUomUnit", e.target.value)}
+                        value={form.regUomCase}
+                        onChange={(e) => set("regUomCase", e.target.value)}
                         disabled={!form.regItemType}
                         className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
                       >
@@ -670,139 +769,81 @@ export function ProductCreateModal({
                           </option>
                         ))}
                       </select>
+                      <p className="mt-0.5 text-xs text-navy/70">
+                        Used when this product is sold by the case. Leave blank to report every
+                        quantity in {w.base.lowerOther}.
+                      </p>
                     </div>
-                    {productConfig.caseUomSupported && Number(form.unitsPerBox) > 1 && (
-                      <div className="col-span-2">
-                        <label className="mb-1 block text-sm font-medium text-navy">
-                          Case unit of measure
-                        </label>
-                        <select
-                          value={form.regUomCase}
-                          onChange={(e) => set("regUomCase", e.target.value)}
-                          disabled={!form.regItemType}
-                          className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
-                        >
-                          <option value="">
-                            {form.regItemType ? "Select…" : "Select item type first"}
-                          </option>
-                          {uomsForItemType(productConfig, form.regItemType).map((u) => (
-                            <option key={u.code} value={u.code}>
-                              {u.label}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="mt-0.5 text-xs text-navy/70">
-                          Used when this product is sold by the case. Leave blank to report every
-                          quantity in {w.base.lowerOther}.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">Description</label>
-                <textarea
-                  rows={2}
-                  value={form.description}
-                  onChange={(e) => set("description", e.target.value)}
-                  className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-
-              {/* ── Costing method ── */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">Costing Method</label>
-                <select
-                  value={form.costingMethod}
-                  onChange={(e) => set("costingMethod", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  <option value="FIFO">FIFO — First In, First Out</option>
-                  <option value="LIFO">LIFO — Last In, First Out</option>
-                  <option value="AVCO">AVCO — Weighted Average Cost</option>
-                  <option value="LAST_COST">Last Cost — most recent purchase price</option>
-                  <option value="STANDARD">Standard Cost</option>
-                </select>
-              </div>
-
-              {form.costingMethod === "STANDARD" && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-navy">
-                    Standard Cost *
-                  </label>
-                  <input
-                    required={form.costingMethod === "STANDARD"}
-                    type="number"
-                    min="0"
-                    step="0.0001"
-                    value={form.standardCost}
-                    onChange={(e) => set("standardCost", e.target.value)}
-                    placeholder="e.g. 1.2500"
-                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-navy">
-                  {w.base.other} per {w.pack.lower}
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="e.g. 12"
-                  value={form.unitsPerBox}
-                  onChange={(e) => set("unitsPerBox", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="mt-0.5 text-xs text-navy/70">
-                  How many individual units are in one {w.pack.lower} (optional)
-                </p>
-                {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
-                  form.unitsPerBox === String(initialUnitsPerBox) && (
-                    <p className="mt-0.5 text-[11px] text-navy/70">
-                      Suggested from the invoice line ({initialUnitsPerBox} per {w.pack.lower}) —
-                      verify before saving.
-                    </p>
                   )}
+                </div>
               </div>
+            )}
 
-              {/* Pack-size prompt — suggested from the name/unit while the field
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium text-navy">Description</label>
+              <textarea
+                rows={2}
+                value={form.description}
+                onChange={(e) => set("description", e.target.value)}
+                className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            {/* ── Costing method ── */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Costing Method</label>
+              <select
+                value={form.costingMethod}
+                onChange={(e) => set("costingMethod", e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="FIFO">FIFO — First In, First Out</option>
+                <option value="LIFO">LIFO — Last In, First Out</option>
+                <option value="AVCO">AVCO — Weighted Average Cost</option>
+                <option value="LAST_COST">Last Cost — most recent purchase price</option>
+                <option value="STANDARD">Standard Cost</option>
+              </select>
+            </div>
+
+            {form.costingMethod === "STANDARD" && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">Standard Cost *</label>
+                <input
+                  required={form.costingMethod === "STANDARD"}
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={form.standardCost}
+                  onChange={(e) => set("standardCost", e.target.value)}
+                  placeholder="e.g. 1.2500"
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            )}
+
+            {!packUnit && unitsPerField}
+
+            {/* Pack-size prompt — suggested from the name/unit while the field
                   above is still unset. Never guesses: HIGH/MEDIUM pre-fills the
                   parsed count, AMBIGUOUS states the conflict and leaves the input
                   empty, PIECE_UNIT renders nothing. `/products/create` is only a
                   redirect to this modal (RF-203), so this IS the web create form. */}
-              {/* `col-span-2` goes on the component itself, not a wrapper: the
+            {/* `col-span-2` goes on the component itself, not a wrapper: the
                   prompt renders null most of the time and an empty wrapper would
                   still cost a grid row of `gap-4`. */}
-              <PackSizePrompt
-                className="col-span-2"
-                // Mirrors the submit-time name resolution above: a variant is
-                // created under its own `variantName`, not the blank name field.
-                name={
-                  form.parentProductId && form.variantName.trim() ? form.variantName : form.name
-                }
-                unit={form.unit}
-                unitSku={form.unitSku}
-                unitsPerBox={form.unitsPerBox}
-                onAccept={(value) => set("unitsPerBox", String(value))}
-              />
-            </div>
+            <PackSizePrompt
+              className="col-span-2"
+              // Mirrors the submit-time name resolution above: a variant is
+              // created under its own `variantName`, not the blank name field.
+              name={form.parentProductId && form.variantName.trim() ? form.variantName : form.name}
+              unit={form.unit}
+              unitSku={form.unitSku}
+              unitsPerBox={form.unitsPerBox}
+              onAccept={(value) => set("unitsPerBox", String(value))}
+            />
           </div>
-
-          <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={busy}>
-              {isUploading ? "Uploading photos…" : "Create Product"}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

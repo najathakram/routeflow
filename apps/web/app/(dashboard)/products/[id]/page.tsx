@@ -1,5 +1,6 @@
 "use client";
 
+import { priceUnitWord } from "@/lib/product-unit-label";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -488,6 +489,7 @@ export default function ProductDetailPage() {
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
+      barcode: product.barcode ?? "",
       unitSku: product.unitSku ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
@@ -534,6 +536,7 @@ export default function ProductDetailPage() {
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
+        barcode: draft.barcode?.trim() || null,
         unitSku: draft.unitSku?.trim() || null,
         // One category axis: a regulated type's structured Category picker
         // drives `category` server-side — never send the free-text value
@@ -1668,7 +1671,7 @@ export default function ProductDetailPage() {
 
                 <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                   <InfoRow
-                    label="SKU / Barcode"
+                    label={`SKU (${UW.pack.lower} code)`}
                     value={
                       isEditing ? (
                         <input
@@ -1678,6 +1681,20 @@ export default function ProductDetailPage() {
                         />
                       ) : (
                         (product.sku ?? <span className="text-navy/30">—</span>)
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Barcode"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.barcode as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, barcode: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.barcode ?? <span className="text-navy/30">—</span>)
                       )
                     }
                   />
@@ -1775,7 +1792,7 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label={`${tierLabel(tierLabels, 1)} Price (List)`}
+                    label={`Price per ${priceUnitWord(isEditing ? (editDraft.unit as string) : product.unit)} (${tierLabel(tierLabels, 1)})`}
                     value={
                       isEditing ? (
                         <>
