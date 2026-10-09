@@ -16,7 +16,11 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { canEditPrices } from "@/lib/can-edit-prices";
-import { setCounterCartBusy, setCounterCartHasLines } from "@/lib/counter-cart-signal";
+import {
+  setCounterCartBusy,
+  setCounterCartHasLines,
+  setCounterDiscardHook,
+} from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -222,6 +226,12 @@ export function CounterSaleScreen() {
     setCounterCartHasLines(hasLines);
     return () => setCounterCartHasLines(false);
   }, [hasLines]);
+  // The register's "Discard this sale?" also drops the stored live cart, or it would come back next visit.
+  const discardLiveCart = liveCart.discard;
+  React.useEffect(() => {
+    setCounterDiscardHook(discardLiveCart);
+    return () => setCounterDiscardHook(null);
+  }, [discardLiveCart]);
   // A sale POST, a ship draft save or an unknown sale outcome: the register's Exit must not leave (it would drop the receipt).
   const busy = createSale.isPending || createDraft.isPending || outcomeUnknown;
   React.useEffect(() => {
@@ -329,6 +339,7 @@ export function CounterSaleScreen() {
       if (!draft?.id) throw new Error("draft has no id");
       if (!mountedRef.current) return; // the clerk left the counter meanwhile: the draft stays parked, no navigation
       setShipIntent(false);
+      liveCart.discard(); // the cart now lives in the draft: its stored copy must not outlive this screen
       resetSale();
       router.push(`/orders?resumeDraft=${encodeURIComponent(draft.id)}`);
     } catch {
