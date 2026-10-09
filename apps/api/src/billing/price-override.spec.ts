@@ -1,12 +1,11 @@
 import {
   isPricePushFailure,
   mergeOverride,
+  itemUnitAmount,
   priceOverrideAudit,
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
   prorationBehaviorFor,
-  publicPush,
-  revertPriceParams,
   sameOverride,
   STRIPE_PRICE_PUSH_STATUSES,
 } from "./price-override";
@@ -39,7 +38,11 @@ describe("price-override helpers (SA-733 D8 / M7)", () => {
     expect(isPricePushFailure({ synced: false, reason: "subscription_not_active_canceled" })).toBe(
       false,
     );
-    expect(isPricePushFailure({ synced: false, reason: "stripe_not_configured" })).toBe(false);
+    // Item 8: a live stripeSubId whose Stripe side cannot be repriced REFUSES the change.
+    for (const reason of ["no_subscription_item", "no_base_item", "stripe_not_configured"]) {
+      expect(isPricePushFailure({ synced: false, reason })).toBe(true);
+    }
+    expect(isPricePushFailure({ synced: false, reason: "price_unresolvable" })).toBe(false);
     expect(isPricePushFailure({ synced: true })).toBe(false);
   });
 
@@ -47,25 +50,23 @@ describe("price-override helpers (SA-733 D8 / M7)", () => {
     const base = {
       tenantId: "t1",
       amountCents: 1999,
-      effective: "next_cycle" as const,
+      proration: "none" as const,
       version: new Date(5000),
       itemPriceId: "price_1",
     };
-    expect(priceOverrideIdempotencyKey(base)).toBe(
-      "t1:price-override:1999:next_cycle:v5000:price_1",
-    );
+    expect(priceOverrideIdempotencyKey(base)).toBe("t1:price-override:1999:none:v5000:price_1");
     expect(priceOverrideIdempotencyKey({ ...base })).toBe(priceOverrideIdempotencyKey(base));
     const others = [
       { ...base, amountCents: 2000 },
-      { ...base, effective: "now_prorated" as const },
+      { ...base, proration: "create_prorations" as const },
       { ...base, version: new Date(6000) },
       { ...base, itemPriceId: "price_2" },
       { ...base, tenantId: "t2" },
     ].map(priceOverrideIdempotencyKey);
     expect(new Set([priceOverrideIdempotencyKey(base), ...others]).size).toBe(6);
-    expect(
-      priceOverrideIdempotencyKey({ tenantId: "t1", amountCents: 1, effective: "next_cycle" }),
-    ).toBe("t1:price-override:1:next_cycle:v0:-");
+    expect(priceOverrideIdempotencyKey({ tenantId: "t1", amountCents: 1, proration: "none" })).toBe(
+      "t1:price-override:1:none:v0:-",
+    );
   });
 
   it("mergeOverride: undefined keeps the stored column, null clears it, a number sets it", () => {
@@ -90,45 +91,16 @@ describe("price-override helpers (SA-733 D8 / M7)", () => {
     expect(sameOverride(null, { priceOverrideMonthly: 1 })).toBe(false);
   });
 
-  it("revertPriceParams puts the item back at the previous cents with the same proration", () => {
-    expect(
-      revertPriceParams({
-        subscriptionId: "sub_1",
-        itemId: "si_1",
-        productId: "prod_1",
-        interval: "year",
-        previousCents: 120000,
-        proration: "create_prorations",
-        key: "k",
-      }),
-    ).toEqual({
-      items: [
-        {
-          id: "si_1",
-          price_data: {
-            currency: "usd",
-            unit_amount: 120000,
-            recurring: { interval: "year" },
-            product: "prod_1",
-          },
-        },
-      ],
-      proration_behavior: "create_prorations",
-    });
+  it("itemUnitAmount reads one item's cents from a subscription, or undefined", () => {
+    const sub = { items: { data: [{ id: "si_1", price: { unit_amount: 1999 } }, { id: "si_2" }] } };
+    expect(itemUnitAmount(sub, "si_1")).toBe(1999);
+    expect(itemUnitAmount(sub, "si_2")).toBeUndefined();
+    expect(itemUnitAmount(sub, "si_9")).toBeUndefined();
+    expect(itemUnitAmount(null, "si_1")).toBeUndefined();
   });
 
-  it("the audit meta carries the request, effective mode, OLD and NEW price and the push, never the undo handle", () => {
-    const undo = {
-      subscriptionId: "sub_1",
-      itemId: "si_1",
-      productId: "prod_1",
-      interval: "month" as const,
-      previousCents: 10000,
-      proration: "none" as const,
-      key: "k",
-    };
-    const sync = { synced: true, oldAmount: 100, newAmount: 80, proration: "none" as const, undo };
-    expect(publicPush(sync)).not.toHaveProperty("undo");
+  it("the audit meta carries the request, effective mode, OLD and NEW price and the push", () => {
+    const sync = { synced: true, oldAmount: 100, newAmount: 80, proration: "none" as const };
     const meta = priceOverrideAudit({
       dto: { monthly: 80 },
       effective: "next_cycle",

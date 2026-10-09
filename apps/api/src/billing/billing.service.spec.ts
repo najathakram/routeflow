@@ -1598,7 +1598,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
   });
 
   // SA-733 D8 / M7: the push takes an explicit proration mode, carries a deterministic idempotency key, never
-  // skips a live past_due / unpaid subscription, and hands back what it needs to be undone.
+  // skips a live past_due / unpaid subscription, and survives a lost response.
   describe("SA-733 D8/M7 — effective mode, idempotency key, live statuses", () => {
     const liveSub = (status: string, priceId = "price_old") => ({
       status,
@@ -1658,7 +1658,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated", version });
       const [, , options] = stripe.updateSubscription.mock.calls[0];
       expect(options).toEqual({
-        idempotencyKey: `t1:price-override:15000:now_prorated:v${version.getTime()}:price_old`,
+        idempotencyKey: `t1:price-override:15000:create_prorations:v${version.getTime()}:price_old`,
       });
     });
 
@@ -1749,38 +1749,74 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       expect(result).toEqual({ synced: false, reason: "stripe_update_failed" });
     });
 
-    it("hands back an undo; revertPricePush restores the previous cents with the same proration under a :revert key", async () => {
+    // Item 3: a lost RESPONSE. Stripe may have applied the update although the call threw.
+    it("a thrown update whose item already bills the NEW amount is treated as applied", async () => {
       arrange();
-      const pushed = await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
-      expect(pushed.undo).toMatchObject({
-        subscriptionId: "sub_1",
-        itemId: "si_1",
-        productId: "prod_1",
-        previousCents: 10000,
-        proration: "create_prorations",
-      });
-      stripe.updateSubscription.mockClear();
-      expect(await service.revertPricePush("t1", pushed.undo!)).toBe(true);
-      const [subId, params, options] = stripe.updateSubscription.mock.calls[0];
-      expect(subId).toBe("sub_1");
-      expect(params.proration_behavior).toBe("create_prorations");
-      expect(params.items[0]).toEqual({
-        id: "si_1",
-        price_data: {
-          currency: "usd",
-          unit_amount: 10000,
-          recurring: { interval: "month" },
-          product: "prod_1",
-        },
-      });
-      expect(options.idempotencyKey).toBe(`${pushed.undo!.key}:revert`);
+      stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+      stripe.getSubscription
+        .mockResolvedValueOnce(liveSub("active")) // the read before the update
+        .mockResolvedValueOnce({
+          status: "active",
+          items: {
+            data: [
+              {
+                id: "si_1",
+                price: { id: "price_new", unit_amount: 15000, recurring: { interval: "month" } },
+              },
+            ],
+          },
+        }); // the re-read after the lost response
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result).toMatchObject({ synced: true, newAmount: 150 });
     });
 
-    it("revertPricePush reports false (and does not throw) when the revert itself fails", async () => {
+    it("a thrown update whose item still bills the OLD amount (or cannot be re-read) stays a failure", async () => {
       arrange();
-      const pushed = await service.pushResolvedPriceToStripe("t1");
-      stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
-      expect(await service.revertPricePush("t1", pushed.undo!)).toBe(false);
+      stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+      expect(await service.pushResolvedPriceToStripe("t1")).toEqual({
+        synced: false,
+        reason: "stripe_update_failed",
+      });
+      stripe.getSubscription
+        .mockResolvedValueOnce(liveSub("active"))
+        .mockRejectedValueOnce(new Error("still down"));
+      expect(await service.pushResolvedPriceToStripe("t1")).toEqual({
+        synced: false,
+        reason: "stripe_update_failed",
+      });
+    });
+
+    // Item 9: nothing to change.
+    it("an item that already bills the target cents is not touched, even for now_prorated", async () => {
+      arrange();
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "x" },
+        unit_amount: 10000, // the item already bills 10000
+        recurring: { interval: "month" },
+      });
+      const result = await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
+      expect(result).toMatchObject({ synced: true, unchanged: true, proration: "none" });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    // Item 7: the key is on the proration SENT.
+    it("the key follows the proration actually sent: now_prorated on a past_due sub equals next_cycle", async () => {
+      arrange("past_due");
+      await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
+      await service.pushResolvedPriceToStripe("t1", { effective: "next_cycle" });
+      const [a, b] = stripe.updateSubscription.mock.calls.map((c) => c[2].idempotencyKey);
+      expect(a).toBe(b);
+      expect(a).toContain(":none:");
+    });
+
+    // Item 8: with a live stripeSubId these skips are reported (the caller refuses the local write).
+    it("a live subscription with no base item reports no_base_item", async () => {
+      arrange();
+      stripe.getSubscription.mockResolvedValue({ status: "active", items: { data: [] } });
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result.synced).toBe(false);
+      expect(["no_subscription_item", "no_base_item"]).toContain(result.reason);
     });
 
     it("{ pushed } skips the Stripe half: only the ledger reconciles", async () => {

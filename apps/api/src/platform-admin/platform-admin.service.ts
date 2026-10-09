@@ -6,6 +6,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
   ServiceUnavailableException,
+  BadGatewayException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -76,9 +77,12 @@ import {
   mergeOverride,
   priceOverrideAudit,
   priceOverrideOf,
-  publicPush,
   sameOverride,
+  type PriceOverrideEffective,
+  type PricePushResult,
+  type ProposedOverride,
 } from "../billing/price-override";
+import { underTenantPriceLock } from "../billing/price-lock";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
@@ -1656,6 +1660,16 @@ export class PlatformAdminService {
    * `next_cycle` (default) = `none`, `now_prorated` = `create_prorations`.
    */
   async updateTenantPriceOverride(id: string, dto: UpdateTenantPriceDto, adminId: string | null) {
+    // One writer per tenant price (Postgres advisory lock, held across the Stripe calls): two overlapping
+    // changes, a double submit and the plan-price fan-out can no longer interleave their Stripe updates.
+    return underTenantPriceLock(id, () => this.updateTenantPriceOverrideLocked(id, dto, adminId));
+  }
+
+  private async updateTenantPriceOverrideLocked(
+    id: string,
+    dto: UpdateTenantPriceDto,
+    adminId: string | null,
+  ) {
     await this._findOrThrow(id);
 
     // Reject BEFORE writing when the resulting state has no resolvable monthly price
@@ -1681,14 +1695,18 @@ export class PlatformAdminService {
 
     const effective = dto.effective ?? "next_cycle";
     const before = await this.platformPricingService.resolveTenantPricing(id).catch(() => null);
+    const proposed = mergeOverride(existing, dto);
     const pushed = await this.billingService.pushResolvedPriceToStripe(id, {
       effective,
-      proposed: mergeOverride(existing, dto),
+      proposed,
       version: existing?.updatedAt,
     });
     if (isPricePushFailure(pushed)) {
+      // Stripe may still have applied it (a lost response is re-read, but a cached idempotent failure
+      // is not): check the subscription in Stripe before retrying.
       throw new ServiceUnavailableException(
-        `Stripe did not accept the price change (${pushed.reason}) — the price override was NOT saved. Retry shortly.`,
+        `Stripe did not confirm the price change (${pushed.reason}) — the price override was NOT saved. ` +
+          `Check the subscription in Stripe, then retry.`,
       );
     }
 
@@ -1723,8 +1741,8 @@ export class PlatformAdminService {
           },
         },
       });
-      // D8: Stripe was repriced from the pre-lock read — a fee that moved since would leave Stripe and the
-      // row disagreeing, so refuse (the catch below puts Stripe back) rather than overwrite it.
+      // D8: Stripe was repriced from the pre-tx read - a fee that moved since (a writer outside the price
+      // lock, e.g. a plan change) is refused here; the catch below re-syncs Stripe from the committed row.
       if (!sameOverride(row.subscription, existing)) {
         throw new ConflictException(
           "The tenant's price override changed while this update was in flight — reload and retry.",
@@ -1765,31 +1783,96 @@ export class PlatformAdminService {
     try {
       await localWrite;
     } catch (err) {
-      // The row was not written. If Stripe was already repriced, put it back; a failed revert leaves
-      // Stripe ahead of the database, so say so in the audit trail where an admin will find it.
-      if (pushed.undo && !(await this.billingService.revertPricePush(id, pushed.undo))) {
-        await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
-          kind: "price_override_stripe_ahead",
-          effective,
-          ...publicPush(pushed),
-        });
+      // true = the committed row already holds the proposed fee (a lost commit ack): the write is in.
+      if (
+        !(await this.settleStripeAfterFailedWrite(id, adminId, { proposed, pushed, effective }))
+      ) {
+        throw err;
       }
-      throw err;
     }
 
-    const [sync, pricing] = await Promise.all([
-      this.billingService.syncStripeSubscriptionPrice(id, { pushed }),
-      this.platformPricingService.resolveTenantPricing(id),
-    ]);
-
+    const pricing = await this.platformPricingService.resolveTenantPricing(id);
+    // The audit row goes BEFORE the ledger half: the price has changed, so an admin must never get a 500
+    // with no audit trail. The ledger converges on the next sync if its half fails.
     await this.recordAdminAction(
       id,
       adminId,
       AdminAuditAction.TENANT_CONFIG_UPDATED,
-      priceOverrideAudit({ dto, effective, before, after: pricing, sync }),
+      priceOverrideAudit({ dto, effective, before, after: pricing, sync: pushed }),
     );
+    try {
+      await this.billingService.syncStripeSubscriptionPrice(id, { pushed });
+    } catch (e) {
+      this.logger.error(
+        `Price-override ledger reconcile failed for tenant ${id} (the next sync converges): ${(e as Error).message}`,
+      );
+    }
 
-    return { ...pricing, sync: publicPush(sync) };
+    return { ...pricing, sync: pushed };
+  }
+
+  /**
+   * The local write failed AFTER Stripe was repriced. Never restore a remembered amount (another writer
+   * may have committed since): read the COMMITTED row and bring Stripe to it. Returns true when the row
+   * already holds the proposed fee; false after Stripe is back in line with the committed row (the caller
+   * rethrows the original error). If Stripe cannot be brought back, the HTTP error says so, distinctly.
+   */
+  private async settleStripeAfterFailedWrite(
+    id: string,
+    adminId: string | null,
+    a: {
+      proposed: ProposedOverride;
+      pushed: PricePushResult;
+      effective: PriceOverrideEffective;
+    },
+  ): Promise<boolean> {
+    let committed: {
+      priceOverrideMonthly: unknown;
+      priceOverrideAnnual: unknown;
+      updatedAt: Date;
+    } | null = null;
+    try {
+      committed = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId: id },
+        select: { priceOverrideMonthly: true, priceOverrideAnnual: true, updatedAt: true },
+      });
+      if (
+        committed &&
+        sameOverride(committed, {
+          priceOverrideMonthly: a.proposed.monthly,
+          priceOverrideAnnual: a.proposed.annual,
+        })
+      ) {
+        return true;
+      }
+    } catch {
+      committed = null; // the database is unreachable: Stripe cannot be matched to it
+    }
+    if (!a.pushed.synced || a.pushed.unchanged) return false; // Stripe was never moved by this request
+    if (committed) {
+      const resync = await this.billingService
+        .pushResolvedPriceToStripe(id, {
+          // The same proration mode as the push, so a create_prorations change nets itself out.
+          effective: a.pushed.proration === "create_prorations" ? "now_prorated" : "next_cycle",
+          version: committed.updatedAt,
+        })
+        .catch(() => null);
+      if (resync?.synced) return false;
+    }
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
+      kind: "price_override_stripe_ahead",
+      effective: a.effective,
+      ...a.pushed,
+    }).catch(() => undefined);
+    this.logger.error(
+      `Price override for tenant ${id}: Stripe now bills ${a.pushed.newAmount} but the database was not updated and Stripe could not be re-synced`,
+    );
+    throw new BadGatewayException({
+      code: API_ERROR_CODES.PRICE_OVERRIDE_STRIPE_AHEAD,
+      message:
+        `Stripe now bills $${a.pushed.newAmount}, the database still says $${a.pushed.oldAmount ?? "?"} - ` +
+        `reconcile the subscription price before changing it again.`,
+    });
   }
 
   /**
@@ -1856,7 +1939,11 @@ export class PlatformAdminService {
     let failed = 0;
     for (const target of targets) {
       try {
-        const result = await this.billingService.syncStripeSubscriptionPrice(target.tenantId);
+        // The same per-tenant price lock the override flow takes, so the fan-out cannot overwrite an
+        // override Stripe update that has not committed yet.
+        const result = await underTenantPriceLock(target.tenantId, () =>
+          this.billingService.syncStripeSubscriptionPrice(target.tenantId),
+        );
         if (result?.synced) synced++;
       } catch (e) {
         failed++;

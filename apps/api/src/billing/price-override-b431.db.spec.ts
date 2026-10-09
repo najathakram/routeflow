@@ -21,6 +21,7 @@ import { Client, Pool } from "pg";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { ServiceUnavailableException } from "@nestjs/common";
+import { withAdvisoryLock } from "../common/db-locks";
 import { toCents } from "@routeflow/pricing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
@@ -284,6 +285,7 @@ describeDb(
       const l = await ledger(id);
       expect(l.sum).toBe(l.snapshot); // never double-booked, whichever of the two won the lock
       expect(l.override).toBe(1200);
+      expect(l.snapshot).toBe(1200);
     }, 60_000);
 
     describe("D8 Stripe-first against the real pricing service (Stripe mocked at the StripeService boundary)", () => {
@@ -347,7 +349,7 @@ describeDb(
           expect(params.proration_behavior).toBe(proration);
           expect(params.items[0].price_data.unit_amount).toBe(8000);
           expect(options.idempotencyKey).toEqual(
-            expect.stringContaining(`${id}:price-override:8000:${effective}:v`),
+            expect.stringContaining(`${id}:price-override:8000:${proration}:v`),
           );
 
           const l = await ledger(id);
@@ -392,6 +394,110 @@ describeDb(
         const l = await ledger(id);
         expect(l.sum).toBe(l.snapshot);
         expect(l.snapshot).toBe(40);
+      });
+
+      /** A Stripe whose item amount is real STATE, so "Stripe == DB" can be asserted after a race. */
+      function statefulStripe(initialCents: number, onUpdate?: () => Promise<void>) {
+        const state = { cents: initialCents, updates: 0 };
+        let fired = false;
+        stripe.getSubscription.mockImplementation(async () => stripeSubFor(state.cents));
+        stripe.updateSubscription.mockImplementation(async (_sub: string, params: any) => {
+          await new Promise((r) => setTimeout(r, 40)); // widen the window an overlapping writer would use
+          if (onUpdate && !fired) {
+            fired = true; // the outside writer commits once, during the FIRST push only
+            await onUpdate();
+          }
+          state.cents = params.items[0].price_data.unit_amount;
+          state.updates++;
+          return {};
+        });
+        return state;
+      }
+
+      it("two concurrent overrides on one tenant serialise on the price lock and end with Stripe == the database", async () => {
+        const id = await makeTenant("two-admins", {
+          snapshot: starterPrice,
+          stripeSubId: `sub_two_${run}`,
+        });
+        const state = statefulStripe(toCents(starterPrice));
+
+        const results = await Promise.allSettled([
+          admin.updateTenantPriceOverride(id, { monthly: 150 } as any, "admin-a"),
+          admin.updateTenantPriceOverride(id, { monthly: 200 } as any, "admin-b"),
+        ]);
+
+        expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]); // serialised, not refused
+        const l = await ledger(id);
+        expect([150, 200]).toContain(l.override); // whichever ran last wins
+        expect(state.cents).toBe(toCents(l.override!)); // Stripe == DB
+        expect(l.snapshot).toBe(l.override);
+        expect(l.sum).toBe(l.snapshot);
+      });
+
+      it("the override waits for a holder of the tenant's price lock and touches nothing until it is released", async () => {
+        const id = await makeTenant("lock-wait", {
+          snapshot: starterPrice,
+          stripeSubId: `sub_lock_${run}`,
+        });
+        const state = statefulStripe(toCents(starterPrice));
+        let pending: Promise<unknown> | undefined;
+        let touchedWhileHeld = -1;
+
+        await withAdvisoryLock(
+          { family: "tenant-price", key: id, mode: "wait", waitMs: 10_000 },
+          async () => {
+            pending = admin.updateTenantPriceOverride(id, { monthly: 90 } as any, "admin-a");
+            // ENTRY, condition-based: the override is parked on the advisory lock.
+            const deadline = Date.now() + 5_000;
+            let waiting = 0;
+            while (waiting < 1 && Date.now() < deadline) {
+              const q = await pool.query(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`,
+              );
+              waiting = q.rows[0].n;
+              if (waiting < 1) await new Promise((r) => setTimeout(r, 20));
+            }
+            if (waiting < 1)
+              throw new Error("entry not reached: the override is not waiting on the lock");
+            touchedWhileHeld = stripe.getSubscription.mock.calls.length + state.updates;
+          },
+        );
+        await pending;
+
+        expect(touchedWhileHeld).toBe(0); // nothing reached Stripe while the lock was held elsewhere
+        const l = await ledger(id);
+        expect(l.override).toBe(90);
+        expect(state.cents).toBe(9000);
+      });
+
+      it("an outside writer commits a different fee mid-flight: 409, and Stripe follows THAT committed row", async () => {
+        const id = await makeTenant("outside-writer", {
+          snapshot: starterPrice,
+          stripeSubId: `sub_out_${run}`,
+        });
+        const state = statefulStripe(toCents(starterPrice), async () => {
+          // A writer that does not take the price lock (e.g. a plan change) commits a fee of 95.
+          await prisma.tenantSubscription.update({
+            where: { tenantId: id },
+            data: { priceOverrideMonthly: 95, basePriceSnapshot: 95 },
+          });
+          await events.emit(
+            id,
+            "plan.changed",
+            { seeded: true },
+            { amountDelta: 95 - starterPrice, actorId: null },
+          );
+        });
+
+        await expect(
+          admin.updateTenantPriceOverride(id, { monthly: 150 } as any, "admin-a"),
+        ).rejects.toMatchObject({ status: 409 });
+
+        const l = await ledger(id);
+        expect(l.override).toBe(95); // the outside writer's fee stands
+        expect(state.cents).toBe(9500); // Stripe re-synced from the committed row, not reset to a stale amount
+        expect(l.sum).toBe(l.snapshot);
       });
     });
   },

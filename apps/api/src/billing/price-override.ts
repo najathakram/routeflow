@@ -38,19 +38,6 @@ export interface PricePushOptions {
   version?: Date | string | null;
 }
 
-/** What a push changed on Stripe — enough to put it back if the local write then fails. */
-export interface PriceUndo {
-  subscriptionId: string;
-  itemId: string;
-  productId: string;
-  interval: "month" | "year";
-  /** The item's amount before the push, in whole cents. */
-  previousCents: number;
-  proration: StripeProrationBehavior;
-  /** The idempotency key of the push this undoes (the revert key derives from it). */
-  key: string;
-}
-
 export interface PricePushResult {
   synced: boolean;
   reason?: string;
@@ -58,7 +45,8 @@ export interface PricePushResult {
   newAmount?: number;
   /** The proration mode actually sent (may be `none` although `now_prorated` was asked — see below). */
   proration?: StripeProrationBehavior;
-  undo?: PriceUndo;
+  /** The item already billed this amount, so Stripe was not called. */
+  unchanged?: boolean;
 }
 
 export function prorationBehaviorFor(effective: PriceOverrideEffective): StripeProrationBehavior {
@@ -89,6 +77,12 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_retrieve_failed",
   "stripe_product_create_failed",
   "stripe_update_failed",
+  // A live stripeSubId whose Stripe side cannot be repriced (no base item, or Stripe unconfigured) must
+  // REFUSE the change: writing the fee locally would leave Stripe billing the old price. Manual-pay
+  // tenants have no stripeSubId and never get here.
+  "no_subscription_item",
+  "no_base_item",
+  "stripe_not_configured",
 ];
 
 export function isPricePushFailure(result: { synced: boolean; reason?: string }): boolean {
@@ -97,15 +91,15 @@ export function isPricePushFailure(result: { synced: boolean; reason?: string })
 
 /**
  * Deterministic Stripe idempotency key for one price push: (tenant, "price-override", the new amount in
- * cents, effective, the override row's version) plus the item's CURRENT Stripe price id. A retry of the
+ * cents, the proration SENT, the override row version) plus the item's CURRENT Stripe price id. A retry of the
  * same change sends the same key; a later, different change differs in amount or version. The price id
- * (inline `price_data` mints a new Price on every update) keeps a retry that follows a compensating revert
+ * (inline `price_data` mints a new Price on every update) keeps a retry that follows a corrective re-sync
  * from being swallowed as a replay of the first, since the revert changed the item's price.
  */
 export function priceOverrideIdempotencyKey(parts: {
   tenantId: string;
   amountCents: number;
-  effective: PriceOverrideEffective;
+  proration: StripeProrationBehavior;
   version?: Date | string | null;
   itemPriceId?: string | null;
 }): string {
@@ -115,7 +109,7 @@ export function priceOverrideIdempotencyKey(parts: {
     parts.tenantId,
     "price-override",
     parts.amountCents,
-    parts.effective,
+    parts.proration,
     version,
     parts.itemPriceId ?? "-",
   ].join(":");
@@ -145,28 +139,10 @@ export function sameOverride(
   );
 }
 
-/** The `subscriptions.update` params that put an item back at the amount it held before a push. */
-export function revertPriceParams(undo: PriceUndo): Record<string, unknown> {
-  return {
-    items: [
-      {
-        id: undo.itemId,
-        price_data: {
-          currency: "usd",
-          unit_amount: undo.previousCents,
-          recurring: { interval: undo.interval },
-          product: undo.productId,
-        },
-      },
-    ],
-    proration_behavior: undo.proration,
-  };
-}
-
-/** A push result without its revert handle — what is returned to the admin and written to the audit row. */
-export function publicPush(push: PricePushResult): Omit<PricePushResult, "undo"> {
-  const { undo: _undo, ...rest } = push;
-  return rest;
+/** The unit amount (cents) Stripe reports for one subscription item, or undefined when unreadable. */
+export function itemUnitAmount(stripeSub: any, itemId: string): number | undefined {
+  const item = stripeSub?.items?.data?.find((i: any) => i?.id === itemId);
+  return typeof item?.price?.unit_amount === "number" ? item.price.unit_amount : undefined;
 }
 
 /**
@@ -190,6 +166,6 @@ export function priceOverrideAudit(args: {
     effective: args.effective,
     oldPrice: price(args.before),
     newPrice: price(args.after),
-    sync: publicPush(args.sync),
+    sync: args.sync,
   };
 }

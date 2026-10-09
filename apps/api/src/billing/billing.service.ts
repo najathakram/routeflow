@@ -18,11 +18,10 @@ import { fromCents, roundMoney } from "@routeflow/pricing";
 import {
   type PricePushOptions,
   type PricePushResult,
-  type PriceUndo,
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
   prorationBehaviorFor,
-  revertPriceParams,
+  itemUnitAmount,
   STRIPE_PRICE_PUSH_STATUSES,
 } from "./price-override";
 import { StripeService } from "./stripe.service";
@@ -565,6 +564,8 @@ export class BillingService {
     }
 
     // SA-733r M7: past_due / unpaid are live — an owner price change must reach their next invoice.
+    // A Stripe-side `paused` (or incomplete) subscription is skipped: a price change made while it is
+    // paused does NOT reach Stripe, so the resume path (B3) must reconcile the price on resume.
     if (!STRIPE_PRICE_PUSH_STATUSES.includes(stripeSub.status)) {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
@@ -602,13 +603,18 @@ export class BillingService {
     const key = priceOverrideIdempotencyKey({
       tenantId,
       amountCents: priceData.unit_amount,
-      effective,
+      proration, // the mode actually SENT: an active -> past_due flip between attempts must not reuse a key
       version: opts?.version,
       itemPriceId: item.price?.id,
     });
     const oldAmount =
       typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
     const newAmount = fromCents(priceData.unit_amount);
+    // Same cents on the same interval: nothing to change. Re-saving a price with now_prorated would only
+    // add net-zero proration lines to the customer's invoice, so Stripe is left alone.
+    if (item.price?.unit_amount === priceData.unit_amount) {
+      return { synced: true, unchanged: true, oldAmount, newAmount, proration: "none" };
+    }
 
     // Stripe requires a `product` ID on inline price_data for a subscription-item
     // update — `product_data` is a Checkout-session-only shape and is REJECTED here
@@ -649,51 +655,21 @@ export class BillingService {
         `Failed to sync Stripe subscription price for tenant ${tenantId}`,
         err as Error,
       );
-      return { synced: false, reason: "stripe_update_failed" };
+      // A lost RESPONSE is not a failed update: Stripe may have applied it. Re-read the item; if it already
+      // bills the new amount the push is applied, otherwise it is a failure the caller must refuse.
+      const reread = await this.stripe.getSubscription(sub.stripeSubId).catch(() => null);
+      if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
+        return { synced: false, reason: "stripe_update_failed" };
+      }
+      this.logger.warn(
+        `Stripe price update for tenant ${tenantId} errored but the item already bills ${newAmount} — treating it as applied`,
+      );
     }
 
     this.logger.log(
       `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=${proration})`,
     );
-    const previousCents = item.price?.unit_amount;
-    return {
-      synced: true,
-      oldAmount,
-      newAmount,
-      proration,
-      undo:
-        typeof previousCents === "number"
-          ? {
-              subscriptionId: sub.stripeSubId,
-              itemId: item.id,
-              productId: productId as string,
-              interval,
-              previousCents,
-              proration,
-              key,
-            }
-          : undefined,
-    };
-  }
-
-  /**
-   * D8: put a Stripe price push back after the local write it preceded failed. Same proration mode as the
-   * push (a `create_prorations` push leaves proration lines that only an opposite proration nets out).
-   * Returns false — logged loudly — when the revert itself fails: Stripe is then ahead of the database.
-   */
-  async revertPricePush(tenantId: string, undo: PriceUndo): Promise<boolean> {
-    try {
-      await this.stripe.updateSubscription(undo.subscriptionId, revertPriceParams(undo), {
-        idempotencyKey: `${undo.key}:revert`,
-      });
-      return true;
-    } catch (err) {
-      this.logger.error(
-        `Failed to revert the Stripe price push for tenant ${tenantId} — Stripe is AHEAD of the database, reconcile by hand`,
-        err as Error,
-      );
-      return false;
-    }
+    return { synced: true, oldAmount, newAmount, proration };
   }
 
   /**
