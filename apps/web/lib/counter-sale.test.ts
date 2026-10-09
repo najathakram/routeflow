@@ -1,4 +1,5 @@
 import type { FulfilmentCapability } from "@routeflow/types";
+import * as keys from "./counter-live-cart-keys";
 import {
   AUTO_PRINT_KEY,
   cartTotals,
@@ -573,5 +574,24 @@ describe("amountDue", () => {
     for (const t of [0, 1, 2.49, 2.5, 2.51, 20]) {
       expect(amountDue(2.5, t) > 0).toBe(changeDue(2.5, t) === 0 && t < 2.5);
     }
+  });
+});
+
+describe("live cart storage (SA-748 section 1)", () => {
+  it("keys by tenant + user, and by nothing when either is unknown", () => {
+    expect(keys.liveCartKey("acme", "u1")).toBe("rf.counterSale.liveCart:acme:u1");
+    expect(keys.liveCartKey("acme", null)).toBeNull();
+    expect(keys.liveCartKey(undefined, "u1")).toBeNull();
+  });
+
+  it("logout wipes every stored live cart and nothing else", () => {
+    window.localStorage.setItem("rf.counterSale.liveCart:acme:u1", "{}");
+    window.localStorage.setItem("rf.counterSale.liveCart:other:u2", "{}");
+    window.localStorage.setItem("rf.counterSale.autoPrint", "1");
+    keys.clearAllLiveCarts();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:acme:u1")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.liveCart:other:u2")).toBeNull();
+    expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
+    window.localStorage.clear();
   });
 });

@@ -61,6 +61,8 @@ import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { useCounterLiveCart } from "./useCounterLiveCart";
+import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLineRow } from "./CounterLineRow";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
@@ -113,6 +115,7 @@ export function CounterSaleScreen() {
   const mayEditPrices = canEditPrices(authUser);
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
+  const liveKey = liveCartKey(authUser?.tenantSlug, authUser?.id);
   const scanRef = React.useRef<HTMLInputElement>(null);
   // One Idempotency-Key per SALE. It lives until a DEFINITIVE answer (any 2xx, or a 4xx that proves nothing was written) or a
   // reset; after a 5xx / network error / timeout the outcome is UNKNOWN, the sale is locked and "Try again" re-sends this same
@@ -198,6 +201,26 @@ export function CounterSaleScreen() {
   const clearUnderpaidError = () =>
     setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
+  // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
+  const liveCart = useCounterLiveCart({
+    storeKey: liveKey,
+    heldKey,
+    snapshot: { lines, customer, method, tendered, reference },
+    suspended: createSale.isPending || outcomeUnknown || receipt !== null,
+    canRestore: lines.length === 0 && !receipt,
+    onRestore: (snap) => {
+      setLines(snap.lines as SaleLine[]);
+      setCustomer((snap.customer as PickedCustomer | null) ?? null);
+      setMethod(snap.method as CounterSalePaymentMethod);
+      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
+      setReference(snap.reference);
+    },
+    onClearedElsewhere: () => {
+      setLines([]);
+      setCustomer(null);
+      setReference("");
+    },
+  });
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
   React.useEffect(() => {
     setCounterCartHasLines(hasLines);
@@ -481,6 +504,7 @@ export function CounterSaleScreen() {
     setEnteredTender(null);
     attemptRef.current = null;
     clearHeldAttempt(heldKey);
+    liveCart.endSend();
     setOutcomeUnknown(false);
     setHeldCorrupt(false);
     setLookupFailed(false);
@@ -501,6 +525,7 @@ export function CounterSaleScreen() {
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
     setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
+    liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
@@ -515,11 +540,13 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
+        liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+        liveCart.endSend();
       } else {
         attempt.unknown = true;
         writeHeldAttempt(heldKey, {
@@ -939,6 +966,30 @@ export function CounterSaleScreen() {
             </div>
           ) : null}
 
+          {liveCart.notice ? (
+            <div
+              role="status"
+              className="flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm"
+              data-testid={
+                liveCart.notice === "restored"
+                  ? "counter-cart-restored"
+                  : liveCart.notice === "other-tab"
+                    ? "counter-cart-other-tab"
+                    : "counter-cart-cleared-elsewhere"
+              }
+            >
+              <span>
+                {liveCart.notice === "restored"
+                  ? "We put back your unfinished sale."
+                  : liveCart.notice === "other-tab"
+                    ? "Another tab has an unfinished sale. This tab's cart won't survive a refresh."
+                    : "That sale was finished in another tab."}
+              </span>
+              <Button className="min-h-[44px]" variant="secondary" onClick={liveCart.dismissNotice}>
+                OK
+              </Button>
+            </div>
+          ) : null}
           <ul className="divide-y rounded border" aria-label="Items">
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>
