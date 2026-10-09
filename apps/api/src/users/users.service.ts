@@ -107,17 +107,34 @@ export class UsersService {
   async findById(
     id: string,
   ): Promise<
-    (Omit<User, "password" | "googleId"> & { googleLinked: boolean; hasPassword: boolean }) | null
+    | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
+        googleLinked: boolean;
+        hasPassword: boolean;
+      })
+    | null
   > {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
-    const { password, googleId, ...rest } = user;
+    // The feature-group columns are reported by the admin listing and GET /users/me/permissions only.
+    const {
+      password,
+      googleId,
+      deniedPermissionGroups: _deniedPermissionGroups,
+      permissionsVersion: _permissionsVersion,
+      ...rest
+    } = user;
     return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
   }
 
-  async findAll(query: ListUsersDto) {
+  /**
+   * `callerRole` decides whether each row carries the feature-group columns: an account admin (or the
+   * platform super admin) gets `deniedPermissionGroups` + `permissionsVersion`, every other caller does not.
+   */
+  async findAll(query: ListUsersDto, callerRole?: UserRole) {
     const { search, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
+    const includePermissions =
+      callerRole === UserRole.TENANT_ADMIN || callerRole === UserRole.SUPER_ADMIN;
     const where: any = {
       role: { not: UserRole.CUSTOMER },
     };
@@ -142,6 +159,7 @@ export class UsersService {
           isAdmin: true,
           canActAsDriver: true,
           createdAt: true,
+          ...(includePermissions ? { deniedPermissionGroups: true, permissionsVersion: true } : {}),
         },
         skip,
         take: limit,
