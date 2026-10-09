@@ -400,6 +400,20 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  /** 400 from the counter-sale POST: both `payment` and `payments` were sent (or the body carries neither). Send exactly one. */
+  COUNTER_PAYMENT_SHAPE_CONFLICT: "COUNTER_PAYMENT_SHAPE_CONFLICT",
+  /** 400 from the counter-sale POST: more tender legs than the counter allows (TENDER_RULES.counter.maxLegs). */
+  COUNTER_TOO_MANY_LEGS: "COUNTER_TOO_MANY_LEGS",
+  /** 400 from the counter-sale POST: a tender leg uses a method this surface does not take (STORE_CREDIT at the counter). */
+  TENDER_METHOD_NOT_ALLOWED: "TENDER_METHOD_NOT_ALLOWED",
+  /** 400 from the counter-sale POST: ON_ACCOUNT takes no money, so it cannot be one leg of a split. */
+  COUNTER_ON_ACCOUNT_NOT_SPLIT: "COUNTER_ON_ACCOUNT_NOT_SPLIT",
+  /** 400 from the counter-sale POST: more than one CASH leg (TENDER_RULES.counter.maxCashLegs). */
+  COUNTER_DUPLICATE_CASH_LEG: "COUNTER_DUPLICATE_CASH_LEG",
+  /** 400 from the counter-sale POST: in a split every leg needs an amount above zero. */
+  COUNTER_LEG_AMOUNT_REQUIRED: "COUNTER_LEG_AMOUNT_REQUIRED",
+  /** 400 from the counter-sale POST: a tender leg amount is not whole cents. */
+  COUNTER_LEG_NOT_CENTS: "COUNTER_LEG_NOT_CENTS",
   /**
    * 409 on a createSale replay whose order was changed (e.g. cancelled) after the first attempt. The sale
    * EXISTS — the client must treat it as an UNKNOWN outcome: never as "nothing was charged", never drop the

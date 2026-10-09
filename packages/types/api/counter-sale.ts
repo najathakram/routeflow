@@ -38,8 +38,24 @@ export interface CounterSaleRequest {
   customerId?: string;
   walkIn?: boolean;
   items: CounterSaleItem[];
-  payment: CounterSalePayment;
+  /**
+   * The tender, EXACTLY ONE of `payment` / `payments` (both, or neither, is 400 COUNTER_PAYMENT_SHAPE_CONFLICT).
+   * `payment` is a one-leg alias of `payments` and stays supported so a held attempt replays unchanged.
+   */
+  payment?: CounterSalePayment;
+  /**
+   * A split tender: up to 4 legs (one cash at most; ON_ACCOUNT only alone). In a split every leg carries an
+   * amount above zero, in whole cents. Non-cash legs are taken first, cash last (change is cash's).
+   */
+  payments?: CounterSalePayment[];
   notes?: string;
+}
+
+/** One tender leg as stored: its method, the money recorded against it and the payment rows that hold it. */
+export interface CounterSaleTenderLine {
+  method: CounterSalePaymentMethod;
+  amount: number;
+  paymentIds: string[];
 }
 
 export interface CounterSaleResponse {
@@ -51,9 +67,12 @@ export interface CounterSaleResponse {
   paid: number;
   balanceDue: number;
   change?: number;
+  /** the first stored payment of the FIRST leg (leg 0) */
   paymentId?: string;
+  /** every leg of the tender, in request order, read back from storage (GET by-key: the legs found there) */
+  payments?: CounterSaleTenderLine[];
   /**
-   * The tender method, echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
+   * The tender method (leg 0's), echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
    * tender; none = "ON_ACCOUNT", since nothing marks "left on account" apart from "tender failed").
    */
   method?: CounterSalePaymentMethod;
