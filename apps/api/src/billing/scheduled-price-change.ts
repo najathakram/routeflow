@@ -363,24 +363,39 @@ export class ScheduledPriceChangeService {
           periodEnd: sub.downgradeEffectiveAt.toISOString(),
         })}`,
       );
-      await this.stripe.updateSubscription(
-        sub.stripeSubId,
-        {
-          items: [
-            {
-              id: base.id,
-              price_data: {
-                currency: typeof base.price?.currency === "string" ? base.price.currency : "usd",
-                unit_amount: amountCents,
-                recurring: { interval: "month" },
-                product: product.id,
-              },
+      // ONE attempt = one key, computed above from the state read BEFORE this call. The params and the key are
+      // built once and every send of THIS attempt reuses them verbatim - never recomputed from a later re-read.
+      const params = {
+        items: [
+          {
+            id: base.id,
+            price_data: {
+              currency: typeof base.price?.currency === "string" ? base.price.currency : "usd",
+              unit_amount: amountCents,
+              recurring: { interval: "month" as const },
+              product: product.id,
             },
-          ],
-          proration_behavior: "none",
-        },
-        { idempotencyKey: key },
-      );
+          },
+        ],
+        proration_behavior: "none" as const,
+      };
+      const send = () =>
+        this.stripe.updateSubscription(sub.stripeSubId as string, params, { idempotencyKey: key });
+      try {
+        await send();
+      } catch (first) {
+        // A lost response is not a failed update: Stripe may have applied it. Re-read; if the item already bills
+        // the target the attempt is done. Otherwise (or if Stripe cannot be read) retry ONCE under the SAME key:
+        // if the first send landed, Stripe replays it (no second application); if not, this one applies it.
+        this.logger.warn(
+          `Scheduled price tenant ${tenantId}: the push reported a failure (${(first as Error).message}) - verifying, then retrying under the same key ${key}`,
+        );
+        const live = await this.stripe
+          .getSubscription(sub.stripeSubId, { expand: CHECKOUT_ADDON_EXPAND })
+          .catch(() => null);
+        const liveBase = live ? stripeBaseItem(live, addonIds) : undefined;
+        if (liveBase?.price?.unit_amount !== amountCents) await send();
+      }
     } catch (err) {
       this.logger.error(
         `Scheduled price tenant ${tenantId}: Stripe push failed: ${(err as Error).message}`,
