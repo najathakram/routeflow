@@ -340,6 +340,23 @@ describe("CounterSaleScreen", () => {
       expect(scanField()).toHaveFocus();
     });
 
+    it("a digit is left alone while a listbox / menu / combobox typeahead holds focus", async () => {
+      await withCola();
+      for (const role of ["listbox", "menu", "combobox"]) {
+        const host = document.createElement("div");
+        host.setAttribute("role", role);
+        const item = document.createElement("div");
+        item.tabIndex = 0;
+        host.appendChild(item);
+        document.body.appendChild(host);
+        item.focus();
+        expect(item).toHaveFocus();
+        fireEvent.keyDown(item, { key: "5" });
+        expect(scanField()).not.toHaveFocus();
+        host.remove();
+      }
+    });
+
     it("a letter is left alone (g-then-x navigation shortcuts keep working)", async () => {
       await withCola();
       addNoteBtn().focus();

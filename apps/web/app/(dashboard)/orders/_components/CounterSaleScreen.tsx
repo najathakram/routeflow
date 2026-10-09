@@ -274,6 +274,13 @@ export function CounterSaleScreen() {
       const scanEl = scanRef.current;
       if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      // a Radix Select / Menu typeahead owns the digits while its list or trigger holds focus
+      if (
+        document.activeElement?.closest(
+          '[role="listbox"],[role="menu"],[role="combobox"],[data-radix-popper-content-wrapper],[data-radix-select-viewport],[data-radix-menu-content]',
+        )
+      )
+        return;
       scanEl.focus();
       e.stopImmediatePropagation();
     };
