@@ -1,5 +1,10 @@
 import { roundMoney } from "@routeflow/pricing";
-import { buildCounterReceipt, formatReceiptMoney, type ReceiptLineInput } from "./counter-receipt";
+import {
+  buildCounterReceipt,
+  formatReceiptMoney,
+  formatSaleTime,
+  type ReceiptLineInput,
+} from "./counter-receipt";
 
 const NOW = new Date("2026-10-07T15:30:00Z");
 const PLAIN: ReceiptLineInput = { tempId: "a", name: "Cola", unitPrice: 2.5, qty: 3 };
@@ -140,5 +145,16 @@ describe("buildCounterReceipt", () => {
     expect(m.methodLabel).toBe("Cash");
     expect(m.tendered).toBe(30);
     expect(m.cashier).toBe("pat");
+  });
+});
+
+describe("formatSaleTime", () => {
+  const at = "2026-10-07T15:15:00.000Z";
+  it("reads the time in the given IANA zone", () => {
+    expect(formatSaleTime(at, "America/New_York")).toBe("Oct 7, 2026, 11:15 AM");
+  });
+  it("a zone that is not IANA (free-text tenant setting) falls back to UTC, never throws", () => {
+    expect(() => formatSaleTime(at, "Not/AZone")).not.toThrow();
+    expect(formatSaleTime(at, "Not/AZone")).toBe("Oct 7, 2026, 3:15 PM");
   });
 });

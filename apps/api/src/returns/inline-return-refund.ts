@@ -10,6 +10,7 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { DEAD_RETURN_STATUSES } from "../orders/counter-sale/counter-sale-today";
 
 /** The only tenders a counter refund can record. A card refund is RECORDED only; no processor is called. */
 export const REFUND_TENDERS = ["CASH", "CARD", "CHECK"] as const;
@@ -74,6 +75,29 @@ export const isRefundPending = (ret: {
   ret.refundMethod === EXTERNAL_REFUND_METHOD &&
   !ret.refundedAt &&
   !ret.creditNoteId;
+
+/**
+ * A refund that is RECORDED, not merely captured: `refundMethod` EXTERNAL_REFUND with `refundedAt` set, on a return that is
+ * not dead (REJECTED / CANCELLED: `DEAD_RETURN_STATUSES`, the list today's sales already uses). The mirror image of
+ * `isRefundPending` (same method, `refundedAt` still null). One definition of "cash left the till" for every reader that
+ * must not strand it (the invoice void and order cancel guards); it is a Prisma `where` fragment.
+ */
+export const CASH_REFUNDED_RETURN_WHERE = {
+  refundMethod: EXTERNAL_REFUND_METHOD,
+  refundedAt: { not: null },
+  status: { notIn: DEAD_RETURN_STATUSES },
+} as const;
+
+/**
+ * The reverse of `loadSourceInvoicesState`'s resolution (returned line -> `sourceInvoiceItemId` -> `InvoiceItem.invoiceId`):
+ * the ids of the lines that sit on `invoiceId`, i.e. the values an INLINE return's `sourceInvoiceItemId` must hold to be
+ * sourced from that invoice. Takes no lock; the caller already holds the invoice's.
+ */
+export async function sourceLineIdsOfInvoice(db: any, invoiceId: string): Promise<string[]> {
+  const lines: Array<{ id?: string | null }> =
+    (await db.invoiceItem.findMany({ where: { invoiceId }, select: { id: true } })) ?? [];
+  return lines.map((l) => l.id).filter((i): i is string => !!i);
+}
 
 /**
  * SA-727 (F4): the payment methods that are MONEY (a cash/card/check refund can hand it back). Everything else a confirmed

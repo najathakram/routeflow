@@ -44,7 +44,7 @@ export function ReadOnlyBanner({ status, readOnlyReason, compact = false }: Read
         <a
           href="/choose-plan"
           onClick={(e) => {
-            if (guardCounterLeave()) e.preventDefault(); // POS-7: not mid-sale
+            if (guardCounterLeave(() => window.location.assign("/choose-plan"))) e.preventDefault(); // POS-7: not mid-sale
           }}
           className="font-medium underline underline-offset-2"
         >

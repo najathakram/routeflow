@@ -103,6 +103,33 @@ describe("CounterReturnAction", () => {
       "Return recorded. Hand $12.40 back to the customer.",
     );
   });
+  it("W21b: a whole-sale return keeps its success line when the row flips to fully returned", () => {
+    const { rerender } = render(<CounterReturnAction orderId="o1" canReturn />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
+    // the refetch marks the sale FULL: the component must stay mounted with its success line
+    rerender(<CounterReturnAction orderId="o1" canReturn={false} />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Hand $12.40 back to the customer.",
+    );
+    expect(screen.getByRole("button", { name: "Return items" })).toBeInTheDocument();
+  });
+  it("W21b: once the dialog closes on a fully returned sale, the button goes but the success line stays", () => {
+    const { rerender } = render(<CounterReturnAction orderId="o1" canReturn />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
+    rerender(<CounterReturnAction orderId="o1" canReturn={false} />);
+    const onClose = dialogProps.mock.calls.at(-1)?.[0].onClose as () => void;
+    React.act(() => onClose());
+    expect(screen.queryByRole("button", { name: "Return items" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Hand $12.40 back to the customer.",
+    );
+  });
+  it("W21b: a sale that is already fully returned offers no Return items button", () => {
+    render(<CounterReturnAction orderId="o1" canReturn={false} />);
+    expect(screen.queryByRole("button", { name: "Return items" })).toBeNull();
+  });
   it("card refund: repeats the card line", () => {
     render(<CounterReturnAction orderId="o1" />);
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
@@ -123,5 +150,18 @@ describe("CounterReturnAction", () => {
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/\$/);
     expect(screen.getByRole("status").textContent).not.toMatch(/^Return recorded/);
+  });
+  it("W21b: Done returns focus to the Return items button, not body", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    const btn = screen.getByRole("button", { name: "Return items" });
+    fireEvent.click(btn);
+    const evt = new Event("focus", { cancelable: true });
+    const onCloseAutoFocus = dialogProps.mock.calls.at(-1)?.[0].onCloseAutoFocus as (
+      e: Event,
+    ) => void;
+    document.body.focus();
+    React.act(() => onCloseAutoFocus(evt));
+    expect(evt.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(btn);
   });
 });
