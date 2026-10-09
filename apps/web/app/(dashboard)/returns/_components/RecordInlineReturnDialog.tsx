@@ -88,6 +88,7 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "exceedsCash",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
 const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
@@ -430,6 +431,8 @@ export function RecordInlineReturnDialog({
                 captureMutation.isPending ||
                 captureSentRef.current
               }
+              // SA-749r2 #9: after "more cash than was taken" the tender is the way out, so it stays editable
+              tenderEditable={refundError === "exceedsCash"}
               error={refundError}
             />
           ) : null
@@ -441,8 +444,13 @@ export function RecordInlineReturnDialog({
         )}
         renderQuoteActions={() =>
           showChoice &&
-          (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
-            saved && (refundError === "failed" || CREDIT_INSTEAD.has(refundError)) ? (
+          (refundError === "failed" ||
+            refundError === "exceedsCash" ||
+            (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
+            saved &&
+            (refundError === "failed" ||
+              refundError === "exceedsCash" ||
+              CREDIT_INSTEAD.has(refundError)) ? (
               <>
                 <Button
                   variant="secondary"
@@ -452,7 +460,7 @@ export function RecordInlineReturnDialog({
                 >
                   Give store credit instead
                 </Button>
-                {refundError === "failed" ? (
+                {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
                     loading={refunding}
                     disabled={crediting}
@@ -602,6 +610,7 @@ function RefundChoice({
   tender,
   onTender,
   locked,
+  tenderEditable = false,
   error,
 }: {
   amount: string;
@@ -612,6 +621,8 @@ function RefundChoice({
   tender: InlineRefundTender;
   onTender: (t: InlineRefundTender) => void;
   locked: boolean;
+  /** SA-749r2 #9: keep the "Refund by" tender editable although the choice is locked (the way out of a cash cap refusal). */
+  tenderEditable?: boolean;
   error: RefundErrorKind | null;
 }) {
   const refund = resolution === "REFUND";
@@ -647,7 +658,7 @@ function RefundChoice({
           <Select
             label="Refund by"
             value={tender}
-            disabled={locked}
+            disabled={locked && !tenderEditable}
             onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />
