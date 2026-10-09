@@ -1,5 +1,10 @@
 import { priceOverrideOf } from "./price-override";
-import { Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -24,6 +29,9 @@ import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
+import { StripeService } from "./stripe.service";
+import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
+import { lockTenantPrice } from "./tenant-price-lock";
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
@@ -55,6 +63,8 @@ export class BillingCronService {
     private readonly billingNotification: BillingNotificationService,
     // Lane B A2b: a scheduled downgrade snapshots the tenant's feature config in the same tx.
     private readonly planTransition: PlanTransitionConfigService,
+    // SA-733r M7: a scheduled downgrade reaches Stripe too (proration none), under the tenant-price lock.
+    private readonly stripe: StripeService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -232,6 +242,8 @@ export class BillingCronService {
         planVersionId: true,
         // #2223 / SA-444c: the negotiated fee a downgrade keeps.
         priceOverrideMonthly: true,
+        priceOverrideAnnual: true,
+        stripeSubId: true,
         // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
         basePriceSnapshot: true,
         downgradeToPlanKey: true,
@@ -258,6 +270,17 @@ export class BillingCronService {
         continue;
       }
 
+      // SA-733 D8: the same per-tenant lock the upgrade and the price override take, so this push and its
+      // possible revert cannot interleave with another price writer. Held until the finally below.
+      let unlock: () => Promise<void>;
+      try {
+        unlock = await lockTenantPrice(s.tenantId);
+      } catch (lockErr) {
+        this.logger.error(
+          `Scheduled downgrade held back for tenant=${s.tenantId} — ${(lockErr as Error).message}; still armed, next sweep retries`,
+        );
+        continue;
+      }
       try {
         let targetVersion = fromVersion;
         let targetDef = findPlanDefinition(fromVersion.definitions, target);
@@ -297,7 +320,21 @@ export class BillingCronService {
           ? await this.planTransition.prepare(transition)
           : null;
 
-        await this.prisma.$transaction(async (tx) => {
+        // SA-733r M7: the downgraded price reaches Stripe first (proration none: the lower price starts at the
+        // next invoice, no credit), and `flow.settle` puts it back if the local write below throws or is
+        // overtaken. A tenant with no Stripe subscription skips this.
+        const flow = await beginStripeFirstPlanChange(
+          { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+          planChangeArgs({
+            tenantId: s.tenantId,
+            sub: s,
+            version: targetVersion,
+            def: targetDef,
+            proration: "none",
+            retireAddons: false,
+          }),
+        );
+        const written = this.prisma.$transaction(async (tx) => {
           // Snapshot first, in the same transaction: a failure here throws into the per-row catch
           // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
           if (transition && preparedTransition) {
@@ -401,6 +438,7 @@ export class BillingCronService {
             { amountDelta, tx },
           );
         }, this.planTransition.transactionOptions(preparedTransition));
+        await flow.settle(written);
         this.planTransition.invalidateCaches(s.tenantId, preparedTransition);
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
@@ -442,6 +480,14 @@ export class BillingCronService {
           if (++consecutiveSnapshotFailures >= MAX_CONSECUTIVE_SNAPSHOT_FAILURES) throw err;
           continue;
         }
+        // SA-733r M7: Stripe could not take this tenant's price (unreadable, not live, nothing resolvable): the
+        // schedule stays armed for the next sweep, and ONE tenant never aborts the rest.
+        if (err instanceof ServiceUnavailableException || err instanceof BadRequestException) {
+          this.logger.error(
+            `Scheduled downgrade held back for tenant=${s.tenantId} target="${target}" — ${err.message}`,
+          );
+          continue;
+        }
         if (!this.isUnresolvablePlanKeyError(err)) throw err;
         // B218: log and move on — a cron that dies on tenant N's bad row would silently
         // strand every tenant after it unapplied too, which is worse than the one bad row.
@@ -451,6 +497,8 @@ export class BillingCronService {
           }`,
         );
         continue;
+      } finally {
+        await unlock();
       }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
