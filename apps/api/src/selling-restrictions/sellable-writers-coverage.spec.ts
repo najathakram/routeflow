@@ -415,7 +415,11 @@ describe("the scanner and the proof themselves (so a silent no-match cannot pass
 
 describe("every order/invoice line writer is classified for selling restrictions", () => {
   it("the inventory equals the table, both directions", () => {
-    const scanned = [...writers()].sort();
+    // SA-762r F1: changeStatus's only line write (the cancel's status flip) moved verbatim into the free
+    // function order-cancel-tx.ts::cancelOrderInTx, so the scanner no longer reaches it; it stays an
+    // enforcement point (the DRAFT promotion's assertLinesSellable), named here instead of scanned.
+    const gateOnly = [ord("changeStatus")];
+    const scanned = [...new Set([...writers(), ...gateOnly])].sort();
     expect({ unclassified: scanned.filter((k) => !TABLE[k]) }).toEqual({ unclassified: [] });
     expect({ stale: Object.keys(TABLE).filter((k) => !scanned.includes(k)) }).toEqual({
       stale: [],

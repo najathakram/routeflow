@@ -50,7 +50,10 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "the writer itself: stamps compositionMode/recipeId/recipeVersion after it writes the rows",
   },
-  "orders/orders.service.ts::changeStatus": { kind: "exempt", reason: "status only" },
+  // SA-762r F1: the cancel's line-status flip moved verbatim out of changeStatus into cancelOrderInTx. This
+  // line scanner reads a 2-space-indented call as a function start, so it names the site after the body's
+  // indented `throwIfInTransitUnderLock(` line rather than the exported function.
+  "orders/order-cancel-tx.ts::throwIfInTransitUnderLock": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",

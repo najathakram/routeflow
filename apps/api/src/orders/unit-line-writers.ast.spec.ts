@@ -113,10 +113,8 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "categoryTaxAmount only; reads the line snapshot first",
   },
-  "orders/orders.service.ts::OrdersService.changeStatus": {
-    kind: "FIELD_ONLY",
-    why: "line status flips",
-  },
+  // SA-762r F1: changeStatus's only line write (the cancel's status flip) moved verbatim into the shared
+  // free function order-cancel-tx.ts::cancelOrderInTx, which this class-method scanner does not enumerate.
   "orders/orders.service.ts::OrdersService.reopenOrder": {
     kind: "FIELD_ONLY",
     why: "line status flips",
