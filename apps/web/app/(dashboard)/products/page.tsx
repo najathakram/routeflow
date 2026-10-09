@@ -745,6 +745,8 @@ export default function ProductsPage() {
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
   // What the last bulk delete refused and why (#3323): shown in a dialog, not buried in a toast.
   const [skipReport, setSkipReport] = React.useState<SkippedProduct[]>([]);
+  // Names of the products in the last bulk delete, taken before the selection clears, for the skip report.
+  const [skipNames, setSkipNames] = React.useState<ReadonlyMap<string, string>>(new Map());
   const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
@@ -1110,6 +1112,7 @@ export default function ProductsPage() {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
       // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
+      setSkipNames(new Map(ids.map((id) => [id, productById.get(id)?.name ?? ""])));
       setSelected(new Set());
       const { softDeleted, skipped } = res;
       const parts = [`${res.deleted} deleted`];
@@ -1450,7 +1453,11 @@ export default function ProductsPage() {
         }}
       />
 
-      <BulkDeleteSkipReport skipped={skipReport} onClose={() => setSkipReport([])} />
+      <BulkDeleteSkipReport
+        skipped={skipReport}
+        onClose={() => setSkipReport([])}
+        nameById={skipNames}
+      />
 
       {/* Bulk delete confirmation */}
       <ConfirmDialog

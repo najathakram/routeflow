@@ -10,7 +10,15 @@ const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
 describe("products list: bulk delete skip report wiring", () => {
   it("renders the report from the refused items and clears it on Done", () => {
     expect(src).toMatch(
-      /<BulkDeleteSkipReport skipped=\{skipReport\} onClose=\{\(\) => setSkipReport\(\[\]\)\}/,
+      /<BulkDeleteSkipReport\s+skipped=\{skipReport\}\s+onClose=\{\(\) => setSkipReport\(\[\]\)\}\s+nameById=\{skipNames\}/,
+    );
+  });
+  it("takes the names from the selection BEFORE it clears, so a skip is never anonymous", () => {
+    expect(src).toMatch(/setSkipNames\(new Map\(ids\.map\(/);
+    const handler = src.slice(src.indexOf("const handleBulkDelete"));
+    expect(handler.indexOf("setSkipNames(")).toBeGreaterThan(-1);
+    expect(handler.indexOf("setSkipNames(")).toBeLessThan(
+      handler.indexOf("setSelected(new Set());"),
     );
   });
   it("fills it from the result's skipped list and keeps the reasons out of the toast", () => {

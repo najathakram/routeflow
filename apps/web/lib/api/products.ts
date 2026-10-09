@@ -254,7 +254,7 @@ const BULK_DELETE_CHUNK = 500;
 export interface BulkDeleteProductsResult {
   deleted: number;
   softDeleted: number;
-  skipped: Array<{ id: string; reason: string }>;
+  skipped: Array<{ id: string; code?: string; reason?: string }>;
 }
 
 export function useBulkDeleteProducts() {

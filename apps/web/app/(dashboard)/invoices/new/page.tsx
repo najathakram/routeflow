@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -346,7 +347,7 @@ function ProductSearchInput({
                         )}
                         {hasVariants && (
                           <span className="text-[10px] text-navy/70 shrink-0">
-                            {p.variants.length} variants
+                            {countNoun(p.variants.length, "variant")}
                           </span>
                         )}
                       </div>

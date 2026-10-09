@@ -107,7 +107,13 @@ describe("ProductsService.bulkDelete / clearAll: a product with variants (B1212)
     expect(hardDeletedIds()).not.toContain("fam");
     expect(softDeletedIds()).not.toContain("fam");
     expect(result.deleted).toBe(0);
-    expect(result.skipped).toEqual([{ id: "fam", reason: expect.stringMatching(/variant/i) }]);
+    expect(result.skipped).toEqual([
+      {
+        id: "fam",
+        code: "FAMILY_HAS_ACTIVE_VARIANTS",
+        reason: expect.stringMatching(/variant/i),
+      },
+    ]);
   });
 
   it("a family with only ARCHIVED variants outside the selection is archived, never hard-deleted", async () => {
@@ -142,6 +148,8 @@ describe("ProductsService.bulkDelete / clearAll: a product with variants (B1212)
     expect(softDeletedIds()).toEqual([]);
     expect(result.deleted + result.softDeleted).toBe(0);
     expect(result.skipped.map((s) => s.id).sort()).toEqual(["fam", "v1"]);
+    expect(result.skipped.find((s) => s.id === "v1")?.code).toBe("PRODUCT_HAS_ACTIVE_ORDER_ITEMS");
+    expect(result.skipped.find((s) => s.id === "fam")?.code).toBe("FAMILY_HAS_ACTIVE_VARIANTS");
   });
 
   it("clearAll over a family and its variants never hard-deletes a family that keeps a variant", async () => {

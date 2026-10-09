@@ -14,6 +14,7 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -589,7 +590,7 @@ function CreateEstimateModal({
                               )}
                               {hasVariants && (
                                 <span className="shrink-0 text-[10px] text-navy/70">
-                                  {p.variants.length} variants
+                                  {countNoun(p.variants.length, "variant")}
                                 </span>
                               )}
                             </div>
