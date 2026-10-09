@@ -70,6 +70,22 @@ export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<Loc
   return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt, payments: payments ?? [] };
 }
 
+/**
+ * Review hardening: the pre-lock read named an order; the lock was taken on the order the invoice points at NOW.
+ * If the link moved in between, the carrier check, ledger resync and order recompute would act on a stale order.
+ */
+export function assertSameOrderLink(
+  locked: { orderId?: string | null },
+  pre: { orderId?: string | null },
+): void {
+  if ((locked.orderId ?? null) !== (pre.orderId ?? null)) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+      message: "The invoice changed while it was being edited. Try again.",
+    });
+  }
+}
+
 /** r87: the unlocked pre-read said DRAFT; the lock says whether it still is (a send can commit in between). */
 export function assertStillDraft(invoice: { status?: unknown }): void {
   if (invoice.status !== InvoiceStatus.DRAFT) {
@@ -78,8 +94,8 @@ export function assertStillDraft(invoice: { status?: unknown }): void {
 }
 
 /** The two header money fields rounded to cents at intake (B1047): 10.005 must not store as 10.00 while the total counts 10.01. */
-export const intakeMoney = (v: number | undefined, stored: unknown): number =>
-  v !== undefined ? roundMoney(v) : Number(stored ?? 0);
+export const intakeMoney = (v: number | null | undefined, stored: unknown): number =>
+  v != null ? roundMoney(v) : Number(stored ?? 0);
 
 /** True when two money figures differ by at least a cent (both sides rounded first, L-170). */
 const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Number(b)) !== 0;
@@ -92,6 +108,15 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
  * the column truncated, an exempt customer with a stale levy): refuse with 409 INVOICE_TAX_STATE_STALE
  * and write nothing. Otherwise the total is recomputed from the stored (== recomputed) subtotal and tax
  * with the new discount and shipping; only `discount`, `shippingFee` and `total` are written.
+ *
+ * Known edges, ruled by the Lead (INV-A review):
+ *  - An EXEMPT customer whose row still carries a levy snapshot (categoryTaxAmount != 0) is stale even when
+ *    the stored tax is 0: the items branch would zero the snapshot and resync the regulated ledger, this
+ *    branch cannot, so the two must not disagree. Re-saving the lines cleans both (census reason 4).
+ *  - B296: create() taxes with the UNROUNDED line rate while InvoiceItem.taxRate is Decimal(5,4), so a fresh
+ *    draft with a rate such as 0.08875 can be 409 INVOICE_TAX_STATE_STALE on its first header-only PATCH.
+ *    That is a 409 (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it would
+ *    change the money charged. SA-761 T-1 (sitting 4) widens InvoiceItem.taxRate and retires this edge.
  */
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
@@ -101,7 +126,13 @@ export function planHeaderOnlyTotals(
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
   const t = sumInvoiceTotals(storedRows, { discount, shipping: shippingFee, isTaxExempt });
-  if (differs(t.subtotal, invoice.subtotal) || differs(t.tax, invoice.taxAmount)) {
+  const exemptWithLevy =
+    isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
+  if (
+    exemptWithLevy ||
+    differs(t.subtotal, invoice.subtotal) ||
+    differs(t.tax, invoice.taxAmount)
+  ) {
     throw new ConflictException({
       code: API_ERROR_CODES.INVOICE_TAX_STATE_STALE,
       message:
@@ -127,7 +158,7 @@ export function assertNotOverpaidByEdit(
   if (over(newTotal) > over(Number(storedTotal))) {
     throw new ConflictException({
       code: API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID,
-      message: `This change would take the invoice total ($${roundMoney(newTotal).toFixed(2)}) below the $${paid.toFixed(2)} already paid or credited. Remove the credit first or use a smaller discount.`,
+      message: `This change would take the invoice total ($${roundMoney(newTotal).toFixed(2)}) below the $${paid.toFixed(2)} already paid or credited. Remove the credit first, or change the lines or discount.`,
     });
   }
 }

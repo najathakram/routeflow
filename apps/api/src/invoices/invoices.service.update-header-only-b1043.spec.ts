@@ -196,6 +196,17 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       nothingWritten();
     });
 
+    it("Lead ruling A: an exempt customer whose row carries a levy snapshot is stale even when the stored tax is 0 (re-saving cleans the snapshot and the ledger)", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row({ categoryTaxAmount: 5 })], {
+        exempt: true,
+      });
+      await expect(service.update("inv-1", { shippingFee: 1 })).rejects.toMatchObject({
+        status: 409,
+        response: { code: "INVOICE_TAX_STATE_STALE" },
+      });
+      nothingWritten();
+    });
+
     it("a legacy row (rate 0, stored tax 4.00): discount 1 -> 409, nothing written", async () => {
       arrange({ subtotal: 100, taxAmount: 4, total: 104 }, [row({ taxRate: 0 })]);
       await expect(service.update("inv-1", { discount: 1 })).rejects.toMatchObject({
@@ -480,6 +491,59 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       // and the tax/subtotal the items branch re-derived equal what the header-only branch trusted
       expect(items.subtotal).toBe(stored.subtotal);
       expect(items.taxAmount).toBe(stored.taxAmount);
+    });
+  });
+
+  describe("review hardening", () => {
+    it("an explicit null discount or shippingFee keeps the stored value (items rewrite), as before", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 95, discount: 5 }, [row({ id: "item-1" })]);
+      await service.update("inv-1", {
+        items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 100 }],
+        discount: null,
+        shippingFee: null,
+      } as any);
+      expect(written().discount).toBe(5);
+      expect(written().shippingFee).toBe(0);
+      expect(written().total).toBe(95);
+    });
+
+    it("an explicit null discount keeps the stored value (header-only)", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 95, discount: 5 }, [row()]);
+      await service.update("inv-1", { discount: null, shippingFee: 3 } as any);
+      expect(written().discount).toBe(5);
+      expect(written().total).toBe(98);
+    });
+
+    it("items rewrite: an order link that moved between the pre-read and the lock is a 409 (the carrier check, resync and recompute would use a stale order)", async () => {
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ ...draft, orderId: null }) // unlocked pre-read
+        .mockResolvedValue({ ...draft, orderId: "ord-2" }); // under the lock
+      prisma.invoiceItem.findMany.mockResolvedValue([row({ id: "item-1" })]);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      await expect(
+        service.update("inv-1", {
+          items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 100 }],
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "INVOICE_CHANGED_CONCURRENTLY" },
+      });
+      expect(prisma.invoiceItem.deleteMany).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
+    it("header-only: the same moved order link is a 409", async () => {
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ ...draft, orderId: null })
+        .mockResolvedValue({ ...draft, orderId: "ord-2" });
+      prisma.invoiceItem.findMany.mockResolvedValue([row()]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      await expect(service.update("inv-1", { discount: 1 })).rejects.toMatchObject({
+        status: 409,
+        response: { code: "INVOICE_CHANGED_CONCURRENTLY" },
+      });
+      nothingWritten();
     });
   });
 });

@@ -89,7 +89,7 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
     "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
-    "That change would take the invoice total below what is already paid or credited. Use a smaller discount, or remove the credit first.",
+    "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:

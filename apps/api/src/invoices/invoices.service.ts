@@ -179,6 +179,7 @@ import {
 } from "./manual-invoice-context";
 import {
   assertNotOverpaidByEdit,
+  assertSameOrderLink,
   assertStillDraft,
   intakeMoney,
   loadLockedInvoiceForEdit,
@@ -3116,6 +3117,7 @@ export class InvoicesService {
         // Lock order (SA-137/203): the ORDER row first, then the invoice (loadLockedInvoiceForEdit, B1043).
         const locked = await loadLockedInvoiceForEdit(tx, id);
         assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
+        assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
         // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
         const carrierLocked = await invoiceOrderWithCarrier(
@@ -3283,6 +3285,7 @@ export class InvoicesService {
       : await this.prisma.tenantTransaction(async (tx: any) => {
           const locked = await loadLockedInvoiceForEdit(tx, id);
           assertStillDraft(locked.invoice); // r87
+          assertSameOrderLink(locked.invoice, inv);
           const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
           assertInvoiceTotalsSane(
             { discount: totals.discount, subtotal, total: totals.total },
