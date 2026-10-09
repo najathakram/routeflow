@@ -27,6 +27,7 @@ export function fakeStripeCatchup(
   const sessions: Record<string, any> = { ...(seed.sessions ?? {}) };
   const subs: Record<string, any> = { ...(seed.subs ?? {}) };
   const calls: string[] = [];
+  const items: { id: string; invoice: string; metadata: Record<string, string> }[] = [];
   let seq = 0;
 
   const facts = (i: FakeInvoice | undefined): InvoiceFacts =>
@@ -60,6 +61,9 @@ export function fakeStripeCatchup(
       calls.push(`getInvoiceFacts:${id}`);
       return facts(invoices.get(id));
     }),
+    listInvoiceItems: jest.fn(async (invoiceId: string) =>
+      items.filter((i) => i.invoice === invoiceId),
+    ),
     listSubscriptionInvoices: jest.fn(async (subId: string) =>
       [...invoices.values()].filter((i) => i.subscription === subId).map((i) => ({ id: i.id })),
     ),
@@ -116,8 +120,17 @@ export function fakeStripeCatchup(
           calls.push("invoiceItems.create");
           const inv = invoices.get(params.invoice);
           if (inv) inv.amountDue = (inv.amountDue ?? 0) + params.amount;
-          return { id: `ii_${++seq}` };
+          const item = {
+            id: `ii_${++seq}`,
+            invoice: params.invoice,
+            metadata: params.metadata ?? {},
+          };
+          items.push(item);
+          return item;
         }),
+        list: jest.fn(async ({ invoice }: any) => ({
+          data: items.filter((i) => i.invoice === invoice),
+        })),
       },
       checkout: {
         sessions: {

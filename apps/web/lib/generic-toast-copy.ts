@@ -100,9 +100,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
     "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
-    "A card checkout is already open for your account. Finish it, or try again in a moment.",
+    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
-    "Your card payment is being confirmed. This will be available once it clears.",
+    "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

@@ -486,6 +486,9 @@ export class BillingService {
     // the completion webhook overwrites `stripeSubId`, orphaning the first one where
     // nothing in RouteFlow can see (or cancel) it. Price changes never need a new
     // checkout — they ride the existing subscription via syncStripeSubscriptionPrice.
+    // NOTE: this read is deliberately NOT under the Tenant lock. It is a fast refusal, not a guarantee: the claim's
+    // authority is the locked CAS in CatchupClaimService.openClaim, and a catch-up completing in between is stopped
+    // by the settle-side verification (the session's own subscription), so a race here cannot double-void.
     const existingSub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
       select: { stripeSubId: true, externalPayment: true, catchupState: true },

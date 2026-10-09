@@ -1298,3 +1298,135 @@ describe("nits", () => {
     expect(h.sub().catchupState).toBeNull();
   });
 });
+
+describe("Lead delta review", () => {
+  const stubMeta = {
+    tenantId: "t1",
+    catchup: "prepaid",
+    catchup_shape: "trial",
+    catchup_stub_cents: "17567",
+    catchup_stub_label: "Subscription — November 2026 (from Nov 14)",
+    catchup_finalize_at: String(Math.floor(Date.parse("2026-11-14T12:00:00Z") / 1000)),
+  };
+
+  it("(1) DOUBLE-CHARGE: the stub item is tagged catchup_for=<session>; a Stripe-side coupon that lowers amountDue never makes a redelivery add a SECOND stub", async () => {
+    const h = make({ stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION }, [
+      octPaid,
+    ]);
+    await h.svc.onSessionCompleted(sessionOf({ metadata: stubMeta }));
+    const draftId = h.sub().catchupInvoiceId;
+    const first = h.stripe.client.invoiceItems.create.mock.calls[0][0];
+    expect(first.metadata).toEqual({ catchup_for: SESSION, tenantId: "t1" });
+
+    // a coupon / discount on the customer lowers what the draft will charge, far below the stub
+    h.stripe.invoices.get(draftId)!.amountDue = 5000;
+    // the redelivery arrives after the 24 h idempotency window: Stripe would NOT replay the first create
+    await h.svc.onSessionCompleted(sessionOf({ metadata: stubMeta }));
+    await h.svc.onSessionCompleted(sessionOf({ metadata: stubMeta }));
+
+    expect(h.stripe.client.invoiceItems.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("(1) an item tagged for ANOTHER session does not count as this session's stub", async () => {
+    const h = make({ stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION }, [
+      octPaid,
+    ]);
+    h.stripe.client.invoiceItems.create.mockRejectedValueOnce(new Error("stripe 500"));
+    await expect(h.svc.onSessionCompleted(sessionOf({ metadata: stubMeta }))).rejects.toThrow();
+    const draftId = h.sub().catchupInvoiceId;
+    await h.stripe.client.invoiceItems.create({
+      invoice: draftId,
+      amount: 100,
+      metadata: { catchup_for: "cs_other" },
+    });
+    h.stripe.client.invoiceItems.create.mockClear();
+    await h.svc.onSessionCompleted(sessionOf({ metadata: stubMeta }));
+    expect(h.stripe.client.invoiceItems.create).toHaveBeenCalledTimes(1);
+    expect(h.stripe.client.invoiceItems.create.mock.calls[0][0].metadata.catchup_for).toBe(SESSION);
+  });
+
+  it("(2) release Step 0: a HELD settle (amount mismatch) is reported needs_ruling, never 'settled'", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_ot" }), [octOpen], {
+      invoices: [
+        { id: "in_ot", status: "paid", subscription: SUB, amountDue: 5000, amountPaid: 5000 },
+      ],
+      sessions: {
+        [SESSION]: {
+          id: SESSION,
+          subscription: SUB,
+          status: "complete",
+          metadata: {
+            tenantId: "t1",
+            catchup: "period",
+            catchup_shape: "trial_one_time",
+            catchup_stub_cents: "31000",
+          },
+        },
+      },
+    });
+    const out = await h.svc.release("t1", { sessionId: SESSION, reason: "t" });
+    expect(out).toBe("needs_ruling");
+    expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT"); // still HELD
+    expect(h.inv("inv_oct").status).toBe("OPEN");
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
+  });
+
+  it("(2) a settle that DID succeed is still 'settled'", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_ok" }), [octOpen], {
+      invoices: [
+        { id: "in_ok", status: "paid", subscription: SUB, amountDue: 100, amountPaid: 100 },
+      ],
+    });
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("settled");
+  });
+
+  it("(2) the module header carries the operator runbook line for a HELD claim", () => {
+    const src = fs.readFileSync(path.join(__dirname, "catchup-claim.service.ts"), "utf8");
+    expect(src).toMatch(/OPERATOR RUNBOOK - leaving a HELD claim/);
+    expect(src).toMatch(/UPDATE "TenantSubscription" SET "catchupState"=NULL/);
+  });
+
+  it("(3) the stuck-completed notice names the STORED subscription too (an ordinary one that also bills)", async () => {
+    const exp = Math.floor(Date.parse("2026-10-10T10:00:00Z") / 1000);
+    const h = make(
+      { stripeSubId: "sub_ordinary", catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
+      [octOpen],
+      {
+        sessions: {
+          [SESSION]: {
+            id: SESSION,
+            subscription: "sub_dup",
+            status: "complete",
+            expires_at: exp,
+            metadata: { tenantId: "t1", catchup: "period" },
+          },
+        },
+      },
+    );
+    await h.svc.sweep(new Date("2026-10-10T13:00:00Z"));
+    const n = h.db.audits.find((a) => a.meta?.kind === "billing_catchup_stuck_completed")!;
+    expect(n.meta).toMatchObject({
+      subscriptionId: "sub_dup",
+      storedSubscriptionId: "sub_ordinary",
+    });
+    expect(n.meta.message).toContain("sub_ordinary");
+  });
+
+  it("optional: a FOREIGN paid invoice on a claimed tenant raises ONE NEEDS RULING notice per invoice (and still voids nothing)", async () => {
+    const h = make(
+      { stripeSubId: "sub_ord", catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
+      [octOpen],
+    );
+    const inv = {
+      id: "in_ord",
+      amount_paid: 100,
+      parent: { subscription_details: { subscription: "sub_ord" } },
+    };
+    await h.svc.onInvoicePaid(inv);
+    await h.svc.onInvoicePaid(inv);
+    expect(
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_foreign_invoice"),
+    ).toHaveLength(1);
+    expect(h.inv("inv_oct").status).toBe("OPEN");
+  });
+});

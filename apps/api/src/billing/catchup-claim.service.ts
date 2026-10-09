@@ -73,6 +73,14 @@ export type ReleaseOutcome =
  * Stripe is never called under that lock: the re-reads of Step 0 happen outside it and the CAS that follows
  * proves nothing moved in between.
  *
+ * OPERATOR RUNBOOK - leaving a HELD claim (an amount mismatch or a foreign subscription: there is no route for it
+ * by design): (1) in Stripe, decide what the tenant really paid; (2) void the superseded RfInvoices by hand
+ * (platform-admin RfInvoice "void") ONLY for periods the card subscription now covers; (3) then, with a fresh
+ * backup, clear the claim in ONE statement: UPDATE "TenantSubscription" SET "catchupState"=NULL,
+ * "catchupSessionId"=NULL, "catchupInvoiceId"=NULL WHERE "tenantId"=<id> (keep the card subscription), or - to go
+ * back to manual invoicing - cancel the Stripe subscription first and also set "stripeSubId"=NULL,
+ * "externalPayment"=true in that statement. Never clear it while an invoice is still unpaid and retrying.
+ *
  * What is NOT here: the dunning skip (N2(a)), pause/resume and `pause_collection` - PR-B3.
  */
 @Injectable()
@@ -160,7 +168,21 @@ export class CatchupClaimService {
   ): Promise<"ok" | "foreign" | "hold"> {
     if (!row.catchupSessionId || !row.stripeSubId) return "foreign";
     const session = await this.stripe.getCheckoutSession(row.catchupSessionId);
-    if (stripeRefId(session?.subscription) !== row.stripeSubId) return "foreign";
+    if (stripeRefId(session?.subscription) !== row.stripeSubId) {
+      // An unrelated subscription's invoice on a tenant whose claim is held is unusual (ordinary checkouts are
+      // refused while a claim is held): say so once, per invoice.
+      if (invoiceId) {
+        await this.noticeOnce(
+          this.prisma,
+          row.tenantId,
+          "billing_catchup_foreign_invoice",
+          invoiceId,
+          `NEEDS RULING: invoice ${invoiceId} was paid on subscription ${row.stripeSubId}, which is not the subscription the catch-up Checkout created. It was NOT treated as the catch-up payment and nothing was voided.`,
+          { invoiceId, storedSubscriptionId: row.stripeSubId },
+        ).catch(() => undefined);
+      }
+      return "foreign";
+    }
     const meta = session?.metadata ?? {};
     const shape = meta[CATCHUP_META.shape];
     const expected = Number(meta[CATCHUP_META.stubCents] ?? 0);
@@ -383,7 +405,11 @@ export class CatchupClaimService {
     if (meta[CATCHUP_META.shape] !== "trial" || !Number.isInteger(stubCents) || stubCents <= 0)
       return;
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
-    if (facts.status !== "draft" || facts.amountDue >= stubCents) return;
+    if (facts.status !== "draft") return;
+    // Detected by the item's own TAG (`metadata.catchup_for = session.id`), never by the invoice amount: a Stripe-side
+    // coupon lowers amountDue, and a redelivery after the idempotency key expired (24 h) would add a SECOND stub.
+    const items = await this.stripe.listInvoiceItems(invoiceId);
+    if (items.some((i) => i?.metadata?.catchup_for === session.id)) return;
     const sub = await this.stripe.getSubscription(subId);
     await this.stripe.client.invoiceItems.create(
       {
@@ -392,6 +418,7 @@ export class CatchupClaimService {
         amount: stubCents,
         currency: "usd",
         description: String(meta[CATCHUP_META.stubLabel] ?? "Subscription — catch-up"),
+        metadata: { catchup_for: session.id, tenantId },
       },
       { idempotencyKey: `${tenantId}:trial-stub-item:${session.id}` },
     );
@@ -662,9 +689,11 @@ export class CatchupClaimService {
     if (seen.catchupState !== "RELEASING" && seen.catchupInvoiceId) {
       const facts = await this.stripe.getInvoiceFacts(seen.catchupInvoiceId);
       if (invoiceIsPaid(facts)) {
-        if (seen.stripeSubId)
-          await this.settle(tenantId, seen.stripeSubId, facts, seen.catchupInvoiceId);
-        return "settled";
+        // A refused settle (held amount mismatch / foreign subscription) is NOT "settled": the claim is still held.
+        const done = seen.stripeSubId
+          ? await this.settle(tenantId, seen.stripeSubId, facts, seen.catchupInvoiceId)
+          : false;
+        return done ? "settled" : "needs_ruling";
       }
       if (facts.paymentProcessing) return "deferred";
     }
@@ -946,8 +975,12 @@ export class CatchupClaimService {
           row.tenantId,
           "billing_catchup_stuck_completed",
           String(row.catchupSessionId),
-          `NEEDS RULING: the catch-up Checkout ${row.catchupSessionId} completed on subscription ${sessionSub}, but the ordinary completion did not apply it (duplicate / stale checkout). The claim was cleared; refund or cancel ${sessionSub} in Stripe.`,
-          { sessionId: row.catchupSessionId, subscriptionId: sessionSub },
+          `NEEDS RULING: the catch-up Checkout ${row.catchupSessionId} completed on subscription ${sessionSub}, but the ordinary completion did not apply it (duplicate / stale checkout). The tenant's stored subscription is ${after.stripeSubId ?? "(none)"}. The claim was cleared; refund or cancel ${sessionSub} in Stripe, and check whether ${after.stripeSubId ?? "the stored one"} is an ordinary subscription that also bills.`,
+          {
+            sessionId: row.catchupSessionId,
+            subscriptionId: sessionSub,
+            storedSubscriptionId: after.stripeSubId,
+          },
         );
       }
     });

@@ -191,6 +191,8 @@ export class CatchupCheckoutService {
       // an OPEN RfInvoice whose period cannot be placed would be left standing beside the card subscription
       if (plan.unplaceableOpenIds.length > 0) ineligible.push("unplaceable_open_invoice");
     }
+    // Defensive: resolveTenantPricing falls back to STARTER, so this never fires today; it keeps a null key from
+    // ever reaching the session (completion would otherwise transition the tenant to the wrong plan).
     if (!resolvedPlanKey && monthly != null) ineligible.push("no_plan_key");
 
     return {

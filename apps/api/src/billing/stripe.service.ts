@@ -266,6 +266,12 @@ export class StripeService implements OnModuleInit {
     };
   }
 
+  /** The invoice items attached to one invoice (the catch-up stub's tag is read from their metadata). */
+  async listInvoiceItems(invoiceId: string): Promise<any[]> {
+    const page = await this.client.invoiceItems.list({ invoice: invoiceId, limit: 100 });
+    return Array.isArray(page?.data) ? page.data : [];
+  }
+
   /** A subscription's most recent invoices (newest first) - the catch-up sweep looks for the first paid one. */
   async listSubscriptionInvoices(subId: string, limit = 5): Promise<any[]> {
     const page = await this.client.invoices.list({ subscription: subId, limit });

@@ -68,3 +68,16 @@ describe("StripeService.getInvoiceFacts (dahlia shape)", () => {
     expect((await svc.getInvoiceFacts("in_1")).nextPaymentAttempt).toBe(1791172800);
   });
 });
+
+describe("StripeService.listInvoiceItems", () => {
+  it("lists one invoice's items (the catch-up stub is found by its metadata tag)", async () => {
+    const list = jest.fn(async () => ({
+      data: [{ id: "ii_1", metadata: { catchup_for: "cs_1" } }],
+    }));
+    const svc = new StripeService({ get: () => undefined } as never);
+    (svc as any).stripe = { invoiceItems: { list } };
+    const items = await svc.listInvoiceItems("in_1");
+    expect(list).toHaveBeenCalledWith({ invoice: "in_1", limit: 100 });
+    expect(items[0].metadata.catchup_for).toBe("cs_1");
+  });
+});
