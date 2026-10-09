@@ -17,7 +17,6 @@ import {
   Search,
   RotateCcw,
   Trash2,
-  Truck,
   Calendar,
   Download,
   Printer,
@@ -98,10 +97,13 @@ import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
 import { PickupHandOverButton, PickupHandOverDialog } from "./_components/PickupHandOver";
 import {
+  ConfirmedPrimaryAction,
+  OutForDeliveryPrimary,
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
 } from "./_components/PosOrderActions";
+import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
@@ -2647,47 +2649,15 @@ export default function OrderDetailPage() {
                   Publish Order
                 </Button>
               </ActionTier>
-              <ActionTier tier="danger">
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Draft deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
-                    >
-                      Confirm Delete
-                    </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete Draft
-                  </Button>
-                )}
-              </ActionTier>
+              <DeleteOrderTier
+                orderId={order.id}
+                deleteOrder={deleteOrder}
+                open={showDeleteConfirm}
+                setOpen={setShowDeleteConfirm}
+                idleLabel="Delete Draft"
+                successTitle="Draft deleted"
+                errorText={orderErrorText}
+              />
             </>
           )}
 
@@ -2776,28 +2746,12 @@ export default function OrderDetailPage() {
           {access.staff && localStatus === "CONFIRMED" && !isEditing && (
             <>
               {!isPos && (
-                <ActionTier tier="primary">
-                  <div className="flex flex-col items-start gap-1">
-                    <Button
-                      size="sm"
-                      variant={orderUiV2.enabled ? undefined : "secondary"}
-                      leftIcon={<Truck className="h-4 w-4" />}
-                      onClick={handleMarkShipped}
-                      loading={updateStatus.isPending}
-                    >
-                      {order.fulfillPath === "SHIP"
-                        ? "Mark shipped"
-                        : order.fulfillPath === "PICKUP"
-                          ? "Ready for pickup"
-                          : "Out for Delivery"}
-                    </Button>
-                    {order.fulfillPath === "SHIP" && (
-                      <p className="text-[11px] text-navy/50">
-                        {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
-                      </p>
-                    )}
-                  </div>
-                </ActionTier>
+                <ConfirmedPrimaryAction
+                  fulfillPath={order.fulfillPath}
+                  v2={orderUiV2.enabled}
+                  onMarkShipped={handleMarkShipped}
+                  pending={updateStatus.isPending}
+                />
               )}
               {order.fulfillPath === "PICKUP" && !isPos && (
                 <ActionTier tier="secondary">
@@ -2833,23 +2787,13 @@ export default function OrderDetailPage() {
           {/* OUT_FOR_DELIVERY actions */}
           {access.staff && localStatus === "OUT_FOR_DELIVERY" && (
             <>
-              <ActionTier tier="primary">
-                {order.fulfillPath === "PICKUP" ? (
-                  <PickupHandOverButton
-                    onOpen={() => setPickupOpen(true)}
-                    label={isPos ? "Hand over" : undefined}
-                  />
-                ) : (
-                  <Button
-                    size="sm"
-                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                    onClick={handleDeliver}
-                    loading={updateStatus.isPending}
-                  >
-                    {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
-                  </Button>
-                )}
-              </ActionTier>
+              <OutForDeliveryPrimary
+                fulfillPath={order.fulfillPath}
+                handOverLabel={isPos ? "Hand over" : undefined}
+                onHandOver={() => setPickupOpen(true)}
+                onDeliver={handleDeliver}
+                pending={updateStatus.isPending}
+              />
               <ActionTier tier="secondary">
                 <Button
                   size="sm"
@@ -2930,55 +2874,21 @@ export default function OrderDetailPage() {
                   Reopen Order
                 </Button>
               </ActionTier>
-              <ActionTier tier="danger">
-                {showDeleteConfirm ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-danger font-medium">Delete order?</span>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      loading={deleteOrder.isPending}
-                      onClick={() => {
-                        deleteOrder.mutate(order.id, {
-                          onSuccess: () => {
-                            toast({ title: "Order deleted", variant: "success" });
-                            router.push("/orders");
-                          },
-                          onError: (e) => {
-                            toast({ title: orderErrorText(e), variant: "error" });
-                            setShowDeleteConfirm(false);
-                          },
-                        });
-                      }}
-                    >
-                      Confirm Delete
-                    </Button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(false)}
-                      className="text-sm text-navy/70 hover:text-navy transition-colors"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setShowDeleteConfirm(true)}
-                  >
-                    Delete
-                  </Button>
-                )}
-              </ActionTier>
+              <DeleteOrderTier
+                orderId={order.id}
+                deleteOrder={deleteOrder}
+                open={showDeleteConfirm}
+                setOpen={setShowDeleteConfirm}
+                idleLabel="Delete"
+                successTitle="Order deleted"
+                errorText={orderErrorText}
+              />
             </>
           )}
         </div>
       </div>
 
-      {isPos && access.staff && !["DRAFT", "CANCELLED"].includes(localStatus) && (
-        <PosProgress order={order} status={localStatus} />
-      )}
+      {isPos && access.staff && <PosProgress order={order} status={localStatus} />}
 
       {/* B1135: a customer's way forward on an order that has shipped (no change request exists for it). */}
       {access.shippedExits && <ShippedOrderExits />}

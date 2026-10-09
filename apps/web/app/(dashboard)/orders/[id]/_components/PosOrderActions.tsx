@@ -7,7 +7,9 @@ import type { Order } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { POS_COPY } from "@/lib/pos-copy";
+import { useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { ActionTier } from "./ActionTier";
+import { PickupHandOverButton } from "./PickupHandOver";
 
 type PosOrder = Pick<Order, "invoices">;
 
@@ -19,6 +21,7 @@ const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.s
  * step: hand-over IS the completion. The invoice step reads "(draft)" until every invoice has been issued.
  */
 export function PosProgress({ order, status }: { order: PosOrder; status: string }) {
+  if (status === "DRAFT" || status === "CANCELLED") return null;
   const invoices = invoicesOf(order);
   const confirmed =
     status === "CONFIRMED" || status === "OUT_FOR_DELIVERY" || status === "DELIVERED";
@@ -192,5 +195,76 @@ export function PosCutAfterHandOverNote() {
     >
       {POS_COPY.cutAfterHandOver}
     </p>
+  );
+}
+
+/** CONFIRMED primary of a non-POS order: Out for Delivery / Mark shipped / Ready for pickup (moved out of page.tsx). */
+export function ConfirmedPrimaryAction({
+  fulfillPath,
+  v2,
+  onMarkShipped,
+  pending,
+}: {
+  fulfillPath: string;
+  v2: boolean;
+  onMarkShipped: () => void;
+  pending: boolean;
+}) {
+  const statusLabel = useOrderStatusLabel();
+  return (
+    <ActionTier tier="primary">
+      <div className="flex flex-col items-start gap-1">
+        <Button
+          size="sm"
+          variant={v2 ? undefined : "secondary"}
+          leftIcon={<Truck className="h-4 w-4" />}
+          onClick={onMarkShipped}
+          loading={pending}
+        >
+          {fulfillPath === "SHIP"
+            ? "Mark shipped"
+            : fulfillPath === "PICKUP"
+              ? "Ready for pickup"
+              : "Out for Delivery"}
+        </Button>
+        {fulfillPath === "SHIP" && (
+          <p className="text-[11px] text-navy/50">
+            {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", fulfillPath as "SHIP")} — the customer is notified it's on the way.`}
+          </p>
+        )}
+      </div>
+    </ActionTier>
+  );
+}
+
+/** OUT_FOR_DELIVERY primary: the hand-over for PICKUP, otherwise Mark (as) Delivered (moved out of page.tsx). */
+export function OutForDeliveryPrimary({
+  fulfillPath,
+  handOverLabel,
+  onHandOver,
+  onDeliver,
+  pending,
+}: {
+  fulfillPath: string;
+  handOverLabel?: string;
+  onHandOver: () => void;
+  onDeliver: () => void;
+  pending: boolean;
+}) {
+  return (
+    <ActionTier tier="primary">
+      {fulfillPath === "PICKUP" ? (
+        <PickupHandOverButton onOpen={onHandOver} label={handOverLabel} />
+      ) : (
+        <Button
+          size="sm"
+          leftIcon={<CheckCircle2 className="h-4 w-4" />}
+          onClick={onDeliver}
+          loading={pending}
+        >
+          {fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+        </Button>
+      )}
+    </ActionTier>
   );
 }
