@@ -13,6 +13,7 @@ jest.mock("../common/db-locks", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { Logger } from "@nestjs/common";
+import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
@@ -1594,6 +1595,209 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     // (or 400) the caller — it reports itself as unsynced.
     expect(result).toEqual({ synced: false, reason: "price_unresolvable" });
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  // SA-733 D8 / M7: the push takes an explicit proration mode, carries a deterministic idempotency key, never
+  // skips a live past_due / unpaid subscription, and hands back what it needs to be undone.
+  describe("SA-733 D8/M7 — effective mode, idempotency key, live statuses", () => {
+    const liveSub = (status: string, priceId = "price_old") => ({
+      status,
+      items: {
+        data: [
+          {
+            id: "si_1",
+            price: {
+              id: priceId,
+              unit_amount: 10000,
+              recurring: { interval: "month" },
+              product: "prod_1",
+            },
+          },
+        ],
+      },
+    });
+    const arrange = (status = "active") => {
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        stripeSubId: "sub_1",
+        billingInterval: "month",
+        planKey: "GROWTH",
+        basePriceSnapshot: 150,
+        tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+      });
+      stripe.getSubscription.mockResolvedValue(liveSub(status));
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "RouteFlow Growth — monthly" },
+        unit_amount: 15000,
+        recurring: { interval: "month" },
+      });
+    };
+
+    it("now_prorated sends create_prorations; next_cycle and the default send none", async () => {
+      arrange();
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      await service.syncStripeSubscriptionPrice("t1", { effective: "next_cycle" });
+      await service.syncStripeSubscriptionPrice("t1");
+      const modes = stripe.updateSubscription.mock.calls.map((c) => c[1].proration_behavior);
+      expect(modes).toEqual(["create_prorations", "none", "none"]);
+    });
+
+    it("a proposed override prices the push (checkoutPriceData gets it); no proposal leaves the call as before", async () => {
+      arrange();
+      const proposed = { monthly: 150, annual: null };
+      await service.syncStripeSubscriptionPrice("t1", { proposed });
+      expect(pricing.checkoutPriceData).toHaveBeenLastCalledWith("t1", "month", proposed);
+      await service.syncStripeSubscriptionPrice("t1");
+      expect(pricing.checkoutPriceData).toHaveBeenLastCalledWith("t1", "month");
+    });
+
+    it("every Stripe update carries an idempotency key: tenant, price-override, cents, effective, row version, item price", async () => {
+      arrange();
+      const version = new Date("2026-10-01T12:00:00.000Z");
+      await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated", version });
+      const [, , options] = stripe.updateSubscription.mock.calls[0];
+      expect(options).toEqual({
+        idempotencyKey: `t1:price-override:15000:now_prorated:v${version.getTime()}:price_old`,
+      });
+    });
+
+    it("the key differs for a different amount, mode or row version — a later change is never swallowed", async () => {
+      arrange();
+      const keys: string[] = [];
+      const run = async (opts: any, cents = 15000) => {
+        pricing.checkoutPriceData.mockResolvedValue({
+          currency: "usd",
+          product_data: { name: "x" },
+          unit_amount: cents,
+          recurring: { interval: "month" },
+        });
+        await service.syncStripeSubscriptionPrice("t1", opts);
+        keys.push(stripe.updateSubscription.mock.calls.at(-1)![2].idempotencyKey);
+      };
+      await run({ version: new Date(1000) });
+      await run({ version: new Date(1000) }); // an identical retry repeats the key
+      await run({ version: new Date(2000) });
+      await run({ version: new Date(1000), effective: "now_prorated" });
+      await run({ version: new Date(1000) }, 16000);
+      expect(keys[0]).toBe(keys[1]);
+      expect(new Set(keys).size).toBe(4);
+    });
+
+    it("the amount sent is whole cents from the shared helper (19.99 dollars -> 1999)", async () => {
+      arrange();
+      pricing.checkoutPriceData.mockResolvedValue({
+        currency: "usd",
+        product_data: { name: "x" },
+        unit_amount: toCents(19.99),
+        recurring: { interval: "month" },
+      });
+      await service.syncStripeSubscriptionPrice("t1");
+      const item = stripe.updateSubscription.mock.calls[0][1].items[0];
+      expect(item.price_data.unit_amount).toBe(1999);
+    });
+
+    it.each(["past_due", "unpaid"])(
+      "M7: a %s subscription is repriced, and takes the change at the NEXT invoice even for now_prorated",
+      async (status) => {
+        arrange(status);
+        const result = await service.syncStripeSubscriptionPrice("t1", {
+          effective: "now_prorated",
+        });
+        expect(result.synced).toBe(true);
+        expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+        expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe("none");
+        expect(result.proration).toBe("none");
+      },
+    );
+
+    it("M7: a trialing subscription is repriced and still honours now_prorated", async () => {
+      arrange("trialing");
+      const result = await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      expect(result.synced).toBe(true);
+      expect(stripe.updateSubscription.mock.calls[0][1].proration_behavior).toBe(
+        "create_prorations",
+      );
+    });
+
+    it.each(["canceled", "incomplete", "incomplete_expired", "paused"])(
+      "M7 pin: a %s subscription is not live — nothing is sent to Stripe",
+      async (status) => {
+        arrange(status);
+        const result = await service.syncStripeSubscriptionPrice("t1");
+        expect(result).toEqual({ synced: false, reason: `subscription_not_active_${status}` });
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      },
+    );
+
+    it("M7 pin: a manual-pay tenant (no stripeSubId) never reaches Stripe", async () => {
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        stripeSubId: null,
+        billingInterval: "month",
+      });
+      const result = await service.syncStripeSubscriptionPrice("t1", { effective: "now_prorated" });
+      expect(result).toEqual({ synced: false, reason: "no_active_stripe_subscription" });
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it("a Stripe update failure is reported as stripe_update_failed (the caller refuses the local write)", async () => {
+      arrange();
+      stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
+      const result = await service.pushResolvedPriceToStripe("t1");
+      expect(result).toEqual({ synced: false, reason: "stripe_update_failed" });
+    });
+
+    it("hands back an undo; revertPricePush restores the previous cents with the same proration under a :revert key", async () => {
+      arrange();
+      const pushed = await service.pushResolvedPriceToStripe("t1", { effective: "now_prorated" });
+      expect(pushed.undo).toMatchObject({
+        subscriptionId: "sub_1",
+        itemId: "si_1",
+        productId: "prod_1",
+        previousCents: 10000,
+        proration: "create_prorations",
+      });
+      stripe.updateSubscription.mockClear();
+      expect(await service.revertPricePush("t1", pushed.undo!)).toBe(true);
+      const [subId, params, options] = stripe.updateSubscription.mock.calls[0];
+      expect(subId).toBe("sub_1");
+      expect(params.proration_behavior).toBe("create_prorations");
+      expect(params.items[0]).toEqual({
+        id: "si_1",
+        price_data: {
+          currency: "usd",
+          unit_amount: 10000,
+          recurring: { interval: "month" },
+          product: "prod_1",
+        },
+      });
+      expect(options.idempotencyKey).toBe(`${pushed.undo!.key}:revert`);
+    });
+
+    it("revertPricePush reports false (and does not throw) when the revert itself fails", async () => {
+      arrange();
+      const pushed = await service.pushResolvedPriceToStripe("t1");
+      stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
+      expect(await service.revertPricePush("t1", pushed.undo!)).toBe(false);
+    });
+
+    it("{ pushed } skips the Stripe half: only the ledger reconciles", async () => {
+      arrange();
+      prisma.tenantSubscription.findUnique.mockResolvedValue({
+        tenantId: "t1",
+        planKey: "GROWTH",
+        basePriceSnapshot: 100, // resolved monthly is 150 -> the ledger half moves it
+        tenant: { status: "ACTIVE", deletedAt: null, class: "PRODUCTION" },
+      });
+      await service.syncStripeSubscriptionPrice("t1", {
+        pushed: { synced: true, oldAmount: 100, newAmount: 150 },
+      });
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.updateMany).toHaveBeenCalled();
+    });
   });
 
   // #2509: reconcilePriceLedger is ONE transaction — read, compare-and-set on the (planKey, snapshot) it

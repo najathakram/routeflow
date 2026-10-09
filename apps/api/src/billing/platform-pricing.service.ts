@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
+import type { ProposedOverride } from "./price-override";
 
 export type PricingSource = "override" | "catalog";
 
@@ -62,9 +63,21 @@ export class PlatformPricingService {
     return this.resolve(tenantId, true);
   }
 
+  /**
+   * D8 / Stripe-first: the price the tenant WOULD resolve to if its override columns held
+   * `proposed` (null = cleared) — read before the override is written, so Stripe can be updated first.
+   */
+  async resolveTenantPricingWith(
+    tenantId: string,
+    proposed: ProposedOverride,
+  ): Promise<ResolvedTenantPricing> {
+    return this.resolve(tenantId, false, proposed);
+  }
+
   private async resolve(
     tenantId: string,
     ignoreOverrides: boolean,
+    proposed?: ProposedOverride,
   ): Promise<ResolvedTenantPricing> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -91,8 +104,16 @@ export class PlatformPricingService {
     const definition = findPlanDefinition(version.definitions, planKey);
     const planName = definition?.name ?? planKey;
 
-    const overrideMonthly = ignoreOverrides ? null : tenant.subscription?.priceOverrideMonthly;
-    const overrideAnnual = ignoreOverrides ? null : tenant.subscription?.priceOverrideAnnual;
+    const overrideMonthly = ignoreOverrides
+      ? null
+      : proposed
+        ? proposed.monthly
+        : tenant.subscription?.priceOverrideMonthly;
+    const overrideAnnual = ignoreOverrides
+      ? null
+      : proposed
+        ? proposed.annual
+        : tenant.subscription?.priceOverrideAnnual;
     // `annualPrice` of 0 is a DELIBERATE promotional price (free first year) — test for
     // null, never truthiness, or a 0 silently becomes "10× monthly".
     const catalogMonthly =
@@ -139,8 +160,11 @@ export class PlatformPricingService {
   async checkoutPriceData(
     tenantId: string,
     interval: "month" | "year",
+    proposed?: ProposedOverride,
   ): Promise<CheckoutPriceData> {
-    const pricing = await this.resolveTenantPricing(tenantId);
+    const pricing = proposed
+      ? await this.resolveTenantPricingWith(tenantId, proposed)
+      : await this.resolveTenantPricing(tenantId);
     const amount = interval === "year" ? pricing.annual : pricing.monthly;
     return {
       currency: pricing.currency,
