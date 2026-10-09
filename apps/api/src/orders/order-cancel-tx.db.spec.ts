@@ -41,6 +41,14 @@ describeDb("SA-762r F5: office cancel of a CONFIRMED order, real Postgres", () =
       {},
       { get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()) },
     );
+    // Fire-and-forget collaborators of changeStatus: every method is an async no-op.
+    const quiet = new Proxy(
+      {},
+      {
+        get: (_t, prop) =>
+          prop === "then" || typeof prop === "symbol" ? undefined : async () => undefined,
+      },
+    );
     const creditNotes = new CreditNotesService(
       prisma,
       anyMethod as any,
@@ -63,6 +71,9 @@ describeDb("SA-762r F5: office cancel of a CONFIRMED order, real Postgres", () =
       gateway: anyMethod,
       authGuard: anyMethod,
       sellingRestrictions: anyMethod,
+      // changeStatus notifies the customer after the commit (fire-and-forget).
+      notifications: quiet,
+      messaging: quiet,
       logger: new Logger("b762c-orders"),
     });
   });
