@@ -187,7 +187,8 @@
 //                    not offer is 400 FULFIL_METHOD_NOT_OFFERED.
 //   B1043 (invoice header-only PATCH, discount or shippingFee without items) — 409 INVOICE_TAX_STATE_STALE: the invoice's stored subtotal or
 //                    tax does not match its lines, so the discount/shipping change cannot be priced safely; nothing is written; re-save the
-//                    invoice lines. Body {code, message}.
+//                    invoice lines. 409 INVOICE_TOTAL_BELOW_PAID (B1046): the edit would take a DRAFT's total below the amount already paid
+//                    or credited against it. Body {code, message}.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -248,6 +249,7 @@ export const API_ERROR_CODES = {
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
+  INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
   PRICE_ADJUSTMENT_OVERPAYS: "PRICE_ADJUSTMENT_OVERPAYS",
   PRICE_ADJUSTMENT_REFUSED: "PRICE_ADJUSTMENT_REFUSED",

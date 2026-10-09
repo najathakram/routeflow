@@ -306,6 +306,7 @@ describe("genericToastCopy: codes users rely on", () => {
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
       ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
+      ["INVOICE_TOTAL_BELOW_PAID", /total below what is already paid or credited/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);
@@ -465,6 +466,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "CHANGE_REQUEST_PACK_CHANGED",
     "INVOICE_CHANGED_CONCURRENTLY",
     "INVOICE_TAX_STATE_STALE",
+    "INVOICE_TOTAL_BELOW_PAID",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

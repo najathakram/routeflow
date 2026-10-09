@@ -178,6 +178,7 @@ import {
   zeroExemptCategoryTax,
 } from "./manual-invoice-context";
 import {
+  assertNotOverpaidByEdit,
   assertStillDraft,
   loadLockedInvoiceForEdit,
   planHeaderOnlyTotals,
@@ -3167,6 +3168,7 @@ export class InvoicesService {
           { discount: invDiscount, subtotal, total },
           storedInvoiceTotals(cur),
         ); // B1030 / SA-651: not worse than stored, before any write
+        assertNotOverpaidByEdit(locked.payments, total, cur.total); // B1046
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3285,6 +3287,7 @@ export class InvoicesService {
             { discount: totals.discount, subtotal, total: totals.total },
             storedInvoiceTotals(locked.invoice),
           ); // B1030 / SA-651
+          assertNotOverpaidByEdit(locked.payments, totals.total, locked.invoice.total); // B1046
           return tx.invoice.update({ where: { id }, data: { ...headerData, ...totals }, include });
         });
     // Backward sync: discount/shipping changes alter the order total too (lines unchanged: no ledger resync).

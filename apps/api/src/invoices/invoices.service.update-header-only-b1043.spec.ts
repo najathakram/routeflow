@@ -298,4 +298,51 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       expect(recompute).not.toHaveBeenCalled();
     });
   });
+
+  describe("B1046 - a DRAFT with applied credit cannot be discounted below what is already paid", () => {
+    const paid = [{ id: "p1", amount: 50, status: "PAID" }];
+
+    it("discount 70 on a $100 invoice with $50 of confirmed credit -> 409, nothing written", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()], { payments: paid });
+      await expect(service.update("inv-1", { discount: 70 })).rejects.toMatchObject({
+        status: 409,
+        response: { code: "INVOICE_TOTAL_BELOW_PAID" },
+      });
+      nothingWritten();
+    });
+
+    it("control: a discount that leaves the total at the paid amount saves (paid == total is not an overpayment)", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()], { payments: paid });
+      await service.update("inv-1", { discount: 50 });
+      expect(written().total).toBe(50);
+    });
+
+    it("not worse: an invoice ALREADY overpaid may still be saved when the edit does not deepen it", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 40, discount: 60 }, [row()], {
+        payments: paid,
+      });
+      await service.update("inv-1", { shippingFee: 5 });
+      expect(written().total).toBe(45);
+    });
+
+    it("an unconfirmed (pending) payment is not paid money", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()], {
+        payments: [{ id: "p2", amount: 90, status: "PENDING" }],
+      });
+      await service.update("inv-1", { discount: 70 });
+      expect(written().total).toBe(30);
+    });
+
+    it("the items rewrite is held to the same rule: lines edited down below the credit are refused", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row({ id: "item-1" })], {
+        payments: paid,
+      });
+      await expect(
+        service.update("inv-1", {
+          items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 20 }],
+        }),
+      ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_TOTAL_BELOW_PAID" } });
+      nothingWritten();
+    });
+  });
 });

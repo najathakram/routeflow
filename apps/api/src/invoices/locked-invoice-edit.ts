@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { sumConfirmed } from "./payment-predicates";
 
 /**
  * B1043 (SA-742r2 INV-A): the ONE locked read both branches of `InvoicesService.update()` start from,
@@ -22,6 +23,8 @@ export interface LockedInvoiceForEdit {
   storedRows: any[];
   /** The customer's tax exemption, read in the same transaction. */
   isTaxExempt: boolean;
+  /** Its payment rows (amount + status), read under the lock for the B1046 overpayment guard. */
+  payments: Array<{ amount: unknown; status: unknown }>;
 }
 
 /**
@@ -60,7 +63,11 @@ export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<Loc
     where: { id: invoice.customerId },
     select: { isTaxExempt: true },
   });
-  return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt };
+  const payments = await tx.invoicePayment.findMany({
+    where: { invoiceId: id },
+    select: { amount: true, status: true },
+  });
+  return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt, payments: payments ?? [] };
 }
 
 /** r87: the unlocked pre-read said DRAFT; the lock says whether it still is (a send can commit in between). */
@@ -98,4 +105,25 @@ export function planHeaderOnlyTotals(
     });
   }
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal };
+}
+
+/**
+ * B1046: an edit must not take a DRAFT's total below what is already paid or credited against it
+ * (CONFIRMED payments, the basis the status recompute uses). NOT-WORSE (like assertInvoiceTotalsSane): an
+ * invoice that is ALREADY overpaid may still be saved while the edit does not deepen the overpayment.
+ */
+export function assertNotOverpaidByEdit(
+  payments: ReadonlyArray<{ amount: unknown; status: unknown }> | null | undefined,
+  newTotal: number,
+  storedTotal: unknown,
+): void {
+  const paid = roundMoney(sumConfirmed(payments as any));
+  if (paid <= 0) return;
+  const over = (total: number) => Math.max(0, roundMoney(paid - roundMoney(total)));
+  if (over(newTotal) > over(Number(storedTotal))) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID,
+      message: `This change would take the invoice total ($${roundMoney(newTotal).toFixed(2)}) below the $${paid.toFixed(2)} already paid or credited. Remove the credit first or use a smaller discount.`,
+    });
+  }
 }
