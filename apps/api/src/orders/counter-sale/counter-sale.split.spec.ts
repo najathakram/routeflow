@@ -633,4 +633,174 @@ describe("CounterSaleService.ring: split payments", () => {
       ]);
     });
   });
+
+  describe("response: per-leg payments[] and change, POST and GET by-key (tests 10, web contract 2-3)", () => {
+    const body = [
+      { method: "CARD", amount: 30, reference: "auth-1" },
+      { method: "CASH", amount: 50 },
+    ];
+    const SALE = {
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      fulfillPath: "PICKUP",
+      skipAutoMerge: true,
+      counterSale: true,
+      status: "DELIVERED",
+      customerId: "cust-walkin",
+    };
+
+    it("POST card 30 + cash 50 on a 70 sale: the exact JSON (top-level method/paymentId are leg 0; amounts are RECORDED)", async () => {
+      const r = await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      expect(r).toEqual({
+        orderId: "ord-1",
+        orderNumber: "ORD-1",
+        invoiceId: "inv-1",
+        invoiceNumber: "N-inv-1",
+        total: 70,
+        paid: 70,
+        balanceDue: 0,
+        change: 10,
+        paymentId: "pay-1",
+        payments: [
+          { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+          { method: "CASH", amount: 40, paymentIds: ["pay-2"] },
+        ],
+        method: "CARD",
+        paymentRecorded: true,
+      });
+    });
+
+    it("a replay of the same split answers the identical body (+ replayed:true), change included", async () => {
+      const first = await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      replay = true;
+      const again = await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      expect(again).toEqual({ ...first, replayed: true });
+    });
+
+    it("a split across two invoices: each leg's rows are listed under that leg", async () => {
+      invoices = [inv("inv-1", 50, 1), inv("inv-2", 20, 2)];
+      const r = await service.ring(walkInSale({ payments: body }), staff);
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+        { method: "CASH", amount: 40, paymentIds: ["pay-2", "pay-3"] },
+      ]);
+      expect(r.paymentId).toBe("pay-1");
+    });
+
+    it("GET by-key (the screen's ?method=<leg 0 method>) returns the grouped legs of a split sale, not just leg 0", async () => {
+      await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE);
+      const r = await service.byKey("key-1", "CARD");
+      expect(r).toMatchObject({
+        method: "CARD",
+        paymentId: "pay-1",
+        paid: 70,
+        balanceDue: 0,
+        paymentRecorded: true,
+        replayed: true,
+        payments: [
+          { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+          { method: "CASH", amount: 40, paymentIds: ["pay-2"] },
+        ],
+      });
+      // cash handed over is not stored: by-key never invents a change figure
+      expect(r.change).toBeUndefined();
+    });
+
+    it("GET by-key without ?method derives every leg and leg 0's method from storage", async () => {
+      await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE);
+      const r = await service.byKey("key-1");
+      expect(r.method).toBe("CARD");
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+        { method: "CASH", amount: 40, paymentIds: ["pay-2"] },
+      ]);
+    });
+
+    it("change is present when card is leg 0 and cash is leg 1 (today it needed the TOP-LEVEL method to be CASH)", async () => {
+      const r = await service.ring(walkInSale({ payments: body }), staff);
+      expect(r.method).toBe("CARD");
+      expect(r.change).toBe(10);
+    });
+
+    it("an office CASH payment on the same invoice is not the cash leg's: change is the cash leg's own rows only", async () => {
+      // 100 sale: card 30 + cash 50 were taken (balance 20); the office then took 20 cash on the invoice (no group id).
+      // The till replays with cash 60 handed over: 50 is the cash leg's, so 10 goes back. Counting the office's
+      // cash as this leg's (every CASH row on the invoice) would read "70 paid in cash" and give no change.
+      invoices = [
+        inv("inv-1", 100, 1, [
+          {
+            id: "p0",
+            amount: 30,
+            method: "CREDIT_CARD",
+            status: "PAID",
+            paymentGroupId: legGroupId("ord-1", 0),
+          },
+          {
+            id: "p1",
+            amount: 50,
+            method: "CASH",
+            status: "PAID",
+            paymentGroupId: legGroupId("ord-1", 1),
+          },
+          { id: "office", amount: 20, method: "CASH", status: "PAID", paymentGroupId: null },
+        ]),
+      ];
+      replay = true;
+      const r = await service.ring(
+        named({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 60 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ paid: 100, balanceDue: 0, change: 10, paymentRecorded: true });
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 30, paymentIds: ["p0"] },
+        { method: "CASH", amount: 50, paymentIds: ["p1"] },
+      ]);
+    });
+
+    it("no change while the stored balance is not covered (a named customer's part-pay)", async () => {
+      const r = await service.ring(
+        named({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 10 },
+          ],
+        }),
+        staff,
+      );
+      expect(r.change).toBeUndefined();
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+        { method: "CASH", amount: 10, paymentIds: ["pay-2"] },
+      ]);
+    });
+
+    it("a refused split still names its legs, each with amount 0 and no rows", async () => {
+      invoices = [
+        inv("inv-1", 70, 1, [
+          { id: "cn-1", amount: 50, method: "CREDIT_NOTE", status: "PAID", paymentGroupId: null },
+        ]),
+      ];
+      const r = await service.ring(named({ payments: body }), staff);
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 0, paymentIds: [] },
+        { method: "CASH", amount: 0, paymentIds: [] },
+      ]);
+      expect(r.paymentId).toBeUndefined();
+    });
+
+    it("ON_ACCOUNT is not a tender: no payments line", async () => {
+      const r = await service.ring(named({ payment: { method: "ON_ACCOUNT" } }), staff);
+      expect(r.payments).toBeUndefined();
+      expect(r.method).toBe("ON_ACCOUNT");
+    });
+  });
 });

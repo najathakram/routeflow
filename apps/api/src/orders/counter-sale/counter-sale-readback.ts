@@ -1,6 +1,10 @@
 import { InternalServerErrorException } from "@nestjs/common";
 import { roundMoney, sumConfirmed } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
+import type {
+  CounterSalePaymentMethod,
+  CounterSaleResponse,
+  CounterSaleTenderLine,
+} from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterLegInput } from "./counter-sale-legs";
 import { isTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
@@ -88,6 +92,21 @@ export function buildCounterSaleResponse(input: {
     if (owed > 0) change = owed;
   }
 
+  // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
+  // and the rows that hold it. A request leg that recorded nothing (refused, or ON_ACCOUNT) reads amount 0.
+  const legCount = Math.max(legs?.length ?? 0, ...[...stored.byLeg.keys()].map((i) => i + 1));
+  const lines: CounterSaleTenderLine[] = [];
+  for (let i = 0; i < legCount; i++) {
+    const rows = stored.byLeg.get(i) ?? [];
+    const lineMethod = legs?.[i]?.method ?? counterMethodOf(rows[0]?.payment.method);
+    if (!lineMethod || lineMethod === "ON_ACCOUNT") continue; // ON_ACCOUNT takes no money: no line
+    lines.push({
+      method: lineMethod,
+      amount: roundMoney(sumConfirmed(rows.map((r) => r.payment))),
+      paymentIds: rows.map((r) => r.payment.id),
+    });
+  }
+
   return {
     orderId: order.id,
     orderNumber: order.orderNumber ?? "",
@@ -98,6 +117,7 @@ export function buildCounterSaleResponse(input: {
     balanceDue,
     ...(change != null ? { change } : {}),
     ...(legZeroRow ? { paymentId: legZeroRow.payment.id } : {}),
+    ...(lines.length > 0 ? { payments: lines } : {}),
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     ...(!settled

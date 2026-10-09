@@ -545,6 +545,7 @@ describe("CounterSaleService.ring", () => {
         balanceDue: 0,
         change: 12.75,
         paymentId: "pay-inv-1",
+        payments: [{ method: "CASH", amount: 37.25, paymentIds: ["pay-inv-1"] }],
         method: "CASH",
         paymentRecorded: true,
       });
@@ -958,6 +959,7 @@ describe("CounterSaleService.ring", () => {
         paid: 37.25,
         balanceDue: 0,
         paymentId: "p0",
+        payments: [{ method: "CASH", amount: 37.25, paymentIds: ["p0"] }],
         method: "CASH",
         paymentRecorded: true,
         replayed: true,
