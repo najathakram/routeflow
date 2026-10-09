@@ -30,6 +30,8 @@ import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
+import { StripeService } from "../billing/stripe.service";
+import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -217,6 +219,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: TenantMirrorService, useValue: tenantMirror },
         { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PlanTransitionConfigService, useValue: planTransition },
+        { provide: StripeService, useValue: { isConfigured: false } },
       ],
     }).compile();
 
@@ -1550,6 +1553,196 @@ describe("PlatformAdminService — audit provenance", () => {
         expect(result.downgradeToPlanKey).toBeUndefined();
       },
     );
+  });
+
+  // SA-733 D8 / SA-733r [M7] (B1104 + B1103): the admin plan edit reaches Stripe like the tenant upgrade does —
+  // Stripe-first, one update, the override beating the plan price, the included add-ons retired.
+  describe("updatePlan — Stripe-first plan change (SA-733 D8)", () => {
+    const periodStart = new Date("2026-09-01T00:00:00Z");
+    const periodEnd = new Date("2026-10-01T00:00:00Z");
+    const ITEM = (id: string, cents: number, product: string, quantity = 1) => ({
+      id,
+      quantity,
+      price: { unit_amount: cents, currency: "usd", recurring: { interval: "month" }, product },
+    });
+    let stripe: any;
+
+    function arrange(opts: {
+      from: string;
+      fromKey: string;
+      status?: string;
+      sub?: Record<string, unknown>;
+      addons?: any[];
+    }) {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: opts.from,
+        status: opts.status ?? "ACTIVE",
+      } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [
+          { planKey: "STARTER", name: "Starter", monthlyPrice: 99 },
+          { planKey: "GROWTH", name: "Growth", monthlyPrice: 249 },
+          { planKey: "SCALE", name: "Scale", monthlyPrice: 499 },
+        ],
+        addonSkus: [
+          { sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25, includedAtPlan: "SCALE" },
+        ],
+      });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: opts.fromKey,
+        basePriceSnapshot: 249,
+        priceOverrideMonthly: null,
+        priceOverrideAnnual: null,
+        stripeSubId: "sub_1",
+        externalPayment: false,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: false,
+        ...(opts.sub ?? {}),
+      });
+      (prisma as any).tenantAddon.findMany.mockResolvedValue(opts.addons ?? []);
+      // emitAddonDelta's paying-set read, under the tenant lock, after the plan write.
+      (prisma.tenant as any).findUniqueOrThrow = jest.fn().mockResolvedValue({
+        status: opts.status ?? "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      });
+      stripe = fakeStripeSubscription([
+        ITEM("si_base", 24900, "prod_growth"),
+        ITEM("si_fc", 2500, "prod_fc"),
+      ]);
+      (service as any).stripe = stripe;
+    }
+    const forecasting = {
+      id: "ta_fc",
+      addonKey: "FORECASTING",
+      sku: "FORECASTING",
+      quantity: 1,
+      priceSnapshot: 25,
+      stripeItemId: "si_fc",
+      isComp: false,
+      active: true,
+    };
+
+    it("runs under the tenant-price advisory lock (the family the price override takes), keyed on the tenant", async () => {
+      const { withAdvisoryLock } = jest.requireMock("../common/db-locks");
+      withAdvisoryLock.mockClear();
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(withAdvisoryLock).toHaveBeenCalledWith(
+        { family: "tenant-price", key: TENANT_ID, mode: "wait" },
+        expect.any(Function),
+      );
+    });
+
+    it("an UPGRADE on a Stripe tenant pushes the new plan price with create_prorations, once, before the local write", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const [subId, params, opts] = stripe.updateSubscription.mock.calls[0];
+      expect(subId).toBe("sub_1");
+      expect(params.proration_behavior).toBe("create_prorations");
+      expect(params.items[0]).toMatchObject({
+        id: "si_base",
+        price_data: { unit_amount: 49900, product: "prod_scale" },
+      });
+      expect(opts.idempotencyKey).toMatch(/^tenant-1:plan-change:v-9:/);
+    });
+
+    it("the tenant's price override WINS over the plan price", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", sub: { priceOverrideMonthly: 300 } });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
+        30000,
+      );
+    });
+
+    it("the included add-on's Stripe item is deleted in the same update; the row retires and its MRR books -price once", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", addons: [forecasting] });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      expect(stripe.updateSubscription.mock.calls[0][1].items).toContainEqual({
+        id: "si_fc",
+        deleted: true,
+      });
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { active: false, stripeItemId: null },
+      });
+      const addonDeltas = billingEventService.emit.mock.calls.filter(
+        (c: any[]) => c[1] === "addon.disabled",
+      );
+      expect(addonDeltas.map((c: any[]) => c[3].amountDelta)).toEqual([-25]);
+    });
+
+    it("the local compare-and-set losing after Stripe applied puts Stripe back (revert, same key + :revert) and the 409 stands", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      (prisma as any).tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+      const [, , fwd] = stripe.updateSubscription.mock.calls[0];
+      const [, revert, rev] = stripe.updateSubscription.mock.calls[1];
+      expect(rev.idempotencyKey).toBe(`${fwd.idempotencyKey}:revert`);
+      expect(revert.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
+    });
+
+    it("re-saving the plan the tenant is already on pushes nothing", async () => {
+      arrange({ from: "PROFESSIONAL", fromKey: "SCALE" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it("an instant (non-ACTIVE) downgrade pushes with proration none, never retiring an add-on", async () => {
+      arrange({
+        from: "PROFESSIONAL",
+        fromKey: "SCALE",
+        status: "READ_ONLY",
+        addons: [forecasting],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      const params = stripe.updateSubscription.mock.calls[0][1];
+      expect(params.proration_behavior).toBe("none");
+      expect(params.items.some((i: any) => i.deleted)).toBe(false);
+      expect((prisma as any).tenantAddon.update).not.toHaveBeenCalled();
+    });
+
+    it("a SCHEDULED downgrade pushes nothing now (the cron pushes at the period end, none)", async () => {
+      arrange({ from: "PROFESSIONAL", fromKey: "SCALE" });
+      await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(stripe.getSubscription).not.toHaveBeenCalled();
+    });
+
+    it("a tenant without a Stripe subscription pushes nothing and still retires the included add-on", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { stripeSubId: null },
+        addons: [{ ...forecasting, stripeItemId: null }],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalled();
+    });
   });
 
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {

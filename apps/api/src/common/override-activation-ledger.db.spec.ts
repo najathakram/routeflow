@@ -177,6 +177,7 @@ describeDb(
           noop, // tenantMirror
           noop, // featureOverrides
           planTransitionStub,
+          noop, // stripe
         );
       platformAdmin = makeAdmin(catalog);
 

@@ -86,6 +86,7 @@ describeDb(
           transactionOptions: () => undefined,
           invalidateCaches: () => undefined,
         } as any,
+        {} as any, // stripe — these tenants carry no stripeSubId
       );
     });
 

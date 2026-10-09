@@ -168,6 +168,7 @@ describeDb(
         noop, // tenantMirror
         noop, // featureOverrides
         planTransitionStub,
+        noop, // stripe
       );
       mutation = new SubscriptionMutationService(
         prisma as any,

@@ -197,13 +197,14 @@ export function upgradeConfirmedTemplate(params: {
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
         <strong>${escapeHtml(params.businessName)}</strong> has upgraded from <strong>${escapeHtml(params.fromPlanName)}</strong> to
-        <strong>${escapeHtml(params.toPlanName)}</strong>. A prorated charge of
-        <strong>${escapeHtml(amount)}</strong> has been applied for the remainder of this billing period.
+        <strong>${escapeHtml(params.toPlanName)}</strong>. We estimate a prorated charge of
+        <strong>${escapeHtml(amount)}</strong> for the remainder of this billing period. The exact amount is
+        calculated by our payment processor and shown on your next invoice.
       </p>
       ${ctaButtonHtml(manageUrl, "View your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\n${params.businessName} has upgraded from ${params.fromPlanName} to ${params.toPlanName}. A prorated charge of ${amount} has been applied for the remainder of this billing period.\n\nView your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\n${params.businessName} has upgraded from ${params.fromPlanName} to ${params.toPlanName}. We estimate a prorated charge of ${amount} for the remainder of this billing period. The exact amount is calculated by our payment processor and shown on your next invoice.\n\nView your plan: ${manageUrl}`;
   return {
     subject: `Upgrade confirmed — ${params.businessName}`,
     html,
