@@ -56,7 +56,7 @@ import {
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
-import { refundTenderData } from "./refund-tender";
+import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
@@ -1403,7 +1403,9 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Only RECEIVED returns can be refunded");
       }
-      return tx.return.findUnique({ where: { id } });
+      // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
+      const row = await tx.return.findUnique({ where: { id } });
+      return row ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) } : row;
     });
   }
 

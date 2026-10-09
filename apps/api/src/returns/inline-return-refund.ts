@@ -273,6 +273,7 @@ export async function loadSourceInvoicesState(
 export function refundSourcesRefusal(
   src: Pick<SourceInvoicesState, "paidInFull" | "paidWithStoreCredit">,
 ): ConflictException | null {
+  if (sourcesAreRefundable(src)) return null; // the ONE predicate (G4): below only chooses WHICH refusal
   if (!src.paidInFull) {
     return new ConflictException({
       code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
@@ -280,14 +281,10 @@ export function refundSourcesRefusal(
         "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead, or cancel the return.",
     });
   }
-  if (src.paidWithStoreCredit) {
-    return new ConflictException({
-      code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
-      message:
-        "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
-    });
-  }
-  return null;
+  return new ConflictException({
+    code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
+    message: "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
+  });
 }
 
 /**

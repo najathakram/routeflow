@@ -211,6 +211,32 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     expect(creditNotesCreate).toHaveBeenCalledTimes(1);
   });
 
+  describe("one tender vocabulary in the response (SA-740r2 item 8)", () => {
+    it("the stored CREDIT_CARD is answered as CARD, like the inline refund; a null stays null", async () => {
+      setReturn();
+      const base = prisma.return.findUnique.getMockImplementation()!;
+      for (const [stored, shown] of [
+        ["CREDIT_CARD", "CARD"],
+        ["CASH", "CASH"],
+        ["CHECK", "CHECK"],
+        [null, null],
+      ] as const) {
+        prisma.return.findUnique.mockImplementation(async (args: any) =>
+          args?.include?.order
+            ? base(args)
+            : {
+                id: "ret-1",
+                status: "REFUNDED",
+                refundMethod: "EXTERNAL_REFUND",
+                refundTender: stored,
+              },
+        );
+        const out: any = await refund({ tender: shown ?? undefined });
+        expect(out.refundTender).toBe(shown);
+      }
+    });
+  });
+
   describe("the tender", () => {
     it.each([
       ["CASH", "CASH"],
