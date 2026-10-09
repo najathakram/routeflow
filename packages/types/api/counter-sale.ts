@@ -155,8 +155,9 @@ export interface TodaysSalesSummary {
   onAccount: number;
   /**
    * Money given back, counted on the day it was given (an earlier day's sale included).
-   * `tenderKnown` is false while the refund tender is not stored: the whole amount then sits in `other`,
-   * cash / card / check are 0 and `cashExpectedInDrawer` does NOT subtract it.
+   * The tender is read from `Return.refundTender`. A refund with no recorded tender sits in `other` and is NOT subtracted
+   * from `cashExpectedInDrawer`; `tenderKnown` is false while ANY refund in the window has no recorded tender (true when
+   * every refund has one, and for a window with no refund at all).
    */
   refunds: {
     count: number;

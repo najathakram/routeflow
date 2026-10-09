@@ -296,6 +296,18 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     });
   });
 
+  it("SA-740r2 (test 11): the window's returns are read tenant-scoped WITH their refundTender column and nothing from the audit log", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const args = prisma.return.findMany.mock.calls[0][0];
+    expect(args.where.tenantId).toBe(T);
+    expect(args.where.order.tenantId).toBe(T);
+    expect(args.select.refundTender).toBe(true);
+    // no audit-meta read is built: the tender is the column
+    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+  });
+
   it("refunds are keyed to the refund date, on counter sales of ANY day (no sale-day filter on the order)", async () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);

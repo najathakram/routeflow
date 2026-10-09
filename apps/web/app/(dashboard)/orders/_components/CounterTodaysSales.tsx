@@ -58,6 +58,10 @@ function Stat({ label, value, testId }: { label: string; value: string; testId?:
 /** Server numbers only: nothing here adds, subtracts or derives a figure. */
 function Summary({ s }: { s: TodaysSalesSummary }) {
   const r = s.refunds;
+  // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
+  // refunds until the mobile minimum moves): then the breakdown shows and the labels say which figure lacks a method. A
+  // comparison only; no figure is derived here.
+  const someTenderRecorded = !r.tenderKnown && (r.cash > 0 || r.card > 0 || r.check > 0);
   return (
     <section
       aria-label="Today's summary"
@@ -81,11 +85,17 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
         />
         <Stat label="On account" value={money(s.onAccount)} testId="today-on-account" />
         <Stat
-          label={r.tenderKnown ? "Refunds" : "Refunds (method not recorded)"}
+          label={
+            r.tenderKnown
+              ? "Refunds"
+              : someTenderRecorded
+                ? "Refunds (some without a recorded method)"
+                : "Refunds (method not recorded)"
+          }
           value={money(r.total)}
           testId="today-refunds"
         />
-        {r.tenderKnown ? (
+        {r.tenderKnown || someTenderRecorded ? (
           <>
             <Stat label="Cash refunds" value={money(r.cash)} testId="today-refunds-cash" />
             <Stat label="Card refunds" value={money(r.card)} testId="today-refunds-card" />
@@ -100,7 +110,13 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
         />
         <Stat label="Net collected" value={money(s.netCollected)} testId="today-net-collected" />
         <Stat
-          label={r.tenderKnown ? "Cash expected in drawer" : "Cash expected, before refunds"}
+          label={
+            r.tenderKnown
+              ? "Cash expected in drawer"
+              : someTenderRecorded
+                ? "Cash expected, before refunds with no method recorded"
+                : "Cash expected, before refunds"
+          }
           value={money(s.cashExpectedInDrawer)}
           testId="today-cash-expected"
         />
