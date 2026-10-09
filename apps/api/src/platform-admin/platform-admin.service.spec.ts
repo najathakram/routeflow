@@ -1633,6 +1633,25 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
+    it("the included add-on's Stripe item is deleted in the same update; the row retires and its MRR books -price once", async () => {
+      arrange({ from: "GROWTH", fromKey: "GROWTH", addons: [forecasting] });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      expect(stripe.updateSubscription.mock.calls[0][1].items).toContainEqual({
+        id: "si_fc",
+        deleted: true,
+      });
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "ta_fc" },
+        data: { active: false, stripeItemId: null },
+      });
+      const addonDeltas = billingEventService.emit.mock.calls.filter(
+        (c: any[]) => c[1] === "addon.disabled",
+      );
+      expect(addonDeltas.map((c: any[]) => c[3].amountDelta)).toEqual([-25]);
+    });
+
     it("the local compare-and-set losing after Stripe applied puts Stripe back (revert, same key + :revert) and the 409 stands", async () => {
       arrange({ from: "GROWTH", fromKey: "GROWTH" });
       (prisma as any).tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
@@ -1675,6 +1694,18 @@ describe("PlatformAdminService — audit provenance", () => {
       await service.updatePlan(TENANT_ID, { plan: "STARTER" } as any, ADMIN_ID);
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
       expect(stripe.getSubscription).not.toHaveBeenCalled();
+    });
+
+    it("a tenant without a Stripe subscription pushes nothing and still retires the included add-on", async () => {
+      arrange({
+        from: "GROWTH",
+        fromKey: "GROWTH",
+        sub: { stripeSubId: null },
+        addons: [{ ...forecasting, stripeItemId: null }],
+      });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect((prisma as any).tenantAddon.update).toHaveBeenCalled();
     });
   });
 

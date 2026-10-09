@@ -871,7 +871,7 @@ export class PlatformAdminService {
     };
     const preparedTransition = await this.planTransition.prepare(transition);
 
-    // SA-733r M7: Stripe FIRST (the new price in one update); `flow.settle` puts it back if the
+    // SA-733r M7: Stripe FIRST (price + retired add-on items in one update); `flow.settle` puts it back if the
     // write below throws. A re-save of the tenant's own plan pushes nothing.
     const isUpgrade = isRankedPlanChange && rankTo > rankFrom;
     const flowArgs = planChangeArgs({
@@ -880,7 +880,7 @@ export class PlatformAdminService {
       version,
       def: definition,
       proration: isUpgrade ? "create_prorations" : "none",
-      retireAddons: false,
+      retireAddons: isUpgrade,
     });
     const flow = await beginStripeFirstPlanChange(
       { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
@@ -984,6 +984,11 @@ export class PlatformAdminService {
         },
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
+      await flow.retireAddons(tx, this.billingEventService, {
+        manualPay: priorSub?.externalPayment === true && !priorSub.stripeSubId,
+        tenantLabel: before.slug,
+        actorId: adminId,
+      });
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
     const tenant = await flow.settle(written);

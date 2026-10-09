@@ -24,14 +24,15 @@ import {
  * SA-733r [M7]: the Stripe-first shape every PRICE-MOVING plan write shares — the tenant upgrade, the admin
  * plan edit, and (wired by the cron's owner) the scheduled downgrade:
  *
- *   1. push the RESOLVED price (override beats the plan price) to Stripe, with the retired add-on items
- *      deleted in the same update (plan-change-stripe.ts);
- *   2. run the caller's local write (`commit`) with what Stripe settled;
- *   3. if that write throws for ANY reason, put Stripe back (one compensating update), rewrite the add-on
- *      pointers a re-created item changed, and rethrow the original error. If the compensation fails,
- *      `markNeedsReconcile` raises the alert — Stripe is never left silently ahead.
+ *   1. `beginStripeFirstPlanChange` pushes the RESOLVED price (override beats the plan price) to Stripe, with
+ *      the retired add-on items deleted in the same update (plan-change-stripe.ts);
+ *   2. the caller starts its own local write (a transaction reading `flow.ctx`, calling `flow.retireAddons`);
+ *   3. `flow.settle(write)`: if that write throws for ANY reason, Stripe is put back (one compensating
+ *      update), the add-on pointers a re-created item changed are rewritten, and the original error is
+ *      rethrown. If the compensation fails, `markNeedsReconcile` raises the alert — Stripe is never left
+ *      silently ahead.
  *
- * A tenant with no Stripe subscription (or Stripe off) just runs `commit` — no Stripe read, no extra query.
+ * A tenant with no Stripe subscription (or Stripe off) skips step 1: no Stripe read, no extra query.
  */
 
 export interface PlanChangeFlowDeps extends Omit<PlanChangeDeps, "stripe"> {

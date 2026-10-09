@@ -58,6 +58,7 @@ import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
+import { readRetiredAddons } from "./addon-retirement";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
 export interface SubscribeInput {
@@ -107,6 +108,8 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
+  /** UPGRADE only (B1103): the add-ons the target plan already includes — switched off at commit. */
+  retiredAddons?: { sku: string; name: string }[];
 }
 
 /**
@@ -901,10 +904,20 @@ export class SubscriptionMutationService {
               },
               newMonthly - oldMonthly,
             );
+      // B1103: the add-ons the new plan includes are switched off (and stop billing) at commit.
+      const retiredAddons = (
+        await readRetiredAddons(this.prisma, tenantId, version.addonSkus, toKey)
+      ).map((a) => ({ sku: a.code, name: a.name }));
       // upgrade() writes `cancelAtPeriodEnd: false` — say so before the tenant commits.
       const notes = [
         ...(override != null ? [CUSTOM_FEE_UNCHANGED] : []),
         ...(priorSub.cancelAtPeriodEnd ? [CANCELLATION_REVOKED_WARNING] : []),
+        ...(retiredAddons.length
+          ? [
+              `Now included in ${publishedTargetDef?.name ?? toKey}, so switched off: ` +
+                `${retiredAddons.map((a) => a.name).join(", ")}.`,
+            ]
+          : []),
       ];
       return {
         action: "UPGRADE",
@@ -913,6 +926,7 @@ export class SubscriptionMutationService {
         keepsRenewalAt: priorSub.periodEnd,
         fromPlanKey: fromKey,
         seatAckRequired: false,
+        retiredAddons,
         ...(notes.length ? { warning: notes.join(" ") } : {}),
       };
     }
@@ -1034,7 +1048,9 @@ export class SubscriptionMutationService {
       actor: { id: actorId ?? null },
     };
     const preparedTransition = await this.planTransition.prepare(transition);
-    // SA-733r M7: Stripe FIRST (one update: the new price); `flow.settle` puts it back if
+    const manualPay = this.addonModeOf(sub) === "MANUAL";
+    const tenantLabel = manualPay ? await this.tenantLabelOf(tenantId) : "";
+    // SA-733r M7: Stripe FIRST (one update: new price + retired add-on items); `flow.settle` puts it back if
     // the write below throws.
     const flow = await beginStripeFirstPlanChange(
       { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
@@ -1044,7 +1060,7 @@ export class SubscriptionMutationService {
         version,
         def,
         proration: "create_prorations",
-        retireAddons: false,
+        retireAddons: true,
       }),
     );
 
@@ -1119,6 +1135,8 @@ export class SubscriptionMutationService {
         },
         { amountDelta, actorId, tx },
       );
+      // B1103: the add-ons the new plan includes stop billing — rows off, MRR to 0 once, STOP notice.
+      await flow.retireAddons(tx, this.events, { manualPay, tenantLabel, actorId });
     }, this.planTransition.transactionOptions(preparedTransition));
     await flow.settle(written);
 
