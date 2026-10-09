@@ -22,6 +22,7 @@ export function CounterReceiptBody({
   profile,
   fallbackMethod,
   headingRef,
+  customerName,
 }: {
   receipt: CounterSaleResponse;
   lines: readonly ReceiptLineInput[];
@@ -31,6 +32,8 @@ export function CounterReceiptBody({
   fallbackMethod?: CounterSalePaymentMethod;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
+  /** the named customer on the sale; omit for a walk-in */
+  customerName?: string | null;
 }) {
   const { branding } = useTenant();
   const cashier = useOptionalAuth()?.user?.username ?? null;
@@ -41,6 +44,7 @@ export function CounterReceiptBody({
     enteredTender,
     fallbackMethod,
     cashier,
+    customerName,
     now,
     profile: {
       ...profile,

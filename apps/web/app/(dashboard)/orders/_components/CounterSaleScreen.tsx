@@ -799,6 +799,7 @@ export function CounterSaleScreen() {
           profile={settings}
           fallbackMethod={method}
           headingRef={receiptHeadingRef}
+          customerName={customer?.businessName}
         />
         <div className="flex flex-wrap gap-2 print:hidden">
           <Button className={RECEIPT_BTN} onClick={() => window.print()}>

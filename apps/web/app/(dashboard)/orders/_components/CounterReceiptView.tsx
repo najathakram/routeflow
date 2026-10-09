@@ -8,6 +8,9 @@ import { formatReceiptMoney as money, type CounterReceiptModel } from "@/lib/cou
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
  * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
  */
+/** 8.25 -> "8.25", 8 -> "8", 7.5 -> "7.5" (no trailing zeros). */
+const taxRateText = (rate: number): string => String(Number(rate.toFixed(3)));
+
 export function CounterReceiptView({
   model: m,
   logoUrl,
@@ -63,6 +66,7 @@ export function CounterReceiptView({
         )}
         {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
         {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
+        {m.customerName ? <p data-testid="receipt-customer">Customer: {m.customerName}</p> : null}
       </div>
       <ul className="divide-y text-sm">
         {m.lines.map((l) => (
@@ -143,7 +147,9 @@ export function CounterReceiptView({
         ) : null}
         {m.adjustment !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
-            <dt>Tax and adjustments</dt>
+            <dt>
+              {m.taxRate != null ? `Tax (${taxRateText(m.taxRate)}%)` : "Tax and adjustments"}
+            </dt>
             <dd>{money(m.adjustment)}</dd>
           </div>
         ) : null}

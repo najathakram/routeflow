@@ -67,6 +67,10 @@ export interface CounterReceiptModel {
   dateLabel: string;
   lines: CounterReceiptLine[];
   cashier: string | null;
+  /** The customer's name for a named customer; null for a walk-in (nothing is printed). */
+  customerName: string | null;
+  /** The business tax rate in percent (8.25), for the `Tax (8.25%)` label; null when none is charged or it is unknown. */
+  taxRate: number | null;
   /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
   subtotal: number;
   /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
@@ -112,6 +116,11 @@ function lineDetail(l: ReceiptLineInput): string {
 
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 
+const rateOf = (profile: ReceiptBusinessProfile | null | undefined): number | null => {
+  const r = profile?.taxRate;
+  return typeof r === "number" && Number.isFinite(r) && r > 0 ? r : null;
+};
+
 export function receiptHeader(profile: ReceiptBusinessProfile | null | undefined) {
   const street = clean(profile?.street);
   const cityLine = [
@@ -133,6 +142,8 @@ export function buildCounterReceipt(input: {
   /** the method the clerk rang, used when the response does not echo one */
   fallbackMethod?: CounterSalePaymentMethod;
   cashier?: string | null;
+  /** the named customer on the sale; omit (or blank) for a walk-in */
+  customerName?: string | null;
   /** set only for a recovered cash sale: what the clerk entered (the server stores no cash tendered) */
   enteredTender: number | null;
   profile: ReceiptBusinessProfile | null | undefined;
@@ -203,6 +214,8 @@ export function buildCounterReceipt(input: {
     dateLabel: formatSaleTime(now, profile?.timezone || undefined),
     lines: rows,
     cashier: clean(input.cashier) || null,
+    customerName: clean(input.customerName) || null,
+    taxRate: rateOf(profile),
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
     adjustment: roundMoney(receipt.total - netSubtotal),
@@ -225,6 +238,8 @@ export function buildCounterReceipt(input: {
 export interface ReprintOrderLike {
   orderNumber: string;
   total: number;
+  /** The order's customer: a named customer prints on the reprint, the walk-in does not. */
+  customer?: { businessName?: string | null; isWalkIn?: boolean | null } | null;
   lineItems: ReadonlyArray<{
     id: string;
     name?: string | null;
@@ -239,6 +254,8 @@ export interface ReprintOrderLike {
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
+    /** The line note the cashier typed (OrderItem.notes). */
+    notes?: string | null;
     status?: string;
   }>;
 }
@@ -315,7 +332,7 @@ export function receiptModelFromOrder(input: {
         key: line.tempId,
         name: line.name,
         detail: lineDetail(line),
-        note: null,
+        note: clean(l.notes) || null,
         // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
         original: null,
         discount: 0,
@@ -340,6 +357,11 @@ export function receiptModelFromOrder(input: {
     dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
     lines: rows,
     cashier: clean(input.cashier) || null,
+    customerName:
+      order.customer && !order.customer.isWalkIn
+        ? clean(order.customer.businessName) || null
+        : null,
+    taxRate: rateOf(profile),
     subtotal,
     adjustment: roundMoney(order.total - subtotal),
     discounts: 0,
