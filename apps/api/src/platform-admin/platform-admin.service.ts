@@ -27,6 +27,8 @@ import { PlanTransitionConfigService } from "../billing/plan-transition-config.s
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService, isPayingRow } from "../billing/mrr.service";
+import { applyCouponStateTx } from "../billing/coupon-state";
+import { NO_COUPON } from "../billing/coupon-unbilled";
 import { TenantMirrorService } from "./tenant-mirror.service";
 import {
   normalizePlanKey,
@@ -571,7 +573,9 @@ export class PlatformAdminService {
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
+          subscription: {
+            select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+          },
         },
       });
 
@@ -645,8 +649,9 @@ export class PlatformAdminService {
       // reactivation, the mirror: live counts it again while the ledger never catches up).
       // class and deletedAt are untouched by this call, so only status (and, via the B556
       // fill-in just above, possibly planKey) can move isPayingRow between before/after.
-      const wasPaying = isPayingRow(before, priorPlanKey);
-      const isPaying = isPayingRow({ ...before, status: updated.status }, finalPlanKey);
+      const couponFull = before.subscription?.couponFull ?? false;
+      const wasPaying = isPayingRow(before, priorPlanKey, couponFull);
+      const isPaying = isPayingRow({ ...before, status: updated.status }, finalPlanKey, couponFull);
       if (wasPaying !== isPaying) {
         const addons = await tx.tenantAddon.findMany({
           where: { tenantId: id, active: true },
@@ -740,6 +745,8 @@ export class PlatformAdminService {
         stripeSubId: true,
         externalPayment: true,
         discount: true,
+        // SA-736r M2: a coupon-unbilled row is never in the paying set; the CAS below holds it to what was read.
+        couponFull: true,
         cycle: true,
         periodStart: true,
         periodEnd: true,
@@ -887,8 +894,8 @@ export class PlatformAdminService {
     // afterwards — a manual/external activation (which deliberately leaves planKey null)
     // CROSSES in here. class/deletedAt are untouched by this write, so `before` covers both
     // sides — only which planKey is evaluated differs.
-    const wasPaying = isPayingRow(before, priorSub?.planKey ?? null);
-    const isPaying = isPayingRow(before, definition.planKey);
+    const wasPaying = isPayingRow(before, priorSub?.planKey ?? null, priorSub?.couponFull ?? false);
+    const isPaying = isPayingRow(before, definition.planKey, priorSub?.couponFull ?? false);
 
     const transition = {
       tenantId: id,
@@ -962,6 +969,8 @@ export class PlatformAdminService {
             planKey: priorSub.planKey ?? null,
             priceOverrideMonthly: priorSub.priceOverrideMonthly ?? null,
             basePriceSnapshot: priorSub.basePriceSnapshot ?? null,
+            // SA-736r: a coupon sync that landed since the read makes the deltas above stale - a 409.
+            couponFull: priorSub.couponFull,
           },
           data: {
             ...subWrite,
@@ -1130,6 +1139,7 @@ export class PlatformAdminService {
                 basePriceSnapshot: true,
                 discount: true,
                 priceOverrideMonthly: true,
+                couponFull: true,
               },
             },
           },
@@ -1138,8 +1148,15 @@ export class PlatformAdminService {
         // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
         // the write below, so only class/deletedAt (untouched here) gate whether this activation
         // actually crosses into MrrService's paying set — via the shared isPayingRow predicate.
-        const wasPaying = isPayingRow(before, before.subscription?.planKey ?? null);
-        const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey);
+        // SA-736r M5: a manual payer is billed by RF invoices, so the activation resets the coupon columns
+        // (couponFull = false) and books the crossing HERE, from this in-tx before/after: a former coupon
+        // tenant books +X once through its own isPaying transition (the reset itself books nothing).
+        const wasPaying = isPayingRow(
+          before,
+          before.subscription?.planKey ?? null,
+          before.subscription?.couponFull ?? false,
+        );
+        const isPaying = isPayingRow({ ...before, status: "ACTIVE" }, definition.planKey, false);
         // #2460 / SA-464 (1): manual activation is a PAID path (owner 09-24), so a crossing INTO the
         // paying set snapshots what the tenant pays — a negotiated override (0 = free, explicitly),
         // else the catalog price — in this same tx, and books it below. A renewal of a row already in
@@ -1207,6 +1224,14 @@ export class PlatformAdminService {
             },
           }),
         ]);
+
+        // UNCONDITIONAL: the reset also stamps couponSyncedAt = now, so a Stripe read that started before this
+        // activation can never write its (now stale) state afterwards, even for a tenant that was not couponFull.
+        await applyCouponStateTx(tx, this.billingEventService, id, NO_COUPON, {
+          reason: "manual_activation",
+          bookDelta: false,
+          tenantLockHeld: true,
+        });
 
         if (wasPaying !== isPaying) {
           // SA-693 / S4: only BILLABLE add-ons cross into the ledger — a comp is a platform grant (never
@@ -1798,6 +1823,7 @@ export class PlatformAdminService {
               basePriceSnapshot: true,
               priceOverrideMonthly: true,
               priceOverrideAnnual: true,
+              couponFull: true,
             },
           },
         },
@@ -1829,7 +1855,10 @@ export class PlatformAdminService {
       });
       // Snapshot written regardless; ONLY the emit is gated — a non-paying tenant books
       // once, at activation.
-      if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null)) {
+      if (
+        backfillBase &&
+        isPayingRow(row, row.subscription?.planKey ?? null, row.subscription?.couponFull ?? false)
+      ) {
         await this.billingEventService.emit(
           id,
           BILLING_EVENTS.PLAN_CHANGED,

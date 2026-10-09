@@ -23,12 +23,12 @@ import * as t from "${LIB_HREF}";
 const T = { id: "t-1", slug: "qa-2639", name: "QA 2639", status: "ACTIVE", class: "PRODUCTION", deletedAt: null };
 const check = (tenant, sub, allowPayingTenant) => t.checkProtectedTarget({ tenant, sub, allowPayingTenant });
 console.log(JSON.stringify({
-  paying: check(T, { planKey: "STARTER", stripeSubId: null }, false),
-  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa" }, false),
-  payingFlag: check(T, { planKey: "STARTER", stripeSubId: null }, true),
-  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null }, false),
+  paying: check(T, { planKey: "STARTER", stripeSubId: null, couponFull: false }, false),
+  stripeOnly: check({ ...T, class: "TEST", status: "READ_ONLY" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }, false),
+  payingFlag: check(T, { planKey: "STARTER", stripeSubId: null, couponFull: false }, true),
+  plain: check({ ...T, class: "TEST" }, { planKey: "STARTER", stripeSubId: null, couponFull: false }, false),
   noSub: check(T, null, false),
-  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa" }, false),
+  deletedStripe: check({ ...T, class: "TEST", deletedAt: "2026-01-01" }, { planKey: null, stripeSubId: "sub_fake_qa", couponFull: false }, false),
   parse: t.parseFreshStartArgs(["qa-2639", "--local", "--allow-paying-tenant"]),
   parseDefault: t.parseFreshStartArgs(["qa-2639", "--local"]),
 }));

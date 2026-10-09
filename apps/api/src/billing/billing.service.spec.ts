@@ -32,6 +32,24 @@ import { PlatformPricingService } from "./platform-pricing.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
+/** SA-736r: an upcoming-invoice preview that bills (one recurring subscription line, no discount). */
+const pricedPreview = () => ({
+  lines: {
+    has_more: false,
+    data: [
+      {
+        amount: 34_900,
+        discount_amounts: [],
+        parent: {
+          type: "subscription_item_details",
+          subscription_item_details: { proration: false },
+        },
+      },
+    ],
+  },
+  total_discount_amounts: [],
+});
+
 /** SA-690: the add-on checkout/adoption seam of SubscriptionMutationService — inert by default (no
  *  add-ons), so every pre-existing assertion in this file measures exactly what it did before. */
 const mutationsStub = () =>
@@ -149,6 +167,12 @@ function make(
     createBillingPortalSession: jest
       .fn()
       .mockResolvedValue({ url: "https://billing.stripe.test/p/session_1" }),
+    // SA-736r: the coupon sync's two Stripe reads. Inert by default - no discount, a priced upcoming
+    // invoice - so a sync leaves `couponFull` false and every pre-existing assertion measures what it did.
+    retrieveSubscriptionWithDiscounts: jest
+      .fn()
+      .mockResolvedValue({ id: "sub_1", status: "active", discounts: [] }),
+    previewNextInvoice: jest.fn().mockResolvedValue(pricedPreview()),
   } as any;
   const email = { send: jest.fn().mockResolvedValue({}) } as any;
   const tenantStatus = { invalidate: jest.fn() } as any;
@@ -905,6 +929,54 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
         expect(emitted(events)).toEqual([]);
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      // SA-736r F2/M3: the coupon sync rides the checkout completion, LAST - and a redelivery that finds the
+      // session already applied STILL syncs (idempotent), so a sync that threw after the upsert is retried.
+      it("SA-736r F2: a redelivery of an already-applied session re-syncs the coupon (retrieve by id, then the preview)", async () => {
+        const stored = {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          stripeCustomerId: "cus_1",
+        };
+        const { svc, prisma, stripe } = make({ transitionCount: 1, sub: stored });
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
+        await (svc as any).onCheckoutCompleted(withId("cs_done"));
+        expect(stripe.retrieveSubscriptionWithDiscounts).toHaveBeenCalledWith("sub_1");
+        expect(stripe.previewNextInvoice).toHaveBeenCalledWith("sub_1");
+      });
+
+      it("SA-736r M3: a first-time completion syncs LAST (after the activation crossing), and a throwing sync fails the webhook", async () => {
+        const stored = {
+          tenantId: "t1",
+          planKey: "BUSINESS",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeSubId: "sub_1",
+          stripeCustomerId: "cus_1",
+        };
+        const { svc, stripe, mutations } = make({ transitionCount: 1, sub: stored });
+        const order: string[] = [];
+        mutations.adoptCheckoutAddons.mockImplementation(async () => {
+          order.push("adopt");
+        });
+        stripe.retrieveSubscriptionWithDiscounts.mockImplementation(async () => {
+          order.push("sync");
+          return { id: "sub_1", status: "active", discounts: [] };
+        });
+        await (svc as any).onCheckoutCompleted(withId("cs_new"));
+        expect(order).toEqual(["adopt", "sync"]);
+
+        const bad = make({ transitionCount: 1, sub: stored });
+        bad.stripe.retrieveSubscriptionWithDiscounts.mockRejectedValue(new Error("Stripe timeout"));
+        await expect((bad.svc as any).onCheckoutCompleted(withId("cs_bad2"))).rejects.toThrow(
+          "Stripe timeout",
+        );
       });
 
       it("drops the feature caches AFTER the transaction commits, and not for a redelivery or a failed tx", async () => {

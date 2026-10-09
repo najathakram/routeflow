@@ -20,6 +20,7 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
 import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
@@ -378,6 +379,7 @@ export class BillingCronService {
               stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
+              couponFull: true,
             },
           });
           if (
@@ -396,8 +398,8 @@ export class BillingCronService {
             throw new DowngradeOvertakenError();
           }
           const amountDelta = roundMoney(
-            (isPayingRow(lockedTenant, target) ? newBase : 0) -
-              (isPayingRow(lockedTenant, lockedSub.planKey)
+            (isPayingRow(lockedTenant, target, lockedSub.couponFull) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey, lockedSub.couponFull)
                 ? Number(lockedSub.basePriceSnapshot ?? 0)
                 : 0),
           );
@@ -621,6 +623,7 @@ export class BillingCronService {
             discount: true,
             cancelAtPeriodEnd: true,
             periodEnd: true,
+            couponFull: true,
           },
         });
         if (
@@ -645,7 +648,7 @@ export class BillingCronService {
           (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
           0,
         );
-        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+        const contribution = isPayingRow(tenant, sub.planKey ?? null, sub.couponFull)
           ? roundMoney(
               (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
                 addonMrr -
@@ -731,16 +734,19 @@ export class BillingCronService {
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
-      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
-      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
-      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
-      const periodEnd =
-        s.externalPayment && priorMs > 0
-          ? new Date(start.getTime() + priorMs)
-          : addCycle(start, s.cycle);
+      // SA-744r2: an external (manual-pay) row rolls onto the owner's CALENDAR - the same helper the RF
+      // invoice issuer uses for "the next window" (L-167), so the two always agree - and BOTH ends are
+      // written (the snapped start, never the raw old end). Stripe/catalog rows keep addCycle's calendar
+      // clamping (B329 note above).
+      let next: { periodStart: Date; periodEnd: Date };
+      if (s.externalPayment) {
+        next = nextBillingWindow(start, effectiveCycle(s.cycle, s.periodStart, start));
+      } else {
+        next = { periodStart: start, periodEnd: addCycle(start, s.cycle) };
+      }
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd },
+        data: { periodStart: next.periodStart, periodEnd: next.periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);

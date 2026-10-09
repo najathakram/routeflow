@@ -340,6 +340,13 @@ function make(opts: Opts = {}) {
       }
       return stripeSubObject(id);
     }),
+    // SA-736r: the coupon sync's two reads - inert (no discount, no upcoming invoice -> nothing is written).
+    retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
+      id,
+      status: "active",
+      discounts: [],
+    })),
+    previewNextInvoice: jest.fn(async () => null),
     // B1158: the re-read right before a superseded cancel — status plus "is its payment still processing".
     getSubscriptionPaymentState: jest.fn(async (id: string) => {
       if (opts.storedSubStatus === "missing" && id !== "sub_1") {

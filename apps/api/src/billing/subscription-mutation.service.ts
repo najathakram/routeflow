@@ -37,6 +37,8 @@ import {
   writeManualInvoiceNotice,
 } from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
+import { applyCouponStateTx } from "./coupon-state";
+import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
@@ -453,6 +455,8 @@ export class SubscriptionMutationService {
             basePriceSnapshot: true,
             stripeSubId: true,
             externalPayment: true,
+            // SA-736r M2: a coupon-unbilled row is never in the paying set.
+            couponFull: true,
           },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
@@ -483,7 +487,8 @@ export class SubscriptionMutationService {
       const wasTrial = lockedTenant.status === "TRIAL";
       // Same paying-set basis as before (isPayingRow — class/deletedAt gate it too), now read
       // from the LOCKED row instead of the pre-tx one.
-      const wasPaying = isPayingRow(lockedTenant, lockedSub?.planKey ?? null);
+      const lockedCouponFull = lockedSub?.couponFull ?? false;
+      const wasPaying = isPayingRow(lockedTenant, lockedSub?.planKey ?? null, lockedCouponFull);
       // Coming from a NON-paying status (READ_ONLY / SUSPENDED / CANCELLED / TRIAL) the tenant
       // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
       // +base delta, mirroring the negative delta emitted when access ended (billing-cron
@@ -497,7 +502,11 @@ export class SubscriptionMutationService {
       // #2583 / SA-513: the SAME paying predicate on both sides — a non-PRODUCTION or deleted row
       // was never counted (before = 0) and never will be after (after = 0), whatever its status.
       const oldPlanMonthly = wasPaying ? Number(lockedSub?.basePriceSnapshot ?? 0) : 0;
-      const isPaying = isPayingRow({ ...lockedTenant, status: "ACTIVE" }, input.planKey);
+      const isPaying = isPayingRow(
+        { ...lockedTenant, status: "ACTIVE" },
+        input.planKey,
+        lockedCouponFull,
+      );
       // #2188 / SA-385 (3): a code's prior is the SAME row findAddonRow re-activates below — the
       // oldest active row matching the shared predicate — so the ledger nets against that row.
       const byAge = [...lockedAddons].sort(
@@ -1134,8 +1143,14 @@ export class SubscriptionMutationService {
         select: { status: true, class: true, deletedAt: true },
       });
       if (!lockedTenant) throw new NotFoundException("Tenant not found");
-      const wasPaying = isPayingRow(lockedTenant, sub.planKey ?? null);
-      const isPaying = isPayingRow(lockedTenant, planKey);
+      // SA-736r M2: couponFull is read UNDER the lock (a coupon sync can overtake the pre-tx `sub`).
+      const lockedCoupon = await tx.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { couponFull: true },
+      });
+      const couponFull = lockedCoupon?.couponFull ?? false;
+      const wasPaying = isPayingRow(lockedTenant, sub.planKey ?? null, couponFull);
+      const isPaying = isPayingRow(lockedTenant, planKey, couponFull);
       const amountDelta = roundMoney(
         (isPaying ? newBase : 0) - (wasPaying ? Number(sub.basePriceSnapshot ?? 0) : 0),
       );
@@ -1629,9 +1644,22 @@ export class SubscriptionMutationService {
     // to the SAME stripeSubId so a concurrent re-subscribe that already wrote a new pointer is
     // never clobbered. This is the one local write the READ_ONLY branch makes, and it happens
     // only after a confirmed provider outcome.
-    await this.prisma.tenantSubscription.updateMany({
-      where: { tenantId, stripeSubId },
-      data: { stripeSubId: null },
+    // ONE tx (Tenant lock first): the pointer release and the coupon reset commit together - a crash can
+    // never leave a released pointer that still carries the old subscription's coupon columns.
+    await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId);
+      const released = await tx.tenantSubscription.updateMany({
+        where: { tenantId, stripeSubId },
+        data: { stripeSubId: null },
+      });
+      // SA-736r M5: `couponFull` never outlives its Stripe subscription; a READ_ONLY tenant is not paying,
+      // so the reset books 0.
+      if (released.count > 0) {
+        await applyCouponStateTx(tx, this.events, tenantId, NO_COUPON, {
+          reason: "stripe_sub_released",
+          tenantLockHeld: true,
+        });
+      }
     });
   }
 
