@@ -24,15 +24,26 @@ export const INLINE_TOTAL = /roundMoney\([\w.]*[sS]ubtotal\s*-\s*[\w.]*[dD]iscou
 /** Production source roots (relative to the repo root). packages/pricing is the ONE home, never scanned. */
 const SCAN_ROOTS = ["apps/api/src", "apps/mobile/lib", "apps/web/app", "apps/web/lib"];
 
-/** Known inline copies, each with the bug that retires it. */
-const ALLOWLIST: Record<string, string> = {
-  "apps/api/src/invoices/price-adjustment-ledger.ts":
-    "totalsFromLines: the exempt asymmetry (SA-734 A4, bug r186); lands with the B297 PR3 lane",
-  "apps/api/src/estimates/estimates.service.ts":
-    "estimate create total from `(dto as any).taxAmount` (B395 -> SA-761a T-3)",
-  "apps/mobile/lib/invoice-totals.ts":
-    "mobile's own computeInvoiceTotals (B1028): becomes a thin adapter over @routeflow/pricing in INV-B",
-  "apps/mobile/lib/run-money.ts": "run settlement money (B810 -> SA-761a T-4b)",
+const INLINE_TOTAL_ALL = new RegExp(INLINE_TOTAL.source, "g");
+
+/**
+ * Known inline copies: the EXACT number of matches pinned per file, with the bug that retires it. A new copy
+ * inside an allowlisted file changes the count and fails; zero matches is an error (retire the entry).
+ */
+const ALLOWLIST: Record<string, { count: number; why: string }> = {
+  "apps/api/src/invoices/price-adjustment-ledger.ts": {
+    count: 1,
+    why: "totalsFromLines: the exempt asymmetry (SA-734 A4, bug r186); lands with the B297 PR3 lane",
+  },
+  "apps/api/src/estimates/estimates.service.ts": {
+    count: 1,
+    why: "estimate create total from the dto taxAmount (B395 -> SA-761a T-3)",
+  },
+  "apps/mobile/lib/invoice-totals.ts": {
+    count: 1,
+    why: "mobile own computeInvoiceTotals (B1028): a thin adapter over @routeflow/pricing in INV-B",
+  },
+  "apps/mobile/lib/run-money.ts": { count: 3, why: "run settlement money (B810 -> SA-761a T-4b)" },
 };
 
 const SOURCE = /\.[cm]?[tj]sx?$/;
@@ -64,18 +75,20 @@ const stripComments = (s: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
     .replace(/(^|[^:])\/\/.*$/gm, (m, lead: string) => lead + " ".repeat(m.length - lead.length));
 
-/** Every file under `roots` (relative to `base`) whose code contains the inline-formula head. */
-export function filesWithInlineTotal(base: string, roots: string[]): string[] {
+/** Inline-formula match count per file under `roots` (relative to `base`); files with none are omitted. */
+export function inlineTotalCounts(base: string, roots: string[]): Record<string, number> {
   const files: string[] = [];
   for (const r of roots) walk(path.join(base, r), files);
-  return files
-    .filter((f) => INLINE_TOTAL.test(stripComments(fs.readFileSync(f, "utf8"))))
-    .map((f) => path.relative(base, f).split(path.sep).join("/"))
-    .sort();
+  const out: Record<string, number> = {};
+  for (const f of files.sort()) {
+    const n = (stripComments(fs.readFileSync(f, "utf8")).match(INLINE_TOTAL_ALL) ?? []).length;
+    if (n > 0) out[path.relative(base, f).split(path.sep).join("/")] = n;
+  }
+  return out;
 }
 
 describe("B1043 / G4 — one invoice total formula (sumInvoiceTotals)", () => {
-  const hits = filesWithInlineTotal(REPO_ROOT, SCAN_ROOTS);
+  const hits = inlineTotalCounts(REPO_ROOT, SCAN_ROOTS);
 
   it("scans a non-trivial number of production files (an empty scan must not read as green)", () => {
     const files: string[] = [];
@@ -84,12 +97,13 @@ describe("B1043 / G4 — one invoice total formula (sumInvoiceTotals)", () => {
   });
 
   it("no production file outside the allowlist carries an inline copy of the total formula", () => {
-    expect(hits.filter((f) => !(f in ALLOWLIST))).toEqual([]);
+    expect(Object.keys(hits).filter((f) => !(f in ALLOWLIST))).toEqual([]);
   });
 
-  it("every allowlisted exception still matches (zero matches is an error: retire the entry with its fix)", () => {
-    for (const f of Object.keys(ALLOWLIST)) {
-      expect({ file: f, stillInline: hits.includes(f) }).toEqual({ file: f, stillInline: true });
+  it("every allowlisted file carries EXACTLY its pinned number of copies (a new copy fails; zero is an error: retire the entry)", () => {
+    for (const [f, { count }] of Object.entries(ALLOWLIST)) {
+      expect(count).toBeGreaterThan(0);
+      expect({ file: f, matches: hits[f] ?? 0 }).toEqual({ file: f, matches: count });
     }
   });
 
@@ -126,9 +140,17 @@ describe("B1043 / G4 — one invoice total formula (sumInvoiceTotals)", () => {
         path.join(dir, "rogue.service.ts"),
         "export const bad = (subtotal: number, invDiscount: number) =>\n  roundMoney(subtotal - invDiscount + 1);\n",
       );
-      expect(filesWithInlineTotal(tmp, ["apps/api/src"])).toEqual([
-        "apps/api/src/demo/rogue.service.ts",
-      ]);
+      expect(inlineTotalCounts(tmp, ["apps/api/src"])).toEqual({
+        "apps/api/src/demo/rogue.service.ts": 1,
+      });
+      // a SECOND copy in the same file is counted, so an allowlisted file cannot hide one
+      fs.appendFileSync(
+        path.join(dir, "rogue.service.ts"),
+        "export const bad2 = (subtotal: number, discount: number) => roundMoney(subtotal - discount);\n",
+      );
+      expect(inlineTotalCounts(tmp, ["apps/api/src"])).toEqual({
+        "apps/api/src/demo/rogue.service.ts": 2,
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
