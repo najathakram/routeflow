@@ -103,7 +103,7 @@ export function AnchoredList({
       )}
       style={{
         position: "fixed",
-        zIndex: 300,
+        zIndex: 250,
         left: place.left,
         width: place.width,
         top: place.top,

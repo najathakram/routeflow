@@ -41,7 +41,8 @@ describe("AnchoredList", () => {
     expect(screen.getByRole("dialog").contains(list)).toBe(false);
     expect(list.className).toMatch(/pointer-events-auto/);
     expect(list.style.position).toBe("fixed");
-    expect(Number(list.style.zIndex)).toBeGreaterThan(50);
+    // above the Radix dialog layer (50) but below ReAuthProvider's prompt (300)
+    expect(Number(list.style.zIndex)).toBe(250);
     expect(isInsideAnchoredList(screen.getByText("item"))).toBe(true);
     expect(isInsideAnchoredList(screen.getByText("anchor"))).toBe(false);
   });
