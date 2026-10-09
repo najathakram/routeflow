@@ -99,6 +99,7 @@ import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
+  type RecordPaymentOpts,
   SetCheckStatusDto,
   StandalonePaymentDto,
   UpdatePaymentDto,
@@ -4565,15 +4566,14 @@ export class InvoicesService {
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
-  async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
+  async recordPayment(id: string, dto: RecordInvoicePaymentDto, opts?: RecordPaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
         "Use the dedicated 'Apply Credit Note' or 'Apply Advance Payment' actions for these methods so the source balance is properly debited.",
       );
     }
-    // Refuse a null tenant BEFORE the transaction opens — same policy as sites
-    // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
+    // Refuse a null tenant BEFORE the transaction opens (D3): a PAY number never comes from the shared row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
     return withAfterCommit(this.prisma, async (tx, after) => {
       // Lock the invoice row so concurrent payment requests serialize here
@@ -4647,6 +4647,7 @@ export class InvoicesService {
           status: paymentStatus as any,
           paymentNumber,
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
+          paymentGroupId: opts?.paymentGroupId,
         },
       });
 
