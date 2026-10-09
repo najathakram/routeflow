@@ -104,9 +104,7 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
-  async findById(
-    id: string,
-  ): Promise<
+  async findById(id: string): Promise<
     | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
         googleLinked: boolean;
         hasPassword: boolean;
