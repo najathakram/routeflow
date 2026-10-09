@@ -504,7 +504,7 @@ export function ProductCreateModal({
                 </div>
                 <p className="mt-0.5 text-xs text-navy/70">
                   Code on the individual unit — printed on customer invoices. Leave blank if it
-                  matches the case code.
+                  matches the {w.pack.lower} code.
                 </p>
               </div>
 

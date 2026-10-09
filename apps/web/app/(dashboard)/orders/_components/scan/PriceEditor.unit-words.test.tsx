@@ -76,4 +76,17 @@ describe("PriceEditor unit words", () => {
     const word = screen.getByTitle("Shrinkwrapped trays");
     expect(word.className).toContain("truncate");
   });
+
+  it("Piece mode keeps 'Box price' and explains it: each piece is the box price ÷ N (computed by the pricing helper)", () => {
+    setup(boxed({ sellBy: "unit", unitPrice: 24, unitsPerBox: 6, boxes: 0, pieces: 2, qty: 2 }));
+    expect(screen.getByText("Box price")).toBeInTheDocument();
+    expect(screen.getByTestId("sell-mode-hint")).toHaveTextContent(
+      "Selling by the piece: each piece is the box price ÷ 6 ($4.00)",
+    );
+  });
+
+  it("case mode has no such hint", () => {
+    setup(boxed({ sellBy: "case" }));
+    expect(screen.queryByTestId("sell-mode-hint")).toBeNull();
+  });
 });
