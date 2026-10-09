@@ -39,7 +39,11 @@ export type RetiredAddon<R extends AddonRowLike = AddonRowLike> = R & {
   name: string;
 };
 
-/** The active rows whose SKU `toPlanKey` already includes. Pure. */
+/**
+ * The active rows whose SKU `toPlanKey` already includes. Pure. FLAT SKUs only: a row holding more than one
+ * unit (a stackable SKU such as extra seats) is never retired wholesale — the plan bundles the SKU, not the
+ * units the tenant bought on top, so switching the row off would drop paid-for units.
+ */
 export function addonsIncludedAtPlan<R extends AddonRowLike>(
   rows: readonly R[],
   addonSkus: readonly AddonSkuDef[],
@@ -47,7 +51,7 @@ export function addonsIncludedAtPlan<R extends AddonRowLike>(
 ): RetiredAddon<R>[] {
   const out: RetiredAddon<R>[] = [];
   for (const row of rows) {
-    if (row.active === false) continue;
+    if (row.active === false || Number(row.quantity) > 1) continue;
     const code = addonSkuCode({ sku: row.sku, addonKey: row.addonKey });
     const def = code ? addonSkus.find((s) => s.sku === code) : undefined;
     if (code && def && isAddonIncludedAtPlan(def.includedAtPlan, toPlanKey)) {
@@ -83,6 +87,26 @@ export interface PlanChangeCtx {
 
 /** No Stripe push happened (no subscription, Stripe off, a terminal subscription): nothing to prove. */
 export const NO_STRIPE_PUSH: PlanChangeCtx = { pushed: false, settledItemIds: new Set() };
+
+/**
+ * Whether the owner invoices this tenant by hand (no Stripe subscription it is billed through, `externalPayment`
+ * set — the same rule as the add-on billing mode), and the label its STOP notice names. ONE rule for the tenant
+ * upgrade and the admin plan edit.
+ */
+export async function manualPayContext(
+  prisma: { tenant: { findUnique(args: any): Promise<unknown> } },
+  tenantId: string,
+  stripeConfigured: boolean,
+  sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
+): Promise<{ manualPay: boolean; tenantLabel: string }> {
+  const manualPay = !(stripeConfigured && sub?.stripeSubId) && sub?.externalPayment === true;
+  if (!manualPay) return { manualPay, tenantLabel: "" };
+  const t = (await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { slug: true, name: true },
+  })) as { slug?: string | null; name?: string | null } | null;
+  return { manualPay, tenantLabel: t?.name ?? t?.slug ?? tenantId };
+}
 
 export interface RetireArgs {
   tenantId: string;

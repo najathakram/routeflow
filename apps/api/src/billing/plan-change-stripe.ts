@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import type { StripeService } from "./stripe.service";
+import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import {
   isLiveStripeSubscriptionStatus,
   isTerminalStripeSubscriptionStatus,
@@ -27,6 +28,13 @@ import {
 /** Fixed tenant-facing copy — never a Stripe/internal message. */
 export const PLAN_CHANGE_BILLING_FAILED =
   "We couldn't change the plan because billing didn't go through. Nothing was changed. Please try again.";
+
+/**
+ * A subscription that is paused or incomplete cannot take a price change; retrying will not help. Says what to
+ * do instead, never "try again".
+ */
+export const PLAN_CHANGE_SUBSCRIPTION_INACTIVE =
+  "We couldn't change the plan because the subscription isn't active. Update the payment method, or contact support to reactivate it.";
 
 /** `create_prorations` for an upgrade (the difference lands on the next invoice); `none` for a scheduled downgrade. */
 export type PlanChangeProration = "create_prorations" | "none";
@@ -51,6 +59,7 @@ export interface DeletableAddonItem {
 export interface PlanChangePushArgs {
   tenantId: string;
   stripeSubId: string | null | undefined;
+  targetPlanKey: string;
   targetPlanVersionId: string;
   planName: string;
   /** The RESOLVED price (a tenant override already beat the plan price); null = nothing resolvable. */
@@ -89,6 +98,8 @@ export interface PlanChangePush {
   /** Add-on item ids confirmed gone from Stripe: deleted by this push, or already absent. */
   settledItemIds: ReadonlySet<string>;
   newAmountCents?: number;
+  /** The Stripe product this push created for the new price — a revert checks the base item still carries it. */
+  productId?: string;
   revert?: RevertPlan;
 }
 
@@ -140,7 +151,7 @@ export async function pushPlanChange(
 
   let sub: any;
   try {
-    sub = await stripe.getSubscription(a.stripeSubId);
+    sub = await stripe.getSubscription(a.stripeSubId, { expand: CHECKOUT_ADDON_EXPAND });
   } catch (err) {
     logger.error(`Plan change tenant ${a.tenantId}: Stripe read failed: ${(err as Error).message}`);
     throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
@@ -155,7 +166,7 @@ export async function pushPlanChange(
     logger.error(
       `Plan change tenant ${a.tenantId}: Stripe subscription is ${sub?.status} — refusing, it would stay on the old price`,
     );
-    throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+    throw new ServiceUnavailableException(PLAN_CHANGE_SUBSCRIPTION_INACTIVE);
   }
   if (!a.price) {
     throw new BadRequestException(
@@ -164,8 +175,14 @@ export async function pushPlanChange(
   }
 
   const items: any[] = Array.isArray(sub?.items?.data) ? sub.items.data : [];
-  const base = stripeBaseItem(sub, a.knownAddonItemIds);
-  const basePrior = base && !a.knownAddonItemIds.has(base.id) ? priceDataOf(base) : null;
+  // An add-on item is told from the base-plan item by the ids our rows own AND by the checkout SKU marker on its
+  // product (a checkout-made item no row has adopted yet).
+  const addonItemIds = new Set([
+    ...a.knownAddonItemIds,
+    ...checkoutAddonItems(sub).map((i) => i.itemId),
+  ]);
+  const base = stripeBaseItem(sub, addonItemIds);
+  const basePrior = base && !addonItemIds.has(base.id) ? priceDataOf(base) : null;
   if (!basePrior || typeof base?.id !== "string") {
     logger.error(
       `Plan change tenant ${a.tenantId}: no readable base-plan item on ${a.stripeSubId}`,
@@ -216,6 +233,21 @@ export async function pushPlanChange(
     unit_amount: newAmountCents,
     product: productId,
   };
+  // Logged BEFORE the write: if the process dies between Stripe's reply and the local commit, this line (with
+  // the key) is how an operator finds the push to reconcile.
+  logger.log(
+    `billing.plan_change.push ${JSON.stringify({
+      tenantId: a.tenantId,
+      stripeSubId: a.stripeSubId,
+      idempotencyKey: key,
+      targetPlanKey: a.targetPlanKey,
+      targetPlanVersionId: a.targetPlanVersionId,
+      priorAmountCents: basePrior.unit_amount,
+      basePriceCents: newAmountCents,
+      proration: a.proration,
+      deleteItemIds: deletes.map((d) => d.itemId),
+    })}`,
+  );
   try {
     await stripe.updateSubscription(
       a.stripeSubId,
@@ -236,7 +268,7 @@ export async function pushPlanChange(
   }
   for (const d of deletes) settled.add(d.itemId);
   logger.log(
-    `Plan change pushed tenant ${a.tenantId}: ${basePrior.unit_amount} -> ${newAmountCents} cents ` +
+    `Plan change pushed tenant ${a.tenantId} (${key}): ${basePrior.unit_amount} -> ${newAmountCents} cents ` +
       `(${interval}, proration_behavior=${a.proration}, ${deletes.length} add-on item(s) deleted)`,
   );
 
@@ -249,6 +281,7 @@ export async function pushPlanChange(
     nonce,
     settledItemIds: settled,
     newAmountCents,
+    productId,
     revert: {
       base: { id: base.id, price_data: basePrior },
       restore: deletes.map((d) => ({

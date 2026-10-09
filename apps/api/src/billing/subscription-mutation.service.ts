@@ -58,7 +58,8 @@ import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
-import { readRetiredAddons } from "./addon-retirement";
+import { manualPayContext, readRetiredAddons } from "./addon-retirement";
+import { withTenantPriceLock } from "./tenant-price-lock";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
 export interface SubscribeInput {
@@ -980,8 +981,16 @@ export class SubscriptionMutationService {
     };
   }
 
-  /** Upgrade to a higher plan — instant, with the prorated price difference charged now. */
-  async upgrade(tenantId: string, planKey: string, actorId?: string) {
+  /**
+   * Upgrade to a higher plan — instant, with the prorated price difference charged now. Serialised per tenant on
+   * the `tenant-price` lock (SA-733 D8): every read below, the Stripe push, the local write and any revert run
+   * inside it, so a second attempt sees the first one's result ("not an upgrade") instead of racing it.
+   */
+  upgrade(tenantId: string, planKey: string, actorId?: string) {
+    return withTenantPriceLock(tenantId, () => this.upgradeLocked(tenantId, planKey, actorId));
+  }
+
+  private async upgradeLocked(tenantId: string, planKey: string, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
@@ -1048,8 +1057,12 @@ export class SubscriptionMutationService {
       actor: { id: actorId ?? null },
     };
     const preparedTransition = await this.planTransition.prepare(transition);
-    const manualPay = this.addonModeOf(sub) === "MANUAL";
-    const tenantLabel = manualPay ? await this.tenantLabelOf(tenantId) : "";
+    const { manualPay, tenantLabel } = await manualPayContext(
+      this.prisma,
+      tenantId,
+      this.stripe.isConfigured,
+      sub,
+    );
     // SA-733r M7: Stripe FIRST (one update: new price + retired add-on items); `flow.settle` puts it back if
     // the write below throws.
     const flow = await beginStripeFirstPlanChange(
@@ -1087,6 +1100,10 @@ export class SubscriptionMutationService {
       const amountDelta = roundMoney(
         (isPaying ? newBase : 0) - (wasPaying ? Number(sub.basePriceSnapshot ?? 0) : 0),
       );
+      // B1103: the add-ons the new plan includes stop billing — rows off, MRR to 0 once, STOP notice. BEFORE the
+      // plan write on purpose: "paying" is judged from the plan the tenant is leaving, so a planKey-NULL
+      // (manual-activation) row, whose add-on never reached the ledger, books nothing for it.
+      await flow.retireAddons(tx, this.events, { manualPay, tenantLabel, actorId });
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
@@ -1135,8 +1152,6 @@ export class SubscriptionMutationService {
         },
         { amountDelta, actorId, tx },
       );
-      // B1103: the add-ons the new plan includes stop billing — rows off, MRR to 0 once, STOP notice.
-      await flow.retireAddons(tx, this.events, { manualPay, tenantLabel, actorId });
     }, this.planTransition.transactionOptions(preparedTransition));
     await flow.settle(written);
 

@@ -1,5 +1,7 @@
 import { PrismaService } from "../prisma/prisma.service";
 import type { Prisma } from "@prisma/client";
+import { normalizePlanKey } from "./plan-catalog.constants";
+import { stripeRefId } from "./stripe-period";
 import { resolvePlanPrice } from "./plan-price";
 import type { BillingEventService } from "./billing-event.service";
 import {
@@ -121,6 +123,7 @@ export async function beginStripeFirstPlanChange(
     {
       tenantId: a.tenantId,
       stripeSubId: a.stripeSubId,
+      targetPlanKey: a.targetPlanKey,
       targetPlanVersionId: a.targetPlanVersionId,
       planName: a.targetPlanName,
       price: a.price,
@@ -182,9 +185,24 @@ async function compensate(
       },
       error,
     });
+  // A revert is only safe if Stripe still holds exactly what THIS push wrote and the local row did not land on
+  // the target. Both are re-read now — never trusted from before the write — and anything unverifiable or
+  // already moved on is ALERTED, not overwritten: a stale snapshot must never clobber a newer price.
+  let toRevert: PlanChangePush;
+  try {
+    const verdict = await revertVerdict({ prisma, stripe }, push, a);
+    if ("skip" in verdict) {
+      alert(new Error(`revert skipped: ${verdict.skip}`));
+      return;
+    }
+    toRevert = verdict.push;
+  } catch (readErr) {
+    alert(readErr);
+    return;
+  }
   let restored;
   try {
-    restored = await revertPlanChange({ stripe, logger }, push);
+    restored = await revertPlanChange({ stripe, logger }, toRevert);
   } catch (revertErr) {
     alert(revertErr);
     return;
@@ -198,13 +216,64 @@ async function compensate(
       if (!r.newItemId)
         throw new Error(`restored item for row ${r.rowId} not found in Stripe's reply`);
       await prisma.tenantAddon.updateMany({
-        where: { id: r.rowId },
+        where: { id: r.rowId, tenantId: a.tenantId },
         data: { stripeItemId: r.newItemId },
       });
     }
   } catch (pointerErr) {
     alert(pointerErr);
   }
+}
+
+/**
+ * Decide whether the compensating revert may run, from fresh reads: not if the local row already shows the
+ * target plan (an ambiguous commit failure, or a concurrent winner), not if the base item no longer carries the
+ * price/product this push created (someone moved it since); and a deleted add-on item is re-created only for a
+ * row that is still active (a concurrent disable already switched the others off).
+ */
+async function revertVerdict(
+  deps: { prisma: PrismaService; stripe: PlanChangeDeps["stripe"] },
+  push: PlanChangePush,
+  a: PlanChangeFlowArgs,
+): Promise<{ skip: string } | { push: PlanChangePush }> {
+  const { prisma, stripe } = deps;
+  const local = await prisma.tenantSubscription.findUnique({
+    where: { tenantId: a.tenantId },
+    select: { planKey: true, planVersionId: true },
+  });
+  if (
+    local &&
+    normalizePlanKey(local.planKey) === normalizePlanKey(a.targetPlanKey) &&
+    local.planVersionId === a.targetPlanVersionId
+  ) {
+    return { skip: "the local row already shows the target plan; Stripe is left as pushed" };
+  }
+  const revert = push.revert;
+  if (!revert || !push.stripeSubId) return { skip: "nothing to restore" };
+  const live = await stripe.getSubscription(push.stripeSubId);
+  const items: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
+  const base = items.find((i) => i?.id === revert.base.id);
+  if (
+    !base ||
+    base.price?.unit_amount !== push.newAmountCents ||
+    stripeRefId(base.price?.product) !== push.productId
+  ) {
+    return { skip: "Stripe's base item no longer carries the price this push wrote" };
+  }
+  const ids = revert.restore.map((r) => r.rowId);
+  const active = ids.length
+    ? await prisma.tenantAddon.findMany({
+        where: { id: { in: ids }, tenantId: a.tenantId, active: true },
+        select: { id: true },
+      })
+    : [];
+  const stillActive = new Set((active as { id: string }[]).map((r) => r.id));
+  return {
+    push: {
+      ...push,
+      revert: { ...revert, restore: revert.restore.filter((r) => stillActive.has(r.rowId)) },
+    },
+  };
 }
 
 /**

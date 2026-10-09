@@ -18,6 +18,7 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { ProrationService } from "./proration.service";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -26,6 +27,7 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
   let pool: Pool;
   let prisma: PrismaClient;
   let mutation: SubscriptionMutationService;
+  let buildMutation: (stripe: any) => SubscriptionMutationService;
   const tenantIds: string[] = [];
   const run = randomUUID().slice(0, 8);
   let versionId: string;
@@ -72,23 +74,25 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
       getPublishedCatalog: () => Promise.resolve(catalog),
       getVersionForTenant: () => Promise.resolve(catalog),
     } as any;
-    mutation = new SubscriptionMutationService(
-      prisma as any,
-      catalogService,
-      new ProrationService(prisma as any, catalogService),
-      { getSubscription: jest.fn().mockResolvedValue(undefined) } as any,
-      { invalidate: jest.fn() } as any,
-      new BillingEventService(prisma as any),
-      { invalidate: jest.fn() } as any,
-      {} as any, // stripe — these tenants have no stripeSubId
-      { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) } as any,
-      {
-        prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
-        onPlanChange: () => Promise.resolve({ action: "none" }),
-        transactionOptions: () => undefined,
-        invalidateCaches: () => undefined,
-      } as any,
-    );
+    buildMutation = (stripe: any) =>
+      new SubscriptionMutationService(
+        prisma as any,
+        catalogService,
+        new ProrationService(prisma as any, catalogService),
+        { getSubscription: jest.fn().mockResolvedValue(undefined) } as any,
+        { invalidate: jest.fn() } as any,
+        new BillingEventService(prisma as any),
+        { invalidate: jest.fn() } as any,
+        stripe,
+        { notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined) } as any,
+        {
+          prepare: () => Promise.resolve({ enabled: false, planAllows: null }),
+          onPlanChange: () => Promise.resolve({ action: "none" }),
+          transactionOptions: () => undefined,
+          invalidateCaches: () => undefined,
+        } as any,
+      );
+    mutation = buildMutation({}); // no stripeSubId on these tenants — nothing to push
   });
 
   afterAll(async () => {
@@ -98,7 +102,11 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
     await pool.end();
   });
 
-  async function tenantOnGrowth(tag: string, externalPayment = false): Promise<string> {
+  async function tenantOnGrowth(
+    tag: string,
+    externalPayment = false,
+    sub: { planKey?: string | null; stripeSubId?: string; basePriceSnapshot?: number | null } = {},
+  ): Promise<string> {
     const slug = assertTestTenant(
       `qa-b1103-${tag}-${run}`,
       "plan-change-addon-retirement.db.spec.ts",
@@ -116,9 +124,10 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
     await prisma.tenantSubscription.create({
       data: {
         tenantId: tenant.id,
-        planKey: "GROWTH",
+        planKey: sub.planKey === undefined ? "GROWTH" : sub.planKey,
         planVersionId: versionId,
-        basePriceSnapshot: 249,
+        basePriceSnapshot: sub.basePriceSnapshot === undefined ? 249 : sub.basePriceSnapshot,
+        stripeSubId: sub.stripeSubId,
         discount: 0,
         cycle: "MONTHLY",
         periodStart: new Date(Date.now() - 15 * 86_400_000),
@@ -167,7 +176,8 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
 
   it("a COMP add-on is deactivated with no ledger delta", async () => {
     const id = await tenantOnGrowth("comp");
-    await addon(id, "FORECASTING", { isComp: true, priceSnapshot: 0 });
+    // A STALE snapshot > 0 on purpose: only the isComp skip keeps the ledger clean.
+    await addon(id, "FORECASTING", { isComp: true, priceSnapshot: 25 });
 
     await mutation.upgrade(id, "SCALE", "admin-b1103");
 
@@ -187,5 +197,49 @@ describeDb("B1103 upgrade() retires the add-ons the new plan includes (real Post
     });
     expect(notices).toHaveLength(1);
     expect(notices[0].meta).toMatchObject({ sku: "FORECASTING", kind: "stop", monthlyPrice: 25 });
+  }, 30_000);
+
+  it("S2: a planKey-NULL (manual-activation) ACTIVE tenant books NOTHING for the retired add-on — its +price never reached the ledger", async () => {
+    const id = await tenantOnGrowth("nullplan", false, { planKey: null, basePriceSnapshot: null });
+    await addon(id, "FORECASTING");
+
+    await mutation.upgrade(id, "SCALE", "admin-b1103");
+
+    const row = await prisma.tenantAddon.findFirstOrThrow({ where: { tenantId: id } });
+    expect(row.active).toBe(false);
+    const ev = await deltas(id);
+    expect(ev.filter((e) => e.type === "addon.disabled")).toEqual([]);
+    expect(ev.filter((e) => e.type === "plan.changed")).toEqual([
+      { type: "plan.changed", delta: 499 },
+    ]);
+  }, 30_000);
+
+  it("a double-clicked upgrade on a Stripe tenant serialises on the REAL tenant-price lock: one push, no revert, Stripe == the database", async () => {
+    const stripe = fakeStripeSubscription([
+      {
+        id: "si_base",
+        quantity: 1,
+        price: {
+          unit_amount: 24900,
+          currency: "usd",
+          recurring: { interval: "month" },
+          product: "prod_growth",
+        },
+      },
+    ]);
+    const id = await tenantOnGrowth("dbl", false, { stripeSubId: `sub_dbl_${run}` });
+    const svc = buildMutation(stripe);
+
+    const results = await Promise.allSettled([
+      svc.upgrade(id, "SCALE", "admin-b1103"),
+      svc.upgrade(id, "SCALE", "admin-b1103"),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1); // the loser never pushed, so nothing to revert
+    expect(stripe.amountOf("si_base")).toBe(49900);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+    expect([sub.planKey, Number(sub.basePriceSnapshot)]).toEqual(["SCALE", 499]);
+    expect((await deltas(id)).filter((e) => e.type === "plan.changed")).toHaveLength(1);
   }, 30_000);
 });

@@ -5,7 +5,12 @@
  * before any write, and the needs-reconcile seam.
  */
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
-import { markNeedsReconcile, pushPlanChange, revertPlanChange } from "./plan-change-stripe";
+import {
+  markNeedsReconcile,
+  PLAN_CHANGE_SUBSCRIPTION_INACTIVE,
+  pushPlanChange,
+  revertPlanChange,
+} from "./plan-change-stripe";
 import { planChangeArgs, runStripeFirstPlanChange } from "./plan-change-flow";
 
 const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
@@ -32,6 +37,7 @@ function stripeWith(sub: any = { status: "active", items: { data: [BASE] } }) {
 const args = (over: Record<string, unknown> = {}) => ({
   tenantId: "t1",
   stripeSubId: "sub_1",
+  targetPlanKey: "GROWTH",
   targetPlanVersionId: "v8",
   planName: "Growth",
   price: { monthly: 249, annual: 2490 },
@@ -148,6 +154,52 @@ describe("pushPlanChange", () => {
     expect(params.proration_behavior).toBe("create_prorations");
     expect(params.items[0]).toMatchObject({ id: "si_base", price_data: { unit_amount: 24900 } });
     expect(opts.idempotencyKey).toBe(`${push.key}:revert`);
+  });
+});
+
+describe("pushPlanChange — Opus review folds", () => {
+  it("S4: the structured push line (tenant, key, target plan/version, base price) is logged BEFORE the Stripe write", async () => {
+    const stripe = stripeWith();
+    const push = await pushPlanChange({ stripe, logger }, args({ proration: "create_prorations" }));
+
+    const line = logger.log.mock.calls
+      .map((c) => String(c[0]))
+      .find((m) => m.startsWith("billing.plan_change.push"));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!.slice(line!.indexOf("{")))).toMatchObject({
+      tenantId: "t1",
+      idempotencyKey: push.key,
+      targetPlanKey: "GROWTH",
+      targetPlanVersionId: "v8",
+      basePriceCents: 24900,
+    });
+    const logOrder = logger.log.mock.invocationCallOrder[0];
+    expect(logOrder).toBeLessThan(stripe.updateSubscription.mock.invocationCallOrder[0]);
+  });
+
+  it("a checkout-made add-on item (SKU marker on its product, no row pointer yet) is never taken for the base-plan item", async () => {
+    const marked = {
+      id: "si_checkout_addon",
+      quantity: 1,
+      price: {
+        unit_amount: 2500,
+        currency: "usd",
+        recurring: { interval: "month" },
+        product: { id: "prod_fc", metadata: { addonSku: "FORECASTING" } },
+      },
+    };
+    // Listed FIRST: Stripe does not order items base-first.
+    const stripe = stripeWith({ status: "active", items: { data: [marked, BASE] } });
+    await pushPlanChange({ stripe, logger }, args());
+    expect(stripe.updateSubscription.mock.calls[0][1].items[0].id).toBe("si_base");
+  });
+
+  it("a paused subscription is refused with copy that says what to do, never 'try again'", async () => {
+    const stripe = stripeWith({ status: "paused", items: { data: [BASE] } });
+    const err = await pushPlanChange({ stripe, logger }, args()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as Error).message).toBe(PLAN_CHANGE_SUBSCRIPTION_INACTIVE);
+    expect((err as Error).message).not.toMatch(/try again/i);
   });
 });
 

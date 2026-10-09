@@ -113,6 +113,7 @@ export const LOCK_FAMILIES = [
   "policy-write",
   "counter-tender",
   "fulfilment-settings",
+  "tenant-price",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -189,6 +190,10 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
+  // `tenant-price` (SA-733 D8): every writer that moves a tenant's Stripe price serialises per tenant on
+  // this one family — the in-app upgrade, the admin plan edit, the price override, the catalog fan-out
+  // and the scheduled-downgrade sweep (which holds ONE slot at a time). Rare and short; `billing`-sized.
+  "tenant-price": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

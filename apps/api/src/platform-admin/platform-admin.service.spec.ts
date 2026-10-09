@@ -1,3 +1,14 @@
+// updatePlan runs under the `tenant-price` advisory lock (SA-733 D8); there is no database here, so the lock is a
+// pass-through that still calls the body (and records how it was taken).
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  })),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 import { Prisma } from "@prisma/client";
 import { ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -16,6 +27,8 @@ import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
+import { StripeService } from "../billing/stripe.service";
+import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -190,6 +203,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: TenantMirrorService, useValue: tenantMirror },
         { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PlanTransitionConfigService, useValue: planTransition },
+        { provide: StripeService, useValue: { isConfigured: false } },
       ],
     }).compile();
 
@@ -1588,15 +1602,10 @@ describe("PlatformAdminService — audit provenance", () => {
         deletedAt: null,
         subscription: { planKey: "SCALE" },
       });
-      stripe = {
-        isConfigured: true,
-        getSubscription: jest.fn().mockResolvedValue({
-          status: "active",
-          items: { data: [ITEM("si_base", 24900, "prod_growth"), ITEM("si_fc", 2500, "prod_fc")] },
-        }),
-        updateSubscription: jest.fn().mockResolvedValue({}),
-        client: { products: { create: jest.fn().mockResolvedValue({ id: "prod_scale" }) } },
-      };
+      stripe = fakeStripeSubscription([
+        ITEM("si_base", 24900, "prod_growth"),
+        ITEM("si_fc", 2500, "prod_fc"),
+      ]);
       (service as any).stripe = stripe;
     }
     const forecasting = {
@@ -1609,6 +1618,17 @@ describe("PlatformAdminService — audit provenance", () => {
       isComp: false,
       active: true,
     };
+
+    it("runs under the tenant-price advisory lock (the family the price override takes), keyed on the tenant", async () => {
+      const { withAdvisoryLock } = jest.requireMock("../common/db-locks");
+      withAdvisoryLock.mockClear();
+      arrange({ from: "GROWTH", fromKey: "GROWTH" });
+      await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+      expect(withAdvisoryLock).toHaveBeenCalledWith(
+        { family: "tenant-price", key: TENANT_ID, mode: "wait" },
+        expect.any(Function),
+      );
+    });
 
     it("an UPGRADE on a Stripe tenant pushes the new plan price with create_prorations, once, before the local write", async () => {
       arrange({ from: "GROWTH", fromKey: "GROWTH" });

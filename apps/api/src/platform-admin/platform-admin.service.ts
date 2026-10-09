@@ -1,7 +1,6 @@
 import {
   Injectable,
   Logger,
-  Optional,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -48,6 +47,8 @@ import {
 import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "../billing/stripe.service";
 import { beginStripeFirstPlanChange, planChangeArgs } from "../billing/plan-change-flow";
+import { manualPayContext } from "../billing/addon-retirement";
+import { withTenantPriceLock } from "../billing/tenant-price-lock";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
@@ -109,8 +110,8 @@ export class PlatformAdminService {
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, in
     // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
-    // SA-733r M7: the Stripe-first plan-change push. Optional so a wiring without Stripe still builds.
-    @Optional() private readonly stripe?: StripeService,
+    // SA-733r M7: the Stripe-first plan-change push.
+    private readonly stripe: StripeService,
   ) {}
 
   /**
@@ -681,7 +682,12 @@ export class PlatformAdminService {
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
 
-  async updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
+  /** Serialised per tenant on the `tenant-price` lock (SA-733 D8): every read and write below runs inside it. */
+  updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
+    return withTenantPriceLock(id, () => this.updatePlanLocked(id, dto, adminId));
+  }
+
+  private async updatePlanLocked(id: string, dto: UpdateTenantPlanDto, adminId: string | null) {
     // SA-140: class/deletedAt added so wasPaying/isPaying below can use the shared isPayingRow
     // predicate — this select previously fetched only status, silently missing the two other
     // conditions payingWhere/isPayingRow require (a real, previously undetected gap: an admin
@@ -882,6 +888,7 @@ export class PlatformAdminService {
       proration: isUpgrade ? "create_prorations" : "none",
       retireAddons: isUpgrade,
     });
+    const manual = await manualPayContext(this.prisma, id, this.stripe.isConfigured, priorSub);
     const flow = await beginStripeFirstPlanChange(
       { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
       fromKey === targetPlanKey ? { ...flowArgs, stripeSubId: null } : flowArgs,
@@ -984,11 +991,7 @@ export class PlatformAdminService {
         },
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
-      await flow.retireAddons(tx, this.billingEventService, {
-        manualPay: priorSub?.externalPayment === true && !priorSub.stripeSubId,
-        tenantLabel: before.slug,
-        actorId: adminId,
-      });
+      await flow.retireAddons(tx, this.billingEventService, { ...manual, actorId: adminId });
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
     const tenant = await flow.settle(written);

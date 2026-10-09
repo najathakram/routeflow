@@ -87,6 +87,9 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // -> recordPayment window, keyed on the order id.
       // "fulfilment-settings" (2026-10-07, fulfilment toggle PR1, M2) backs the tenant Settings PATCH
       // and the Feature Console set()/clear() of the two fulfilment keys, keyed on the tenant id.
+      // "tenant-price" (2026-10-09, SA-733 D8) serialises every writer that moves a tenant's Stripe
+      // price (upgrade, admin plan edit, price override, catalog fan-out, scheduled downgrade), keyed
+      // on the tenant id.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -97,6 +100,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "policy-write",
         "counter-tender",
         "fulfilment-settings",
+        "tenant-price",
       ]);
     });
   });
