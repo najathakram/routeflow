@@ -149,6 +149,7 @@ describe("ProductsService.bulkDelete / clearAll: a product with variants (B1212)
     expect(result.deleted + result.softDeleted).toBe(0);
     expect(result.skipped.map((s) => s.id).sort()).toEqual(["fam", "v1"]);
     expect(result.skipped.find((s) => s.id === "v1")?.code).toBe("PRODUCT_HAS_ACTIVE_ORDER_ITEMS");
+    expect(result.skipped.find((s) => s.id === "fam")?.code).toBe("FAMILY_HAS_ACTIVE_VARIANTS");
   });
 
   it("clearAll over a family and its variants never hard-deletes a family that keeps a variant", async () => {
