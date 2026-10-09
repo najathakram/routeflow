@@ -27,7 +27,7 @@ import {
 } from "./counter-sale-today";
 
 /** The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one (the helpers' own fallback). */
-function effectiveZone(tz: string | null): string {
+export function effectiveZone(tz: string | null): string {
   if (!tz) return "UTC";
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
