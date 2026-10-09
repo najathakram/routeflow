@@ -764,7 +764,7 @@ describe("upgrade(): the compensating revert never clobbers a newer price (SA-73
     // While this attempt's local write is in flight, another writer re-prices the base item in Stripe;
     // then this attempt's own CAS loses.
     tx.tenantSubscription.updateMany.mockImplementationOnce(async () => {
-      const base = stripe.state.items.find((i: any) => i.id === "si_base");
+      const base = stripe.state.items.find((i: any) => i.id === "si_base")!;
       base.price = { ...base.price, unit_amount: 30000, product: "prod_override" };
       return { count: 0 };
     });

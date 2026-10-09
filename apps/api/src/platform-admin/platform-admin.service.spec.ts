@@ -67,7 +67,10 @@ describe("PlatformAdminService — audit provenance", () => {
     transactionOptions: jest.Mock;
     invalidateCaches: jest.Mock;
   };
-  let platformPricingService: { resolveTenantPricing: jest.Mock };
+  let platformPricingService: {
+    resolveTenantPricing: jest.Mock;
+    resolveCatalogPricing?: jest.Mock;
+  };
   let mrrService: {
     computeOverview: jest.Mock;
     priceTenant: jest.Mock;
