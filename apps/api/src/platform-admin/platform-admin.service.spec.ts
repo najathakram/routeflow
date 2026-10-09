@@ -70,7 +70,10 @@ describe("PlatformAdminService — audit provenance", () => {
     transactionOptions: jest.Mock;
     invalidateCaches: jest.Mock;
   };
-  let platformPricingService: { resolveTenantPricing: jest.Mock };
+  let platformPricingService: {
+    resolveTenantPricing: jest.Mock;
+    resolveCatalogPricing?: jest.Mock;
+  };
   let mrrService: {
     computeOverview: jest.Mock;
     priceTenant: jest.Mock;
@@ -2140,6 +2143,47 @@ describe("PlatformAdminService — audit provenance", () => {
         });
       billingServiceMock.pushResolvedPriceToStripe.mockResolvedValue(livePush);
       billingServiceMock.syncStripeSubscriptionPrice.mockResolvedValue(livePush);
+    });
+
+    it("review: an override committed after an EARLY downgrade push restores the current price FIRST, then the override push goes out", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        ...preRow,
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: "STARTER",
+      });
+      const restore = jest.fn().mockResolvedValue(undefined);
+      (service as any).scheduledPrice = { restoreIfPushedLocked: restore };
+
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+
+      expect(restore).toHaveBeenCalledWith(TENANT_ID, "STARTER", { mustBeCleared: false });
+      expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
+        billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("review: ... and a restore that FAILS stops the override before anything else is sent or saved", async () => {
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        ...preRow,
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: "STARTER",
+      });
+      (service as any).scheduledPrice = {
+        restoreIfPushedLocked: jest.fn().mockRejectedValue(new Error("stripe down")),
+      };
+
+      await expect(
+        service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+      ).rejects.toThrow("stripe down");
+      expect(billingServiceMock.pushResolvedPriceToStripe).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("review: no schedule (or no Stripe subscription) -> no restore", async () => {
+      const restore = jest.fn();
+      (service as any).scheduledPrice = { restoreIfPushedLocked: restore };
+      await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+      expect(restore).not.toHaveBeenCalled();
     });
 
     it("now_prorated is pushed with the proposed override and the pre-change row version", async () => {

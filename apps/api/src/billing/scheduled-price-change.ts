@@ -163,7 +163,15 @@ export class ScheduledPriceChangeService {
     if (opts.mustBeCleared && sub.downgradeToPlanKey) return;
     const version = await this.catalog.getVersionForTenant(sub.planVersionId);
     const keptDef = findPlanDefinition(version.definitions, sub.planKey);
-    const clearedDef = findPlanDefinition(version.definitions, scheduledTargetPlanKey);
+    // The same resolution as apply(): a grandfathered pin that predates the target prices it from the published
+    // catalog.
+    let clearedDef = findPlanDefinition(version.definitions, scheduledTargetPlanKey);
+    if (!clearedDef) {
+      const published = await this.catalog.getPublishedVersion();
+      clearedDef = published
+        ? findPlanDefinition(published.definitions, scheduledTargetPlanKey)
+        : undefined;
+    }
     const kept = resolvePlanPrice(keptDef, {
       monthly: sub.priceOverrideMonthly,
       annual: sub.priceOverrideAnnual,
@@ -172,7 +180,18 @@ export class ScheduledPriceChangeService {
       monthly: sub.priceOverrideMonthly,
       annual: sub.priceOverrideAnnual,
     });
-    if (!kept.ok || !cleared.ok) return;
+    if (!kept.ok || !cleared.ok) {
+      // A caller that is about to PRORATE from Stripe's price (an upgrade, an admin edit) must not go on blind.
+      if (!opts.mustBeCleared) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SCHEDULED_PRICE_CHANGE_REFUSED,
+          message:
+            "The price of the scheduled downgrade cannot be resolved, so Stripe's current price cannot be " +
+            "verified before this change. Resolve the plan's price first.",
+        });
+      }
+      return;
+    }
     const keptCents = toCents(kept.monthly);
     const clearedCents = toCents(cleared.monthly);
     if (keptCents === clearedCents) return; // a custom fee: the price never moved
@@ -322,7 +341,10 @@ export class ScheduledPriceChangeService {
     // does not change). Nothing to send.
     if (priorAmountCents === amountCents) return noop("already_applied");
 
-    const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}`;
+    // The key names the STATE it moves from and to: the (prior, new) amounts AND the item's current Price id. A
+    // push, a restore and a re-push of the same schedule repeat the amounts but not the Price id (an inline
+    // price_data mints a new Price every update), so Stripe never replays the first one's cached result.
+    const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}`;
     try {
       const product = await this.stripe.client.products.create(
         { name: `RouteFlow ${targetDef.name} — monthly` },

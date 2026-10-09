@@ -462,15 +462,17 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
     ...BASE_ITEM,
     price: { ...BASE_ITEM.price, unit_amount: cents, product: "prod_low" },
   });
-  const scheduled = {
+  // Built per TEST (a function), never at describe/collection time: a clock fuse started at collection
+  // can expire before the test runs on a slow host (no-collection-time-clock-fuse.spec.ts).
+  const scheduled = () => ({
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date(Date.now() + 2 * DAY),
-  };
+  });
 
   it("an early push left Stripe on the lowered price (9900): the upgrade restores the CURRENT price (24900, none) BEFORE it prorates, so the proration is (new - current), not (new - lowered)", async () => {
     const { svc, stripe, db } = make({
       realScheduledPrice: true,
-      sub: scheduled,
+      sub: scheduled(),
       stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
     });
     await svc.upgrade("t1", "SCALE", "admin");
@@ -489,8 +491,31 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
     expect(stripe.amountOf("si_base")).toBe(49900);
   });
 
+  it("review: an early push, then the tenant CANCELS: the schedule is cleared and Stripe is put back on the current price", async () => {
+    const { svc, stripe, db, tx } = make({
+      realScheduledPrice: true,
+      sub: scheduled(),
+      stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
+    });
+    // cancel()'s transaction writes the row; the fake tx only needed `update` for it.
+    tx.tenantSubscription.update = jest.fn(async ({ data }: any) => {
+      Object.assign(db.sub, data);
+      return {};
+    });
+
+    await svc.cancel("t1", "admin");
+
+    const calls = stripe.updateSubscription.mock.calls;
+    expect(calls[0][1]).toEqual({ cancel_at_period_end: true }); // cancel() tells Stripe first
+    const restore = calls.at(-1)![1];
+    expect(restore.items[0].price_data.unit_amount).toBe(24900);
+    expect(restore.proration_behavior).toBe("none");
+    expect(stripe.amountOf("si_base")).toBe(24900);
+    expect(db.sub.downgradeToPlanKey).toBeNull();
+  });
+
   it("no early push (Stripe still on the current price) -> no restore call, only the upgrade push", async () => {
-    const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled });
+    const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled() });
     await svc.upgrade("t1", "SCALE", "admin");
     expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
   });
@@ -498,7 +523,7 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
   it("a failed restore stops the upgrade BEFORE it pushes or writes anything (fail closed: never prorate from the lowered price)", async () => {
     const { svc, stripe, db, prisma } = make({
       realScheduledPrice: true,
-      sub: scheduled,
+      sub: scheduled(),
       stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
     });
     stripe.updateSubscription.mockRejectedValueOnce(new Error("stripe down"));
@@ -767,7 +792,7 @@ describe("upgrade(): the compensating revert never clobbers a newer price (SA-73
     // While this attempt's local write is in flight, another writer re-prices the base item in Stripe;
     // then this attempt's own CAS loses.
     tx.tenantSubscription.updateMany.mockImplementationOnce(async () => {
-      const base = stripe.state.items.find((i: any) => i.id === "si_base");
+      const base = stripe.state.items.find((i: any) => i.id === "si_base")!;
       base.price = { ...base.price, unit_amount: 30000, product: "prod_override" };
       return { count: 0 };
     });

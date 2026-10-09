@@ -1770,6 +1770,8 @@ export class PlatformAdminService {
         planKey: true,
         basePriceSnapshot: true,
         updatedAt: true,
+        downgradeToPlanKey: true, // R1 Option B: an early pre-renewal push may have lowered Stripe's price
+        stripeSubId: true,
       },
     });
     const nextMonthly =
@@ -1777,6 +1779,15 @@ export class PlatformAdminService {
     if (nextMonthly == null) {
       // Throws BadRequestException when the catalog can't price this tenant's plan.
       await this.platformPricingService.resolveCatalogPricing(id);
+    }
+
+    // R1 Option B: if a pre-renewal push already moved Stripe onto a scheduled downgrade's LOWER price, put the
+    // current plan's price back FIRST - the override then applies (and prorates, if asked) from the right price,
+    // and the renewal is not left on the lowered one. Fails closed (throws) before anything else is sent.
+    if (existing?.stripeSubId && existing.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreIfPushedLocked(id, existing.downgradeToPlanKey, {
+        mustBeCleared: false,
+      });
     }
 
     const effective = dto.effective ?? "next_cycle";
