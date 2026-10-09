@@ -10,11 +10,14 @@ export function QtyStepper({
   onUpdate,
   onRemove,
   size = "md",
+  stack = false,
 }: {
   qty: number;
   onUpdate: (qty: number) => void;
   onRemove: () => void;
   size?: "sm" | "md";
+  /** Below `sm` take a whole row of the parent (the field flexes); from `sm` up stay inline. For the narrow 2-column tile. */
+  stack?: boolean;
 }) {
   const [inputVal, setInputVal] = React.useState(String(qty));
 
@@ -39,10 +42,10 @@ export function QtyStepper({
     "flex min-h-11 min-w-11 items-center justify-center text-buyer-600 hover:bg-buyer-100 transition-colors disabled:opacity-40";
 
   const iconCls = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
-  const inputW = size === "sm" ? "w-7" : "w-8";
+  const inputW = stack ? (size === "sm" ? "sm:w-7" : "sm:w-8") : size === "sm" ? "w-7" : "w-8";
 
   return (
-    <div className="flex items-center gap-1">
+    <div data-qty-stepper className={`flex items-center gap-1 ${stack ? "w-full sm:w-auto" : ""}`}>
       {/* Red X remove button */}
       <button
         onClick={onRemove}
@@ -55,7 +58,7 @@ export function QtyStepper({
 
       {/* Stepper group */}
       <div
-        className={`flex items-center rounded-lg border border-buyer-200 bg-buyer-50 ${size === "sm" ? "gap-0" : "gap-0"}`}
+        className={`flex items-center rounded-lg border border-buyer-200 bg-buyer-50 ${stack ? "min-w-0 flex-1 sm:flex-none" : ""}`}
       >
         <button
           onClick={() => {
@@ -82,7 +85,7 @@ export function QtyStepper({
               e.currentTarget.blur();
             }
           }}
-          className={`h-11 ${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+          className={`h-11 ${stack ? "min-w-0 flex-1 sm:flex-none" : ""} ${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
         />
         <button
           onClick={() => onUpdate(qty + 1)}

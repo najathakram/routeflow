@@ -96,6 +96,37 @@ describe("ProductTile tap targets and Notify me", () => {
     expect(on).toHaveAttribute("aria-pressed", "true");
   });
 
+  it.each([undefined, "sm" as const])(
+    "with the item in the cart the stepper gets its OWN full-width row below sm (density %s)",
+    (size) => {
+      render(
+        <ProductTile
+          product={product()}
+          sellerSlug="acme"
+          cartItem={{ productId: "p1", qty: 3 } as never}
+          promoRules={[]}
+          onAdd={jest.fn()}
+          onUpdateQty={jest.fn()}
+          onToggleFavorite={jest.fn()}
+          onToggleStockAlert={jest.fn()}
+          isFavorite={false}
+          size={size}
+        />,
+      );
+      const plus = screen.getByRole("button", { name: "Increase quantity" });
+      // the stepper's own root is a full-width row below sm and inline again from sm
+      const stepperRoot = plus.closest("[data-qty-stepper]") as HTMLElement;
+      expect(stepperRoot).not.toBeNull();
+      expect(stepperRoot.className).toMatch(/\bw-full\b/);
+      expect(stepperRoot.className).toMatch(/\bsm:w-auto\b/);
+      // the price row wraps so the stepper drops under the price instead of overshooting the tile
+      expect(stepperRoot.parentElement!.className).toMatch(/\bflex-wrap\b/);
+      expect(stepperRoot.parentElement!.className).toMatch(/\bsm:flex-nowrap\b/);
+      // the field flexes to fill the row
+      expect(screen.getByRole("spinbutton", { name: "Quantity" }).className).toMatch(/\bflex-1\b/);
+    },
+  );
+
   it.each([undefined, "sm" as const])("Add has a 44px hit height (density %s)", (size) => {
     setup(product(), size);
     expect(screen.getByRole("button", { name: /^add$/i }).className).toMatch(/\bmin-h-11\b/);

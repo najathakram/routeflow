@@ -205,7 +205,9 @@ export function ProductTile({
           </p>
         </div>
 
-        <div className="flex items-end justify-between gap-2">
+        <div
+          className={`flex items-end justify-between gap-2 ${cartItem ? "flex-wrap sm:flex-nowrap" : ""}`}
+        >
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>
@@ -222,7 +224,12 @@ export function ProductTile({
           </div>
 
           {cartItem ? (
-            <QtyStepper qty={cartItem.qty} onUpdate={onUpdateQty} onRemove={() => onUpdateQty(0)} />
+            <QtyStepper
+              qty={cartItem.qty}
+              onUpdate={onUpdateQty}
+              onRemove={() => onUpdateQty(0)}
+              stack
+            />
           ) : outOfStock && onToggleStockAlert ? (
             <button
               onClick={onToggleStockAlert}
