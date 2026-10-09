@@ -240,7 +240,7 @@ export function isCounterSaleIncomplete(err: unknown): boolean {
 
 /** POS-5: 403 PRICE_EDIT_NOT_PERMITTED (an edited price from a caller who may not change prices). Nothing was written. */
 export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
-  "You can't change prices. Reset the edited prices, or ask your account admin.";
+  "You can't change prices. Use Reset price on the edited lines, or ask your account admin.";
 
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
