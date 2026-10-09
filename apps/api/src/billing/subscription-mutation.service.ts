@@ -9,7 +9,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
@@ -17,13 +17,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
-import {
-  CheckoutAddonItem,
-  checkoutAddonItems,
-  checkoutAddonLineItem,
-  fromCents,
-  toCents,
-} from "./stripe-addon-items";
+import { CheckoutAddonItem, checkoutAddonItems, checkoutAddonLineItem } from "./stripe-addon-items";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -2321,7 +2315,7 @@ export class SubscriptionMutationService {
         row.id,
         billed.itemId,
         // The same cents the item was created at, through the pricing helpers (never inline rounding).
-        fromCents(toCents(skuDef.monthlyPrice)),
+        fromCents(toCents(Number(skuDef.monthlyPrice))),
         quantity,
         row.quantity,
         expectedItemId,
@@ -2463,7 +2457,7 @@ export class SubscriptionMutationService {
     const mine = (lines ?? []).filter((ii: any) => !before.has(String(ii.id)));
     if (mine.length === 0) return null;
     const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
-    return roundMoney(cents / 100);
+    return fromCents(cents);
   }
 
   /**
@@ -2573,7 +2567,7 @@ export class SubscriptionMutationService {
           proration_behavior: "create_prorations",
           price_data: {
             currency: "usd",
-            unit_amount: toCents(skuDef.monthlyPrice),
+            unit_amount: toCents(Number(skuDef.monthlyPrice)),
             recurring: { interval: "month" },
             product: product.id,
           },

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
+import { toCents } from "@routeflow/pricing";
 
 export type PricingSource = "override" | "catalog";
 
@@ -133,7 +134,7 @@ export class PlatformPricingService {
 
   /**
    * Build the Stripe Checkout `price_data` line item for a tenant + billing interval.
-   * Integer cents — `Math.round` guards float drift (e.g. 249 * 100).
+   * Integer cents via the shared `toCents` (rounded to cents first, so float drift never moves a cent).
    */
   async checkoutPriceData(
     tenantId: string,
@@ -146,7 +147,7 @@ export class PlatformPricingService {
       product_data: {
         name: `RouteFlow ${pricing.planName} — ${interval === "year" ? "annual" : "monthly"}`,
       },
-      unit_amount: Math.round(amount * 100),
+      unit_amount: toCents(amount),
       recurring: { interval },
     };
   }

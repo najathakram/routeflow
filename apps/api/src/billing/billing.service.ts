@@ -14,7 +14,7 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -582,8 +582,8 @@ export class BillingService {
 
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
     const oldAmount =
-      typeof item.price?.unit_amount === "number" ? item.price.unit_amount / 100 : undefined;
-    const newAmount = priceData.unit_amount / 100;
+      typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
+    const newAmount = fromCents(priceData.unit_amount);
 
     // Stripe requires a `product` ID on inline price_data for a subscription-item
     // update — `product_data` is a Checkout-session-only shape and is REJECTED here
