@@ -46,6 +46,8 @@ export interface Order {
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
   /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
   fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
+  counterSale?: boolean | null;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -421,7 +423,7 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
 export function useActiveOrderForCustomer(
   customerId: string | null | undefined,
   /** The path the order being built is on: the merge preview must look for the same target create would. */
-  fulfillPath?: "ROUTE" | "SHIP",
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP",
 ) {
   return useQuery<ActiveOrderSummary | null>({
     queryKey: ["orders", "active", customerId, fulfillPath],
@@ -646,7 +648,7 @@ export function usePatchOrderCommissionRate() {
 
 export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" | "PICKUP" }>({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
