@@ -340,6 +340,12 @@ export function PriceEditor({
               )}
             </div>
           )}
+          {packed && li.sellBy === "unit" && perPiece != null ? (
+            <p className="text-[11px] text-navy/60" data-testid="sell-mode-hint">
+              Selling by the {w.base.lower}: each {w.base.lower} is the {w.pack.lower} price ÷{" "}
+              {li.unitsPerBox} (${perPiece.toFixed(2)})
+            </p>
+          ) : null}
         </section>
 
         {/* The negotiation floor: the SAME component the row renders. */}

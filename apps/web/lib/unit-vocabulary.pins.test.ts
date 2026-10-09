@@ -196,7 +196,7 @@ const FILES: Pin[] = [
   { file: `${D}products/page.tsx`, gone: ['header: "Units / case"'] },
   {
     file: `${W}components/ProductCreateModal.tsx`,
-    gone: ["Case code (SKU", ">Units per box<"],
+    gone: ["Case code (SKU", ">Units per box<", "matches the case code"],
   },
   { file: `${W}components/InlineCreateProductModal.tsx`, gone: [">Units per box<"] },
   { file: `${W}components/PackSizePrompt.tsx`, gone: ['aria-label="Units per box"'] },
