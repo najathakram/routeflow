@@ -9,7 +9,8 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { findPlanDefinition } from "./plan-catalog.constants";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { markNeedsReconcile, PLAN_CHANGE_BILLING_FAILED } from "./plan-change-stripe";
+import { markNeedsReconcile } from "./needs-reconcile";
+import { PLAN_CHANGE_BILLING_FAILED } from "./plan-change-stripe";
 import { resolvePlanPrice } from "./plan-price";
 import { underTenantPriceLock } from "./price-lock";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
@@ -123,11 +124,14 @@ export class ScheduledPriceChangeService {
         this.restoreIfPushedLocked(tenantId, clearedTargetPlanKey, { mustBeCleared: true }),
       );
     } catch (err) {
-      markNeedsReconcile(this.logger, {
-        tenantId,
-        local: { clearedTargetPlanKey },
-        error: err,
-      });
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          local: { clearedTargetPlanKey },
+          error: err,
+        },
+      );
     }
   }
 

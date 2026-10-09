@@ -48,6 +48,7 @@ import {
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
 import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
+import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
@@ -554,6 +555,14 @@ export class BillingService {
     // every paying tenant from, and Σ BillingEvent.amountDelta is what it reconciles
     // against — so a price change writes BOTH, whatever Stripe did.
     await this.reconcilePriceLedger(tenantId, pricing.monthly, pricing.planKey, result);
+    // N4: the ledger half landed behind the Stripe push (both agree again): the push's flag comes down.
+    if (result.synced) {
+      await clearNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        tenantId,
+        result.reconcile,
+      );
+    }
     return result;
   }
 
@@ -663,8 +672,24 @@ export class BillingService {
       product: productId,
     };
 
-    // Logged BEFORE the write (until the needsReconcile column lands): if the process dies between Stripe's reply
-    // and the local commit, this line, with its key, is how an operator finds the push to reconcile.
+    // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
+    // clears it after its local write (syncStripeSubscriptionPrice / the override flow). Unwritable => nothing sent.
+    const reconcileDeps = { prisma: this.prisma, logger: this.logger };
+    let reconcile: { owned: boolean };
+    try {
+      reconcile = await armNeedsReconcile(reconcileDeps, {
+        tenantId,
+        kind: "price_override",
+        key,
+        stripeSubId: sub.stripeSubId,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Could not record needsReconcile before pushing tenant ${tenantId}'s price (${(err as Error).message}) - nothing was sent`,
+      );
+      return { synced: false, reason: "reconcile_flag_failed" };
+    }
+    // Also logged BEFORE the write: the key is how an operator finds the push if the process dies mid-flight.
     this.logger.log(
       `billing.price_override.push ${JSON.stringify({
         tenantId,
@@ -691,6 +716,8 @@ export class BillingService {
       // bills the new amount the push is applied, otherwise it is a failure the caller must refuse.
       const reread = await this.stripe.getSubscription(sub.stripeSubId).catch(() => null);
       if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
+        // Stripe was READ and did not take it: nothing is ahead, this attempt's flag comes down.
+        await clearNeedsReconcile(reconcileDeps, tenantId, reconcile);
         return { synced: false, reason: "stripe_update_failed" };
       }
       this.logger.warn(
@@ -701,7 +728,7 @@ export class BillingService {
     this.logger.log(
       `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=${proration})`,
     );
-    return { synced: true, oldAmount, newAmount, proration };
+    return { synced: true, oldAmount, newAmount, proration, reconcile };
   }
 
   /**

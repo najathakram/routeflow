@@ -17,8 +17,8 @@ import {
   type AddonSkuDef,
   type PlanChangeCtx,
 } from "./addon-retirement";
+import { clearNeedsReconcile, markNeedsReconcile } from "./needs-reconcile";
 import {
-  markNeedsReconcile,
   pushPlanChange,
   revertPlanChange,
   type DeletableAddonItem,
@@ -132,7 +132,7 @@ export async function beginStripeFirstPlanChange(
     : [];
 
   const push = await pushPlanChange(
-    { stripe, logger },
+    { stripe, logger, prisma },
     {
       tenantId: a.tenantId,
       stripeSubId: a.stripeSubId,
@@ -159,10 +159,18 @@ export async function beginStripeFirstPlanChange(
     retireAddons: retireWith(ctx),
     settle: async (write) => {
       try {
-        return await write;
+        const out = await write;
+        // N4: the local half landed - Stripe and the row agree again, so this attempt's flag comes down.
+        await clearNeedsReconcile({ prisma, logger }, a.tenantId, push.reconcile);
+        return out;
       } catch (err) {
         if (push.pushed) {
           const outcome = await compensate({ prisma, stripe, logger }, push, a, err);
+          // landed = the row is on the target; reverted = Stripe is back on the prior items: both agree again.
+          // skipped / Stripe-ahead keep the flag (markNeedsReconcile raised it).
+          if (outcome === "landed" || outcome === "reverted") {
+            await clearNeedsReconcile({ prisma, logger }, a.tenantId, push.reconcile);
+          }
           if (outcome === "landed") return PLAN_CHANGE_LANDED;
         }
         throw err;
@@ -192,27 +200,30 @@ async function compensate(
 ): Promise<"landed" | "reverted" | "skipped"> {
   const { prisma, stripe, logger } = deps;
   const alert = (error: unknown) =>
-    markNeedsReconcile(logger, {
-      tenantId: a.tenantId,
-      stripeSubId: push.stripeSubId,
-      key: push.key,
-      local: a.localState,
-      stripe: {
-        pushedPlanKey: a.targetPlanKey,
-        pushedAmountCents: push.newAmountCents,
-        proration: push.proration,
-        priorItems: push.revert,
-        localWriteError: cause instanceof Error ? cause.message : String(cause),
+    markNeedsReconcile(
+      { prisma, logger },
+      {
+        tenantId: a.tenantId,
+        stripeSubId: push.stripeSubId,
+        key: push.key,
+        local: a.localState,
+        stripe: {
+          pushedPlanKey: a.targetPlanKey,
+          pushedAmountCents: push.newAmountCents,
+          proration: push.proration,
+          priorItems: push.revert,
+          localWriteError: cause instanceof Error ? cause.message : String(cause),
+        },
+        error,
       },
-      error,
-    });
+    );
   // A revert is only safe if Stripe still holds exactly what THIS push wrote and the local row did not land on
   // the target. Both are re-read now — never trusted from before the write — and anything unverifiable or
   // already moved on is ALERTED, not overwritten: a stale snapshot must never clobber a newer price.
   // Stripe is AHEAD of the database and could not be brought back (or checked): alert, leave an audit row, and
   // tell the caller with a distinct 502 - never the ordinary original error, which would read as "nothing happened".
   const stripeAhead = async (error: unknown): Promise<never> => {
-    alert(error);
+    await alert(error);
     const was = push.revert?.baseBefore.unit_amount;
     const message = push.revert?.baseChanged
       ? `Stripe now bills $${fromCents(push.newAmountCents ?? 0)}, the database still says $${was == null ? "?" : fromCents(was)} - ` +
@@ -246,7 +257,7 @@ async function compensate(
         );
         return "landed";
       }
-      alert(new Error(`revert skipped: ${verdict.skip}`));
+      await alert(new Error(`revert skipped: ${verdict.skip}`));
       return "skipped";
     }
     toRevert = verdict.push;
@@ -273,7 +284,9 @@ async function compensate(
       });
     }
   } catch (pointerErr) {
-    alert(pointerErr);
+    // The add-on pointers still name a deleted item: that IS an inconsistency, so the flag stays up.
+    await alert(pointerErr);
+    return "skipped";
   }
   return "reverted";
 }

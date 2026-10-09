@@ -2,16 +2,20 @@
  * SA-733r [M7]: the Stripe half of every price-moving plan write, tested at the StripeService boundary (a
  * mock — no live Stripe). Covers the shapes `upgrade()` / `updatePlan` / a future caller would share:
  * `create_prorations` for an upgrade, `none` for a downgrade, the override beating the plan price, fail-closed
- * before any write, and the needs-reconcile seam.
+ * before any write, and the needsReconcile flag (SA-733r3 N4: armed BEFORE the Stripe write, cleared after the
+ * local one).
  */
+jest.mock("./needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import {
   BadGatewayException,
   BadRequestException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { armNeedsReconcile, clearNeedsReconcile, markNeedsReconcile } from "./needs-reconcile";
 import {
-  markNeedsReconcile,
   PLAN_CHANGE_SUBSCRIPTION_INACTIVE,
   pushPlanChange,
   revertPlanChange,
@@ -323,30 +327,154 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
   });
 });
 
-describe("markNeedsReconcile (SEAM: the needsReconcile column ships with the B2/B3 migration)", () => {
-  it("logs ONE ERROR-level structured alert with the tenant id, the idempotency key and both subscription states", () => {
-    const log = { error: jest.fn() };
-    markNeedsReconcile(log, {
-      tenantId: "t1",
-      stripeSubId: "sub_1",
-      key: "t1:plan-change:v8:n",
-      local: { planKey: "GROWTH" },
-      stripe: { pushedPlanKey: "SCALE" },
-      error: new Error("revert refused"),
+describe("needsReconcile — SA-733r3 N4 (armed BEFORE the Stripe write, cleared after the local one)", () => {
+  const prisma = { $transaction: jest.fn() } as any;
+
+  it("the flag + attempt nonce are armed BEFORE subscriptions.update, with the same key the update carries", async () => {
+    const stripe = stripeWith();
+    const order: string[] = [];
+    (armNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+      order.push("arm");
+      return { owned: true };
+    });
+    stripe.updateSubscription.mockImplementationOnce(async () => {
+      order.push("stripe.update");
+      return {};
     });
 
-    expect(log.error).toHaveBeenCalledTimes(1);
-    const msg = String(log.error.mock.calls[0][0]);
-    expect(msg).toContain("billing.plan_change.needs_reconcile");
-    expect(JSON.parse(msg.slice(msg.indexOf("{")))).toEqual({
-      event: "billing.plan_change.needs_reconcile",
-      severity: "ERROR",
-      tenantId: "t1",
-      stripeSubId: "sub_1",
-      idempotencyKey: "t1:plan-change:v8:n",
-      localState: { planKey: "GROWTH" },
-      stripeState: { pushedPlanKey: "SCALE" },
-      error: "revert refused",
+    const push = await pushPlanChange({ stripe, logger, prisma }, args());
+
+    expect(order).toEqual(["arm", "stripe.update"]);
+    const armCall = (armNeedsReconcile as jest.Mock).mock.calls[0];
+    expect(armCall[1]).toMatchObject({ tenantId: "t1", kind: "plan_change", stripeSubId: "sub_1" });
+    expect(armCall[1].key).toBe(push.key);
+    expect(armCall[1].nonce).toBe(push.nonce);
+    expect(stripe.updateSubscription.mock.calls[0][2]).toEqual({ idempotencyKey: push.key });
+    expect(push.reconcile).toEqual({ owned: true }); // the caller clears it after its local write
+    expect(clearNeedsReconcile).not.toHaveBeenCalled();
+  });
+
+  it("an attempt that cannot arm the flag sends NOTHING to Stripe (fixed copy, 503)", async () => {
+    const stripe = stripeWith();
+    (armNeedsReconcile as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+    await expect(pushPlanChange({ stripe, logger, prisma }, args())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("an update that errored but Stripe did NOT apply: the attempt's flag comes down, the error is the fixed 503", async () => {
+    const stripe = stripeWith();
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("card_declined internal"));
+    await expect(pushPlanChange({ stripe, logger, prisma }, args())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(clearNeedsReconcile).toHaveBeenCalledWith(expect.objectContaining({ prisma }), "t1", {
+      owned: true,
+    });
+  });
+
+  it("an update that errored but Stripe APPLIED it: the flag stays armed for the caller's local write", async () => {
+    const stripe = stripeWith();
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("timeout after commit"));
+    stripe.getSubscription
+      .mockResolvedValueOnce({ status: "active", items: { data: [BASE] } }) // the pre-read
+      .mockResolvedValueOnce({
+        status: "active",
+        items: { data: [{ ...BASE, price: { ...BASE.price, unit_amount: 24900 } }] },
+      }); // the re-read after the error
+    const push = await pushPlanChange({ stripe, logger, prisma }, args());
+    expect(push.pushed).toBe(true);
+    expect(push.reconcile).toEqual({ owned: true });
+    expect(clearNeedsReconcile).not.toHaveBeenCalled();
+  });
+
+  it("an update whose outcome cannot be read back: 502 STRIPE_AHEAD and the flag is RAISED (not cleared)", async () => {
+    const stripe = stripeWith();
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("timeout"));
+    stripe.getSubscription
+      .mockResolvedValueOnce({ status: "active", items: { data: [BASE] } })
+      .mockRejectedValueOnce(new Error("still down"));
+    await expect(pushPlanChange({ stripe, logger, prisma }, args())).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(markNeedsReconcile).toHaveBeenCalledWith(
+      expect.objectContaining({ prisma }),
+      expect.objectContaining({ tenantId: "t1", stripeSubId: "sub_1" }),
+    );
+    expect(clearNeedsReconcile).not.toHaveBeenCalled();
+  });
+
+  describe("the flow around a local write", () => {
+    const flowArgs = () =>
+      planChangeArgs({
+        tenantId: "t1",
+        sub: { stripeSubId: "sub_1", planKey: "SCALE", priceOverrideMonthly: null },
+        version: { id: "v8", addonSkus: [] },
+        def: { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, annualPrice: 2490 },
+        proration: "none",
+        retireAddons: false,
+      });
+    const flowPrisma = () =>
+      ({
+        $transaction: jest.fn(),
+        tenantAddon: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
+        tenantSubscription: {
+          findUnique: jest.fn().mockResolvedValue({ planKey: "SCALE", planVersionId: "v1" }),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      }) as any;
+
+    it("local write OK -> the flag is cleared AFTER the write, and only the attempt's own ownership is passed", async () => {
+      const stripe = stripeWith();
+      const order: string[] = [];
+      (clearNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+        order.push("clear");
+      });
+      await runStripeFirstPlanChange(
+        { prisma: flowPrisma(), stripe, logger },
+        flowArgs(),
+        async () => {
+          order.push("local-write");
+        },
+      );
+      expect(order).toEqual(["local-write", "clear"]);
+      expect((clearNeedsReconcile as jest.Mock).mock.calls[0][2]).toEqual({ owned: true });
+    });
+
+    it("local write FAILS and Stripe is reverted -> cleared (they agree again); the original error surfaces", async () => {
+      const stripe = fakeStripeSubscription([{ id: "si_base", price: { ...BASE.price } }]);
+      await expect(
+        runStripeFirstPlanChange(
+          { prisma: flowPrisma(), stripe: stripe as any, logger },
+          flowArgs(),
+          async () => {
+            throw new Error("local CAS 409");
+          },
+        ),
+      ).rejects.toThrow("local CAS 409");
+      expect(stripe.amountOf("si_base")).toBe(34900); // reverted
+      expect(clearNeedsReconcile).toHaveBeenCalledTimes(1);
+      expect(markNeedsReconcile).not.toHaveBeenCalled();
+    });
+
+    it("local write FAILS and the revert ALSO fails -> the flag is raised and NOT cleared (502 STRIPE_AHEAD)", async () => {
+      const stripe = fakeStripeSubscription([{ id: "si_base", price: { ...BASE.price } }]);
+      const forward = stripe.updateSubscription.getMockImplementation()!;
+      stripe.updateSubscription
+        .mockImplementationOnce(forward) // the forward push applies
+        .mockRejectedValueOnce(new Error("revert refused")); // the revert does not
+      await expect(
+        runStripeFirstPlanChange(
+          { prisma: flowPrisma(), stripe: stripe as any, logger },
+          flowArgs(),
+          async () => {
+            throw new Error("local CAS 409");
+          },
+        ),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+      expect(markNeedsReconcile).toHaveBeenCalledTimes(1);
+      expect(clearNeedsReconcile).not.toHaveBeenCalled();
     });
   });
 });

@@ -11,8 +11,13 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+jest.mock("./needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import { Test, TestingModule } from "@nestjs/testing";
 import { Logger } from "@nestjs/common";
+import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
+import { isPricePushFailure } from "./price-override";
 import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
@@ -1684,6 +1689,69 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
         stripe.updateSubscription.mock.invocationCallOrder[0],
       );
       log.mockRestore();
+    });
+
+    describe("SA-733r3 N4 — needsReconcile around the Stripe price write", () => {
+      beforeEach(() => {
+        (armNeedsReconcile as jest.Mock).mockClear();
+        (clearNeedsReconcile as jest.Mock).mockClear();
+      });
+
+      it("is armed BEFORE subscriptions.update (key + stripe sub), and cleared once the ledger half has landed", async () => {
+        arrange();
+        const order: string[] = [];
+        (armNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+          order.push("arm");
+          return { owned: true };
+        });
+        stripe.updateSubscription.mockImplementationOnce(async () => {
+          order.push("stripe.update");
+          return {};
+        });
+        (clearNeedsReconcile as jest.Mock).mockImplementationOnce(async () => {
+          order.push("clear");
+        });
+
+        const result = await service.syncStripeSubscriptionPrice("t1", { effective: "next_cycle" });
+
+        expect(order).toEqual(["arm", "stripe.update", "clear"]);
+        const [, armArgs] = (armNeedsReconcile as jest.Mock).mock.calls[0];
+        expect(armArgs).toMatchObject({
+          tenantId: "t1",
+          kind: "price_override",
+          stripeSubId: "sub_1",
+        });
+        expect(armArgs.key).toBe(stripe.updateSubscription.mock.calls[0][2].idempotencyKey);
+        expect((clearNeedsReconcile as jest.Mock).mock.calls[0][2]).toEqual(result.reconcile);
+      });
+
+      it("a flag that cannot be written sends NOTHING to Stripe and reads as a push failure (the caller refuses)", async () => {
+        arrange();
+        (armNeedsReconcile as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+        const result = await service.pushResolvedPriceToStripe("t1");
+        expect(result).toEqual({ synced: false, reason: "reconcile_flag_failed" });
+        expect(isPricePushFailure(result)).toBe(true);
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      });
+
+      it("a Stripe write that failed and was NOT applied lowers the attempt's own flag", async () => {
+        arrange();
+        stripe.updateSubscription.mockRejectedValue(new Error("socket hang up"));
+        await service.pushResolvedPriceToStripe("t1");
+        expect(clearNeedsReconcile).toHaveBeenCalledWith(expect.anything(), "t1", { owned: true });
+      });
+
+      it("an unchanged price arms nothing (no Stripe write)", async () => {
+        arrange();
+        pricing.checkoutPriceData.mockResolvedValue({
+          currency: "usd",
+          product_data: { name: "x" },
+          unit_amount: 10000,
+          recurring: { interval: "month" },
+        });
+        await service.pushResolvedPriceToStripe("t1");
+        expect(armNeedsReconcile).not.toHaveBeenCalled();
+      });
     });
 
     it("the key differs for a different amount, mode or row version — a later change is never swallowed", async () => {

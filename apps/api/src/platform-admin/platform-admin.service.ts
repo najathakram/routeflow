@@ -92,6 +92,7 @@ import {
   type ProposedOverride,
 } from "../billing/price-override";
 import { underTenantPriceLock } from "../billing/price-lock";
+import { clearNeedsReconcile } from "../billing/needs-reconcile";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
@@ -1918,7 +1919,14 @@ export class PlatformAdminService {
           version: committed.updatedAt,
         })
         .catch(() => null);
-      if (resync?.synced) return false;
+      if (resync?.synced) {
+        // N4: Stripe is back on the committed row: the flag the original push armed comes down. (The resync's
+        // own arm finds it already raised, so only the original attempt owns it.)
+        await clearNeedsReconcile({ prisma: this.prisma, logger: this.logger }, id, {
+          owned: (a.pushed.reconcile?.owned ?? false) || (resync.reconcile?.owned ?? false),
+        });
+        return false;
+      }
     }
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
       kind: "price_override_stripe_ahead",

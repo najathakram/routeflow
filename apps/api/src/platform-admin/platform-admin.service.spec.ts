@@ -8,6 +8,9 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
+jest.mock("../billing/needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import { Prisma } from "@prisma/client";
 import {
   BadGatewayException,

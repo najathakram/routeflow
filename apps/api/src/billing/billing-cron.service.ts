@@ -26,7 +26,7 @@ import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
-import { markNeedsReconcile } from "./plan-change-stripe";
+import { markNeedsReconcile } from "./needs-reconcile";
 import { stripeBaseItem } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
 
@@ -572,13 +572,16 @@ export class BillingCronService {
       if (!base || ids.has(base.id) || base.price?.recurring?.interval !== "month") return;
       const expectedCents = toCents(Number(expectedMonthly));
       if (base.price?.unit_amount === expectedCents) return;
-      markNeedsReconcile(this.logger, {
-        tenantId,
-        stripeSubId,
-        local: { planKey: target, monthly: Number(expectedMonthly) },
-        stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
-        error: "the downgrade flipped locally but Stripe still bills a different price",
-      });
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          stripeSubId,
+          local: { planKey: target, monthly: Number(expectedMonthly) },
+          stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
+          error: "the downgrade flipped locally but Stripe still bills a different price",
+        },
+      );
     } catch (e) {
       this.logger.warn(
         `Could not verify Stripe's price after the downgrade of tenant=${tenantId}: ${(e as Error).message}`,
