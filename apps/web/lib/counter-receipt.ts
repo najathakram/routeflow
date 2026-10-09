@@ -163,6 +163,15 @@ export function buildCounterReceipt(input: {
     if (serverChange != null) {
       change = serverChange;
       if (cashLeg) tendered = roundMoney(cashLeg.amount + serverChange);
+    } else if (enteredTender != null && cashLeg) {
+      // a recovered sale (GET by-key never carries change): the cash the clerk entered on the held attempt, as entered
+      tendered = enteredTender;
+      tenderedAsEntered = true;
+      const derived = roundMoney(enteredTender - cashLeg.amount);
+      if (derived > 0) {
+        change = derived;
+        changeAsEntered = true;
+      }
     }
   } else if (hasTender) {
     if (enteredTender != null) {

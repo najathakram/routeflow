@@ -48,7 +48,7 @@ describe("a split-payment receipt", () => {
     expect(m.tenderedAsEntered).toBe(false);
   });
 
-  it("an exact split has no change and no tendered row; the Paid figure is the server's", () => {
+  it("an exact live split has no change and no tendered row; the Paid figure is the server's", () => {
     const m = build({ payments: legs });
     expect(m).toMatchObject({ change: null, tendered: null, paid: 70, showPaid: true });
   });
@@ -57,6 +57,21 @@ describe("a split-payment receipt", () => {
     const m = build({ payments: legs, change: 10 }, 99); // a stale 'entered' figure must not leak into a split
     expect(m.tendered).toBe(50);
     expect(m.tenderedAsEntered).toBe(false);
+  });
+
+  it("a recovered split sale (by-key never carries change) shows the cash entered and the change as entered", () => {
+    const m = build({ payments: legs }, 50);
+    expect(m).toMatchObject({
+      tendered: 50,
+      tenderedAsEntered: true,
+      change: 10,
+      changeAsEntered: true,
+    });
+  });
+
+  it("a recovered split sale with no change owed shows nothing extra", () => {
+    const m = build({ payments: legs }, 40);
+    expect(m).toMatchObject({ tendered: 40, tenderedAsEntered: true, change: null });
   });
 
   it("a single tender is unchanged: no tender lines, the one Payment method row", () => {

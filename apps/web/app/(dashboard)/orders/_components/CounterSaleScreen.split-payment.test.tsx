@@ -1,4 +1,5 @@
 import * as React from "react";
+import { isWholeCents } from "@routeflow/pricing";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -343,6 +344,19 @@ describe("the split panel, named customer", () => {
   });
 });
 
+describe("the single tender never sends a sub-cent amount", () => {
+  it("a tendered 20.005 goes out as a whole-cent figure", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "20.005" } });
+    fireEvent.click(complete());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const amount = mutateAsync.mock.calls[0][0].dto.payment.amount;
+    expect(isWholeCents(amount)).toBe(true);
+  });
+});
+
 describe("a held attempt replays the exact legs with the same key", () => {
   it("after an unknown outcome the panel is frozen, Try again re-sends the SAME body and key, and a reload restores the legs", async () => {
     mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
@@ -379,9 +393,19 @@ describe("a held attempt replays the exact legs with the same key", () => {
     ]);
   });
 
-  it("a recovered split sale (Check sale status) rings the cash leg as entered", async () => {
+  it("a recovered split sale (Check sale status) shows the cash entered and the change, as entered", async () => {
     mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
-    lookupAsync.mockResolvedValueOnce({ ...SALE, method: "CASH", replayed: true });
+    // GET by-key: the stored legs, never a change
+    lookupAsync.mockResolvedValueOnce({
+      ...SALE,
+      change: undefined,
+      method: "CARD",
+      replayed: true,
+      payments: [
+        { method: "CARD", amount: 30, paymentIds: ["p1"] },
+        { method: "CASH", amount: 40, paymentIds: ["p2"] },
+      ],
+    });
     await ring70();
     openSplit();
     setAmount(2, "30");
@@ -390,7 +414,12 @@ describe("a held attempt replays the exact legs with the same key", () => {
     await screen.findByTestId("counter-outcome-unknown");
     fireEvent.click(screen.getByRole("button", { name: "Check sale status" }));
     await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+    // leg 0 of the held body is the CASH row: the lookup asks with that method
     expect(lookupAsync).toHaveBeenCalledWith({ idempotencyKey: "key-1", method: "CASH" });
+    expect(screen.getAllByTestId("receipt-tender-line")).toHaveLength(2);
+    expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$50.00");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("$10.00");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("as entered");
   });
 
   it("a 409 COUNTER_TENDER_CHANGED is final: its fixed copy, the lock lifts, no retry", async () => {
@@ -455,6 +484,11 @@ describe("the receipt of a split sale", () => {
       change: undefined,
       paymentRecorded: false,
       paymentErrorCode: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+      // all or nothing: the legs come back at amount 0 and nothing is recorded
+      payments: [
+        { method: "CARD", amount: 0, paymentIds: [] },
+        { method: "CASH", amount: 0, paymentIds: [] },
+      ],
     });
     await ring70();
     openSplit();
