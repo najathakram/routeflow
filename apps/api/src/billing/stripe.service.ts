@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 import { STRIPE_API_VERSION } from "./stripe-period";
+import { COUPON_SYNC_EXPAND, COUPON_SYNC_REQUEST, isInvoiceUpcomingNone } from "./coupon-unbilled";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value.
@@ -140,6 +141,40 @@ export class StripeService implements OnModuleInit {
       if (pi?.status === "processing") paymentProcessing = true;
     }
     return { status, paymentProcessing };
+  }
+
+  /**
+   * SA-736r M3: the coupon sync's subscription read - discounts expanded, capped by the per-request options
+   * (a timeout throws, so the webhook ledger records an error and Stripe redelivers). Never the payload.
+   */
+  async retrieveSubscriptionWithDiscounts(subId: string): Promise<any> {
+    return this.client.subscriptions.retrieve(
+      subId,
+      { expand: [...COUPON_SYNC_EXPAND] },
+      {
+        timeout: COUPON_SYNC_REQUEST.timeoutMs,
+        maxNetworkRetries: COUPON_SYNC_REQUEST.maxNetworkRetries,
+      },
+    );
+  }
+
+  /**
+   * SA-736r: the subscription's UPCOMING invoice (`invoices.createPreview`), or null when Stripe says it has
+   * none (`invoice_upcoming_none`: ending or canceled) - a null result is that case. Any other error throws.
+   */
+  async previewNextInvoice(subId: string): Promise<any> {
+    try {
+      return await this.client.invoices.createPreview(
+        { subscription: subId },
+        {
+          timeout: COUPON_SYNC_REQUEST.timeoutMs,
+          maxNetworkRetries: COUPON_SYNC_REQUEST.maxNetworkRetries,
+        },
+      );
+    } catch (err) {
+      if (isInvoiceUpcomingNone(err)) return null;
+      throw err;
+    }
   }
 
   /** B1158: the completed session by id — the parked-checkout sweep re-runs the webhook handling from it. */

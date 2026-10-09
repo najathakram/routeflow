@@ -30,6 +30,13 @@ import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { isPayingRow } from "./mrr.service";
 import {
+  applyCouponStateTx,
+  resetCouponState,
+  syncCouponFromStripe,
+  type CouponSyncOutcome,
+} from "./coupon-state";
+import { NO_COUPON } from "./coupon-unbilled";
+import {
   BILLING_EVENTS,
   BillingEventType,
   planKeyToEnum,
@@ -225,6 +232,7 @@ export class BillingService {
       planKey: string | null;
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
+      couponFull: boolean;
     },
     tenant: { deletedAt: Date | null; class: string },
     direction: 1 | -1,
@@ -232,7 +240,7 @@ export class BillingService {
     payload: Prisma.InputJsonValue,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey)) return;
+    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey, sub.couponFull)) return;
     // SA-693 / SHOULD-2: only BILLABLE add-ons count — a comp is a platform grant (never revenue), and one that
     // was billed before it became a comp can still carry a stale snapshot.
     const addons = await tx.tenantAddon.findMany({
@@ -269,11 +277,6 @@ export class BillingService {
    */
   private async transitionAndEmit(
     tenantId: string,
-    sub: {
-      planKey: string | null;
-      basePriceSnapshot: Prisma.Decimal | null;
-      discount: Prisma.Decimal | null;
-    },
     statusWhere: Prisma.TenantWhereInput,
     toStatus: "ACTIVE" | "CANCELLED" | "SUSPENDED",
     direction: 1 | -1,
@@ -295,8 +298,61 @@ export class BillingService {
         where: { id: tenantId },
         select: { deletedAt: true, class: true },
       });
-      await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
+      // SA-736r M1: planKey, snapshot, discount AND couponFull are re-read HERE, inside the tx and after
+      // the status CAS (which holds the Tenant row) - never taken from a `sub` read before the tx, which a
+      // coupon sync or a plan change can overtake. An absent row is not paying: books nothing.
+      const sub = await tx.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { planKey: true, basePriceSnapshot: true, discount: true, couponFull: true },
+      });
+      if (sub) await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
       return true;
+    });
+  }
+
+  /**
+   * SA-736r M3: re-derive `couponFull` from Stripe (retrieve + upcoming-invoice preview, never the webhook
+   * payload) and write it through the single writer. A failure THROWS - callers keep it OUTSIDE any best-effort
+   * try/catch so the webhook ledger records an error and Stripe redelivers.
+   */
+  private syncCoupon(
+    tenantId: string,
+    stripeSubId: string,
+    reason: string,
+  ): Promise<CouponSyncOutcome> {
+    return syncCouponFromStripe(
+      { prisma: this.prisma, stripe: this.stripe, events: this.events },
+      tenantId,
+      stripeSubId,
+      reason,
+    );
+  }
+
+  /**
+   * SA-736r M5: inside the checkout tx (the Tenant row is locked), a replaced `stripeSubId` takes the old
+   * subscription's coupon columns with it. Read BEFORE the upsert; the reset runs AFTER it.
+   */
+  private async storedStripeSubIdTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ): Promise<string | null> {
+    const row = await tx.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { stripeSubId: true },
+    });
+    return row?.stripeSubId ?? null;
+  }
+
+  private async resetCouponIfSubReplacedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    previousSubId: string | null,
+    newSubId: string,
+  ): Promise<void> {
+    if (previousSubId == null || previousSubId === newSubId) return;
+    await applyCouponStateTx(tx, this.events, tenantId, NO_COUPON, {
+      reason: "stripe_sub_replaced",
+      tenantLockHeld: true,
     });
   }
 
@@ -731,6 +787,7 @@ export class BillingService {
             select: {
               planKey: true,
               basePriceSnapshot: true,
+              couponFull: true,
               tenant: { select: { status: true, deletedAt: true, class: true } },
             },
           });
@@ -750,7 +807,7 @@ export class BillingService {
           });
           if (count === 0) return "retry" as const;
 
-          if (isPayingRow(sub.tenant, sub.planKey)) {
+          if (isPayingRow(sub.tenant, sub.planKey, sub.couponFull)) {
             await this.events.emit(
               tenantId,
               BILLING_EVENTS.PLAN_CHANGED,
@@ -1693,6 +1750,9 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
+      // SA-736r F2: the redelivery syncs the coupon too (idempotent), so a sync that threw after the first
+      // delivery's upsert is retried here instead of being lost behind "already applied".
+      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
       return;
     }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
@@ -1923,6 +1983,7 @@ export class BillingService {
                 await lockTenantForLedger(tx, tenantId);
                 // X1: judged again under the lock; a duplicate throws, so the hook's writes above roll back.
                 await recheckUnderLock(tx);
+                const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
                 // Compare-and-swap on the plan we judged the transition from (the same shape as
                 // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
                 // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
@@ -1944,6 +2005,7 @@ export class BillingService {
                   }
                 }
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 if (session.id) {
                   await this.writeAppliedMarker(tx, tenantId, session.id, {
                     fromPlanKey: transition.fromPlanKey,
@@ -2006,7 +2068,9 @@ export class BillingService {
             }
             await lockTenantForLedger(tx, tenantId);
             await recheckUnderLock(tx);
+            const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
                 toPlanKey: planKeyForCheckout,
@@ -2041,6 +2105,9 @@ export class BillingService {
         stripeSub,
         adoptCtx,
       );
+      // SA-736r F2: a redelivery that finds the session applied STILL syncs the coupon (idempotent), so a
+      // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED.
+      await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
       return;
     }
 
@@ -2050,7 +2117,6 @@ export class BillingService {
     // legacy Stripe doesn't set it, so emitPayingDelta short-circuits).
     const reinstated = await this.transitionAndEmit(
       tenantId,
-      upserted,
       { status: { not: "ACTIVE" } },
       "ACTIVE",
       1,
@@ -2079,6 +2145,10 @@ export class BillingService {
     // two sum to what Stripe bills. Reversed, the crossing would price the adopted snapshot a second
     // time.
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
+
+    // SA-736r M3: LAST, after the activation crossing and the add-on adoption (their writes are
+    // idempotent), so a throwing sync is retried by Stripe without double-booking anything.
+    await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
@@ -2193,7 +2263,6 @@ export class BillingService {
     // (already ACTIVE → count 0 → no ledger delta).
     const reinstated = await this.transitionAndEmit(
       sub.tenantId,
-      sub,
       { status: { not: "ACTIVE" } },
       "ACTIVE",
       1,
@@ -2212,6 +2281,10 @@ export class BillingService {
           `applies it when due`,
       );
     }
+
+    // SA-736r F1: LAST - catches a repeating coupon that ended at the period boundary. Every earlier write
+    // here is idempotent (CAS resume, absolute reset), so a throwing sync is safely retried.
+    if (sub.stripeSubId) await this.syncCoupon(sub.tenantId, sub.stripeSubId, "payment_succeeded");
 
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
   }
@@ -2286,6 +2359,11 @@ export class BillingService {
       "invoice.payment_failed",
     );
     if (!sub) return;
+
+    // SA-736r M3/F1: a failing invoice means the coupon no longer zeroes it. The sync runs BEFORE the
+    // non-idempotent increment below: a throwing sync aborts here, before the count moves, and the redelivery
+    // runs the whole handler once.
+    await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "payment_failed");
 
     // Dunning is counted, not enforced here: no status change. Grace and suspension stay with
     // suspendOverdueTenants (which re-checks Stripe); reinstatement stays with payment_succeeded,
@@ -2380,7 +2458,6 @@ ${updateLine}
   ): Promise<void> {
     const churned = await this.transitionAndEmit(
       sub.tenantId,
-      sub,
       { status: "ACTIVE" },
       "CANCELLED",
       -1,
@@ -2395,6 +2472,14 @@ ${updateLine}
           data: { status: "CANCELLED" },
         })
       ).count === 1;
+    // SA-736r M5/F5: the coupon columns never outlive their subscription. Own tx, whatever the status CAS
+    // returned (it misses TRIAL / READ_ONLY rows); after the transition, so cancelling a couponFull tenant
+    // books 0, and before the early return below.
+    await resetCouponState(
+      { prisma: this.prisma, events: this.events },
+      sub.tenantId,
+      `stripe_${reason}`,
+    );
     if (!cancelled) {
       this.logger.log(
         `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
@@ -2462,7 +2547,10 @@ ${updateLine}
     // grace stays with suspendOverdueTenants, reinstatement with invoice.payment_succeeded.
     if (subscription.status === "canceled") {
       await this.cancelFromStripe(sub, "subscription_canceled");
+      return; // SA-736r M1: a canceled status skips the coupon sync - cancelFromStripe resets the columns
     }
+    // SA-736r M3: adding or removing a discount fires this event; re-derive from Stripe, not the payload.
+    await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "subscription_updated");
   }
 
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────
@@ -2507,7 +2595,6 @@ ${updateLine}
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
           const suspended = await this.transitionAndEmit(
             sub.tenantId,
-            sub,
             { status: "ACTIVE" },
             "SUSPENDED",
             -1,

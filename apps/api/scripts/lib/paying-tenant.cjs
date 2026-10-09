@@ -16,12 +16,22 @@ const PAYING_TENANT_CONDITIONS = {
 };
 
 /**
+ * SA-736r M2: `couponFull` is REQUIRED (a boolean). `undefined` - a select that never fetched the column -
+ * THROWS, so a script can never silently count a coupon-unbilled tenant as paying.
+ *
  * @param {{ status: string, deletedAt: Date | null | undefined, class: string }} tenant
  * @param {string | null | undefined} planKey the tenant's TenantSubscription.planKey
+ * @param {boolean} couponFull the tenant's TenantSubscription.couponFull
  * @returns {boolean}
  */
-function isPayingTenant(tenant, planKey) {
+function isPayingTenant(tenant, planKey, couponFull) {
+  if (typeof couponFull !== "boolean") {
+    throw new TypeError(
+      "isPayingTenant: couponFull must be a boolean (select it with the subscription)",
+    );
+  }
   return (
+    couponFull !== true &&
     tenant.status === PAYING_TENANT_CONDITIONS.status &&
     // Loose, exactly like isPayingRow: `undefined` (a select that never fetched it) reads as null.
     tenant.deletedAt == PAYING_TENANT_CONDITIONS.deletedAt &&
@@ -40,7 +50,8 @@ function isPayingTenant(tenant, planKey) {
  * @returns {"paying" | "stripe-linked" | null}
  */
 function protectedArm(tenant, sub) {
-  if (isPayingTenant(tenant, sub?.planKey ?? null)) return "paying";
+  // A coupon-unbilled tenant is not "paying" - it still has a stripeSubId, so it stays PROTECTED via the next arm.
+  if (isPayingTenant(tenant, sub?.planKey ?? null, sub?.couponFull === true)) return "paying";
   if (sub?.stripeSubId != null && tenant.deletedAt == null) return "stripe-linked";
   return null;
 }

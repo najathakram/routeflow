@@ -379,6 +379,7 @@ export class BillingCronService {
               stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
+              couponFull: true,
             },
           });
           if (
@@ -397,8 +398,8 @@ export class BillingCronService {
             throw new DowngradeOvertakenError();
           }
           const amountDelta = roundMoney(
-            (isPayingRow(lockedTenant, target) ? newBase : 0) -
-              (isPayingRow(lockedTenant, lockedSub.planKey)
+            (isPayingRow(lockedTenant, target, lockedSub.couponFull) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey, lockedSub.couponFull)
                 ? Number(lockedSub.basePriceSnapshot ?? 0)
                 : 0),
           );
@@ -619,6 +620,7 @@ export class BillingCronService {
             discount: true,
             cancelAtPeriodEnd: true,
             periodEnd: true,
+            couponFull: true,
           },
         });
         if (
@@ -643,7 +645,7 @@ export class BillingCronService {
           (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
           0,
         );
-        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+        const contribution = isPayingRow(tenant, sub.planKey ?? null, sub.couponFull)
           ? roundMoney(
               (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
                 addonMrr -
