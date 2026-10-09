@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
+import { resolvePlanPrice } from "./plan-price";
 
 export type PricingSource = "override" | "catalog";
 
@@ -91,43 +92,31 @@ export class PlatformPricingService {
     const definition = findPlanDefinition(version.definitions, planKey);
     const planName = definition?.name ?? planKey;
 
-    const overrideMonthly = ignoreOverrides ? null : tenant.subscription?.priceOverrideMonthly;
-    const overrideAnnual = ignoreOverrides ? null : tenant.subscription?.priceOverrideAnnual;
-    // `annualPrice` of 0 is a DELIBERATE promotional price (free first year) — test for
-    // null, never truthiness, or a 0 silently becomes "10× monthly".
-    const catalogMonthly =
-      definition?.monthlyPrice != null ? Number(definition.monthlyPrice) : null;
-    const catalogAnnual = definition?.annualPrice != null ? Number(definition.annualPrice) : null;
-
-    // Either override column on its own counts as a custom fee: an annual-only fee is a
-    // real negotiated case (annual prepay discount off the catalog monthly), and silently
-    // ignoring it would bill the catalog price to a tenant the admin already re-priced.
-    if (overrideMonthly != null || overrideAnnual != null) {
-      const monthly = overrideMonthly != null ? Number(overrideMonthly) : catalogMonthly;
-      if (monthly == null) {
-        throw new BadRequestException(
-          `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
-            `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
-            `fee is set — set a custom MONTHLY fee too.`,
-        );
-      }
-      const annual = overrideAnnual != null ? Number(overrideAnnual) : monthly * 10;
-      return { planKey, planName, monthly, annual, source: "override", currency: "usd" };
-    }
-
-    if (catalogMonthly == null) {
+    const resolved = resolvePlanPrice(
+      definition,
+      ignoreOverrides
+        ? null
+        : {
+            monthly: tenant.subscription?.priceOverrideMonthly,
+            annual: tenant.subscription?.priceOverrideAnnual,
+          },
+    );
+    if (!resolved.ok) {
       throw new BadRequestException(
-        `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
-          `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
+        resolved.reason === "annual_override_without_monthly"
+          ? `No monthly price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+              `This plan has no catalog price (custom/Enterprise) and only an annual custom ` +
+              `fee is set — set a custom MONTHLY fee too.`
+          : `No price is resolvable for tenant ${tenantId} on plan ${planKey}. ` +
+              `This plan has no catalog price (custom/Enterprise) — set a custom fee first.`,
       );
     }
-    const annual = catalogAnnual != null ? catalogAnnual : catalogMonthly * 10;
     return {
       planKey,
       planName,
-      monthly: catalogMonthly,
-      annual,
-      source: "catalog",
+      monthly: resolved.monthly,
+      annual: resolved.annual,
+      source: resolved.source,
       currency: "usd",
     };
   }
