@@ -68,6 +68,7 @@ function Summary({
   label = "Today's summary",
   testId = "today-summary",
   prefix = "today",
+  cashExpectedSuffix = "",
 }: {
   s: TodaysSalesSummary;
   /** the region's accessible name */
@@ -75,6 +76,8 @@ function Summary({
   testId?: string;
   /** test-id prefix of the stats (`${prefix}-in-cash`) */
   prefix?: string;
+  /** appended to the cash-expected label (the week total says it is a sum of the days) */
+  cashExpectedSuffix?: string;
 }) {
   const r = s.refunds;
   return (
@@ -123,7 +126,7 @@ function Summary({
           testId={`${prefix}-net-collected`}
         />
         <Stat
-          label={r.tenderKnown ? "Cash expected in drawer" : "Cash expected, before refunds"}
+          label={`${r.tenderKnown ? "Cash expected in drawer" : "Cash expected, before refunds"}${cashExpectedSuffix}`}
           value={money(s.cashExpectedInDrawer)}
           testId={`${prefix}-cash-expected`}
         />
@@ -271,7 +274,13 @@ function WeekReport({ today }: { today: string }) {
       <p className="text-xs text-navy/70">
         {dayLabel(oldest as string)} to {dayLabel(days[0] as string)}
       </p>
-      <Summary s={total} label="Last 7 days total" testId="week-total" prefix="week-total" />
+      <Summary
+        s={total}
+        label="Last 7 days total"
+        testId="week-total"
+        prefix="week-total"
+        cashExpectedSuffix=" (sum of days)"
+      />
       {rows.map((r) => (
         <div key={r.day} className="space-y-1 break-inside-avoid">
           <h3 className="text-sm font-semibold">{dayLabel(r.day)}</h3>

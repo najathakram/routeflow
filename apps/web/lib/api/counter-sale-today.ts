@@ -29,10 +29,11 @@ export function useCounterSaleWeek(days: readonly string[], enabled = true) {
   return useQueries({
     queries: days.map((day) => ({
       queryKey: [...COUNTER_SALE_TODAY_KEY, "day", day],
-      queryFn: () =>
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
         apiClient
           .get<TodaysSalesResponse>("/orders/counter-sale/today", {
             params: { day, page: 1, limit: 1 },
+            signal, // a closed sheet cancels the calls still in flight
           })
           .then((r) => r.data),
       enabled,

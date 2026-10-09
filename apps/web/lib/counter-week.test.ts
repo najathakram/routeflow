@@ -1,5 +1,5 @@
 import type { TodaysSalesSummary } from "@routeflow/types";
-import { lastDays, sumWeek, weekCsv } from "./counter-week";
+import { csvText, lastDays, sumWeek, weekCsv } from "./counter-week";
 
 /**
  * Train 4 (b): "Last 7 days" on Today's sales. Seven calls to the existing day endpoint, one summary each; the week total is
@@ -114,5 +114,22 @@ describe("weekCsv", () => {
       },
     ]);
     expect(csv.trim().split("\r\n").pop()).toMatch(/refund method not recorded/);
+  });
+});
+
+describe("csvText (formula guard for text cells)", () => {
+  it.each(["=SUM(A1)", "+1", "-1+1", "@cmd", "\tTAB", "\rCR"])(
+    "a text cell that starts with a formula character is neutralised: %j",
+    (v) => {
+      expect(csvText(v).startsWith("'")).toBe(true);
+    },
+  );
+  it("ordinary text and dates are left alone", () => {
+    expect(csvText("2026-10-09")).toBe("2026-10-09");
+    expect(csvText("Total")).toBe("Total");
+  });
+  it("the CSV day column goes through it (a hostile day label cannot start a formula)", () => {
+    const csv = weekCsv([{ day: "=1+1", summary: summary() }]);
+    expect(csv.split("\r\n")[1]!.startsWith("'=1+1,")).toBe(true);
   });
 });

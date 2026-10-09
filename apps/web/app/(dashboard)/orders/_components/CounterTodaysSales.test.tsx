@@ -607,6 +607,34 @@ describe("Last 7 days (Train 4 b)", () => {
     expect(within(first).getByTestId("week-day-2026-10-07-in-cash")).toHaveTextContent("$30.00");
   });
 
+  it("the week's cash figure says it is a sum of the days", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    const total = await screen.findByTestId("week-total");
+    expect(within(total).getByTestId("week-total-cash-expected")).toHaveTextContent(
+      "Cash expected in drawer (sum of days)",
+    );
+    // a single day keeps its own plain label
+    expect(
+      within(screen.getByTestId("week-day-2026-10-07")).getByTestId(
+        "week-day-2026-10-07-cash-expected",
+      ),
+    ).not.toHaveTextContent("sum of days");
+  });
+
+  it("each day's request carries the query's abort signal (a closed sheet cancels the in-flight calls)", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    await waitFor(() => expect(dayCalls()).toHaveLength(7));
+    for (const c of dayCalls()) {
+      expect((c[1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
   it("'Today' goes back to the list of today's sales", async () => {
     serveWeek();
     await open();

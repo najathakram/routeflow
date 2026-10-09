@@ -84,7 +84,7 @@ const amount = (n: number) => n.toFixed(2);
 
 function csvRow(label: string, s: TodaysSalesSummary): string[] {
   return [
-    label,
+    csvText(label),
     String(s.sales.count),
     amount(s.sales.total),
     amount(s.moneyIn.cash),
@@ -104,6 +104,12 @@ function csvRow(label: string, s: TodaysSalesSummary): string[] {
     amount(s.netCollected),
   ];
 }
+
+/**
+ * A TEXT cell that starts with = + - @ (or a tab / CR) would run as a formula when the file is opened in a spreadsheet:
+ * it is prefixed with an apostrophe. Numbers (a plain negative like -5.00) never go through here.
+ */
+export const csvText = (v: string): string => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
 
 const cell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
