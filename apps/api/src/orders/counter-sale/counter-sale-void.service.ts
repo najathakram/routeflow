@@ -194,9 +194,10 @@ export class CounterSaleVoidService {
     }> =
       invoiceIds.length === 0
         ? []
-        : await tx.invoicePayment.findMany({
-            // scan-ok: draft-payment-not-void — EVERY live row on purpose (PAID, PENDING, DRAFT): a DRAFT or
-            // other non-tender row is FOREIGN and refuses the void (isForeignPaymentRow), never skipped.
+        : // EVERY live row on purpose (PAID, PENDING, DRAFT): a DRAFT or other non-tender row is FOREIGN and
+          // refuses the void (isForeignPaymentRow), it is never skipped.
+          // scan-ok: draft-payment-not-void — all non-VOID rows are read deliberately, see above.
+          await tx.invoicePayment.findMany({
             where: { invoiceId: { in: invoiceIds }, status: { not: "VOID" } },
             select: {
               id: true,
