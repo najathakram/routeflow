@@ -275,6 +275,33 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     await expect(park("A", { registerKey: "expiry-cap" })).resolves.toBeDefined();
   });
 
+  it("a stored payload that no longer passes the whitelist is a 404 AND leaves the cart open (the resume rolls back)", async () => {
+    const stale = randomUUID();
+    await raw.counterParkedCart.create({
+      data: {
+        id: stale,
+        tenantId: tenants.A,
+        registerKey: "rollback",
+        createdById: actorsA[0].sub,
+        label: "Stale shape",
+        // a shape the whitelist refuses (lines is not a list): as if the rules had tightened after it was parked
+        payload: { lines: "not-a-list" },
+        payloadVersion: 1,
+        expiresAt: new Date(Date.now() + 3_600_000),
+      },
+    });
+    await expect(asA(() => service.resume(stale, actorsA[0] as never))).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PARK_TAKEN },
+    });
+    const row = await raw.counterParkedCart.findUnique({ where: { id: stale } });
+    expect(row?.resumedAt).toBeNull();
+    expect(row?.resumedById).toBeNull();
+    // still listed, so the clerk can discard it instead of losing it silently
+    const listed = await asA(() => service.list({ register: "rollback", page: 1, pageSize: 20 }));
+    expect(listed.data.map((r) => r.id)).toContain(stale);
+    await expect(asA(() => service.discard(stale))).resolves.toBeUndefined();
+  });
+
   it("discard: only an unresumed cart of this tenant", async () => {
     const mine = await park("A", { registerKey: "discard" });
     const resumed = await park("A", { registerKey: "discard" });

@@ -253,34 +253,40 @@ export class CounterParkService {
     const actor = this.actorId(user);
     if (!isUuid(id)) throw takenError();
 
-    // The compare-and-set: the row changes state only if it is still open, in this tenant, and unexpired.
-    let rows = await this.prisma.$queryRaw<ParkedRow[]>`
-      UPDATE "CounterParkedCart"
-         SET "resumedAt" = ${now}, "resumedById" = ${actor}
-       WHERE "id" = ${id} AND "tenantId" = ${tenantId}
-         AND "resumedAt" IS NULL AND "expiresAt" > ${now}
-      RETURNING "id", "label", "createdAt", "payload"`;
-
-    if (rows.length === 0) {
-      // The same actor's retry (a lost response): the row they resumed a moment ago, and only that.
-      const since = new Date(now.getTime() - COUNTER_PARK_RETRY_WINDOW_MS);
-      rows = await this.prisma.$queryRaw<ParkedRow[]>`
-        SELECT "id", "label", "createdAt", "payload"
-          FROM "CounterParkedCart"
+    // ONE transaction: the compare-and-set and the payload re-check commit together. If the stored payload no longer passes
+    // the whitelist the throw rolls the UPDATE back, so the cart is not marked taken (and stays listed to discard) when the
+    // clerk got nothing back.
+    return this.prisma.tenantTransaction(async (tx: unknown): Promise<ResumeParkedCartResponse> => {
+      const db = tx as TxRaw;
+      // The compare-and-set: the row changes state only if it is still open, in this tenant, and unexpired.
+      let rows = await db.$queryRaw<ParkedRow[]>`
+        UPDATE "CounterParkedCart"
+           SET "resumedAt" = ${now}, "resumedById" = ${actor}
          WHERE "id" = ${id} AND "tenantId" = ${tenantId}
-           AND "resumedById" = ${actor} AND "resumedAt" > ${since}`;
-    }
-    if (rows.length === 0) throw takenError();
+           AND "resumedAt" IS NULL AND "expiresAt" > ${now}
+        RETURNING "id", "label", "createdAt", "payload"`;
 
-    // Defence in depth: only a payload that still passes the whitelist leaves the server.
-    const clean = sanitizeParkedPayload(rows[0].payload, COUNTER_SALE_METHODS);
-    if (!clean.ok) throw takenError();
-    return {
-      id: rows[0].id,
-      label: rows[0].label,
-      createdAt: iso(rows[0].createdAt),
-      payload: clean.value,
-    };
+      if (rows.length === 0) {
+        // The same actor's retry (a lost response): the row they resumed a moment ago, and only that.
+        const since = new Date(now.getTime() - COUNTER_PARK_RETRY_WINDOW_MS);
+        rows = await db.$queryRaw<ParkedRow[]>`
+          SELECT "id", "label", "createdAt", "payload"
+            FROM "CounterParkedCart"
+           WHERE "id" = ${id} AND "tenantId" = ${tenantId}
+             AND "resumedById" = ${actor} AND "resumedAt" > ${since}`;
+      }
+      if (rows.length === 0) throw takenError();
+
+      // Defence in depth: only a payload that still passes the whitelist leaves the server.
+      const clean = sanitizeParkedPayload(rows[0].payload, COUNTER_SALE_METHODS);
+      if (!clean.ok) throw takenError();
+      return {
+        id: rows[0].id,
+        label: rows[0].label,
+        createdAt: iso(rows[0].createdAt),
+        payload: clean.value,
+      };
+    });
   }
 
   async discard(id: string): Promise<void> {
