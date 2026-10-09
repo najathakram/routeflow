@@ -177,7 +177,11 @@ import {
   loadManualLineContext,
   zeroExemptCategoryTax,
 } from "./manual-invoice-context";
-import { loadLockedInvoiceForEdit, planHeaderOnlyTotals } from "./locked-invoice-edit";
+import {
+  assertStillDraft,
+  loadLockedInvoiceForEdit,
+  planHeaderOnlyTotals,
+} from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -3109,6 +3113,7 @@ export class InvoicesService {
         // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
         // Lock order (SA-137/203): the ORDER row first, then the invoice (loadLockedInvoiceForEdit, B1043).
         const locked = await loadLockedInvoiceForEdit(tx, id);
+        assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
         // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
         const carrierLocked = await invoiceOrderWithCarrier(
@@ -3274,6 +3279,7 @@ export class InvoicesService {
       ? await this.prisma.forTenant().invoice.update({ where: { id }, data: headerData, include })
       : await this.prisma.tenantTransaction(async (tx: any) => {
           const locked = await loadLockedInvoiceForEdit(tx, id);
+          assertStillDraft(locked.invoice); // r87
           const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
           assertInvoiceTotalsSane(
             { discount: totals.discount, subtotal, total: totals.total },

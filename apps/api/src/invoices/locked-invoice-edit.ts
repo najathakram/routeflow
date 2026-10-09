@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { InvoiceStatus } from "@prisma/client";
 import { roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -60,6 +61,13 @@ export async function loadLockedInvoiceForEdit(tx: any, id: string): Promise<Loc
     select: { isTaxExempt: true },
   });
   return { invoice, storedRows, isTaxExempt: !!customer?.isTaxExempt };
+}
+
+/** r87: the unlocked pre-read said DRAFT; the lock says whether it still is (a send can commit in between). */
+export function assertStillDraft(invoice: { status?: unknown }): void {
+  if (invoice.status !== InvoiceStatus.DRAFT) {
+    throw new BadRequestException("Only DRAFT invoices can be edited");
+  }
 }
 
 /** True when two money figures differ by at least a cent (both sides rounded first, L-170). */

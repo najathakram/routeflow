@@ -242,6 +242,30 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       expect(written()).toEqual({ notes: "just a note" });
     });
 
+    it("r87: an invoice that left DRAFT between the first read and the lock is refused", async () => {
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ ...draft }) // findOneOrThrow, unlocked
+        .mockResolvedValue({ ...draft, status: InvoiceStatus.SENT }); // under the lock
+      prisma.invoiceItem.findMany.mockResolvedValue([row()]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      await expect(service.update("inv-1", { discount: 1 })).rejects.toMatchObject({ status: 400 });
+      nothingWritten();
+    });
+
+    it("r87: the items rewrite refuses an invoice that left DRAFT under the lock too", async () => {
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ ...draft })
+        .mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
+      prisma.invoiceItem.findMany.mockResolvedValue([row()]);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+      await expect(
+        service.update("inv-1", { items: [{ description: "Widget", qty: 1, unitPrice: 100 }] }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(prisma.invoiceItem.deleteMany).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
     it("a stored line with a NULL or foreign tenant fails closed (400) instead of being dropped", async () => {
       arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()]);
       queryRaw.mockResolvedValue([{ n: 1 }]);
