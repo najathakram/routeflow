@@ -53,7 +53,7 @@ function isLockTimeout(e: unknown): boolean {
 async function bounded(
   tx: RawExecutor,
   wait: "3s" | "5s",
-  acquire: () => Promise<unknown>,
+  acquire: () => PromiseLike<unknown>,
 ): Promise<void> {
   if (wait === "5s") await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
   else await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
