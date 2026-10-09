@@ -100,7 +100,8 @@ export function buildCounterSaleResponse(input: {
   const lines: CounterSaleTenderLine[] = [];
   for (let i = 0; i < legCount; i++) {
     const rows = stored.byLeg.get(i) ?? [];
-    const lineMethod = legs?.[i]?.method ?? counterMethodOf(rows[0]?.payment.method);
+    // The STORED method wins whenever a row exists: a by-key `?method` hint is only the till's guess
+    const lineMethod = counterMethodOf(rows[0]?.payment.method) ?? legs?.[i]?.method;
     if (!lineMethod || lineMethod === "ON_ACCOUNT") continue; // ON_ACCOUNT takes no money: no line
     lines.push({
       method: lineMethod,

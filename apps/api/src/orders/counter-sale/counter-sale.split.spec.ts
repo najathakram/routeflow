@@ -759,6 +759,19 @@ describe("CounterSaleService.ring: split payments", () => {
       expect(r.change).toBeUndefined();
     });
 
+    it("GET by-key with a ?method that is not leg 0's still lists the STORED legs under their stored methods", async () => {
+      await service.ring(walkInSale({ payments: body }), staff, "key-1");
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE);
+      const stored = [
+        { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+        { method: "CASH", amount: 40, paymentIds: ["pay-2"] },
+      ];
+      // ON_ACCOUNT used to make leg 0 vanish (card money missing); CASH used to relabel the stored card leg
+      expect((await service.byKey("key-1", "ON_ACCOUNT")).payments).toEqual(stored);
+      expect((await service.byKey("key-1", "CASH")).payments).toEqual(stored);
+      expect((await service.byKey("key-1", "CHECK")).payments).toEqual(stored);
+    });
+
     it("GET by-key without ?method derives every leg and leg 0's method from storage", async () => {
       await service.ring(walkInSale({ payments: body }), staff, "key-1");
       (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE);
