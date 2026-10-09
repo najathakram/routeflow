@@ -38,6 +38,7 @@ import {
   COUNTER_SALES_DISABLED_COPY,
   PAYMENT_PROBLEM_COPY,
   cartTotals,
+  amountDue,
   changeDue,
   clearHeldAttempt,
   counterSaleErrorCopy,
@@ -193,6 +194,9 @@ export function CounterSaleScreen() {
       }, 0),
     [],
   );
+  // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
+  const clearUnderpaidError = () =>
+    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   const hasLines = lines.length > 0; // POS-7: the register header's Exit asks before discarding a cart with lines
   React.useEffect(() => {
@@ -263,9 +267,41 @@ export function CounterSaleScreen() {
   const scan = useCounterSaleScan({
     locked: lineLocked,
     refocus,
-    add: (product, level, n) =>
-      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id))),
+    add: (product, level, n) => {
+      scanCueArmedRef.current = true;
+      setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
+    },
   });
+
+  // A scan that lands on a line already in the cart says so (a new line is its own signal): "Cola · now 2".
+  const [scanCue, setScanCue] = React.useState<string | null>(null);
+  const scanCueArmedRef = React.useRef(false);
+  const prevLinesRef = React.useRef<SaleLine[]>(lines);
+  const scanCueTimerRef = React.useRef<number | null>(null);
+  // The cue's timer lives in a ref: a later line change must not cancel it (the cue would stick with stale text).
+  React.useEffect(
+    () => () => {
+      if (scanCueTimerRef.current !== null) window.clearTimeout(scanCueTimerRef.current);
+    },
+    [],
+  );
+  React.useEffect(() => {
+    const before = prevLinesRef.current;
+    prevLinesRef.current = lines;
+    if (!scanCueArmedRef.current) return;
+    scanCueArmedRef.current = false;
+    const grown = lines.find((l) => {
+      const was = before.find((b) => b.tempId === l.tempId);
+      return !!was && was.qty !== l.qty;
+    });
+    if (!grown) return;
+    setScanCue(`${grown.name} · now ${lineQtyLabel(grown).replace(/^× /, "")}`);
+    if (scanCueTimerRef.current !== null) window.clearTimeout(scanCueTimerRef.current);
+    scanCueTimerRef.current = window.setTimeout(() => {
+      scanCueTimerRef.current = null;
+      setScanCue(null);
+    }, 2500);
+  }, [lines]);
 
   // The scan field is disabled during the POST: hand focus back when the POST ends without a receipt.
   const wasPendingRef = React.useRef(false);
@@ -859,6 +895,15 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {scanCue ? (
+            <p
+              role="status"
+              className="rounded bg-navy/5 px-2 py-1 text-sm font-medium"
+              data-testid="counter-scan-cue"
+            >
+              {scanCue}
+            </p>
+          ) : null}
           {scan.message ? <p className="text-sm text-red-700">{scan.message}</p> : null}
           {scan.failed ? (
             <div
@@ -913,6 +958,7 @@ export function CounterSaleScreen() {
                 onPriceEdit={editPrice}
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
+                onQtyEnter={refocus}
               />
             ))}
           </ul>
@@ -1003,6 +1049,7 @@ export function CounterSaleScreen() {
                       className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
                       onClick={(e) => {
                         setTendered(String(q.amount));
+                        clearUnderpaidError();
                         refocusAfterPointer(e);
                       }}
                     >
@@ -1018,7 +1065,10 @@ export function CounterSaleScreen() {
                     className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
                     value={tendered}
                     disabled={locked}
-                    onChange={(e) => setTendered(e.target.value)}
+                    onChange={(e) => {
+                      setTendered(e.target.value);
+                      clearUnderpaidError();
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -1027,9 +1077,6 @@ export function CounterSaleScreen() {
                     }}
                   />
                 </label>
-                <p className="text-3xl font-bold" data-testid="change-due">
-                  Change {money(changeDue(totals.total, tenderedNum))}
-                </p>
               </div>
             ) : null}
 
@@ -1145,6 +1192,14 @@ export function CounterSaleScreen() {
               <span>Estimated total</span>
               <span>{money(totals.total)}</span>
             </div>
+
+            {method === "CASH" ? (
+              <p className="text-3xl font-bold" data-testid="change-due" role="status">
+                {amountDue(totals.total, tenderedNum) > 0
+                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
+                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+              </p>
+            ) : null}
 
             <div className="flex flex-wrap gap-2" data-testid="counter-checkout-actions">
               <Button

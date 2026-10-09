@@ -107,6 +107,11 @@ export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
 }
 
+/** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
+export function amountDue(total: number, tendered: number): number {
+  return Math.max(0, roundMoney(total - tendered));
+}
+
 export interface PaymentMethodOption {
   method: CounterSalePaymentMethod;
   label: string;
