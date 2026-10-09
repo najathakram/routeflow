@@ -9,6 +9,7 @@ import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
+import { countNoun } from "@/lib/plural";
 import { useProducts } from "@/lib/api/products";
 import {
   attachParent,
@@ -1966,7 +1967,7 @@ export function CreateOrderModal({
                                 )}
                                 {hasVariants && (
                                   <span className="ml-1 text-[10px] text-navy/70 shrink-0">
-                                    {p.variants.length} variants
+                                    {countNoun(p.variants.length, "variant")}
                                   </span>
                                 )}
                                 {!hasVariants && (

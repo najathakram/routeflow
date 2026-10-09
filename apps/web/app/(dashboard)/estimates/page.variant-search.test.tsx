@@ -181,3 +181,21 @@ describe("new estimate - a non-family parent stays quotable (#3323)", () => {
     expect(within(dialog).queryByRole("button", { name: /itself/ })).toBeNull();
   });
 });
+
+describe("new estimate - variant count wording (row 213)", () => {
+  it("says '1 variant' for one and '2 variants' for two", async () => {
+    mockRows = [
+      FAMILY,
+      {
+        ...FAMILY,
+        id: "f-two",
+        name: "Sample Duo",
+        variants: [...FAMILY.variants, { ...FAMILY.variants[0], id: "v-lime", name: "Lime" }],
+      },
+    ];
+    const { user, dialog } = await openDialog();
+    await user.type(within(dialog).getByPlaceholderText(/search by name, sku/i), "sample");
+    expect(await within(dialog).findByText("1 variant")).toBeInTheDocument();
+    expect(within(dialog).getByText("2 variants")).toBeInTheDocument();
+  });
+});
