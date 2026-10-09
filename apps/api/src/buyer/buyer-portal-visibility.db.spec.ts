@@ -514,7 +514,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     return inTenant(f, async () => {
       const search = await catalog.getCatalog({ search: p.name, limit: 100 }, f.customerId);
       const scan = (code: string) =>
-        asBool(() => controller.scanProduct(code, { customerId: f.customerId }));
+        asBool(() =>
+          controller.scanProduct(code, { customerId: f.customerId, tenantId: f.tenantId }),
+        );
       return {
         search: search.data.some((r: any) => r.id === p.id),
         detail: await asBool(() => catalog.getProductDetail(p.id, f.customerId)),
