@@ -7,6 +7,7 @@ import * as React from "react";
 import type { ParkedCartPayload } from "@routeflow/pricing";
 import { useDiscard, useParkedCarts, usePark, useResume } from "@/lib/api/counter-park";
 import {
+  PARK_CHANGED_COPY,
   buildParkPayload,
   discardErrorCopy,
   parkErrorCopy,
@@ -22,6 +23,8 @@ export interface ParkedSalesDeps {
   blocked: boolean;
   /** the handler-side truth for a sale POST in flight (a render may not have caught up yet) */
   inFlight: () => boolean;
+  /** a park / resume / discard request is running: the screen locks its lines and Complete until it ends */
+  onBusyChange?: (busy: boolean) => void;
   /** called ONLY after the server stored the park: the screen clears for the next customer */
   onParked: () => void;
   /** called with the server-rebuilt payload after a resume: the screen restores its state from it */
@@ -49,11 +52,13 @@ export function useParkedSales(deps: ParkedSalesDeps) {
   const canAct = () => !d.current.blocked && !d.current.inFlight() && !workRef.current;
   const begin = (w: NonNullable<ParkWork>) => {
     workRef.current = true;
+    d.current.onBusyChange?.(true);
     setWork(w);
     setMessage(null);
   };
   const end = () => {
     workRef.current = false;
+    d.current.onBusyChange?.(false);
     setWork(null);
   };
 
@@ -67,8 +72,16 @@ export function useParkedSales(deps: ParkedSalesDeps) {
     }
     begin({ kind: "park" });
     try {
+      const posted = JSON.stringify(built.value);
       await parkM.mutateAsync(built.value);
-      d.current.onParked(); // only now: a failed park leaves the cart untouched
+      // Only now, and only if the cart is still exactly what was parked: a changed cart (or a sale that started meanwhile)
+      // is NEVER cleared. The parked copy stays in the list as it was.
+      const now = buildParkPayload(d.current.cart);
+      if (d.current.inFlight() || !now.ok || JSON.stringify(now.value) !== posted) {
+        setMessage({ scope, text: PARK_CHANGED_COPY });
+        return false;
+      }
+      d.current.onParked(); // a failed park leaves the cart untouched
       return true;
     } catch (err) {
       setMessage({ scope, text: parkErrorCopy(err) });

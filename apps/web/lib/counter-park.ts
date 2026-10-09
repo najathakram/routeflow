@@ -28,6 +28,8 @@ export const DISCARD_FAILED_COPY = "Couldn't discard that parked sale. Try again
 export const PARKED_LIST_FAILED_COPY = "Couldn't load the parked sales.";
 export const PARKED_EMPTY_COPY = "No parked sales.";
 export const PARKED_STALE_COPY = "from earlier — prices refresh when you pay";
+export const PARK_CHANGED_COPY =
+  "The sale changed while it was being parked. It is saved in Parked sales as it was; check the cart before you continue.";
 export const PARKED_EDITED_PRICES_COPY =
   "This sale has edited prices and you can't change prices. Remove those items, or ask your account admin to finish it.";
 

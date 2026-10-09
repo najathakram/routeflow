@@ -398,6 +398,45 @@ describe("Park", () => {
     expect(itemNames().join(" ")).toContain("Cola");
   });
 
+  it("while a park is in flight, Complete and the line controls are off and no sale can be sent", async () => {
+    renderScreen();
+    await scan("COLA");
+    let answer: (v: unknown) => void = () => undefined;
+    post.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    const complete = screen.getByRole("button", { name: /Complete & show receipt/ });
+    const completeNext = screen.getByRole("button", { name: /Complete & next sale/ });
+    expect(complete).toBeDisabled();
+    expect(completeNext).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove Cola" })).toBeDisabled();
+    fireEvent.click(complete);
+    fireEvent.click(completeNext);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    answer({ data: { id: "x" } });
+    await waitFor(() => expect(itemNames().join(" ")).toContain("No items yet."));
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("a cart that CHANGED while it was being parked is not cleared: it says so, and nothing is lost", async () => {
+    renderScreen();
+    await scan("COLA");
+    let answer: (v: unknown) => void = () => undefined;
+    post.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    fireEvent.click(parkBtn());
+    await waitFor(() => expect(parkCalls()).toHaveLength(1));
+    // the payment side stays editable during the request: change it, then let the park answer
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "999" } });
+    answer({ data: { id: "x" } });
+    const note = await screen.findByTestId("counter-park-error");
+    expect(note).toHaveTextContent(
+      "The sale changed while it was being parked. It is saved in Parked sales as it was; check the cart before you continue.",
+    );
+    expect(itemNames().join(" ")).toContain("Cola");
+    expect(screen.getByLabelText("Check number")).toHaveValue("999");
+  });
+
   it("a double click is one park", async () => {
     renderScreen();
     await scan("COLA");

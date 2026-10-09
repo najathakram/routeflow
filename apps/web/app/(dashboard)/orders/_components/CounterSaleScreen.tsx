@@ -222,7 +222,15 @@ export function CounterSaleScreen() {
   const [sending, setSending] = React.useState(false);
   const salePosting = createSale.isPending || sending;
   const saleInFlight = () => submittingRef.current || createSale.isPending;
-  const lineLocked = locked || salePosting;
+  // A park / resume / discard request in flight (reported by ParkedSales): lines, scans and Complete wait for it, so the cart
+  // that is parked is the cart that is cleared.
+  const [parkBusy, setParkBusy] = React.useState(false);
+  const parkBusyRef = React.useRef(false);
+  const onParkBusy = (busy: boolean) => {
+    parkBusyRef.current = busy;
+    setParkBusy(busy);
+  };
+  const lineLocked = locked || salePosting || parkBusy;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
@@ -588,6 +596,7 @@ export function CounterSaleScreen() {
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
+    if (parkBusyRef.current) return; // a park / resume request is still running
     if (shipRunningRef.current || createDraft.isPending) return; // a ship hand-off is saving this cart
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
     if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
@@ -743,6 +752,7 @@ export function CounterSaleScreen() {
           }
           inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
           canEditPrices={mayEditPrices}
+          onBusyChange={onParkBusy}
           onParked={resetSale}
           onRestore={restoreParked}
         />
@@ -1182,7 +1192,12 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  parkBusy
                 }
               >
                 Complete &amp; show receipt
@@ -1192,7 +1207,12 @@ export function CounterSaleScreen() {
                 variant="secondary"
                 onClick={() => void completeSale(true)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  parkBusy
                 }
               >
                 Complete &amp; next sale
