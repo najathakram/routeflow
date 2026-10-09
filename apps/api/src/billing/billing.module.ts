@@ -29,6 +29,7 @@ import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { CatchupClaimService } from "./catchup-claim.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -55,6 +56,8 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
     BillingCronService,
     // R1 option B: a scheduled downgrade's price reaches Stripe before the renewal (invoice.upcoming + a backup sweep).
     ScheduledPriceChangeService,
+    // SA-733r3 N2: the October catch-up claim lifecycle (webhook entry points + the hourly sweep).
+    CatchupClaimService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -80,6 +83,8 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
   exports: [
     StripeService,
     ScheduledPriceChangeService,
+    // The platform-admin RfInvoice queue refuses payments while a claim is held.
+    CatchupClaimService,
     BillingService,
     PlatformPricingService,
     AddonService,

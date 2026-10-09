@@ -48,6 +48,7 @@ import {
 } from "./stripe-addon-items";
 import { lockTenantForLedger } from "./addon-ledger";
 import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
+import { CatchupClaimService } from "./catchup-claim.service";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
@@ -200,6 +201,8 @@ export class BillingService {
     private readonly mutations: SubscriptionMutationService,
     // R1 option B: the `invoice.upcoming` trigger of a scheduled downgrade's Stripe price push.
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
+    // SA-733r3 N2: the October catch-up claim (completion / expiry / paid / failed hooks below).
+    @Optional() private readonly catchup?: CatchupClaimService,
   ) {}
 
   /**
@@ -857,6 +860,16 @@ export class BillingService {
     switch (event.type) {
       case "checkout.session.completed":
         await this.onCheckoutCompleted(event.data.object);
+        // Catch-up claim: advances only a session this handler actually applied; idempotent on a redelivery.
+        await this.catchup?.onSessionCompleted(event.data.object);
+        break;
+
+      case "checkout.session.expired":
+        await this.catchup?.onSessionExpired(event.data.object);
+        break;
+
+      case "invoice.paid":
+        await this.catchup?.onInvoicePaid(event.data.object);
         break;
 
       case "invoice.payment_succeeded":
@@ -868,6 +881,7 @@ export class BillingService {
         break;
 
       case "invoice.payment_failed":
+        await this.catchup?.onPaymentFailed(event.data.object);
         await this.onPaymentFailed(event.data.object);
         break;
 

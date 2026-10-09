@@ -31,6 +31,8 @@ export const RF_INVOICE_CANDIDATE_WHERE = {
   cancelAtPeriodEnd: false,
   periodStart: { not: null },
   periodEnd: { not: null },
+  // SA-733r3 N2: a held October catch-up claim freezes RouteFlow invoicing for the tenant (the issuer skips it).
+  catchupState: null,
   tenant: { class: "PRODUCTION", deletedAt: null, status: "ACTIVE" },
 } as const;
 

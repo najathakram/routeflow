@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
-import { STRIPE_API_VERSION } from "./stripe-period";
+import { STRIPE_API_VERSION, stripeInvoiceSubscriptionId } from "./stripe-period";
+import type { InvoiceFacts } from "./catchup-claim";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value.
@@ -175,6 +176,70 @@ export class StripeService implements OnModuleInit {
 
   async getInvoice(invoiceId: string): Promise<any> {
     return this.client.invoices.retrieve(invoiceId);
+  }
+
+  /**
+   * SA-733r4 N2: an invoice's settlement facts for the catch-up claim - paid?, a payment still PROCESSING (a bank
+   * debit; `Invoice.payment_intent` is gone under dahlia, so `payments` is expanded like
+   * {@link getSubscriptionPaymentState}), and whether Stripe will try again. `resource_missing` => status null.
+   * Any other error (including one reading a PaymentIntent) rethrows: a failed read says nothing about money
+   * in flight.
+   */
+  async getInvoiceFacts(invoiceId: string): Promise<InvoiceFacts> {
+    let inv: any;
+    try {
+      inv = await this.client.invoices.retrieve(invoiceId, {
+        expand: ["payments.data.payment.payment_intent"],
+      });
+    } catch (err) {
+      const e = err as { code?: string; statusCode?: number } | undefined;
+      if (e?.code === "resource_missing" || e?.statusCode === 404) {
+        return {
+          status: null,
+          amountPaid: 0,
+          amountDue: 0,
+          paymentProcessing: false,
+          nextPaymentAttempt: null,
+          attemptCount: 0,
+          subscriptionId: null,
+        };
+      }
+      throw err;
+    }
+    const payments: any[] = Array.isArray(inv?.payments?.data) ? inv.payments.data : [];
+    let paymentProcessing = false;
+    for (const entry of payments) {
+      if (entry?.payment?.type !== "payment_intent") continue;
+      const ref = entry.payment.payment_intent;
+      const pi =
+        ref && typeof ref === "object"
+          ? ref
+          : typeof ref === "string"
+            ? await this.client.paymentIntents.retrieve(ref)
+            : null;
+      if (pi?.status === "processing") paymentProcessing = true;
+    }
+    return {
+      status: typeof inv?.status === "string" ? inv.status : null,
+      amountPaid: Number.isFinite(inv?.amount_paid) ? inv.amount_paid : 0,
+      amountDue: Number.isFinite(inv?.amount_due) ? inv.amount_due : 0,
+      paymentProcessing,
+      nextPaymentAttempt:
+        typeof inv?.next_payment_attempt === "number" ? inv.next_payment_attempt : null,
+      attemptCount: Number.isFinite(inv?.attempt_count) ? inv.attempt_count : 0,
+      subscriptionId: stripeInvoiceSubscriptionId(inv),
+    };
+  }
+
+  /** A subscription's most recent invoices (newest first) - the catch-up sweep looks for the first paid one. */
+  async listSubscriptionInvoices(subId: string, limit = 5): Promise<any[]> {
+    const page = await this.client.invoices.list({ subscription: subId, limit });
+    return Array.isArray(page?.data) ? page.data : [];
+  }
+
+  /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
+  async deleteDraftInvoice(invoiceId: string): Promise<any> {
+    return this.client.invoices.del(invoiceId);
   }
 
   /** Voids an OPEN invoice (a paid one cannot be voided — refund it instead). */
