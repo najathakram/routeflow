@@ -137,7 +137,19 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}products/[id]/ProductUnitsCard.tsx`,
-    gone: ["· the pack (edit", "derived from the pack price", "per unit\n"],
+    gone: [
+      "· the pack (edit",
+      "derived from the pack price",
+      "per unit\n",
+      "Pieces per unit",
+      "Units per case",
+    ],
+    present: [
+      // The units-card factor field: visible label and aria-label both name the pieces-per-level.
+      "{w.base.other} per {unit.label.toLowerCase()}",
+      "aria-label={`${w.base.other} per ${unit.label}`}",
+      "the {w.pack.lower} (edit its price above)",
+    ],
   },
   {
     file: `${D}inventory/_components/PurchaseOrdersCreateModal.tsx`,
