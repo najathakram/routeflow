@@ -75,7 +75,14 @@ import {
   loadSourceInvoicesState,
   lockRefundInvoices,
   lockRefundOrders,
+  type RefundTender,
 } from "./inline-return-refund";
+import {
+  refundTenderColumn,
+  refundTenderData,
+  refundTenderOfColumn,
+  refundTenderOfReturn,
+} from "./refund-tender";
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
 
@@ -1458,6 +1465,8 @@ export class InlineReturnsService {
           status: "REFUNDED",
           refundAmount: amount,
           refundedAt: new Date(),
+          // SA-740r: the tender of record, written in the SAME CAS as refundedAt (CARD is stored as CREDIT_CARD)
+          ...refundTenderData(dto.tender),
         },
       });
       if (claimed.count === 0) throw this.alreadyResolved();
@@ -1492,9 +1501,11 @@ export class InlineReturnsService {
   }
 
   /**
-   * The replay of a refund (the return id is the key): only an EXTERNAL_REFUND with the SAME tender (read from its audit
-   * row; the column does not exist yet) and the SAME amount returns the stored result. Store credit, another tender or
-   * another amount is 409 RETURN_ALREADY_RESOLVED.
+   * The replay of a refund (the return id is the key): only an EXTERNAL_REFUND with the SAME tender and the SAME amount
+   * returns the stored result. The tender is compared in ONE vocabulary: `Return.refundTender` against
+   * `refundTenderColumn(dto.tender)` (the counter payment map; CARD is CREDIT_CARD); only a row the backfill has not reached
+   * (column null) falls back to the tender in its `inline_return.refund` audit row. Store credit, another tender or another
+   * amount is 409 RETURN_ALREADY_RESOLVED.
    */
   private async refundReplay(
     db: any,
@@ -1503,39 +1514,44 @@ export class InlineReturnsService {
       status?: string | null;
       refundMethod?: string | null;
       refundAmount?: unknown;
+      refundTender?: string | null;
     },
-    tender: string,
+    tender: RefundTender,
     expected: number,
   ): Promise<any> {
-    const audit =
-      ret.refundMethod === EXTERNAL_REFUND_METHOD && ret.status === "REFUNDED"
-        ? await db.auditLog.findFirst({
-            where: { action: INLINE_REFUND_AUDIT_ACTION, entityType: "Return", entityId: ret.id },
-            orderBy: { createdAt: "asc" },
-            select: { meta: true },
-          })
-        : null;
-    const storedTender = (audit?.meta as { tender?: string } | null | undefined)?.tender;
-    if (
-      !audit ||
-      storedTender !== tender ||
-      roundMoney(Number(ret.refundAmount ?? 0)) !== expected
-    ) {
+    const resolvedRefund = ret.refundMethod === EXTERNAL_REFUND_METHOD && ret.status === "REFUNDED";
+    let sameTender = false;
+    if (resolvedRefund && ret.refundTender != null) {
+      sameTender = ret.refundTender === refundTenderColumn(tender);
+    } else if (resolvedRefund) {
+      // pre-backfill row: the audit row written in the refund's own transaction still holds the tender
+      const audit = await db.auditLog.findFirst({
+        where: { action: INLINE_REFUND_AUDIT_ACTION, entityType: "Return", entityId: ret.id },
+        orderBy: { createdAt: "asc" },
+        select: { meta: true },
+      });
+      sameTender = refundTenderOfReturn({}, audit?.meta as { tender?: unknown } | null) === tender;
+    }
+    if (!sameTender || roundMoney(Number(ret.refundAmount ?? 0)) !== expected) {
       throw new ConflictException({
         code: API_ERROR_CODES.RETURN_ALREADY_RESOLVED,
         message: "This return was already resolved.",
       });
     }
-    return this.refundResult(db, ret.id, storedTender);
+    return this.refundResult(db, ret.id, tender);
   }
 
-  /** The final return state a refund answers with: the row (REFUNDED, refundAmount) plus the tender it was recorded with. */
-  private async refundResult(db: any, id: string, tender: string): Promise<any> {
+  /**
+   * The final return state a refund answers with: the row (REFUNDED, refundAmount) plus the tender it was recorded with, in the
+   * counter vocabulary read back from the stored column (so the response can never disagree with what is stored); the tender
+   * the caller recorded stands in only for a row whose column is still null.
+   */
+  private async refundResult(db: any, id: string, recordedTender: RefundTender): Promise<any> {
     const after = await db.return.findUnique({ where: { id }, include: { items: true } });
     if (!after) throw new NotFoundException("Return not found");
     return {
       ...(await this.withParkedReversals(after)),
-      refundTender: tender,
+      refundTender: refundTenderOfColumn(after.refundTender) ?? recordedTender,
       refundPending: false,
     };
   }

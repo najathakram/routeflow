@@ -5,7 +5,8 @@ import { REFUND_TENDERS, type RefundTender } from "../inline-return-refund";
 /**
  * SA-727: `POST /returns/inline/:id/refund`. The client never types an amount to refund: `expectedAmount` is
  * the figure the quote showed, and the server refuses (409 REFUND_AMOUNT_CHANGED) unless it equals the
- * amount it computes for the captured return. The tender is recorded in the audit trail only (the list is mirrored in `@routeflow/types` as
+ * amount it computes for the captured return. The tender is stored in `Return.refundTender` (the PaymentMethod; CARD is CREDIT_CARD) in the same
+ * CAS as `refundedAt`, and in the audit row (the list is mirrored in `@routeflow/types` as
  * `INLINE_REFUND_TENDER_VALUES`, pinned equal by inline-returns-quote-response-parity.spec.ts).
  */
 export class RefundInlineReturnDto {

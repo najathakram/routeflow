@@ -4,8 +4,9 @@
  *
  * A refund is a RESOLUTION OF THE RETURN (the existing EXTERNAL_REFUND method), never a negative
  * InvoicePayment and never a new model: the invoice stays PAID, AR is untouched, and net sales already
- * nets an EXTERNAL_REFUND return by `refundedAt` (common/invoiced-sales.ts). The tender lives ONLY in
- * the awaited audit row (`Return.refundMethod` stays the literal EXTERNAL_REFUND until a column lands).
+ * nets an EXTERNAL_REFUND return by `refundedAt` (common/invoiced-sales.ts). The tender of record is the
+ * `Return.refundTender` column (SA-740r, see refund-tender.ts), written in the same CAS as `refundedAt`; the awaited audit row
+ * carries it too. `Return.refundMethod` stays the literal EXTERNAL_REFUND.
  */
 import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";

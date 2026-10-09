@@ -164,7 +164,12 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         refundMethod: "EXTERNAL_REFUND",
         refundedAt: null,
       },
-      data: { status: "REFUNDED", refundAmount: 30, refundedAt: expect.any(Date) },
+      data: {
+        status: "REFUNDED",
+        refundAmount: 30,
+        refundedAt: expect.any(Date),
+        refundTender: "CASH", // SA-740r: the tender is written in the SAME CAS as refundedAt
+      },
     });
     expect(JSON.stringify(prisma.return.updateMany.mock.calls[0][0].where)).not.toContain(
       "holdReason",
@@ -176,7 +181,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 
-  it("M5: ONE awaited audit row {returnId, invoiceIds, amount, tender, actor, impersonatedBy}; the tender is only in the audit meta", async () => {
+  it("M5: ONE awaited audit row {returnId, invoiceIds, amount, tender, actor, impersonatedBy}; the row carries the tender as its PaymentMethod column too", async () => {
     await service.refund(
       "ret-1",
       { ...REFUND, tender: "CARD", reason: " customer changed mind " },
@@ -200,10 +205,65 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         }),
       }),
     });
-    // refundMethod stays the literal stored at capture: no new string, no tender in the row
+    // refundMethod stays the literal stored at capture: no new string. The tender is the PaymentMethod column (SA-740r):
+    // a CARD refund is stored as CREDIT_CARD, the same map the counter payment legs use.
     const data = prisma.return.updateMany.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("refundMethod");
-    expect(JSON.stringify(data)).not.toMatch(/CARD|CASH|CHECK/);
+    expect(data.refundTender).toBe("CREDIT_CARD");
+  });
+
+  describe("SA-740r: Return.refundTender is the tender of record", () => {
+    const refundedRow = (over: Record<string, unknown> = {}) =>
+      receivedReturn({
+        status: "REFUNDED",
+        refundMethod: "EXTERNAL_REFUND",
+        refundAmount: 30,
+        refundedAt: new Date(),
+        ...over,
+      });
+
+    it("CHECK is stored as CHECK, CARD as CREDIT_CARD, CASH as CASH, in the claim itself", async () => {
+      for (const [tender, column] of [
+        ["CASH", "CASH"],
+        ["CARD", "CREDIT_CARD"],
+        ["CHECK", "CHECK"],
+      ] as const) {
+        prisma.return.updateMany.mockClear();
+        row = receivedReturn();
+        await service.refund("ret-1", { ...REFUND, tender }, OPERATOR);
+        expect(prisma.return.updateMany.mock.calls[0][0].data.refundTender).toBe(column);
+      }
+    });
+
+    it("a replay trusts the COLUMN: the same tender (CARD vs CREDIT_CARD) is a 200 with no audit row read needed", async () => {
+      row = refundedRow({ refundTender: "CREDIT_CARD" });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+      const out = await service.refund("ret-1", { ...REFUND, tender: "CARD" }, OPERATOR);
+      expect(out).toMatchObject({ status: "REFUNDED", refundTender: "CARD" });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a replay with another tender than the column is 409 even when the audit row says otherwise", async () => {
+      row = refundedRow({ refundTender: "CREDIT_CARD" });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH" } });
+      expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
+        "RETURN_ALREADY_RESOLVED",
+      );
+    });
+
+    it("a row the backfill has not reached (column null) still replays from the audit tender", async () => {
+      row = refundedRow({ refundTender: null });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH", amount: 30 } });
+      await expect(service.refund("ret-1", REFUND, OPERATOR)).resolves.toMatchObject({
+        refundTender: "CASH",
+      });
+    });
+
+    it("the response names the tender in the counter vocabulary read back from the stored column", async () => {
+      row = refundedRow({ refundTender: "CHECK" });
+      const out = await service.refund("ret-1", { ...REFUND, tender: "CHECK" }, OPERATOR);
+      expect(out.refundTender).toBe("CHECK");
+    });
   });
 
   it("M5 (rollback): an audit failure rejects the whole refund, after the claim ran inside the same transaction", async () => {
