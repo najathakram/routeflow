@@ -156,7 +156,7 @@ describe("UnitsService", () => {
       expect(trimSets).toHaveLength(3);
       for (const set of trimSets) {
         expect(set).not.toMatch(/\\v/);
-        expect(set).toContain("\\x0B");
+        expect(set).toContain("\\u000b");
         expect(set).toContain("\\u00a0");
       }
     });

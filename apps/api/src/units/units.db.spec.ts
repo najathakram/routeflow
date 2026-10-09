@@ -189,6 +189,18 @@ describeDb("tenant units against real Postgres", () => {
     expect((await raw.product.findUnique({ where: { id: p2.id } }))?.packLabel).toBe("Dive");
   });
 
+  it("the SQL key trims every character JS trim() does: an ideographic space (U+3000) around Case still counts and renames", async () => {
+    const u = await asA(() => service.create({ name: "Case" }, user));
+    const p1 = await product(A, "P1", { unit: "Case\u3000" });
+    const p2 = await product(A, "P2", { packLabel: "\ufeff\u2003Case\u202f" });
+    const [row] = (await asA(() => service.list(false))).filter((x) => x.id === u.id);
+    expect(row.productCount).toBe(2);
+    const out = await asA(() => service.update(u.id, { name: "Carton" }, user));
+    expect(out.productsUpdated).toBe(2);
+    expect((await raw.product.findUnique({ where: { id: p1.id } }))?.unit).toBe("Carton");
+    expect((await raw.product.findUnique({ where: { id: p2.id } }))?.packLabel).toBe("Carton");
+  });
+
   it("an NFD and an NFC spelling of one word are ONE unit, counted and renamed through the SQL NFC fold", async () => {
     const nfc = "Caf\u00e9";
     const nfd = "Cafe\u0301";
