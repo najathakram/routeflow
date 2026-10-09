@@ -335,6 +335,67 @@ describe("the idempotency key names the state it moves between (review)", () => 
   });
 });
 
+describe("one attempt = one idempotency key, computed before the call and reused by its retry (review)", () => {
+  it("a lost response (Stripe applied it, the reply failed, Stripe unreadable) is retried under the SAME key and replayed - applied exactly once", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { svc, stripe } = make();
+    const apply = stripe.updateSubscription.getMockImplementation()!;
+    stripe.updateSubscription.mockImplementationOnce(async (...a: any[]) => {
+      await (apply as any)(...a); // Stripe commits...
+      throw new Error("socket hang up"); // ...the reply is lost
+    });
+    // the first read (the attempt's state) works; the verify re-read after the failure does not
+    const read = stripe.getSubscription.getMockImplementation()!;
+    stripe.getSubscription
+      .mockImplementationOnce(read)
+      .mockRejectedValueOnce(new Error("stripe unreadable"));
+
+    const out = await svc.apply("t1", NOW);
+
+    expect(out).toMatchObject({ applied: true, amountCents: 5900 });
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(2);
+    const [k1, k2] = stripe.updateSubscription.mock.calls.map((c: any[]) => c[2].idempotencyKey);
+    expect(k2).toBe(k1); // the retry REUSES the attempt's key - never recomputed
+    expect(out.applied && out.key).toBe(k1);
+    expect(stripe.state.prices).toBe(1); // Stripe replayed the second send: ONE price minted, not two
+    expect(stripe.amountOf("si_base")).toBe(5900);
+    warn.mockRestore();
+  });
+
+  it("a lost response whose re-read shows it landed is simply done: no second send at all", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { svc, stripe } = make();
+    const apply = stripe.updateSubscription.getMockImplementation()!;
+    stripe.updateSubscription.mockImplementationOnce(async (...a: any[]) => {
+      await (apply as any)(...a);
+      throw new Error("socket hang up");
+    });
+    await svc.apply("t1", NOW);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+    expect(stripe.amountOf("si_base")).toBe(5900);
+    warn.mockRestore();
+  });
+
+  it("an update that did NOT land is retried once under the same key and applies; a second failure is a 503", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const ok = make();
+    ok.stripe.updateSubscription.mockRejectedValueOnce(new Error("timeout"));
+    await ok.svc.apply("t1", NOW);
+    const keys = ok.stripe.updateSubscription.mock.calls.map((c: any[]) => c[2].idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(ok.stripe.amountOf("si_base")).toBe(5900);
+
+    const bad = make();
+    bad.stripe.updateSubscription.mockRejectedValue(new Error("down"));
+    await expect(bad.svc.apply("t1", NOW)).rejects.toMatchObject({ status: 503 });
+    expect(bad.stripe.updateSubscription).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+    error.mockRestore();
+  });
+});
+
 describe("restoreIfPushedLocked (the caller holds the lock and is about to prorate)", () => {
   const kept = (over: Partial<SubRow> = {}) => row({ ...over });
 

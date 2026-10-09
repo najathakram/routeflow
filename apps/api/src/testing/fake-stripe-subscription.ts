@@ -15,7 +15,13 @@ export interface FakeStripeItem {
 }
 
 export function fakeStripeSubscription(items: FakeStripeItem[], status = "active") {
-  const state = { status, items: items.map((i) => structuredClone(i)), created: 0, prices: 0 };
+  const state = {
+    status,
+    items: items.map((i) => structuredClone(i)),
+    created: 0,
+    prices: 0,
+    keys: new Set<string>(),
+  };
   const snapshot = () => ({ id: "sub_1", status: state.status, items: { data: state.items } });
   const stripe = {
     state,
@@ -23,6 +29,11 @@ export function fakeStripeSubscription(items: FakeStripeItem[], status = "active
     getSubscription: jest.fn(async (..._a: unknown[]) => snapshot()),
     updateSubscription: jest.fn(
       async (_id: string, params: any, _opts: { idempotencyKey: string }) => {
+        // Stripe's own rule: a repeated idempotency key REPLAYS the first call's result, it never applies twice.
+        if (_opts?.idempotencyKey) {
+          if (state.keys.has(_opts.idempotencyKey)) return snapshot();
+          state.keys.add(_opts.idempotencyKey);
+        }
         for (const it of params.items ?? []) {
           if (it.deleted) {
             state.items = state.items.filter((x) => x.id !== it.id);
