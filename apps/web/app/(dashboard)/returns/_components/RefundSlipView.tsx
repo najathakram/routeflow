@@ -36,7 +36,7 @@ export function RefundSlipView({
         <p data-testid="refund-slip-number">Return {m.returnNumber}</p>
         {m.sourceSale ? <p data-testid="refund-slip-source">From {m.sourceSale}</p> : null}
         <p data-testid="refund-slip-date">{m.dateLabel}</p>
-        {m.cashier ? <p data-testid="refund-slip-cashier">Cashier: {m.cashier}</p> : null}
+        {m.printedBy ? <p data-testid="refund-slip-printed-by">Printed by: {m.printedBy}</p> : null}
       </div>
       <ul className="divide-y">
         {m.lines.map((l) => (

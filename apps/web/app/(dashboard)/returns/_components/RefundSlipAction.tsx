@@ -17,6 +17,9 @@ import { RefundSlipView } from "./RefundSlipView";
  * `body.refund-slip-open` (app/shell.css) hides everything else, so the page behind never lands on the 80 mm slip.
  * Nothing is rendered on screen except the button.
  */
+/** A browser that never fires `afterprint` still gets the print scope cleaned up. */
+const PRINT_FALLBACK_MS = 60_000;
+
 export function RefundSlipAction({
   returnId,
   autoPrint = false,
@@ -42,7 +45,7 @@ export function RefundSlipAction({
       ret
         ? buildRefundSlip({
             ret,
-            cashier,
+            printedBy: cashier,
             profile: {
               ...settings,
               businessName: branding?.businessName || settings?.businessName,
@@ -56,23 +59,35 @@ export function RefundSlipAction({
   React.useEffect(() => {
     if (!printing) return;
     document.body.classList.add("refund-slip-open");
+    let fallback: number | undefined;
+    const done = () => {
+      window.removeEventListener("afterprint", done);
+      if (fallback !== undefined) window.clearTimeout(fallback);
+      setPrinting(false);
+    };
     // one frame so the portal is in the DOM before the browser lays the page out for print
     const raf = window.requestAnimationFrame(() => {
+      // print() does NOT block on iOS Safari / Android Chrome: the slip must outlive the call, so clean up when the browser
+      // says the print is over, with a fallback for a browser that never says so
+      window.addEventListener("afterprint", done, { once: true });
+      fallback = window.setTimeout(done, PRINT_FALLBACK_MS);
       window.print();
-      setPrinting(false);
     });
     return () => {
       window.cancelAnimationFrame(raf);
+      window.removeEventListener("afterprint", done);
+      if (fallback !== undefined) window.clearTimeout(fallback);
       document.body.classList.remove("refund-slip-open");
     };
   }, [printing]);
 
   React.useEffect(() => {
-    if (autoPrint && printable && !autoPrinted.current) {
+    // auto-print only for a COUNTER sale's refund: the order page and any other surface never print by themselves
+    if (autoPrint && printable && ret?.order?.counterSale && !autoPrinted.current) {
       autoPrinted.current = true;
       setPrinting(true);
     }
-  }, [autoPrint, printable]);
+  }, [autoPrint, printable, ret?.order?.counterSale]);
 
   if (!isLoading && !printable) return null;
   return (

@@ -33,19 +33,19 @@ const build = (over: Record<string, unknown> = {}, extra: Record<string, unknown
       zip: "78701",
       phone: "555-0100",
     },
-    cashier: " pat ",
+    printedBy: " pat ",
     now: NOW,
     ...extra,
   });
 
 describe("buildRefundSlip", () => {
-  it("carries the header, return number, source sale and cashier", () => {
+  it("carries the header, return number, source sale and who printed it", () => {
     const m = build();
     expect(m.header.name).toBe("Acme Foods");
     expect(m.header.addressLines).toEqual(["1 Main St", "Austin, TX 78701"]);
     expect(m.returnNumber).toBe("RET-7");
     expect(m.sourceSale).toBe("Counter sale ORD-1");
-    expect(m.cashier).toBe("pat");
+    expect(m.printedBy).toBe("pat");
   });
 
   it("a delivered (non-counter) order reads as Order N", () => {
@@ -104,6 +104,26 @@ describe("buildRefundSlip", () => {
     expect(m.dateLabel).toMatch(/2026/);
     expect(m.dateLabel).toMatch(/2:00/); // 14:00 UTC
     expect(build({ refundedAt: null }, { profile: { timezone: "UTC" } }).dateLabel).toMatch(/1:00/);
+  });
+
+  it("a PENDING inline refund (RECEIVED, EXTERNAL_REFUND, no amount, no refundedAt) has no payout, never 'Refunded $0.00'", () => {
+    const m = build({
+      status: "RECEIVED",
+      refundMethod: "EXTERNAL_REFUND",
+      refundTender: null,
+      refundAmount: null,
+      refundedAt: null,
+    });
+    expect(m.payout).toEqual({ kind: "NONE" });
+    expect(m.total).toBe(0);
+  });
+
+  it.each([
+    ["status is not REFUNDED", { status: "APPROVED" }],
+    ["there is no refund amount", { refundAmount: null }],
+    ["there is no refundedAt", { refundedAt: null }],
+  ])("no payout when %s", (_n, over) => {
+    expect(build(over as Record<string, unknown>).payout).toEqual({ kind: "NONE" });
   });
 
   it("an unrefunded return has no payout yet (the slip is for a settled refund)", () => {

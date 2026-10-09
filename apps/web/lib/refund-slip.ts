@@ -37,7 +37,8 @@ export interface RefundSlipModel {
   lines: RefundSlipLine[];
   total: number;
   payout: RefundSlipPayout;
-  cashier: string | null;
+  /** Who PRINTED this copy (the viewer), not who made the refund: a later reprint names whoever prints it. */
+  printedBy: string | null;
   footer: string | null;
 }
 
@@ -47,11 +48,14 @@ const clean = (s: string | null | undefined): string => (s ?? "").trim();
 export function buildRefundSlip(input: {
   ret: Return & { refundTender?: string | null };
   profile: RefundSlipProfile | null | undefined;
-  cashier?: string | null;
+  printedBy?: string | null;
   now?: Date;
 }): RefundSlipModel {
   const { ret, profile } = input;
-  const amount = ret.refundAmount ?? 0;
+  // A refund that is only PENDING (an inline return waiting to be paid out: RECEIVED, EXTERNAL_REFUND, no amount, no refundedAt)
+  // has nothing to hand over yet: no payout, never "Refunded $0.00".
+  const settled = ret.status === "REFUNDED" && ret.refundAmount != null && !!ret.refundedAt;
+  const amount = settled ? (ret.refundAmount as number) : 0;
   const lines = ret.items.map((i) => {
     const price = i.unitPrice != null ? ` × ${formatReceiptMoney(i.unitPrice)}` : "";
     return {
@@ -61,7 +65,9 @@ export function buildRefundSlip(input: {
     };
   });
   let payout: RefundSlipPayout = { kind: "NONE" };
-  if (ret.refundMethod === "CREDIT_NOTE") {
+  if (!settled) {
+    payout = { kind: "NONE" };
+  } else if (ret.refundMethod === "CREDIT_NOTE") {
     const number = clean(ret.creditNote?.creditNoteNumber);
     payout = {
       kind: "STORE_CREDIT",
@@ -84,7 +90,7 @@ export function buildRefundSlip(input: {
     lines,
     total: amount,
     payout,
-    cashier: clean(input.cashier) || null,
+    printedBy: clean(input.printedBy) || null,
     footer: clean(profile?.receiptFooter) || null,
   };
 }

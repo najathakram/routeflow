@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { RefundSlipAction } from "./RefundSlipAction";
 
@@ -97,13 +97,56 @@ describe("RefundSlipAction", () => {
       "Cola",
       "Refunded to Card",
       "$5.00",
-      "Cashier: pat",
+      "Printed by: pat",
       "Thanks for shopping!",
     ]) {
       expect(during!.text).toContain(want);
     }
+    window.dispatchEvent(new Event("afterprint")); // the print is over
     await waitFor(() => expect(document.body.classList.contains("refund-slip-open")).toBe(false));
     expect(document.querySelector("[data-refund-slip-portal]")).toBeNull();
+  });
+
+  it("the print scope stays until the browser says the print is over (print() does not block on tablets)", async () => {
+    renderWithProviders(<RefundSlipAction returnId="r1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Print slip" }));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 30));
+    // print() returned straight away (iOS Safari / Android Chrome): the slip must still be there to be laid out
+    expect(document.querySelector("[data-refund-slip-portal]")).not.toBeNull();
+    expect(document.body.classList.contains("refund-slip-open")).toBe(true);
+    window.dispatchEvent(new Event("afterprint"));
+    await waitFor(() => expect(document.querySelector("[data-refund-slip-portal]")).toBeNull());
+    expect(document.body.classList.contains("refund-slip-open")).toBe(false);
+  });
+
+  it("a browser that never fires afterprint still gets cleaned up by the fallback timer", async () => {
+    jest.useFakeTimers();
+    try {
+      renderWithProviders(<RefundSlipAction returnId="r1" />);
+      const btn = await screen.findByRole("button", { name: "Print slip" });
+      fireEvent.click(btn);
+      await act(async () => {
+        jest.advanceTimersByTime(50); // the rAF that calls print()
+      });
+      expect(print).toHaveBeenCalledTimes(1);
+      expect(document.body.classList.contains("refund-slip-open")).toBe(true);
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(document.body.classList.contains("refund-slip-open")).toBe(false);
+      expect(document.querySelector("[data-refund-slip-portal]")).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("autoPrint never fires for a return that is not from a counter sale", async () => {
+    mockReturn = { ...REFUNDED, order: { id: "o9", orderNumber: "ORD-9", counterSale: false } };
+    renderWithProviders(<RefundSlipAction returnId="r1" autoPrint />);
+    await screen.findByRole("button", { name: "Print slip" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(print).not.toHaveBeenCalled();
   });
 
   it("autoPrint prints once when the refunded return arrives, and not again on re-render", async () => {

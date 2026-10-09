@@ -92,6 +92,7 @@ describe("ReturnDetailPage (#2406)", () => {
       refundAmount: 14.97,
       refundMethod: "EXTERNAL_REFUND",
       refundTender: "CASH",
+      refundedAt: "2026-10-09T14:00:00.000Z",
       order: { id: "o1", orderNumber: "ORD-1", counterSale: true },
     } as unknown as Return;
     renderWithProviders(<ReturnDetailPage />);
