@@ -9,6 +9,10 @@ jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "ret-1" }),
 }));
 
+jest.mock("@/lib/api-client", () => ({
+  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+}));
+
 let mockReturn: Return | undefined;
 jest.mock("@/lib/api/returns", () => ({
   useReturn: () => ({ data: mockReturn, isLoading: false, isError: false }),
@@ -79,4 +83,27 @@ describe("ReturnDetailPage (#2406)", () => {
     expect(screen.getAllByRole("button", { name: /resolve/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
   });
+
+  it("Train 4: a refunded return offers Print slip (from this same record)", async () => {
+    mockReturn = {
+      ...baseReturn,
+      kind: "INLINE",
+      status: "REFUNDED",
+      refundAmount: 14.97,
+      refundMethod: "EXTERNAL_REFUND",
+      refundTender: "CASH",
+      order: { id: "o1", orderNumber: "ORD-1", counterSale: true },
+    } as unknown as Return;
+    renderWithProviders(<ReturnDetailPage />);
+    expect(await screen.findByRole("button", { name: "Print slip" })).toBeEnabled();
+  });
+
+  it.each(["PENDING", "APPROVED", "RECEIVED", "REJECTED"])(
+    "Train 4: a %s return has no Print slip",
+    (status) => {
+      mockReturn = { ...baseReturn, kind: "STANDARD", status } as Return;
+      renderWithProviders(<ReturnDetailPage />);
+      expect(screen.queryByRole("button", { name: "Print slip" })).toBeNull();
+    },
+  );
 });
