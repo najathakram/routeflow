@@ -67,6 +67,17 @@ describe("ProductCreateModal (web-2 #5)", () => {
     );
   });
 
+  it("does not close on Escape or an outside click; the X still closes", async () => {
+    const onClose = jest.fn();
+    renderWithProviders(<ProductCreateModal isOpen onClose={onClose} onCreated={jest.fn()} />);
+    await new Promise((r) => setTimeout(r, 20)); // Radix arms outside-click on a timer
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.pointerDown(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("pins Create in the shared Modal footer slot (header and footer stay put)", () => {
     open();
     const dialog = screen.getByRole("dialog");

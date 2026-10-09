@@ -380,6 +380,9 @@ export function ProductCreateModal({
       title="New Product"
       scroll
       className="max-w-lg"
+      // A long form: only the X / Cancel close it, never a stray Escape or outside click.
+      onEscapeKeyDown={(e) => e.preventDefault()}
+      onInteractOutside={(e) => e.preventDefault()}
       footer={
         <>
           <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>

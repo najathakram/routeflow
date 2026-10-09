@@ -22,6 +22,11 @@ export interface ModalProps {
    */
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
   /**
+   * Radix pointer/focus-outside interception, opt-in: `event.preventDefault()` keeps the dialog
+   * open on an outside click (e.g. a long form that must not be discarded by a stray click).
+   */
+  onInteractOutside?: (event: Event) => void;
+  /**
    * Radix focus hooks, opt-in. A modal opened with no Radix trigger (e.g. by an error handler)
    * has nothing to return focus to on close, so focus falls to <body>; a consumer captures the
    * previously focused element in `onOpenAutoFocus` and restores it (after `preventDefault()`)
@@ -52,6 +57,7 @@ export const Modal = ({
   footer,
   className,
   onEscapeKeyDown,
+  onInteractOutside,
   onOpenAutoFocus,
   onCloseAutoFocus,
   scroll = false,
@@ -61,6 +67,7 @@ export const Modal = ({
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
       <Dialog.Content
         onEscapeKeyDown={onEscapeKeyDown}
+        onInteractOutside={onInteractOutside}
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         className={cn(
