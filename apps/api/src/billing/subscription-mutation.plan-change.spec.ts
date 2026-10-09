@@ -486,6 +486,29 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
     expect(stripe.amountOf("si_base")).toBe(49900);
   });
 
+  it("review: an early push, then the tenant CANCELS: the schedule is cleared and Stripe is put back on the current price", async () => {
+    const { svc, stripe, db, tx } = make({
+      realScheduledPrice: true,
+      sub: scheduled(),
+      stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
+    });
+    // cancel()'s transaction writes the row; the fake tx only needed `update` for it.
+    tx.tenantSubscription.update = jest.fn(async ({ data }: any) => {
+      Object.assign(db.sub, data);
+      return {};
+    });
+
+    await svc.cancel("t1", "admin");
+
+    const calls = stripe.updateSubscription.mock.calls;
+    expect(calls[0][1]).toEqual({ cancel_at_period_end: true }); // cancel() tells Stripe first
+    const restore = calls.at(-1)![1];
+    expect(restore.items[0].price_data.unit_amount).toBe(24900);
+    expect(restore.proration_behavior).toBe("none");
+    expect(stripe.amountOf("si_base")).toBe(24900);
+    expect(db.sub.downgradeToPlanKey).toBeNull();
+  });
+
   it("no early push (Stripe still on the current price) -> no restore call, only the upgrade push", async () => {
     const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled() });
     await svc.upgrade("t1", "SCALE", "admin");

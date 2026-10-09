@@ -141,7 +141,9 @@ describe("applyScheduledPriceChange (ScheduledPriceChangeService.apply)", () => 
         },
       },
     ]);
-    expect(opts.idempotencyKey).toBe(`sub_1:scheduled-price:${at(48).toISOString()}:v7`);
+    expect(opts.idempotencyKey).toBe(
+      `sub_1:scheduled-price:${at(48).toISOString()}:v7:STARTER:34900-5900:-`,
+    );
     expect(stripe.amountOf("si_base")).toBe(5900);
   });
 
@@ -303,6 +305,100 @@ describe("restoreAfterScheduleCleared (Keep current plan after the lower price w
     const { svc, stripe } = make([kept()], [baseItem({ unit_amount: 5900 })]);
     stripe.getSubscription.mockRejectedValueOnce(new Error("stripe down"));
     await expect(svc.restoreAfterScheduleCleared("t1", "STARTER")).resolves.toBeUndefined();
+    expect(error.mock.calls.map((c) => String(c[0])).join("\n")).toContain("needs_reconcile");
+    error.mockRestore();
+  });
+});
+
+describe("the idempotency key names the state it moves between (review)", () => {
+  it("push -> restore -> re-push of the SAME schedule goes out under a DIFFERENT key (Stripe never replays the first)", async () => {
+    const { svc, stripe, rows } = make();
+    await svc.apply("t1", NOW); // 34900 -> 5900
+    const firstKey = stripe.updateSubscription.mock.calls[0][2].idempotencyKey;
+
+    // The tenant keeps its plan: the schedule is cleared and Stripe is put back (34900)...
+    const schedule = { to: rows[0].downgradeToPlanKey, at: rows[0].downgradeEffectiveAt };
+    rows[0].downgradeToPlanKey = null;
+    rows[0].downgradeEffectiveAt = null;
+    await svc.restoreAfterScheduleCleared("t1", "STARTER");
+    expect(stripe.amountOf("si_base")).toBe(34900);
+
+    // ... and later schedules the very same downgrade again (same effective date).
+    rows[0].downgradeToPlanKey = schedule.to;
+    rows[0].downgradeEffectiveAt = schedule.at;
+    await svc.apply("t1", NOW);
+
+    const last = stripe.updateSubscription.mock.calls.at(-1)!;
+    expect(last[1].items[0].price_data.unit_amount).toBe(5900);
+    expect(last[2].idempotencyKey).not.toBe(firstKey);
+    expect(stripe.amountOf("si_base")).toBe(5900);
+  });
+});
+
+describe("restoreIfPushedLocked (the caller holds the lock and is about to prorate)", () => {
+  const kept = (over: Partial<SubRow> = {}) => row({ ...over });
+
+  it("LOW: an unresolvable price THROWS a coded error for a caller that is about to prorate (it must not go on blind)", async () => {
+    const { svc, stripe, catalog } = make([kept()], [baseItem({ unit_amount: 5900 })]);
+    catalog.getVersionForTenant.mockResolvedValue({
+      ...CATALOG,
+      definitions: [{ planKey: "BUSINESS", name: "Business", monthlyPrice: null }],
+    });
+    const err: any = await svc
+      .restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: false })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse().code).toBe("SCHEDULED_PRICE_CHANGE_REFUSED");
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("... but a best-effort caller (resume / cancel, already committed) just returns", async () => {
+    const { svc, catalog } = make(
+      [kept({ downgradeToPlanKey: null, downgradeEffectiveAt: null })],
+      [baseItem({ unit_amount: 5900 })],
+    );
+    catalog.getVersionForTenant.mockResolvedValue({
+      ...CATALOG,
+      definitions: [{ planKey: "BUSINESS", name: "Business", monthlyPrice: null }],
+    });
+    await expect(
+      svc.restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("LOW: a target a grandfathered pin predates is priced from the published catalog (as apply() does) and restored", async () => {
+    // The pinned version has no LITE; the published one prices it at 59. Stripe holds the pushed 5900.
+    const { svc, stripe, catalog } = make(
+      [kept({ downgradeToPlanKey: "LITE" })],
+      [baseItem({ unit_amount: 5900 })],
+    );
+    catalog.getPublishedVersion.mockResolvedValue({
+      ...CATALOG,
+      definitions: [
+        ...CATALOG.definitions,
+        { planKey: "LITE", name: "Lite", monthlyPrice: 59, annualPrice: null },
+      ],
+    });
+    await svc.restoreIfPushedLocked("t1", "LITE", { mustBeCleared: false });
+    expect(stripe.amountOf("si_base")).toBe(34900);
+  });
+});
+
+describe("restoreAfterScheduleCleared under a lock collision", () => {
+  it("NIT: a lock timeout is ALERTED (needs_reconcile), nothing is sent, and the lock is tried exactly once (no retry)", async () => {
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { LockTimeoutError } = jest.requireMock("../common/db-locks");
+    mockWithAdvisoryLock.mockRejectedValueOnce(new LockTimeoutError());
+    const { svc, stripe } = make(
+      [row({ downgradeToPlanKey: null, downgradeEffectiveAt: null })],
+      [baseItem({ unit_amount: 5900 })],
+    );
+
+    await expect(svc.restoreAfterScheduleCleared("t1", "STARTER")).resolves.toBeUndefined();
+
+    expect(mockWithAdvisoryLock).toHaveBeenCalledTimes(1);
+    expect(stripe.getSubscription).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
     expect(error.mock.calls.map((c) => String(c[0])).join("\n")).toContain("needs_reconcile");
     error.mockRestore();
   });

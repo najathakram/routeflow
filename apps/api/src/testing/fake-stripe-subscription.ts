@@ -15,7 +15,7 @@ export interface FakeStripeItem {
 }
 
 export function fakeStripeSubscription(items: FakeStripeItem[], status = "active") {
-  const state = { status, items: items.map((i) => structuredClone(i)), created: 0 };
+  const state = { status, items: items.map((i) => structuredClone(i)), created: 0, prices: 0 };
   const snapshot = () => ({ id: "sub_1", status: state.status, items: { data: state.items } });
   const stripe = {
     state,
@@ -28,13 +28,14 @@ export function fakeStripeSubscription(items: FakeStripeItem[], status = "active
             state.items = state.items.filter((x) => x.id !== it.id);
           } else if (it.id) {
             const target = state.items.find((x) => x.id === it.id);
-            if (target && it.price_data) target.price = { ...it.price_data };
+            if (target && it.price_data)
+              target.price = { ...it.price_data, id: `price_${++state.prices}` };
           } else {
             state.items.push({
               id: `si_new_${++state.created}`,
               quantity: it.quantity,
               metadata: it.metadata,
-              price: { ...it.price_data },
+              price: { ...it.price_data, id: `price_${++state.prices}` },
             });
           }
         }

@@ -3074,6 +3074,30 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     );
   });
 
+  it("review: cancel() of a SCHEDULED DOWNGRADE on a Stripe tenant asks for the pushed lower price to be put back (after the local write)", async () => {
+    const { svc, tx, scheduledPrice } = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: "sub_x", downgradeToPlanKey: "STARTER" }),
+    });
+    await svc.cancel("t1", "admin");
+    expect(scheduledPrice.restoreAfterScheduleCleared).toHaveBeenCalledWith("t1", "STARTER");
+    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
+      scheduledPrice.restoreAfterScheduleCleared.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("review: cancel() with no downgrade, or no Stripe subscription, restores nothing", async () => {
+    const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
+    await a.svc.cancel("t1", "admin");
+    const b = make({
+      tenantStatus: "ACTIVE",
+      sub: activeSub({ stripeSubId: null, downgradeToPlanKey: "STARTER" }),
+    });
+    await b.svc.cancel("t1", "admin");
+    expect(a.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+    expect(b.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
+  });
+
   it("R1 option B: resume() with no downgrade, or no Stripe subscription, restores nothing", async () => {
     const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
     await a.svc.resume("t1", "admin");

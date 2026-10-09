@@ -1454,6 +1454,11 @@ export class SubscriptionMutationService {
         { actorId, tx },
       );
     });
+    // R1 Option B: the cancellation just cleared a scheduled downgrade whose LOWER price may already have been
+    // pushed for the renewal - put Stripe back on the current plan's price (best effort, alerted on failure).
+    if (sub.stripeSubId && sub.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreAfterScheduleCleared(tenantId, sub.downgradeToPlanKey);
+    }
     return this.subscription.getSubscription(tenantId);
   }
 
