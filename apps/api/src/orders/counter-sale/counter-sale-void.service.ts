@@ -16,6 +16,7 @@ import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { assertNoCashRefundOnOrder } from "../../invoices/invoice-cash-refund-guard";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
+import { clearUnevidencedDelivered } from "../delivered-stamp";
 import { lockOrderAndInvoicesInTx } from "../order-cancel-impact";
 import { OrdersService } from "../orders.service";
 import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
@@ -228,6 +229,10 @@ export class CounterSaleVoidService {
     const tender = payments.filter((p) => isCounterTenderRow(orderId, p));
     for (const p of tender) await this.invoices.voidPaymentInTx(tx, after, p.invoiceId, p.id, tz);
     const handBack = handBackOf(tender);
+
+    // 9. The void undoes the hand-over: a line that reads delivered with no DeliveryMutation row behind it goes back to
+    // undelivered, so the cancel below restocks it in full (see delivered-stamp.ts). Order lock held (step 1).
+    await clearUnevidencedDelivered(tx, orderId);
 
     // 10. The office cancel's unwind (stock back, credits and wallet released, every live invoice VOID, lines
     // CANCELLED) from DELIVERED; its inner lock no longer sees a non-VOID tender (step 8 ran first).

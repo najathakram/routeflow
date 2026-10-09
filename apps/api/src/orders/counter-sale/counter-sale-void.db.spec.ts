@@ -14,6 +14,7 @@
  *   (f) a void waits behind a tender (same lock family + key) and completes when the tender releases: serialized.
  *   (g) a recorded cash refund -> 409 ORDER_HAS_CASH_REFUND, nothing moves.
  *   (h) atomic: a failure AFTER the tender was voided (the order left DELIVERED) rolls the tender void back.
+ *   (i) the void undoes the hand-over: deliveredQty = qty with no evidence row restocks in full; evidence is kept.
  * NOT covered here: "refused after the day is closed" (the SA-750 close lands later) and a full ring() same-key replay
  * (the tender lock is proven by (f); ring()'s own locked tender is counter-sale-replay.db.spec.ts's ground).
  *
@@ -105,6 +106,7 @@ describeDb("SA-762r: void a counter sale, real Postgres", () => {
       await prisma.orderIdempotencyKey
         .deleteMany({ where: { orderId: { in: ids } } })
         .catch(swallow);
+      await prisma.deliveryMutation.deleteMany(where).catch(swallow);
       await prisma.return.deleteMany(where).catch(swallow);
       await prisma.stockMovement.deleteMany(where).catch(swallow);
       await prisma.invoicePayment.deleteMany(where).catch(swallow);
@@ -439,5 +441,41 @@ describeDb("SA-762r: void a counter sale, real Postgres", () => {
       body: { code: "ORDER_CHANGED_DURING_EDIT" },
     });
     expect(await snapshot(s)).toEqual(before); // the tender void, run first, was rolled back with the rest
+  }, 120_000);
+  it("(i) a DELIVERED write that stamps deliveredQty = qty (POS mode) still restocks in full; a line with delivery evidence keeps its value", async () => {
+    const s = await seedSale("handover");
+    // what P-1b's DELIVERED write leaves behind: every line reads fully delivered, no DeliveryMutation row
+    await prisma.orderItem.updateMany({
+      where: { orderId: s.order.id },
+      data: { deliveredQty: 5 },
+    });
+    expect((await snapshot(s)).stock).toBe(95);
+    await doVoid(s);
+    expect((await snapshot(s)).stock).toBe(100); // the void undid the hand-over: all 5 pieces came back
+    const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.item.id } });
+    expect(Number(line.deliveredQty)).toBe(0);
+
+    // a second sale whose line HAS a qualifying evidence row: the value is kept, its units stay booked
+    const e = await seedSale("evidence");
+    await prisma.orderItem.updateMany({
+      where: { orderId: e.order.id },
+      data: { deliveredQty: 5 },
+    });
+    await prisma.deliveryMutation.create({
+      data: {
+        tenantId: e.tenantId,
+        orderId: e.order.id,
+        orderItemId: e.item.id,
+        productId: e.product.id,
+        type: "DELIVERED",
+        qty: 5,
+        quantityDelivered: 5,
+      } as any,
+    });
+    await doVoid(e);
+    const kept = await prisma.orderItem.findUniqueOrThrow({ where: { id: e.item.id } });
+    expect(Number(kept.deliveredQty)).toBe(5);
+    expect((await snapshot(e)).stock).toBe(95); // evidence says they left: nothing restocked
+    expect((await snapshot(e)).orderStatus).toBe("CANCELLED");
   }, 120_000);
 });

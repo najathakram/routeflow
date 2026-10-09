@@ -43,6 +43,8 @@ async function build(
     invoiceStatuses?: string[];
     payments?: unknown[];
     lines?: unknown[];
+    products?: Array<{ id: string; unitsPerBox: number | null }>;
+    mutations?: unknown[];
     pack?: number | null;
     returnProbe?: unknown;
     refundProbe?: unknown;
@@ -85,8 +87,10 @@ async function build(
   prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: opts.tz ?? "America/Chicago" });
   prisma.auditLog.findFirst.mockResolvedValue(opts.prior ?? null);
   prisma.auditLog.create.mockResolvedValue({});
-  prisma.orderItem.findMany.mockResolvedValue(
-    (opts.lines ?? [
+  // The order's lines as a tiny in-memory table: the void's hand-over reset and the cancel's settle/marking read
+  // and write it, so what the reset does reaches the stock credit (a mock that ignores writes could not show it).
+  const lines: any[] = (
+    opts.lines ?? [
       {
         productId: "prod-1",
         qty: 5,
@@ -97,11 +101,28 @@ async function build(
         pieces: null,
         unitLabel: null,
       },
-    ]) as never,
+    ]
+  ).map((l: any, i) => ({ id: `line-${i + 1}`, ...l }));
+  prisma.orderItem.findMany.mockImplementation(async (args: any) =>
+    lines.filter(
+      (l) =>
+        (args?.where?.deliveredQty?.gt === undefined ||
+          Number(l.deliveredQty) > args.where.deliveredQty.gt) &&
+        (args?.where?.status?.not === undefined || l.status !== args.where.status.not),
+    ),
   );
-  prisma.product.findMany.mockResolvedValue([
-    { id: "prod-1", name: "Tomatoes", currentStock: 50, unitsPerBox: opts.pack ?? null },
-  ] as never);
+  prisma.orderItem.updateMany.mockImplementation(async (args: any) => {
+    const hit = lines.filter((l) => !args?.where?.id?.in || args.where.id.in.includes(l.id));
+    for (const l of hit) Object.assign(l, args.data);
+    return { count: hit.length };
+  });
+  prisma.deliveryMutation.findMany.mockResolvedValue((opts.mutations ?? []) as never);
+  const catalog = opts.products ?? [{ id: "prod-1", unitsPerBox: opts.pack ?? null }];
+  prisma.product.findMany.mockImplementation(async (args: any) =>
+    catalog
+      .filter((p) => !args?.where?.id?.in || args.where.id.in.includes(p.id))
+      .map((p) => ({ ...p, name: `P ${p.id}`, currentStock: 50 })),
+  );
   prisma.product.update.mockResolvedValue({ id: "prod-1", currentStock: 55 } as never);
   const tx = {
     ...prisma,
@@ -115,7 +136,7 @@ async function build(
     emitOrderStatusChanged: jest.Mock;
   };
   const svc = new CounterSaleVoidService(h.service, invoices as never, prisma, gateway as never);
-  return { ...h, tx, invoices, gateway, svc, order };
+  return { ...h, tx, invoices, gateway, svc, order, lines };
 }
 type Built = Awaited<ReturnType<typeof build>>;
 
@@ -287,6 +308,84 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
     await expect(run(b)).resolves.toEqual({ voided: true, handBack: {} });
     expect(b.invoices.voidPaymentInTx).not.toHaveBeenCalled();
     expect(b.prisma.order.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CounterSaleVoidService: the void undoes the hand-over (a DELIVERED write that stamps deliveredQty)", () => {
+  const line = (over: Record<string, unknown>) => ({
+    productId: "prod-1",
+    qty: 5,
+    deliveredQty: 5,
+    status: "DELIVERED",
+    unitsPerBox: null,
+    boxes: null,
+    pieces: null,
+    unitLabel: null,
+    ...over,
+  });
+  const incrementOf = (b: Built, productId: string) =>
+    b.prisma.product.update.mock.calls.find((c: any[]) => c[0].where.id === productId)?.[0].data
+      .currentStock.increment;
+
+  it("lines left with deliveredQty = qty (POS mode) are fully restocked, a boxed line included", async () => {
+    const b = await build({
+      lines: [
+        line({ id: "l1" }),
+        line({
+          id: "l2",
+          productId: "prod-2",
+          qty: 27,
+          deliveredQty: 27,
+          boxes: 2,
+          pieces: 3,
+          unitsPerBox: 12,
+        }),
+      ],
+      products: [
+        { id: "prod-1", unitsPerBox: null },
+        { id: "prod-2", unitsPerBox: 12 },
+      ],
+    });
+    await run(b);
+    expect(incrementOf(b, "prod-1")).toBe(5);
+    expect(incrementOf(b, "prod-2")).toBe(27); // 2 boxes + 3 pieces of a 12-pack, all of it
+    // the reset is one write on exactly those lines, under the order lock, before the cancel's claim
+    expect(b.prisma.orderItem.updateMany.mock.calls[0][0]).toEqual({
+      where: { id: { in: ["l1", "l2"] }, orderId: ORDER_ID },
+      data: { deliveredQty: 0 },
+    });
+    expect(b.tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      b.prisma.orderItem.updateMany.mock.invocationCallOrder[0],
+    );
+    expect(b.prisma.orderItem.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      b.prisma.order.updateMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("a line WITH a qualifying DeliveryMutation row keeps its deliveredQty (evidence is never rewritten) and is not restocked", async () => {
+    const b = await build({
+      lines: [line({ id: "l1" }), line({ id: "l2", productId: "prod-2", qty: 4, deliveredQty: 4 })],
+      products: [
+        { id: "prod-1", unitsPerBox: null },
+        { id: "prod-2", unitsPerBox: null },
+      ],
+      mutations: [{ orderItemId: "l2", type: "DELIVERED", quantityDelivered: 4 }],
+    });
+    await run(b);
+    expect(b.prisma.orderItem.updateMany.mock.calls[0][0].where.id).toEqual({ in: ["l1"] });
+    expect(b.lines.find((l) => l.id === "l2").deliveredQty).toBe(4);
+    expect(incrementOf(b, "prod-1")).toBe(5);
+    expect(incrementOf(b, "prod-2")).toBeUndefined(); // its delivered units stay booked
+  });
+
+  it("an order whose lines carry no delivered quantity writes no reset at all (today's counter sale)", async () => {
+    const b = await build({ lines: [line({ id: "l1", deliveredQty: 0 })] });
+    await run(b);
+    const resets = b.prisma.orderItem.updateMany.mock.calls.filter(
+      (c: any[]) => "deliveredQty" in (c[0].data ?? {}),
+    );
+    expect(resets).toHaveLength(0);
+    expect(incrementOf(b, "prod-1")).toBe(5);
   });
 });
 
