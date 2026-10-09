@@ -3,6 +3,11 @@ import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
+import {
+  cancelCounterLeave,
+  confirmCounterLeave,
+  guardCounterLeave,
+} from "@/lib/counter-cart-signal";
 
 /**
  * Counter sale (walk-in pickup): the one screen. The API is mocked at the module boundary. Pins: Walk-in default, On account
@@ -2015,6 +2020,30 @@ describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/as entered/);
     await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+  });
+
+  it("Discard on the leave dialog drops the stored cart too, so it is not restored next visit (SA-748 MEDIUM)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true); // the "Discard this sale?" dialog opens
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull(); // Keep selling would still have it
+    confirmCounterLeave(); // Discard
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("Keep selling leaves the stored cart alone", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    expect(guardCounterLeave(jest.fn())).toBe(true);
+    cancelCounterLeave();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull();
   });
 
   describe("two tabs", () => {

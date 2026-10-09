@@ -75,6 +75,7 @@ export function useCounterLiveCart({
   dismissNotice: () => void;
   beginSend: () => void;
   endSend: () => void;
+  discard: () => void;
 } {
   const [notice, setNotice] = React.useState<LiveCartNotice>(null);
   const [owner, setOwner] = React.useState(false); // this tab may write the stored cart
@@ -126,7 +127,8 @@ export function useCounterLiveCart({
   const { lines, customer, method, tendered, reference } = snapshot;
   React.useEffect(() => {
     if (!storeKey || !owner) return;
-    if (suspended || sending) {
+    if (suspended || sending || latest.current.lines.length === 0) {
+      // An empty cart has nothing to keep: drop the stored one NOW, not from a debounce an unmount would cancel.
       clearLiveCart(storeKey);
       return;
     }
@@ -161,6 +163,12 @@ export function useCounterLiveCart({
     return () => window.removeEventListener("storage", onStorage);
   }, [storeKey, owner]);
 
+  const discard = React.useCallback(() => {
+    sendingRef.current = true; // like beginSend: no debounce or pagehide flush may write it back
+    // Only the owner tab drops the stored cart: a second tab must never delete the owner's cart.
+    if (storeKey && ownerRef.current) clearLiveCart(storeKey);
+  }, [storeKey]);
+
   return {
     notice,
     dismissNotice: () => setNotice(null),
@@ -170,6 +178,8 @@ export function useCounterLiveCart({
       if (storeKey && ownerRef.current) clearLiveCart(storeKey);
       setSending(true);
     },
+    /** The sale is over for good (handed to the order builder, or the clerk chose Discard): drop the stored cart NOW and block every later write. */
+    discard,
     endSend: () => {
       sendingRef.current = false;
       setSending(false);
