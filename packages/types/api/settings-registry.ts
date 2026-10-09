@@ -71,6 +71,8 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
     "Fulfillment tab, Delivery method card: reached by its ?tab= link, shown only when self-serve is on",
   "/settings?tab=fulfilment#counter-sales":
     "Fulfillment tab, Counter sales card: reached by its ?tab= link, shown only when self-serve is on",
+  "/orders/counter-sale":
+    "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
 };
 
 const cfg = (key: string, screen: string, extra: Partial<SettingRow> = {}): SettingRow => ({
