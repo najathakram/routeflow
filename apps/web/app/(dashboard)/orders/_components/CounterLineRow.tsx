@@ -72,7 +72,7 @@ function QtyField({
   locked: boolean;
   onCommit: (text: string) => boolean;
   onEnter?: () => void;
-  /** The LAST quantity field of the line: Tab commits and hands focus to the scan box instead of the next control. */
+  /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
   tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
@@ -95,7 +95,8 @@ function QtyField({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey)) {
+        // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
+        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
           e.preventDefault();
           commit();
           onEnter?.();

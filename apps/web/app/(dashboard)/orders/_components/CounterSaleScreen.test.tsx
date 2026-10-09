@@ -304,6 +304,17 @@ describe("CounterSaleScreen", () => {
       expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
     });
 
+    it("a plain Tab (no typed draft) is NOT hijacked: the default Tab proceeds", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      // fireEvent returns false when the handler called preventDefault
+      const notPrevented = fireEvent.keyDown(qty, { key: "Tab" });
+      expect(notPrevented).toBe(true);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
     it("Shift+Tab out of the quantity field is left alone", async () => {
       await withCola();
       const qty = screen.getByLabelText("Set quantity of Cola");
