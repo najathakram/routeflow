@@ -98,6 +98,7 @@ describe("#2656 the three goods-rate call sites agree with @routeflow/pricing", 
   it("the API's applyPriceAdjustment calls the shared helper on the locked invoice's lines", () => {
     const src = readFileSync(path.resolve(__dirname, "../invoices/invoices.service.ts"), "utf8");
     expect(src).toMatch(/inferredGoodsFlatRate\(\{ \.\.\.live, lines: live\.items \}\)/);
-    expect(src).toMatch(/inferredGoodsFlatRate,\n\} from "@routeflow\/pricing";/);
+    // Imported from the shared package; later names in the same import list do not matter.
+    expect(src).toMatch(/inferredGoodsFlatRate,\n(?:\s+\w+,\n)*\} from "@routeflow\/pricing";/);
   });
 });
