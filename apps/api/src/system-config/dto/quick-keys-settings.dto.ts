@@ -97,6 +97,10 @@ function clean(dto: object): boolean {
  */
 export function validateQuickKeysInput(raw: unknown): FilledQuickKeysSettings {
   if (!isPlainObject(raw)) throw invalid();
+  // `@ValidateNested` also accepts arrays, so the three object levels are judged first: an array there is a 400, never
+  // a TypeError further down.
+  if (!isPlainObject(raw.counter) || !isPlainObject(raw.counter.default)) throw invalid();
+  if (raw.counter.registers !== undefined && !isPlainObject(raw.counter.registers)) throw invalid();
   // class-transformer silently drops `__proto__`, so the register keys are judged on the raw input first.
   const rawRegisters = isPlainObject(raw.counter) ? raw.counter.registers : undefined;
   if (isPlainObject(rawRegisters)) {

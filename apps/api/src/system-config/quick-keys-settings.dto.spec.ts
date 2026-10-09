@@ -89,6 +89,20 @@ describe("validateQuickKeysInput", () => {
     }
   });
 
+  it("an array where an object belongs is a 400, never a 500 (counter, default, a register)", () => {
+    const ok = { pinned: [], hidden: [] };
+    for (const raw of [
+      { counter: [] },
+      { counter: [{ default: ok }] },
+      { counter: { default: [] } },
+      { counter: { default: [ok] } },
+      { counter: { default: ok, registers: [ok] } },
+      { counter: { default: ok, registers: { main: [ok] } } },
+    ]) {
+      expect(reject(raw)).toBe("quickKeys is invalid");
+    }
+  });
+
   it("registers.main is accepted and stored as the default register", () => {
     const out = validateQuickKeysInput(
       body({ registers: { main: { pinned: [id(5)], hidden: [id(6)] } } }, { pinned: [id(1)] }),

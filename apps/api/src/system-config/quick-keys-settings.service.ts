@@ -50,7 +50,28 @@ export class QuickKeysSettingsService {
         select: { id: true },
       });
       if (found.length !== wanted.size) {
-        throw new BadRequestException(QUICK_KEYS_UNKNOWN_PRODUCT_MESSAGE);
+        // A product that was pinned or hidden and has since been hard-deleted must not block every later save: ids
+        // that are missing AND were already in the stored value are pruned; a NEWLY added unknown id stays a 400.
+        const present = new Set(found.map((r) => r.id));
+        const stored = await this.read();
+        const storedIds = new Set<string>();
+        for (const reg of [
+          stored.counter.default,
+          ...Object.values(stored.counter.registers ?? {}),
+        ]) {
+          for (const id of [...reg.pinned, ...reg.hidden]) storedIds.add(id);
+        }
+        const missing = [...wanted].filter((id) => !present.has(id));
+        if (missing.some((id) => !storedIds.has(id))) {
+          throw new BadRequestException(QUICK_KEYS_UNKNOWN_PRODUCT_MESSAGE);
+        }
+        const gone = new Set(missing);
+        const prune = (reg: { pinned: string[]; hidden: string[] }) => {
+          reg.pinned = reg.pinned.filter((id) => !gone.has(id));
+          reg.hidden = reg.hidden.filter((id) => !gone.has(id));
+        };
+        prune(value.counter.default);
+        for (const reg of Object.values(value.counter.registers ?? {})) prune(reg);
       }
     }
     return value;

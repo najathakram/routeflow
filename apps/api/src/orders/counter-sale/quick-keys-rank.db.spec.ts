@@ -6,8 +6,9 @@
  * foreign product linked onto this tenant's order), and the scan-shaped product (active variants only, a
  * cross-tenant parent link dropped).
  *
- * NOT RUN by the authoring lane (no Postgres here): the DB lane runs it (`npm run local:test:db`, test tenants
- * only, collected only by jest.db.config.js).
+ * Runs in the DB lane (`npm run local:test:db`, test tenants only, collected only by jest.db.config.js).
+ * Not covered here, by design: a pin of ANOTHER tenant's product is refused at PATCH /settings (one tenant-scoped
+ * findMany, pinned in settings.controller.quick-keys.spec.ts) and the grid's own findMany carries the tenant.
  */
 import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";

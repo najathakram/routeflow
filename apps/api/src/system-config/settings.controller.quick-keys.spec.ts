@@ -134,6 +134,26 @@ describe("SettingsController: quickKeys", () => {
       expect(svc.set).not.toHaveBeenCalled();
     });
 
+    it("an id that was ALREADY stored but whose product is gone (hard-deleted) is pruned, not a 400", async () => {
+      const gone = id(900);
+      svc.get.mockResolvedValue(
+        JSON.stringify({ counter: { default: { pinned: [gone, id(1)], hidden: [id(901)] } } }),
+      );
+      await patch({ counter: { default: { pinned: [gone, id(1), id(2)], hidden: [id(901)] } } });
+      const stored = JSON.parse(svc.set.mock.calls.find((c) => c[0] === "settings.quickKeys")![1]);
+      expect(stored.counter.default).toEqual({ pinned: [id(1), id(2)], hidden: [] });
+    });
+
+    it("a NEWLY added unknown id is still a 400 even when another stored id is stale", async () => {
+      svc.get.mockResolvedValue(
+        JSON.stringify({ counter: { default: { pinned: [id(900)], hidden: [] } } }),
+      );
+      await expect(
+        patch({ counter: { default: { pinned: [id(900), id(901)], hidden: [] } } }),
+      ).rejects.toThrow(QUICK_KEYS_UNKNOWN_PRODUCT_MESSAGE);
+      expect(svc.set).not.toHaveBeenCalled();
+    });
+
     it("a pinned or hidden id that is not this tenant's product is a 400, nothing written", async () => {
       const foreign = id(900);
       await expect(
