@@ -34,10 +34,9 @@ export function QtyStepper({
     }
   };
 
+  // 44px hit area on both sizes; only the icon and the field width differ between sm and md.
   const btnCls =
-    size === "sm"
-      ? "p-1 text-buyer-600 hover:bg-buyer-100 transition-colors"
-      : "p-1.5 text-buyer-600 hover:bg-buyer-100 transition-colors";
+    "flex min-h-11 min-w-11 items-center justify-center text-buyer-600 hover:bg-buyer-100 transition-colors disabled:opacity-40";
 
   const iconCls = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
   const inputW = size === "sm" ? "w-7" : "w-8";
@@ -47,8 +46,9 @@ export function QtyStepper({
       {/* Red X remove button */}
       <button
         onClick={onRemove}
-        className="flex items-center justify-center rounded p-0.5 text-danger/60 hover:bg-danger/10 hover:text-danger transition-colors"
+        className="flex min-h-11 min-w-11 items-center justify-center rounded p-0.5 text-danger/60 hover:bg-danger/10 hover:text-danger transition-colors"
         title="Remove from cart"
+        aria-label="Remove from cart"
       >
         <X className={iconCls} />
       </button>
@@ -63,12 +63,14 @@ export function QtyStepper({
           }}
           className={`rounded-l-lg ${btnCls}`}
           disabled={qty <= 1}
+          aria-label="Decrease quantity"
         >
           <Minus className={iconCls} />
         </button>
         <input
           type="number"
           min={1}
+          aria-label="Quantity"
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onBlur={(e) => commit(e.target.value)}
@@ -80,9 +82,13 @@ export function QtyStepper({
               e.currentTarget.blur();
             }
           }}
-          className={`${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+          className={`h-11 ${inputW} border-none bg-transparent text-center text-sm font-semibold text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 rounded [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
         />
-        <button onClick={() => onUpdate(qty + 1)} className={`rounded-r-lg ${btnCls}`}>
+        <button
+          onClick={() => onUpdate(qty + 1)}
+          className={`rounded-r-lg ${btnCls}`}
+          aria-label="Increase quantity"
+        >
           <Plus className={iconCls} />
         </button>
       </div>
