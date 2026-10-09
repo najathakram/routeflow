@@ -393,6 +393,10 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Reopen the close first. */
+  COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
+  /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
+  DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
