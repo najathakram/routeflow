@@ -6,7 +6,11 @@
  * (`priorPieces`): credit(prior + now) - credit(prior), on the same linear cumulative basis, so the slices sum to the whole.
  */
 import { Test } from "@nestjs/testing";
-import { priceMatchedChunk, type CandidateInvoiceLine } from "./inline-returns-pricing";
+import {
+  allocateReturnedPieces,
+  priceMatchedChunk,
+  type CandidateInvoiceLine,
+} from "./inline-returns-pricing";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -94,6 +98,39 @@ describe("B905: priceMatchedChunk telescopes over the pieces already credited", 
   it("a prior past the line never pushes a slice negative or past the line", () => {
     const out = priceMatchedChunk(line({ priorPieces: 3 }), 1, false);
     expect(out.subtotal).toBe(0);
+  });
+});
+
+describe("B905: allocation never lands a chunk on a line its own earlier returns already used up", () => {
+  it("two lines of one product in one order, L1 fully returned earlier: the chunk goes to L2 at FULL price, not $0 on L1", () => {
+    const l1 = line({ sourceInvoiceItemId: "L1", qty: 3, subtotal: 9, priorPieces: 3 }); // fully returned earlier
+    const l2 = line({ sourceInvoiceItemId: "L2", qty: 3, subtotal: 12, priorPieces: 0 });
+    // the per-(order, product) supply is the aggregate: 6 sold - 3 returned = 3 left
+    const chunks = allocateReturnedPieces(
+      [l1, l2],
+      [{ sourceOrderId: "order-1", productId: "prod-1", remainingPieces: 3 }],
+      "prod-1",
+      2,
+    );
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].line?.sourceInvoiceItemId).toBe("L2");
+    const priced = priceMatchedChunk(chunks[0].line!, chunks[0].pieces, false);
+    expect(priced.subtotal).toBe(8); // 2 of L2's 3 pieces at 12/3, never 0
+  });
+
+  it("a partly used line only offers what it has left", () => {
+    const l1 = line({ sourceInvoiceItemId: "L1", qty: 3, subtotal: 9, priorPieces: 2 });
+    const l2 = line({ sourceInvoiceItemId: "L2", qty: 3, subtotal: 12 });
+    const chunks = allocateReturnedPieces(
+      [l1, l2],
+      [{ sourceOrderId: "order-1", productId: "prod-1", remainingPieces: 4 }],
+      "prod-1",
+      3,
+    );
+    expect(chunks.map((c) => [c.line?.sourceInvoiceItemId, c.pieces])).toEqual([
+      ["L1", 1],
+      ["L2", 2],
+    ]);
   });
 });
 

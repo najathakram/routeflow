@@ -253,7 +253,9 @@ export function allocateReturnedPieces(
     if (line.productId !== productId) continue;
     const cap = remaining.get(line.sourceOrderId) ?? 0;
     if (cap <= 0) continue;
-    const take = Math.min(left, cap, line.piecesQty);
+    // B905: a line offers only what earlier inline returns of ITS OWN left (the supply cap is per order and product, so
+    // without this a fully returned line would take the chunk and price it at $0 while a sibling line still has the goods)
+    const take = Math.min(left, cap, line.piecesQty - Math.max(0, Number(line.priorPieces ?? 0)));
     if (take <= 0) continue;
     chunks.push({ line, pieces: take });
     remaining.set(line.sourceOrderId, cap - take);
