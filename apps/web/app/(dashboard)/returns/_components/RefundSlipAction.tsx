@@ -1,0 +1,99 @@
+"use client";
+
+import * as React from "react";
+import { createPortal } from "react-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Button } from "@routeflow/ui/web";
+import { apiClient } from "@/lib/api-client";
+import { useOptionalAuth } from "@/lib/auth-context";
+import { useReturn } from "@/lib/api/returns";
+import { useTenant } from "@/components/tenant-provider";
+import { buildRefundSlip, type RefundSlipProfile } from "@/lib/refund-slip";
+import { RefundSlipView } from "./RefundSlipView";
+
+/**
+ * "Print slip" for a refunded return (the Return page), optionally printing by itself once (after a refund confirms). The
+ * slip is built from GET /returns/:id and printed from a portal that is a direct child of <body>; while it prints,
+ * `body.refund-slip-open` (app/shell.css) hides everything else, so the page behind never lands on the 80 mm slip.
+ * Nothing is rendered on screen except the button.
+ */
+export function RefundSlipAction({
+  returnId,
+  autoPrint = false,
+  className,
+}: {
+  returnId: string;
+  /** Print once, by itself, as soon as the refunded return is loaded (the refund was just confirmed). */
+  autoPrint?: boolean;
+  className?: string;
+}) {
+  const { data: ret, isLoading } = useReturn(returnId);
+  const { branding } = useTenant();
+  const cashier = useOptionalAuth()?.user?.username ?? null;
+  const { data: settings } = useQuery<RefundSlipProfile>({
+    queryKey: ["settings"],
+    queryFn: () => apiClient.get("/settings").then((r) => r.data),
+  });
+  const [printing, setPrinting] = React.useState(false);
+  const autoPrinted = React.useRef(false);
+
+  const model = React.useMemo(
+    () =>
+      ret
+        ? buildRefundSlip({
+            ret,
+            cashier,
+            profile: {
+              ...settings,
+              businessName: branding?.businessName || settings?.businessName,
+            },
+          })
+        : null,
+    [ret, settings, branding?.businessName, cashier],
+  );
+  const printable = !!model && model.payout.kind !== "NONE";
+
+  React.useEffect(() => {
+    if (!printing) return;
+    document.body.classList.add("refund-slip-open");
+    // one frame so the portal is in the DOM before the browser lays the page out for print
+    const raf = window.requestAnimationFrame(() => {
+      window.print();
+      setPrinting(false);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.body.classList.remove("refund-slip-open");
+    };
+  }, [printing]);
+
+  React.useEffect(() => {
+    if (autoPrint && printable && !autoPrinted.current) {
+      autoPrinted.current = true;
+      setPrinting(true);
+    }
+  }, [autoPrint, printable]);
+
+  if (!isLoading && !printable) return null;
+  return (
+    <>
+      <Button
+        type="button"
+        variant="secondary"
+        className={className ?? "min-h-11"}
+        disabled={!printable || printing}
+        onClick={() => setPrinting(true)}
+      >
+        Print slip
+      </Button>
+      {printing && model
+        ? createPortal(
+            <div data-refund-slip-portal className="hidden print:block">
+              <RefundSlipView model={model} logoUrl={branding?.logoUrl ?? null} />
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
