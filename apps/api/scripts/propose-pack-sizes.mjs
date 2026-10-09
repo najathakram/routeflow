@@ -50,7 +50,11 @@
 // behavioural change belongs in `packages/types/pack-size.ts` first, ported
 // here in step — never the other way around.
 import { createRequire } from "module";
-const { Client } = createRequire(import.meta.url)("pg");
+const req = createRequire(import.meta.url);
+const { Client } = req("pg");
+// Row 195: --execute writes through the protected-tenant guard (no override exists for this script).
+const { loadProtectedSlugs } = req("./lib/protected-slugs.cjs");
+const { assertWritableTenant, ProtectedTenantError } = req("./lib/live-target-guard.cjs");
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -180,13 +184,25 @@ function classify(p) {
   return null;
 }
 
+// Loaded once, from the URL this script dials, before connecting. Only a write needs it.
+let protectedSlugs = null;
+if (EXECUTE) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+}
+
 const client = new Client({ connectionString: url });
 await client.connect();
 
 const { rows: tenants } = await client.query(
-  TENANT
-    ? `SELECT id, slug FROM "Tenant" WHERE slug = $1`
-    : `SELECT id, slug FROM "Tenant" WHERE status = 'ACTIVE' ORDER BY slug`,
+  `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+     FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+    WHERE ${TENANT ? "t.slug = $1" : "t.status = 'ACTIVE'"}
+    ORDER BY t.slug`,
   TENANT ? [TENANT] : [],
 );
 if (!tenants.length) {
@@ -262,6 +278,14 @@ for (const t of tenants) {
     const confirm = args["confirm-tenant"];
     if (confirm !== t.slug) {
       console.log(`   ⚠ SKIPPED WRITE: pass --confirm-tenant=${t.slug} to apply to this tenant.`);
+      continue;
+    }
+    // Row 195: a paying / Stripe-linked / PROTECTED_TENANT_SLUGS tenant is never written here.
+    try {
+      assertWritableTenant(t, t, protectedSlugs);
+    } catch (e) {
+      if (!(e instanceof ProtectedTenantError)) throw e;
+      console.log(`   ⚠ SKIPPED WRITE: ${e.message}`);
       continue;
     }
     const apply = [...tiers.HIGH, ...(MIN_CONFIDENCE === "MEDIUM" ? tiers.MEDIUM : [])];
