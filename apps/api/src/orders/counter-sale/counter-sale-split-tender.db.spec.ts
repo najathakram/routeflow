@@ -100,11 +100,11 @@ describeDb("split payment — counter sale tender on real Postgres", () => {
         });
         orderIds.push(order.id);
         const sameInstant = new Date();
-        for (const inv of nextInvoices) {
+        for (const [idx, inv] of nextInvoices.entries()) {
           await raw.invoice.create({
             data: {
               id: inv.id,
-              invoiceNumber: `INV-${run}-${n}-${inv.id.slice(-2)}`,
+              invoiceNumber: `INV-${run}-${n}-${String.fromCharCode(97 + idx)}`, // a, b: unique per order, never id-derived
               customerId: walkInId,
               orderId: order.id,
               tenantId,
