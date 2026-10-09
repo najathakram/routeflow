@@ -662,6 +662,7 @@ model Order {
   idempotencyCartHash    String?
   registerKey            String?
   soldById               String?
+  counterCashTendered    Decimal?    @db.Decimal(10, 2)
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
   tenantId               String?
