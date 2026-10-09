@@ -1,0 +1,97 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
+import { apiClient } from "../api-client";
+import { getOrderSubmitKey, resetOrderSubmitKey } from "../order-submit-key";
+import { invalidateOrderCaches } from "./orders";
+import {
+  POS_MODE_PREF_KEY,
+  posModeFromPreferences,
+  posModePrefPatch,
+  type PosFinishStep,
+} from "../pos-mode";
+
+const PREFS_KEY = ["user-preferences"] as const;
+
+/** POS mode (SA-763r P-2), the server-backed switch: GET to seed, PATCH on flip, never AsyncStorage. */
+export function usePosModePreference() {
+  const qc = useQueryClient();
+  const prefs = useQuery<Record<string, string>>({
+    queryKey: PREFS_KEY,
+    queryFn: () => apiClient.get("/users/me/preferences").then((r) => r.data),
+    staleTime: 60_000,
+  });
+  const save = useMutation<unknown, Error, boolean>({
+    mutationFn: (next) => apiClient.patch("/users/me/preferences", posModePrefPatch(next)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PREFS_KEY }),
+  });
+  return { prefs, save, seeded: posModeFromPreferences(prefs.data), key: POS_MODE_PREF_KEY };
+}
+
+export class PosFinishError extends Error {
+  constructor(
+    public step: PosFinishStep,
+    public cause: unknown,
+  ) {
+    super(`POS finish failed at ${step}`);
+  }
+}
+
+/**
+ * "Confirm & invoice": PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent
+ * on the server; a failure names the step so the caller says which half is missing.
+ */
+export function usePosFinish() {
+  const qc = useQueryClient();
+  return useMutation<void, PosFinishError, { orderId: string; invoice: boolean }>({
+    mutationFn: async ({ orderId, invoice }) => {
+      try {
+        await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" });
+      } catch (e) {
+        throw new PosFinishError("confirm", e);
+      }
+      if (invoice) {
+        try {
+          await apiClient.post(`/invoices/from-order/${orderId}`);
+        } catch (e) {
+          throw new PosFinishError("invoice", e);
+        }
+      }
+    },
+    onSettled: () => {
+      invalidateOrderCaches(qc);
+      void qc.invalidateQueries({ queryKey: ["invoices"] });
+      void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/**
+ * "Hand over": `POST /orders/:id/pickup-complete` (DELIVERED + the invoice issued). The Idempotency-Key
+ * is REQUIRED; it is one per order and kept across retries, reset once the hand-over succeeds.
+ */
+export function usePickupComplete(orderId: string) {
+  const qc = useQueryClient();
+  return useMutation<PickupCompleteResponse, Error, PickupCompleteRequest | undefined>({
+    mutationFn: (body) =>
+      apiClient
+        .post<PickupCompleteResponse>(`/orders/${orderId}/pickup-complete`, body ?? {}, {
+          headers: { "Idempotency-Key": getOrderSubmitKey(`pickup:${orderId}`) },
+        })
+        .then((r) => r.data),
+    onSuccess: () => {
+      resetOrderSubmitKey(`pickup:${orderId}`);
+      invalidateOrderCaches(qc);
+      void qc.invalidateQueries({ queryKey: ["invoices"] });
+      void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/** "Switch to delivery": `PATCH /orders/:id/fulfill-path` ROUTE (open states only; the server decides). */
+export function useSwitchOrderToDelivery() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, string>({
+    mutationFn: (id) => apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath: "ROUTE" }),
+    onSuccess: () => invalidateOrderCaches(qc),
+  });
+}

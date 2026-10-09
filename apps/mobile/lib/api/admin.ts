@@ -140,7 +140,9 @@ export interface AdminOrder {
    * carrier-shipped, excluded from every trip/route dispatch sweep. Every
    * order has one — not optional, just like the API's `@default(ROUTE)`.
    */
-  fulfillPath: "ROUTE" | "SHIP";
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  /** Walk-in counter sale (PICKUP + counterSale): never a POS-mode order (`isPosOrder`). */
+  counterSale?: boolean | null;
   /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
   cancelBlockedReason?: OrderCancelBlockedReason | null;
   createdAt: string;
