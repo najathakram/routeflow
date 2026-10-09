@@ -422,3 +422,53 @@ describe("a held attempt replays the exact legs with the same key", () => {
     expect(screen.getByLabelText("Payment 1 amount")).toBeEnabled();
   });
 });
+
+describe("the receipt of a split sale", () => {
+  it("lists each tender line and the change the server returned", async () => {
+    mutateAsync.mockResolvedValueOnce({
+      ...SALE,
+      method: "CARD",
+      change: 10,
+      payments: [
+        { method: "CARD", amount: 30, paymentIds: ["p1"] },
+        { method: "CASH", amount: 40, paymentIds: ["p2"] },
+      ],
+    });
+    await ring70();
+    openSplit();
+    setAmount(2, "30");
+    setAmount(1, "50");
+    fireEvent.click(complete());
+    await screen.findByTestId("counter-sale-receipt");
+    const lines = screen.getAllByTestId("receipt-tender-line");
+    expect(lines.map((l) => l.textContent)).toEqual(["Card$30.00", "Cash$40.00"]);
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("$10.00");
+    expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$50.00");
+    expect(screen.queryByTestId("receipt-method")).toBeNull();
+  });
+
+  it("paymentRecorded false (COUNTER_PAYMENT_EXCEEDS_TOTAL): the sale is kept, the fixed copy says to take the payment again", async () => {
+    mutateAsync.mockResolvedValueOnce({
+      ...SALE,
+      paid: 0,
+      balanceDue: 70,
+      change: undefined,
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+    });
+    await ring70();
+    openSplit();
+    setAmount(2, "30");
+    setAmount(1, "40");
+    fireEvent.click(complete());
+    await screen.findByTestId("counter-payment-not-recorded");
+    expect(screen.getByTestId("counter-payment-not-recorded-why")).toHaveTextContent(
+      "The balance changed — take the payment again",
+    );
+    expect(screen.getByRole("link", { name: "Record payment" })).toHaveAttribute(
+      "href",
+      "/invoices/i1",
+    );
+    expect(screen.queryAllByTestId("receipt-tender-line")).toHaveLength(0);
+  });
+});

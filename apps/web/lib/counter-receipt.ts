@@ -5,6 +5,7 @@ import type {
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
+import { COUNTER_BALANCE_CHANGED_COPY, SPLIT_CODES } from "@/lib/counter-split-tender";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
@@ -81,6 +82,10 @@ export interface CounterReceiptModel {
   showPaid: boolean;
   showBalance: boolean;
   methodLabel: string | null;
+  /** Split payment: one line per tender leg (method + amount) when the sale had 2+ legs; empty for a single tender. */
+  tenderLines: Array<{ key: string; label: string; amount: number }>;
+  /** Fixed explanation under "payment not recorded" when the code says why (the balance fell mid-sale), else null. */
+  paymentNotRecordedCopy: string | null;
   tendered: number | null;
   tenderedAsEntered: boolean;
   change: number | null;
@@ -143,13 +148,23 @@ export function buildCounterReceipt(input: {
   const paymentNotRecorded = receipt.paymentRecorded === false;
   const onAccount = method === "ON_ACCOUNT" && !paymentNotRecorded;
   const hasTender = !paymentNotRecorded && !onAccount;
+  // Split payment: the server lists every leg. A single tender (0 or 1 legs) keeps the one-method receipt exactly as before.
+  const legs = hasTender && (receipt.payments?.length ?? 0) > 1 ? (receipt.payments ?? []) : [];
+  const isSplit = legs.length > 1;
 
   const serverChange = receipt.change != null && receipt.change > 0 ? receipt.change : null;
   let tendered: number | null = null;
   let tenderedAsEntered = false;
   let change: number | null = null;
   let changeAsEntered = false;
-  if (hasTender) {
+  if (isSplit) {
+    // each leg is on its own line; cash handed over = the cash leg + the change given back
+    const cashLeg = legs.find((l) => l.method === "CASH");
+    if (serverChange != null) {
+      change = serverChange;
+      if (cashLeg) tendered = roundMoney(cashLeg.amount + serverChange);
+    }
+  } else if (hasTender) {
     if (enteredTender != null) {
       tendered = enteredTender;
       tenderedAsEntered = true;
@@ -213,7 +228,16 @@ export function buildCounterReceipt(input: {
     paymentNotRecorded,
     showPaid: hasTender,
     showBalance: paymentNotRecorded || onAccount || receipt.balanceDue > 0,
-    methodLabel: hasTender && method ? METHOD_LABEL[method] : null,
+    methodLabel: !isSplit && hasTender && method ? METHOD_LABEL[method] : null,
+    tenderLines: legs.map((l, i) => ({
+      key: `${i}-${l.method}`,
+      label: METHOD_LABEL[l.method],
+      amount: l.amount,
+    })),
+    paymentNotRecordedCopy:
+      paymentNotRecorded && receipt.paymentErrorCode === SPLIT_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL
+        ? COUNTER_BALANCE_CHANGED_COPY
+        : null,
     tendered,
     tenderedAsEntered,
     change,
@@ -353,6 +377,8 @@ export function receiptModelFromOrder(input: {
     methodLabel: hasTender
       ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
       : null,
+    tenderLines: [],
+    paymentNotRecordedCopy: null,
     tendered: null,
     tenderedAsEntered: false,
     change: null,

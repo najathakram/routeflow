@@ -122,6 +122,9 @@ export function CounterReceiptView({
           data-testid="counter-payment-not-recorded"
         >
           <p className="font-semibold">Sale recorded — payment not recorded</p>
+          {m.paymentNotRecordedCopy ? (
+            <p data-testid="counter-payment-not-recorded-why">{m.paymentNotRecordedCopy}</p>
+          ) : null}
           <Link
             href={`/invoices/${m.invoiceId}`}
             className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
@@ -151,6 +154,12 @@ export function CounterReceiptView({
           <dt>Total</dt>
           <dd>{money(m.total)}</dd>
         </div>
+        {m.tenderLines.map((t) => (
+          <div key={t.key} className="flex justify-between" data-testid="receipt-tender-line">
+            <dt>{t.label}</dt>
+            <dd>{money(t.amount)}</dd>
+          </div>
+        ))}
         {m.methodLabel ? (
           <div className="flex justify-between" data-testid="receipt-method">
             <dt>Payment method</dt>
