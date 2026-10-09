@@ -4,6 +4,12 @@ import {
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import {
+  SPLIT_PROBLEM_COPY,
+  isCounterTenderChanged,
+  splitProblemCopyForCode,
+  type SplitPaymentProblem,
+} from "./counter-split-tender";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
@@ -123,7 +129,8 @@ export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
   ];
 }
 
-export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
+export type PaymentProblem =
+  "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT" | SplitPaymentProblem;
 
 export function validatePayment(input: {
   method: CounterSalePaymentMethod;
@@ -144,6 +151,8 @@ export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
+  // split payment: one fixed line per new server code (counter-split-tender.ts)
+  ...SPLIT_PROBLEM_COPY,
 };
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
@@ -222,6 +231,8 @@ export function isCounterSaleChanged(err: unknown): boolean {
 export function finalCounterSaleCopy(err: unknown): string | null {
   if (isCounterSaleVoided(err)) return COUNTER_SALE_VOIDED_COPY;
   if (isCounterSaleChanged(err)) return COUNTER_SALE_CHANGED_COPY;
+  // 409 COUNTER_TENDER_CHANGED: the sale and part of its tender exist, and a replay can never succeed: final, never retried.
+  if (isCounterTenderChanged(err)) return SPLIT_PROBLEM_COPY.COUNTER_TENDER_CHANGED;
   return null;
 }
 
@@ -259,6 +270,11 @@ export function counterSaleErrorCopy(err: unknown): string {
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
     return "This walk-in has open credit. Resolve it on the customer, then ring the sale again.";
+  // Split payment: a pre-write 400 of the new contract answers with its own fixed line (nothing was written).
+  if (status === 400) {
+    const splitCopy = splitProblemCopyForCode(res?.data?.code);
+    if (splitCopy) return splitCopy;
+  }
   // B1209: a walk-in's cash below the server's total was refused (400, as pickup-complete) BEFORE anything was written.
   if (status === 400 && res?.data?.code === API_ERROR_CODES.COUNTER_TENDER_SHORT)
     return PICKUP_TENDER_SHORT_COPY;

@@ -31,6 +31,7 @@ import {
   useCreateCounterSale,
 } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
+import { attemptTender } from "@/lib/counter-split-tender";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_DISCARD_COPY,
@@ -611,7 +612,7 @@ export function CounterSaleScreen() {
     try {
       res = await lookupSale.mutateAsync({
         idempotencyKey: attempt.key,
-        method: attempt.dto.payment.method,
+        method: attemptTender(attempt.dto).method,
       });
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
@@ -641,10 +642,9 @@ export function CounterSaleScreen() {
     attemptRef.current = null;
     clearHeldAttempt(heldKey);
     setOutcomeUnknown(false);
-    const { method: sentMethod, amount } = attempt.dto.payment;
-    setEnteredTender(
-      sentMethod === "CASH" && amount != null && res.paymentRecorded !== false ? amount : null,
-    );
+    // leg 0's method (a split's top-level method) and the cash entered, from either body shape
+    const { method: sentMethod, cashAmount } = attemptTender(attempt.dto);
+    setEnteredTender(cashAmount != null && res.paymentRecorded !== false ? cashAmount : null);
     finishSale({ ...res, method: res.method ?? sentMethod }, attempt.next);
     return false;
   };
