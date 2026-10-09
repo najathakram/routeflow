@@ -106,6 +106,32 @@ describe("sanitizeParkedPayload", () => {
     expect(out.reference).toHaveLength(100);
   });
 
+  it("never keeps a lone UTF-16 surrogate: Postgres jsonb rejects it (a 500 otherwise)", () => {
+    const lone = "\uD83D"; // a high surrogate with no low one
+    const out = ok(
+      cart({
+        lines: [line({ name: `Cola${lone}`, note: `a${"\uDE00"}b` })],
+        reference: `ref${lone}`,
+        customer: { id: "c1", businessName: `Acme${lone}` },
+      }),
+    );
+    expect(out.lines[0].name).toBe("Cola");
+    expect(out.lines[0].note).toBe("ab");
+    expect(out.reference).toBe("ref");
+    expect(out.customer?.businessName).toBe("Acme");
+    // JSON of the rebuilt payload carries no unpaired escape
+    expect(JSON.stringify(out)).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+  });
+
+  it("a slice that would cut an emoji in half drops the half, not keeps it", () => {
+    const emoji = "\u{1F600}"; // two code units
+    const name = "x".repeat(COUNTER_PARK_NAME_MAX - 1) + emoji; // the cut lands between the two halves
+    const out = ok(cart({ lines: [line({ name })] }));
+    expect(out.lines[0].name).toBe("x".repeat(COUNTER_PARK_NAME_MAX - 1));
+    // a whole emoji that fits is kept intact
+    expect(ok(cart({ lines: [line({ name: `hi ${emoji}` })] })).lines[0].name).toBe(`hi ${emoji}`);
+  });
+
   it("refuses more than the line cap with its own reason, and exactly the cap passes", () => {
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => line({ tempId: `t${i}`, productId: `p${i}` }));

@@ -123,8 +123,14 @@ export type ParkedPayloadRefusal = "INVALID" | "TOO_MANY_LINES";
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
+/**
+ * Caps a string at `max` UTF-16 code units and removes every UNPAIRED surrogate (a lone half of an emoji, whether it was
+ * sent that way or left by the cut): Postgres jsonb rejects one, which would be a 500 instead of a stored cart.
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const capText = (v: string, max: number): string => v.slice(0, max).replace(LONE_SURROGATE, "");
 const str = (v: unknown, max: number): string | undefined =>
-  typeof v === "string" ? v.slice(0, max) : undefined;
+  typeof v === "string" ? capText(v, max) : undefined;
 const TIER_KEYS = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"] as const;
 
 function rebuildLine(raw: unknown): ParkedCartLine | null {
@@ -134,7 +140,7 @@ function rebuildLine(raw: unknown): ParkedCartLine | null {
   if (!tempId || name === undefined) return null;
   const line: ParkedCartLine = {
     tempId,
-    productId: (raw.productId as string).slice(0, 64),
+    productId: capText(raw.productId as string, 64),
     name,
     unitPrice: raw.unitPrice as number,
     qty: raw.qty as number,
@@ -155,7 +161,7 @@ function rebuildLine(raw: unknown): ParkedCartLine | null {
     for (const k of TIER_KEYS) {
       const v = raw.tierPrices[k];
       if (isNum(v) || v === null) tp[k] = v;
-      else if (typeof v === "string") tp[k] = v.slice(0, 32);
+      else if (typeof v === "string") tp[k] = capText(v, 32);
     }
     line.tierPrices = tp;
   }
@@ -183,8 +189,8 @@ function rebuildCustomer(raw: unknown): ParkedCartCustomer | null | undefined {
   if (raw === null || raw === undefined) return null;
   if (!validCustomer(raw) || !isObj(raw)) return undefined;
   const c: ParkedCartCustomer = {
-    id: (raw.id as string).slice(0, 64),
-    businessName: (raw.businessName as string).slice(0, COUNTER_PARK_NAME_MAX),
+    id: capText(raw.id as string, 64),
+    businessName: capText(raw.businessName as string, COUNTER_PARK_NAME_MAX),
   };
   if (isNum(raw.pricingTier)) c.pricingTier = raw.pricingTier;
   const fulfillPath = str(raw.fulfillPath, 20);
