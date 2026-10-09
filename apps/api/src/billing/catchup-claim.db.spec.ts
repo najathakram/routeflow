@@ -179,7 +179,9 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     });
     const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
     const nov = await rfInvoice(id, "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
-    const stripe = fakeStripeCatchup();
+    const stripe = fakeStripeCatchup({
+      sessions: { cs_paid: { id: "cs_paid", subscription: "sub_paid", status: "complete" } },
+    });
     const { svc } = svcWith(stripe);
 
     await svc.onInvoicePaid({
@@ -311,7 +313,11 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     const sep = await rfInvoice(id, "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z", "PAID");
     const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
     const nov = await rfInvoice(id, "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
-    const { svc } = svcWith();
+    const { svc } = svcWith(
+      fakeStripeCatchup({
+        sessions: { cs_r5: { id: "cs_r5", subscription: "sub_r5", status: "complete" } },
+      }),
+    );
     await svc.onInvoicePaid({
       id: "in_r5",
       amount_paid: 31000,
@@ -325,21 +331,34 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     expect((await sub(id)).catchupState).toBeNull();
   });
 
-  it("b2b review: an ordinary card checkout's first PAID invoice supersedes the manual tenant's OPEN invoices once (real SQL)", async () => {
-    const id = await tenant("conv", { stripeSubId: "sub_conv", externalPayment: true });
+  it("Opus B1 (real SQL): SESSION_OPEN + an ORDINARY subscription's paid first invoice voids nothing and adopts nothing", async () => {
+    const id = await tenant("b1", {
+      stripeSubId: "sub_ord",
+      externalPayment: true,
+      catchupState: "SESSION_OPEN",
+      catchupSessionId: "cs_b1",
+    });
     const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-    const { svc } = svcWith();
-    const invoice = {
-      id: "in_conv",
-      amount_paid: 14900,
-      billing_reason: "subscription_create",
-      parent: { subscription_details: { subscription: "sub_conv" } },
-    };
-    expect(await svc.onOrdinaryConversionPaid(invoice)).toBe(true);
-    expect((await prisma.rfInvoice.findUniqueOrThrow({ where: { id: oct.id } })).status).toBe(
-      "VOID",
+    const { svc } = svcWith(
+      fakeStripeCatchup({
+        sessions: { cs_b1: { id: "cs_b1", subscription: "sub_catchup", status: "open" } },
+      }),
     );
-    expect(await svc.onOrdinaryConversionPaid(invoice)).toBe(false);
+    await svc.onInvoicePaid({
+      id: "in_ord",
+      amount_paid: 12000,
+      billing_reason: "subscription_create",
+      parent: { subscription_details: { subscription: "sub_ord" } },
+    });
+    expect((await prisma.rfInvoice.findUniqueOrThrow({ where: { id: oct.id } })).status).toBe(
+      "OPEN",
+    );
+    expect(await sub(id)).toMatchObject({
+      catchupState: "SESSION_OPEN",
+      catchupSessionId: "cs_b1",
+      catchupInvoiceId: null,
+      externalPayment: true,
+    });
   });
 
   it("expiry releases only the matching SESSION_OPEN claim; a completed claim is never released by it", async () => {

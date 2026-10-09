@@ -79,6 +79,18 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
         audits.push({ ...data });
         return {};
       }),
+      /** tenantId / entityType / action equality plus `AND: [{ meta: { path: [k], equals } }]` (the noticeOnce shape). */
+      findFirst: jest.fn(async ({ where = {} }: any = {}) => {
+        const hit = audits.find((a) => {
+          if (where.tenantId !== undefined && a.tenantId !== where.tenantId) return false;
+          if (where.entityType !== undefined && a.entityType !== where.entityType) return false;
+          if (where.action !== undefined && a.action !== where.action) return false;
+          return (where.AND ?? []).every(
+            (c: any) => c.meta?.path && a.meta?.[c.meta.path[0]] === c.meta.equals,
+          );
+        });
+        return hit ? { id: "audit-hit" } : null;
+      }),
     },
     $queryRaw: jest.fn(async (_s: TemplateStringsArray, ...v: unknown[]) => {
       locks.push(String(v[0]));

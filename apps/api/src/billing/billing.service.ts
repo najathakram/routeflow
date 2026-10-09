@@ -56,7 +56,7 @@ import {
 import { lockTenantForLedger } from "./addon-ledger";
 import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
-import { isCatchupSession, isCatchupSubscription } from "./catchup-claim";
+import { claimRefusal, isCatchupSession, isCatchupSubscription } from "./catchup-claim";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
@@ -488,8 +488,22 @@ export class BillingService {
     // checkout — they ride the existing subscription via syncStripeSubscriptionPrice.
     const existingSub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { stripeSubId: true },
+      select: { stripeSubId: true, externalPayment: true, catchupState: true },
     });
+    // SA-733r5 / Opus B1: while a catch-up claim is held, an ORDINARY checkout would create a second subscription
+    // whose first paid invoice could be mistaken for the catch-up's. Refused with the claim's own coded 409.
+    const held = claimRefusal(existingSub?.catchupState);
+    if (held) throw held;
+    // Ruling (item 8): a manual-pay (externalPayment) tenant completes card setup ONLY through the catch-up flow,
+    // which prices the unpaid periods and voids exactly what it bills. No ordinary checkout for them.
+    if (existingSub?.externalPayment === true && !existingSub.stripeSubId) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
+        message:
+          "Your account is invoiced directly. Card setup is completed through your RouteFlow contact - " +
+          "they will send you a secure payment link.",
+      });
+    }
     if (existingSub?.stripeSubId) {
       let liveStatus: string | undefined;
       try {
@@ -928,8 +942,6 @@ export class BillingService {
 
       case "invoice.paid":
         await this.catchup?.onInvoicePaid(event.data.object);
-        // a manual-pay tenant's ORDINARY card checkout: its first paid invoice supersedes its OPEN RfInvoices
-        await this.catchup?.onOrdinaryConversionPaid(event.data.object);
         break;
 
       case "customer.subscription.trial_will_end":

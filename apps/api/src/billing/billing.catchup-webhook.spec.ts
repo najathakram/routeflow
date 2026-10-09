@@ -9,7 +9,6 @@ function make() {
     onSessionCompleted: jest.fn().mockResolvedValue(undefined),
     onSessionExpired: jest.fn().mockResolvedValue(undefined),
     onInvoicePaid: jest.fn().mockResolvedValue(undefined),
-    onOrdinaryConversionPaid: jest.fn().mockResolvedValue(false),
     onPaymentFailed: jest.fn().mockResolvedValue(undefined),
   };
   const billing = new BillingService(
@@ -54,13 +53,13 @@ describe("catch-up webhook routing", () => {
     expect(catchup.onSessionCompleted).not.toHaveBeenCalled();
   });
 
-  it("checkout.session.expired -> onSessionExpired; invoice.paid -> onInvoicePaid, then the ordinary-checkout conversion", async () => {
+  it("checkout.session.expired -> onSessionExpired; invoice.paid -> onInvoicePaid (no ordinary-conversion path)", async () => {
     const { billing, catchup } = make();
     await billing.handleWebhookEvent(ev("checkout.session.expired", { id: "cs_1" }));
     await billing.handleWebhookEvent(ev("invoice.paid", { id: "in_1" }));
     expect(catchup.onSessionExpired).toHaveBeenCalledWith({ id: "cs_1" });
     expect(catchup.onInvoicePaid).toHaveBeenCalledWith({ id: "in_1" });
-    expect(catchup.onOrdinaryConversionPaid).toHaveBeenCalledWith({ id: "in_1" });
+    expect((catchup as any).onOrdinaryConversionPaid).toBeUndefined();
   });
 
   it("invoice.payment_failed -> the claim hook, then the ordinary handler", async () => {

@@ -95,6 +95,14 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
+  // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
+  // checkout already in progress blocks a second one. Fixed sentences; no ids.
+  [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
+    "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
+    "A card checkout is already open for your account. Finish it, or try again in a moment.",
+  [API_ERROR_CODES.CATCHUP_PENDING]:
+    "Your card payment is being confirmed. This will be available once it clears.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

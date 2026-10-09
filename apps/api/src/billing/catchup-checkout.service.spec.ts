@@ -196,7 +196,7 @@ describe("open()", () => {
     h.stripe.client.checkout.sessions.create.mockRejectedValueOnce(
       new Error("stripe: card details leaked"),
     );
-    const err: any = await h.svc.open("t1", { now: NOW }).catch((e) => e);
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 }).catch((e) => e);
     expect(err.getStatus()).toBe(503);
     expect(JSON.stringify(err.getResponse())).not.toContain("leaked");
     expect(h.sub().catchupState).toBeNull();
@@ -218,6 +218,15 @@ describe("open()", () => {
     });
   });
 
+  it("ruling item 8(e): a tenant who ALREADY PAID October is never charged [checkout, Nov 1) again - no one-time line, trial_end = Nov 1", async () => {
+    const h = make({ invoices: [OCT_PAID] });
+    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 });
+    expect(out).toMatchObject({ shape: "trial", stubCents: 0 });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
+    expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+  });
+
   it("a non-contiguous PAID gap: 409 CATCHUP_NEEDS_RULING, no claim, no Stripe call", async () => {
     const gap = {
       ...OCT_PAID,
@@ -227,7 +236,7 @@ describe("open()", () => {
       periodEnd: new Date("2027-01-01T12:00:00Z"),
     };
     const h = make({ invoices: [OCT_PAID, gap] });
-    await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
     expect(h.sub().catchupState).toBeNull();
@@ -236,7 +245,7 @@ describe("open()", () => {
 
   it("a tenant that already has a Stripe subscription is NEEDS RULING (census), before anything is written", async () => {
     const h = make({ sub: { stripeSubId: "sub_x" } });
-    await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING },
     });
     expect(h.db.locks).toHaveLength(0);
@@ -253,15 +262,88 @@ describe("open()", () => {
 
   it("a second open while a claim is held is refused (exactly one session per tenant)", async () => {
     const h = make();
-    await h.svc.open("t1", { now: NOW });
-    await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({ status: 409 });
+    await h.svc.open("t1", { now: NOW, expectedStubCents: 0 });
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+      status: 409,
+    });
     expect(h.stripe.client.checkout.sessions.create).toHaveBeenCalledTimes(1);
   });
 
   it("Stripe not configured: 503 before anything else", async () => {
     const h = make();
     (h.stripe as any).isConfigured = false;
-    await expect(h.svc.open("t1", { now: NOW })).rejects.toMatchObject({ status: 503 });
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
+      status: 503,
+    });
     expect(h.db.locks).toHaveLength(0);
+  });
+});
+
+describe("Opus review: planning under the claim, the plan key, billing start", () => {
+  it("SHOULD-FIX 3: staff recorded a cheque BETWEEN the dry-run read and the claim -> re-plan under the claim, abort, create nothing", async () => {
+    const h = make({ invoices: [OCT_OPEN] });
+    const realFind = h.prisma.rfInvoice.findMany;
+    let calls = 0;
+    h.prisma.rfInvoice.findMany = jest.fn(async (a: any) => {
+      calls += 1;
+      // the 2nd read (after the claim was taken) sees October PAID: the unpaid span (and the stub) changed
+      return calls >= 2 ? [{ ...OCT_PAID, id: "inv_oct_open" }] : realFind(a);
+    });
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
+    });
+    expect(h.sub().catchupState).toBeNull(); // the claim was dropped
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("the re-plan under the claim does not refuse its own claim (claim_held is not a reason against itself)", async () => {
+    const h = make({ invoices: [OCT_OPEN] });
+    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    expect(out.sessionId).toBeTruthy();
+  });
+
+  it("SHOULD-FIX 4: the session carries the RESOLVED plan key, never a STARTER fallback (a row with a null planKey)", async () => {
+    const h = make({ sub: { planKey: null }, invoices: [OCT_OPEN] });
+    h.pricing.resolveTenantPricing.mockResolvedValue({
+      planKey: "SCALE",
+      monthly: 310,
+      source: "override",
+      currency: "usd",
+    });
+    await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.metadata.planKey).toBe("SCALE");
+  });
+
+  it("SHOULD-FIX 9: a tenant activated AFTER go-live is charged from its billing start and is NOT plainly eligible", async () => {
+    const h = make({ invoices: [] });
+    h.prisma.auditLog.findFirst = jest.fn(async (a: any) =>
+      a.where?.action?.in ? { createdAt: new Date("2026-10-20T08:30:00Z") } : null,
+    );
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.ineligible).toContain("activated_after_go_live");
+    expect(r.plan.ok && r.plan.paidThrough.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+    // never billed from Oct 1: Oct 20 08:30 -> Nov 1 12:00 only
+    expect(r.plan.ok && r.plan.stub.totalCents).toBeLessThan(31000);
+  });
+
+  it("a tenant activated before go-live is unaffected", async () => {
+    const h = make({ invoices: [OCT_OPEN] });
+    h.prisma.auditLog.findFirst = jest.fn(async () => ({
+      createdAt: new Date("2026-08-02T00:00:00Z"),
+    }));
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-10-01T12:00:00.000Z");
+  });
+
+  it("nit: an OPEN RfInvoice with no period is NEEDS RULING (the tenant is not plainly eligible)", async () => {
+    const h = make({
+      invoices: [{ ...OCT_OPEN, id: "x", periodStart: null, periodEnd: null, periodKey: "kx" }],
+    });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.ineligible).toContain("unplaceable_open_invoice");
   });
 });

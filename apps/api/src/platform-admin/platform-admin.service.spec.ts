@@ -1923,6 +1923,62 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("Opus item 7: activateManualSubscription vs a held catch-up claim", () => {
+    const activate = () =>
+      service.activateManualSubscription(
+        TENANT_ID,
+        { plan: "PROFESSIONAL", billingPeriodDays: 30, paymentMethod: "BANK_TRANSFER" } as any,
+        ADMIN_ID,
+      );
+    const arrange = (catchupState: string | null) => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "PROFESSIONAL",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "SCALE", monthlyPrice: 349, isCustom: false }],
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        name: "Acme",
+        slug: "acme",
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: {
+          planKey: "SCALE",
+          basePriceSnapshot: 349,
+          discount: 0,
+          priceOverrideMonthly: null,
+          couponFull: false,
+          catchupState,
+        },
+      } as any);
+    };
+
+    it.each(["AWAITING_FIRST_PAYMENT", "RELEASING"])(
+      "%s: 409 CATCHUP_PENDING under the Tenant lock, nothing written",
+      async (state) => {
+        arrange(state);
+        const err = await activate().catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({ code: "CATCHUP_PENDING" });
+        expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("no claim (and a SESSION_OPEN one, which the stale-checkout guard already covers) is not refused", async () => {
+      for (const state of [null, "SESSION_OPEN"]) {
+        arrange(state);
+        await expect(activate()).resolves.toBeTruthy();
+      }
+    });
+  });
+
   // B864 / SA-277: updateTenantPriceOverride()'s back-fill branch books the run-rate delta
   // unconditionally — it never checks whether the tenant is actually in MrrService's paying
   // set (isPayingRow), so entering the negotiated fee on a still-TRIAL ENTERPRISE tenant books

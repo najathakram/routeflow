@@ -163,6 +163,16 @@ describe("trial shape (prepaid; October paid, paid-through Nov 1)", () => {
   });
 });
 
+describe("Opus item 10: the stub's finalize time is 12:00Z of the paid-through DAY", () => {
+  it("paid through Nov 14 18:45Z -> catchup_finalize_at = Nov 14 12:00Z (the claim floors it at now + 1 h)", () => {
+    const p = plan({
+      invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T18:45:00Z")],
+    });
+    const x = build(p);
+    expect(x.metadata[CATCHUP_META.finalizeAt]).toBe(String(Date.UTC(2026, 10, 14, 12) / 1000));
+  });
+});
+
 describe("anchor_no_line (prepaid through Nov 1, session Oct 30)", () => {
   const now = d("2026-10-30T09:00:00Z");
   const p = plan({

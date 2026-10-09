@@ -54,6 +54,7 @@ describe("CatchupAdminController", () => {
       const dto = plainToInstance(CatchupCheckoutDto, { expectedStubCents: bad });
       expect((await validate(dto)).length).toBeGreaterThan(0);
     }
-    expect(await validate(plainToInstance(CatchupCheckoutDto, {}))).toHaveLength(0);
+    // the dry-run amount is REQUIRED: a request without it is invalid
+    expect((await validate(plainToInstance(CatchupCheckoutDto, {}))).length).toBeGreaterThan(0);
   });
 });

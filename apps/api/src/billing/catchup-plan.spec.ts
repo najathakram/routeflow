@@ -347,3 +347,37 @@ describe("SA-733r5 selector rows", () => {
     expect(stubLines(100, [], CATCHUP_GO_LIVE, CATCHUP_GO_LIVE)).toEqual([]);
   });
 });
+
+describe("Opus item 9: the go-live floor is max(go-live, the tenant's billing start)", () => {
+  it("a tenant activated Oct 20 is charged from Oct 20 08:30Z, not from Oct 1", () => {
+    const p = planCatchup({
+      now: d("2026-10-22T10:00:00Z"),
+      monthly: 310,
+      addons: [],
+      invoices: [],
+      billingStart: d("2026-10-20T08:30:00Z"),
+    });
+    if (!p.ok) throw new Error(p.reason);
+    expect(p.paidThrough.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+    expect(p.stub.from.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+    expect(p.stub.totalCents).toBeLessThan(31000);
+    expect(p.stub.totalCents).toBeGreaterThan(0);
+  });
+
+  it("a billing start BEFORE go-live (or none) leaves the floor at Oct 1 12:00Z", () => {
+    for (const billingStart of [d("2026-08-01T00:00:00Z"), null, undefined]) {
+      const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [], billingStart });
+      if (!p.ok) throw new Error(p.reason);
+      expect(p.paidThrough.getTime()).toBe(CATCHUP_GO_LIVE.getTime());
+    }
+  });
+
+  it("paidThroughOf honours the floor for PAID history too (a PAID invoice before the floor never lowers it)", () => {
+    const floor = d("2026-10-20T08:30:00Z");
+    const r = paidThroughOf(
+      [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-15T12:00:00Z")],
+      floor,
+    );
+    expect(r.ok && r.paidThrough.getTime()).toBe(floor.getTime());
+  });
+});

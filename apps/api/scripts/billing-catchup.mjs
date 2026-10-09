@@ -139,6 +139,10 @@ async function main(argv) {
   }
 
   const expected = args.expectedCents ?? (report.plan.ok ? report.plan.stub.totalCents : undefined);
+  if (expected == null) {
+    console.error("billing-catchup: REFUSED: no dry-run amount to pin. Nothing was created.");
+    return 1;
+  }
   try {
     const out = await api(
       base,

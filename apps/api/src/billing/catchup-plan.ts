@@ -52,19 +52,23 @@ export type PaidThrough =
   | { ok: false; reason: "paid_after_gap" | "paid_invoice_without_period" };
 
 /**
- * Paid-through = the shared `paidThrough` walked forward from the go-live boundary over the PAID invoices; never
- * before go-live. A PAID invoice the walk could not reach (after a gap) refuses: NEEDS RULING, never a guess.
+ * Paid-through = the shared `paidThrough` walked forward from the FLOOR over the PAID invoices; the floor is the
+ * go-live boundary, or the tenant's billing start when that is later (a tenant activated after go-live is not
+ * charged from Oct 1). A PAID invoice the walk could not reach (after a gap) refuses: NEEDS RULING, never a guess.
  */
-export function paidThroughOf(invoices: readonly CatchupInvoice[]): PaidThrough {
+export function paidThroughOf(
+  invoices: readonly CatchupInvoice[],
+  floor: Date = CATCHUP_GO_LIVE,
+): PaidThrough {
   const paid = invoices.filter((i) => i.status === "PAID");
   if (paid.some((i) => !i.periodStart || !i.periodEnd)) {
     return { ok: false, reason: "paid_invoice_without_period" };
   }
   if (paid.length === 0) {
-    return { ok: true, paidThrough: CATCHUP_GO_LIVE, paidInvoiceIds: [], fromInvoices: false };
+    return { ok: true, paidThrough: floor, paidInvoiceIds: [], fromInvoices: false };
   }
   const windows = paid.map((i) => ({ periodStart: i.periodStart!, periodEnd: i.periodEnd! }));
-  const reached = sharedPaidThrough(windows, CATCHUP_GO_LIVE) ?? CATCHUP_GO_LIVE;
+  const reached = sharedPaidThrough(windows, floor) ?? floor;
   // a PAID period that ends after the run (it started after a gap) was not walked: NEEDS RULING
   const outside = paid.filter((i) => snapToBoundary(i.periodEnd!).getTime() > reached.getTime());
   if (outside.length > 0) return { ok: false, reason: "paid_after_gap" };
@@ -72,7 +76,7 @@ export function paidThroughOf(invoices: readonly CatchupInvoice[]): PaidThrough 
     ok: true,
     paidThrough: reached,
     paidInvoiceIds: paid
-      .filter((i) => snapToBoundary(i.periodEnd!).getTime() > CATCHUP_GO_LIVE.getTime())
+      .filter((i) => snapToBoundary(i.periodEnd!).getTime() > floor.getTime())
       .map((i) => i.id),
     fromInvoices: true,
   };
@@ -251,9 +255,15 @@ export function planCatchup(i: {
   monthly: number | null;
   addons: readonly CatchupAddon[];
   invoices: readonly CatchupInvoice[];
+  /** The tenant's billing start (first manual activation), when known; the floor is max(go-live, this). */
+  billingStart?: Date | null;
 }): CatchupPlanResult {
   if (i.monthly == null || !(i.monthly >= 0)) return { ok: false, reason: "no_monthly_price" };
-  const pt = paidThroughOf(i.invoices);
+  const floor =
+    i.billingStart && i.billingStart.getTime() > CATCHUP_GO_LIVE.getTime()
+      ? i.billingStart
+      : CATCHUP_GO_LIVE;
+  const pt = paidThroughOf(i.invoices, floor);
   if (!pt.ok) return pt;
 
   const anchorAt = nextCheckoutAnchor(i.now);

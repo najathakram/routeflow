@@ -21,8 +21,13 @@ describe("SA-733 D6 / M6 — the checkout billing anchor (pure)", () => {
     // ... and an anchor under 90 minutes away is skipped for the following 1st.
     ["Nov 1 10:31Z (89 min) -> Dec 1", "2026-11-01T10:31:00Z", "2026-12-01T12:00:00.000Z"],
     [
-      "Nov 1 10:30Z (exactly 90 min) -> Nov 1 12:00Z",
+      "Nov 1 10:30Z (90 min: under 91) -> Dec 1",
       "2026-11-01T10:30:00Z",
+      "2026-12-01T12:00:00.000Z",
+    ],
+    [
+      "Nov 1 10:29Z (exactly 91 min) -> Nov 1 12:00Z",
+      "2026-11-01T10:29:00Z",
       "2026-11-01T12:00:00.000Z",
     ],
     ["Nov 1 08:00Z (4 h) -> Nov 1 12:00Z", "2026-11-01T08:00:00Z", "2026-11-01T12:00:00.000Z"],

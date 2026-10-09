@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { BillingEventService } from "./billing-event.service";
 import { applyCouponStateTx } from "./coupon-state";
@@ -119,6 +119,75 @@ export class CatchupClaimService {
     }) as Promise<ClaimRow | null>;
   }
 
+  /** A notice written at most once per (kind, key): an hourly sweep must not re-raise the same NEEDS RULING forever. */
+  private async noticeOnce(
+    db: Prisma.TransactionClient | PrismaService,
+    tenantId: string,
+    kind: string,
+    key: string,
+    message: string,
+    meta: Record<string, unknown> = {},
+  ): Promise<boolean> {
+    const seen = await db.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: AdminAuditAction.TENANT_CONFIG_UPDATED,
+        AND: [
+          { meta: { path: ["kind"], equals: kind } },
+          { meta: { path: ["dedupeKey"], equals: key } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (seen) return false;
+    await this.notice(db, tenantId, kind, message, { ...meta, dedupeKey: key });
+    return true;
+  }
+
+  /**
+   * Is this claim's settling invoice really the catch-up's money? (Opus B1 + SHOULD-FIX 2.) Fails closed:
+   *  - "foreign": the invoice's subscription is not the one the claim's Checkout session created - e.g. an ORDINARY
+   *    subscription completed while the claim was SESSION_OPEN. Never adopted, never settles.
+   *  - "hold": the invoice does not carry the amount the session promised (trial_one_time / prepaid stub =
+   *    `catchup_stub_cents`): a Stripe deviation. A NEEDS RULING notice (once) and the claim is HELD, not cleared.
+   *  - "ok".
+   */
+  private async verifyClaimSettlement(
+    row: ClaimRow,
+    facts: InvoiceFacts | null,
+    invoiceId: string | null,
+  ): Promise<"ok" | "foreign" | "hold"> {
+    if (!row.catchupSessionId || !row.stripeSubId) return "foreign";
+    const session = await this.stripe.getCheckoutSession(row.catchupSessionId);
+    if (stripeRefId(session?.subscription) !== row.stripeSubId) return "foreign";
+    const meta = session?.metadata ?? {};
+    const shape = meta[CATCHUP_META.shape];
+    const expected = Number(meta[CATCHUP_META.stubCents] ?? 0);
+    if (
+      (shape === "trial_one_time" || shape === "trial") &&
+      Number.isInteger(expected) &&
+      expected > 0
+    ) {
+      const got = facts ? (facts.amountPaid > 0 ? facts.amountPaid : facts.amountDue) : null;
+      if (got !== expected) {
+        await this.noticeOnce(
+          this.prisma,
+          row.tenantId,
+          "billing_catchup_amount_mismatch",
+          invoiceId ?? row.catchupSessionId,
+          `NEEDS RULING: the catch-up invoice ${invoiceId ?? "(unknown)"} was paid for ${got ?? "an unknown amount"} cents but the session promised ${expected}. The claim is HELD and nothing was voided; check Stripe.`,
+          { invoiceId, expectedCents: expected, gotCents: got },
+        ).catch(() => undefined);
+        this.logger.error(
+          `billing.catchup.amount_mismatch tenant=${row.tenantId} invoice=${invoiceId} expected=${expected} got=${got}: claim HELD`,
+        );
+        return "hold";
+      }
+    }
+    return "ok";
+  }
+
   // ─── opening a claim (called by the catch-up checkout) ────────────────────
 
   /**
@@ -228,10 +297,11 @@ export class CatchupClaimService {
     // Stripe work, OUTSIDE the lock.
     let invoiceId = advanced.catchupInvoiceId;
     if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
+    else await this.ensureStubItem(tenantId, session, invoiceId, subId); // a redelivery: the draft must carry its item
     if (!invoiceId) return; // settles on the first paid invoice (see onInvoicePaid)
 
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
-    if (invoiceIsPaid(facts)) await this.settle(tenantId, subId);
+    if (invoiceIsPaid(facts)) await this.settle(tenantId, subId, facts);
   }
 
   /**
@@ -259,7 +329,12 @@ export class CatchupClaimService {
     const stubCents = Number(meta[CATCHUP_META.stubCents] ?? 0);
     if (meta[CATCHUP_META.shape] === "trial" && Number.isInteger(stubCents) && stubCents > 0) {
       const sub = await this.stripe.getSubscription(subId);
-      const finalizeAt = Number(meta[CATCHUP_META.finalizeAt]);
+      // r3 N3: finalized at 12:00Z of the paid-through day - but Stripe rejects a past timestamp, so never earlier
+      // than one hour from now.
+      const finalizeAt = Math.max(
+        Number(meta[CATCHUP_META.finalizeAt]) || 0,
+        Math.floor(Date.now() / 1000) + 3600,
+      );
       const draft = await this.stripe.client.invoices.create(
         {
           customer: stripeRefId(session.customer) ?? stripeRefId(sub?.customer),
@@ -269,25 +344,14 @@ export class CatchupClaimService {
           ...(stripeRefId(sub?.default_payment_method)
             ? { default_payment_method: stripeRefId(sub.default_payment_method) }
             : {}),
-          ...(Number.isFinite(finalizeAt) && finalizeAt > 0
-            ? { automatically_finalizes_at: finalizeAt }
-            : {}),
+          automatically_finalizes_at: finalizeAt,
           metadata: { catchup_for: session.id, tenantId },
         },
         { idempotencyKey: `${tenantId}:trial-stub:${session.id}` },
       );
       // Persist the id while the invoice is still a draft.
       await this.setInvoiceId(tenantId, session.id, draft.id);
-      await this.stripe.client.invoiceItems.create(
-        {
-          customer: stripeRefId(session.customer) ?? stripeRefId(sub?.customer),
-          invoice: draft.id,
-          amount: stubCents,
-          currency: "usd",
-          description: String(meta[CATCHUP_META.stubLabel] ?? "Subscription — catch-up"),
-        },
-        { idempotencyKey: `${tenantId}:trial-stub-item:${session.id}` },
-      );
+      await this.ensureStubItem(tenantId, session, draft.id, subId);
       return draft.id;
     }
     // No stub: the first invoice with money on it, if Stripe already made one (otherwise onInvoicePaid adopts it).
@@ -300,6 +364,37 @@ export class CatchupClaimService {
       return latest;
     }
     return null;
+  }
+
+  /**
+   * The prepaid-trial stub's ONE item, created on the DRAFT invoice. Idempotent and re-runnable (Opus SHOULD-FIX 1): a
+   * crash between `invoices.create` and `invoiceItems.create` leaves a persisted draft id and a redelivery skips the
+   * creation step - so every completion delivery calls this, and it adds the item (same idempotency key) whenever the
+   * draft is still a draft that does not yet carry the stub. A no-op for any other shape or an already-complete draft.
+   */
+  private async ensureStubItem(
+    tenantId: string,
+    session: any,
+    invoiceId: string,
+    subId: string,
+  ): Promise<void> {
+    const meta = session.metadata ?? {};
+    const stubCents = Number(meta[CATCHUP_META.stubCents] ?? 0);
+    if (meta[CATCHUP_META.shape] !== "trial" || !Number.isInteger(stubCents) || stubCents <= 0)
+      return;
+    const facts = await this.stripe.getInvoiceFacts(invoiceId);
+    if (facts.status !== "draft" || facts.amountDue >= stubCents) return;
+    const sub = await this.stripe.getSubscription(subId);
+    await this.stripe.client.invoiceItems.create(
+      {
+        customer: stripeRefId(session.customer) ?? stripeRefId(sub?.customer),
+        invoice: invoiceId,
+        amount: stubCents,
+        currency: "usd",
+        description: String(meta[CATCHUP_META.stubLabel] ?? "Subscription — catch-up"),
+      },
+      { idempotencyKey: `${tenantId}:trial-stub-item:${session.id}` },
+    );
   }
 
   private async setInvoiceId(
@@ -367,10 +462,15 @@ export class CatchupClaimService {
       Number.isFinite(invoice.amount_paid) &&
       invoice.amount_paid > 0;
     if (!isClaimInvoice && !isFirstMoney) return;
-    if (isFirstMoney) {
-      await this.setInvoiceIdBySub(row.tenantId, subId, invoice.id);
-    }
-    await this.settle(row.tenantId, subId);
+    // Opus B1: nothing is adopted or settled until the invoice is proven to belong to the SESSION's subscription
+    // (settle verifies; a foreign subscription's first invoice - e.g. an ordinary checkout completed while the
+    // claim was SESSION_OPEN - voids nothing and is not recorded on the claim).
+    await this.settle(
+      row.tenantId,
+      subId,
+      await this.stripe.getInvoiceFacts(invoice.id),
+      invoice.id,
+    );
   }
 
   private async setInvoiceIdBySub(
@@ -407,6 +507,8 @@ export class CatchupClaimService {
     // Re-read: the event is only a hint (r3 M8-style) - Stripe decides whether it is definitive.
     const facts = await this.stripe.getInvoiceFacts(invoice.id);
     if (!invoiceDefinitivelyFailed(facts)) return;
+    // No settling invoice stored yet: THIS is the failed one - record it first so the release (Step 2) voids it.
+    if (!row.catchupInvoiceId) await this.setInvoiceIdBySub(row.tenantId, subId, invoice.id);
     await this.release(row.tenantId, {
       sessionId: row.catchupSessionId,
       reason: "first_payment_failed",
@@ -421,12 +523,33 @@ export class CatchupClaimService {
    * A tenant whose RfInvoices cannot be placed (a PAID invoice after a gap) voids nothing and says so (NEEDS
    * RULING) - the claim still clears, because the customer has paid.
    */
-  async settle(tenantId: string, subId: string): Promise<boolean> {
+  async settle(
+    tenantId: string,
+    subId: string,
+    facts: InvoiceFacts | null = null,
+    invoiceId: string | null = null,
+  ): Promise<boolean> {
+    // Verified OUTSIDE the lock (a Stripe read), then re-proved by the CAS below. AWAITING_FIRST_PAYMENT already
+    // means "the session's own subscription is stored"; SESSION_OPEN settles only for the session's own sub.
+    const seen = await this.readClaim(this.prisma, tenantId);
+    if (
+      !seen ||
+      seen.stripeSubId !== subId ||
+      !(seen.catchupState === "AWAITING_FIRST_PAYMENT" || seen.catchupState === "SESSION_OPEN")
+    ) {
+      return false;
+    }
+    const settling = invoiceId ?? seen.catchupInvoiceId;
+    const f = facts ?? (settling ? await this.stripe.getInvoiceFacts(settling) : null);
+    const verdict = await this.verifyClaimSettlement(seen, f, settling);
+    if (verdict !== "ok") return false;
+
     return this.inTenantTx(tenantId, async (tx) => {
       const row = await this.readClaim(tx, tenantId);
       if (
         !row ||
         row.stripeSubId !== subId ||
+        row.catchupSessionId !== seen.catchupSessionId ||
         !(row.catchupState === "AWAITING_FIRST_PAYMENT" || row.catchupState === "SESSION_OPEN")
       ) {
         return false;
@@ -434,7 +557,9 @@ export class CatchupClaimService {
       const voided = await this.voidSupersededTx(tx, tenantId, "billing_catchup_settled");
       await tx.tenantSubscription.updateMany({
         where: { tenantId, stripeSubId: subId, catchupState: row.catchupState },
-        data: { ...CLEAR_CLAIM },
+        // the successful conversion: manual invoicing is OFF for good (so dunning, B3, applies from here). Completion
+        // wrote it already; settlement states it again so it never depends on completion alone.
+        data: { ...CLEAR_CLAIM, externalPayment: false },
       });
       await this.notice(
         tx,
@@ -506,40 +631,11 @@ export class CatchupClaimService {
     return voided;
   }
 
-  /**
-   * An ORDINARY card checkout by a manual-pay tenant (no catch-up claim): its first Stripe invoice
-   * (`subscription_create`) being PAID supersedes the tenant's OPEN RfInvoices from paid-through on - the same rule
-   * and the same writer as a catch-up settlement, once (the OPEN CAS), under the Tenant lock. Never at checkout
-   * completion (an ACH completion is unpaid). Only a row that is still flagged manual (`externalPayment`) with this
-   * subscription and NO held claim qualifies.
-   */
-  async onOrdinaryConversionPaid(invoice: any): Promise<boolean> {
-    const subId = stripeInvoiceSubscriptionId(invoice);
-    if (!subId || !invoice?.id) return false;
-    if (invoice.billing_reason !== "subscription_create") return false;
-    if (!(Number.isFinite(invoice.amount_paid) && invoice.amount_paid > 0)) return false;
-    const row = (await this.prisma.tenantSubscription.findFirst({
-      where: { stripeSubId: subId, externalPayment: true, catchupState: null },
-      select: CLAIM_SELECT,
-    })) as ClaimRow | null;
-    if (!row || row.stripeSubId !== subId) return false;
-    return this.inTenantTx(row.tenantId, async (tx) => {
-      const cur = await this.readClaim(tx, row.tenantId);
-      if (!cur || cur.stripeSubId !== subId || cur.catchupState || !cur.externalPayment)
-        return false;
-      const n = await this.voidSupersededTx(tx, row.tenantId, "billing_card_conversion");
-      if (n > 0) {
-        await this.notice(
-          tx,
-          row.tenantId,
-          "billing_card_conversion",
-          `The card subscription's first invoice is paid; ${n} RouteFlow invoice(s) voided.`,
-          { voided: n, invoiceId: invoice.id },
-        );
-      }
-      return n > 0;
-    });
-  }
+  // RULING (item 8): there is NO ordinary-checkout conversion path for a manual-pay tenant. An ordinary card
+  // checkout by an `externalPayment` tenant is refused (409 EXTERNAL_PAYMENT_USE_CATCHUP, billing.service
+  // createCheckoutSession); the catch-up is the ONLY card path for them, and `voidSupersededTx` runs ONLY from
+  // `settle` (pinned by catchup-claim.service.spec). An `invoice.paid` for a subscription with no held claim
+  // therefore voids nothing, whatever the tenant's flags.
 
   // ─── the RELEASE path (r4 N2(b)) ──────────────────────────────────────────
 
@@ -566,7 +662,8 @@ export class CatchupClaimService {
     if (seen.catchupState !== "RELEASING" && seen.catchupInvoiceId) {
       const facts = await this.stripe.getInvoiceFacts(seen.catchupInvoiceId);
       if (invoiceIsPaid(facts)) {
-        if (seen.stripeSubId) await this.settle(tenantId, seen.stripeSubId);
+        if (seen.stripeSubId)
+          await this.settle(tenantId, seen.stripeSubId, facts, seen.catchupInvoiceId);
         return "settled";
       }
       if (facts.paymentProcessing) return "deferred";
@@ -634,17 +731,21 @@ export class CatchupClaimService {
       const invoiceId = seen.catchupInvoiceId;
       const refusedBecausePaid = async (): Promise<ReleaseOutcome> => {
         // PAID after we decided to release: do NOT cancel; a human refunds / rules.
-        await this.notice(
+        // once per invoice: the hourly sweep retries a RELEASING row and must not re-raise this forever
+        const first = await this.noticeOnce(
           this.prisma,
           tenantId,
           "billing_catchup_release_refused_paid",
+          invoiceId,
           "NEEDS RULING: the October catch-up invoice was PAID while its claim was being released. The " +
             "subscription was NOT cancelled; refund or re-attach it in Stripe.",
           { invoiceId },
-        ).catch(() => undefined);
-        this.logger.error(
-          `billing.catchup.release_refused_paid tenant=${tenantId} invoice=${invoiceId}: NEEDS RULING (refund)`,
-        );
+        ).catch(() => false);
+        if (first) {
+          this.logger.error(
+            `billing.catchup.release_refused_paid tenant=${tenantId} invoice=${invoiceId}: NEEDS RULING (refund)`,
+          );
+        }
         return "needs_ruling";
       };
       const facts = await this.stripe.getInvoiceFacts(invoiceId);
@@ -757,7 +858,9 @@ export class CatchupClaimService {
       facts = await this.stripe.getInvoiceFacts(invoiceId);
     } else {
       // none stored yet: the first invoice with money on it settles (or fails) the claim
-      for (const inv of await this.stripe.listSubscriptionInvoices(row.stripeSubId)) {
+      // Stripe lists NEWEST first; "the first invoice with money" is the OLDEST one with money.
+      const listed = await this.stripe.listSubscriptionInvoices(row.stripeSubId, 100);
+      for (const inv of [...listed].reverse()) {
         const f = await this.stripe.getInvoiceFacts(inv.id);
         if (f.amountPaid > 0 || f.amountDue > 0) {
           invoiceId = inv.id;
@@ -769,7 +872,7 @@ export class CatchupClaimService {
         await this.setInvoiceIdBySub(row.tenantId, row.stripeSubId, invoiceId);
     }
     if (!facts) return false;
-    if (invoiceIsPaid(facts)) return this.settle(row.tenantId, row.stripeSubId);
+    if (invoiceIsPaid(facts)) return this.settle(row.tenantId, row.stripeSubId, facts, invoiceId);
     if (invoiceDefinitivelyFailed(facts)) {
       const r = await this.release(row.tenantId, {
         sessionId: row.catchupSessionId,
@@ -801,9 +904,54 @@ export class CatchupClaimService {
     if (session?.status === "complete") {
       // a missed / out-of-order completion: advance it (a no-op unless the ordinary completion applied it)
       await this.onSessionCompleted(session);
-      return true;
+      return this.releaseStuckCompleted(row, session, now);
     }
     return false; // still open
+  }
+
+  /**
+   * Opus SHOULD-FIX 6. A catch-up session COMPLETED (and may have been paid) but the ordinary completion refused it
+   * (a duplicate / stale_checkout_manual): the subscription the session made is not the stored one, so the claim can
+   * never advance. After the webhook has had a full day to land (the session's own life + 2 h), raise a NEEDS
+   * RULING alert (once) and clear the claim - never silently. The refusal trail row from the ordinary handler names
+   * the subscription to refund / cancel.
+   */
+  private async releaseStuckCompleted(row: ClaimRow, session: any, now: Date): Promise<boolean> {
+    const sessionSub = stripeRefId(session?.subscription);
+    const after = await this.readClaim(this.prisma, row.tenantId);
+    if (
+      !after ||
+      after.catchupState !== "SESSION_OPEN" ||
+      after.catchupSessionId !== row.catchupSessionId
+    ) {
+      return true; // it advanced (or was released) meanwhile
+    }
+    if (!sessionSub || after.stripeSubId === sessionSub) return true; // not stuck: the sub is the stored one
+    const expiresAt = Number(session?.expires_at);
+    const graceMs = 2 * 60 * 60 * 1000;
+    if (!Number.isFinite(expiresAt) || now.getTime() < expiresAt * 1000 + graceMs) return false;
+    await this.inTenantTx(row.tenantId, async (tx) => {
+      const { count } = await tx.tenantSubscription.updateMany({
+        where: {
+          tenantId: row.tenantId,
+          catchupState: "SESSION_OPEN",
+          catchupSessionId: row.catchupSessionId,
+          stripeSubId: after.stripeSubId,
+        },
+        data: { ...CLEAR_CLAIM },
+      });
+      if (count === 1) {
+        await this.noticeOnce(
+          tx,
+          row.tenantId,
+          "billing_catchup_stuck_completed",
+          String(row.catchupSessionId),
+          `NEEDS RULING: the catch-up Checkout ${row.catchupSessionId} completed on subscription ${sessionSub}, but the ordinary completion did not apply it (duplicate / stale checkout). The claim was cleared; refund or cancel ${sessionSub} in Stripe.`,
+          { sessionId: row.catchupSessionId, subscriptionId: sessionSub },
+        );
+      }
+    });
+    return true;
   }
 
   private async releaseOrphan(row: ClaimRow): Promise<boolean> {

@@ -19,7 +19,7 @@ const ONLY_DATE: any[] = [
   "hrtime",
 ];
 
-function make(opts: { addonSkus?: string[] } = {}) {
+function make(opts: { addonSkus?: string[]; sub?: Record<string, unknown> } = {}) {
   const create = jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay.test" });
   const stripe: any = {
     isConfigured: true,
@@ -36,7 +36,14 @@ function make(opts: { addonSkus?: string[] } = {}) {
         config: { businessName: "Acme" },
       })),
     },
-    tenantSubscription: { findUnique: jest.fn(async () => ({ stripeSubId: null })) },
+    tenantSubscription: {
+      findUnique: jest.fn(async () => ({
+        stripeSubId: null,
+        externalPayment: false,
+        catchupState: null,
+        ...opts.sub,
+      })),
+    },
   };
   const mutations: any = {
     checkoutAddonLines: jest.fn(async () => ({
@@ -138,5 +145,37 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
       code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
     });
     expect(h.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("ordinary checkout gates (Opus B1 + ruling item 8)", () => {
+  it.each([
+    ["SESSION_OPEN", API_ERROR_CODES.CATCHUP_SESSION_OPEN],
+    ["AWAITING_FIRST_PAYMENT", API_ERROR_CODES.CATCHUP_PENDING],
+    ["RELEASING", API_ERROR_CODES.CATCHUP_PENDING],
+  ])(
+    "a held catch-up claim (%s) refuses an ordinary checkout with its coded 409",
+    async (state, code) => {
+      const h = make({ sub: { catchupState: state } });
+      const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code });
+      expect(h.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an externalPayment (manual-pay) tenant is routed to the catch-up: 409 EXTERNAL_PAYMENT_USE_CATCHUP, nothing created", async () => {
+    const h = make({ sub: { externalPayment: true } });
+    const err: any = await h.billing.createCheckoutSession("t1", "month").catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP });
+    expect(h.create).not.toHaveBeenCalled();
+    expect(h.mutations.checkoutAddonLines).not.toHaveBeenCalled(); // refused before any add-on read
+  });
+
+  it("a non-externalPayment tenant still checks out normally", async () => {
+    const h = make({ sub: { externalPayment: false } });
+    await h.billing.createCheckoutSession("t1", "month");
+    expect(h.create).toHaveBeenCalledTimes(1);
   });
 });

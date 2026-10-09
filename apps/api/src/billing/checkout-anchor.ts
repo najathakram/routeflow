@@ -21,7 +21,7 @@ import { BOUNDARY_HOUR_UTC, nextBoundaryAfter } from "./rf-invoice/calendar-wind
 export const ANCHOR_HOUR_UTC = BOUNDARY_HOUR_UTC;
 
 /** An anchor closer than this to "now" is skipped for the following 1st (M6). */
-export const MIN_ANCHOR_LEAD_MS = 90 * 60 * 1000;
+export const MIN_ANCHOR_LEAD_MS = 91 * 60 * 1000;
 
 /** The session must expire at least this long before the anchor, so it can never complete after it (M6). */
 export const CHECKOUT_EXPIRY_MARGIN_MS = 60 * 60 * 1000;
@@ -40,8 +40,8 @@ export interface CheckoutAnchorPlan {
 }
 
 /**
- * The anchor for a checkout created at `now`: the next 1st at 12:00 UTC; when that is under 90 minutes away, the
- * following 1st. A start ON the 1st still gets an anchor (the next one at least 90 minutes away).
+ * The anchor for a checkout created at `now`: the next 1st at 12:00 UTC; when that is under 91 minutes away, the
+ * following 1st. A start ON the 1st still gets an anchor (the next one at least 91 minutes away (Stripe's 30-minute floor on `expires_at`, with the 60-minute margin and a minute of rounding)).
  */
 export function nextCheckoutAnchor(now: Date): Date {
   const first = nextBoundaryAfter(now);

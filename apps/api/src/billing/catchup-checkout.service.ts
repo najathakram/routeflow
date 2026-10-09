@@ -7,10 +7,12 @@ import {
 } from "@nestjs/common";
 import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
 import { BillingService } from "./billing.service";
 import { CatchupClaimService } from "./catchup-claim.service";
 import {
+  CATCHUP_GO_LIVE,
   planCatchup,
   type CatchupAddon,
   type CatchupPlan,
@@ -47,6 +49,9 @@ export interface CatchupReport {
   /** For the session: the pieces `open()` needs (not serialised). */
   _inputs?: { planPriceData: Record<string, any>; addonLines: any[]; addonSkus: string[] };
 }
+
+/** The plan changed between the dry-run read and the claim (re-planned under the claim). */
+class ChangedUnderClaim extends Error {}
 
 export interface CatchupCensus {
   counts: Record<string, number>;
@@ -110,7 +115,11 @@ export class CatchupCheckoutService {
   ) {}
 
   /** READ-ONLY: what a catch-up would do for this tenant right now. Writes nothing, calls no Stripe. */
-  async plan(tenantId: string, now: Date = new Date()): Promise<CatchupReport> {
+  async plan(
+    tenantId: string,
+    now: Date = new Date(),
+    opts: { ownClaim?: boolean } = {},
+  ): Promise<CatchupReport> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true, status: true, class: true, deletedAt: true },
@@ -126,14 +135,17 @@ export class CatchupCheckoutService {
     if (tenant.status !== "ACTIVE") ineligible.push("tenant_not_active");
     if (sub?.stripeSubId) ineligible.push("has_stripe_subscription");
     if (sub && !sub.externalPayment) ineligible.push("not_manual_invoicing");
-    if (sub?.catchupState) ineligible.push("claim_held");
+    // `ownClaim`: open() re-plans AFTER taking its own claim; that claim is not a reason to refuse itself
+    if (sub?.catchupState && !opts.ownClaim) ineligible.push("claim_held");
 
     let monthly: number | null = null;
+    let resolvedPlanKey: string | null = null;
     let source: "override" | "catalog" | null = null;
     let planPriceData: Record<string, any> = {};
     try {
       const resolved = await this.pricing.resolveTenantPricing(tenantId);
       monthly = resolved.monthly;
+      resolvedPlanKey = resolved.planKey ?? null;
       source = resolved.source;
       planPriceData = await this.pricing.checkoutPriceData(tenantId, "month");
     } catch (err) {
@@ -153,8 +165,33 @@ export class CatchupCheckoutService {
       select: { id: true, status: true, periodStart: true, periodEnd: true },
     })) as { id: string; status: string; periodStart: Date | null; periodEnd: Date | null }[];
 
-    const plan = planCatchup({ now, monthly, addons, invoices: rows });
+    // The tenant's billing start (its first manual activation): a tenant activated AFTER go-live is not charged
+    // from Oct 1, and is not plainly eligible - the owner confirms the start (Opus item 9).
+    const activation = await this.prisma.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: {
+          in: [
+            AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+            AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED,
+          ],
+        },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    });
+    const billingStart = activation?.createdAt ?? null;
+    const plan = planCatchup({ now, monthly, addons, invoices: rows, billingStart });
     if (!plan.ok) ineligible.push(plan.reason);
+    else {
+      if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
+        ineligible.push("activated_after_go_live");
+      }
+      // an OPEN RfInvoice whose period cannot be placed would be left standing beside the card subscription
+      if (plan.unplaceableOpenIds.length > 0) ineligible.push("unplaceable_open_invoice");
+    }
+    if (!resolvedPlanKey && monthly != null) ineligible.push("no_plan_key");
 
     return {
       tenantId,
@@ -166,7 +203,8 @@ export class CatchupCheckoutService {
       claimState: sub?.catchupState ?? null,
       hasStripeSubscription: !!sub?.stripeSubId,
       externalPayment: !!sub?.externalPayment,
-      planKey: sub?.planKey ?? null,
+      // the RESOLVED plan key (what the ordinary checkout puts in its metadata), never the raw row value
+      planKey: resolvedPlanKey,
       priceSource: source,
       monthlyCents: monthly == null ? null : toCents(monthly),
       rfInvoices: {
@@ -228,7 +266,7 @@ export class CatchupCheckoutService {
    */
   async open(
     tenantId: string,
-    opts: { expectedStubCents?: number; now?: Date } = {},
+    opts: { expectedStubCents: number; now?: Date },
   ): Promise<{ checkoutUrl: string; sessionId: string; stubCents: number; shape: string }> {
     const now = opts.now ?? new Date();
     if (!this.stripe.isConfigured) {
@@ -257,28 +295,41 @@ export class CatchupCheckoutService {
         message: `This tenant is not eligible for a catch-up checkout (${blockers.join(", ")}).`,
       });
     }
-    if (opts.expectedStubCents != null && opts.expectedStubCents !== plan.stub.totalCents) {
-      throw new ConflictException({
+    const changed = () =>
+      new ConflictException({
         code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED,
         message:
           "The catch-up amount changed since the dry-run. Run it again and confirm the new amount.",
       });
-    }
+    if (opts.expectedStubCents !== plan.stub.totalCents) throw changed();
 
     await this.claim.openClaim(tenantId); // under the Tenant lock, BEFORE any Stripe call
     let session: { id: string; url: string };
     try {
+      // Opus SHOULD-FIX 3: the plan above was read BEFORE the claim. Staff may have recorded a cheque in between
+      // (the claim now blocks that, but not what already happened): re-plan under the claim and compare. A change
+      // drops the claim and creates nothing.
+      const fresh = await this.plan(tenantId, now, { ownClaim: true });
+      if (
+        !fresh.plan.ok ||
+        fresh.plan.shape !== plan.shape ||
+        fresh.plan.stub.totalCents !== plan.stub.totalCents ||
+        fresh.plan.trialEndAt.getTime() !== plan.trialEndAt.getTime() ||
+        fresh.ineligible.length > 0
+      ) {
+        throw new ChangedUnderClaim();
+      }
       const customerId = await this.billing.ensureStripeCustomer(tenantId);
       const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
       const params = buildCatchupSessionParams({
         tenantId,
         slug: report.slug,
-        planKey: report.planKey ?? "STARTER",
+        planKey: fresh.planKey as string,
         customerId,
-        planPriceData: report._inputs!.planPriceData,
-        addonLines: report._inputs!.addonLines,
-        addonSkus: report._inputs!.addonSkus,
-        plan,
+        planPriceData: fresh._inputs!.planPriceData,
+        addonLines: fresh._inputs!.addonLines,
+        addonSkus: fresh._inputs!.addonSkus,
+        plan: fresh.plan,
         now,
         successUrl: `${base}/settings/billing?checkout=success`,
         cancelUrl: `${base}/settings/billing?checkout=cancelled`,
@@ -294,6 +345,7 @@ export class CatchupCheckoutService {
             `catch-up: could not drop the claim of ${tenantId} after a failed create: ${(e as Error).message}`,
           ),
         );
+      if (err instanceof ChangedUnderClaim) throw changed();
       this.logger.error(`catch-up session for ${tenantId} failed: ${(err as Error).message}`);
       throw new ServiceUnavailableException(
         "We couldn't create the catch-up checkout. Nothing was charged. Please try again.",

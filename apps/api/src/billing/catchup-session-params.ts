@@ -145,7 +145,20 @@ function buildTrial(i: CatchupSessionInput): Record<string, any> {
       [CATCHUP_META.shape]: "trial",
       [CATCHUP_META.stubCents]: String(stubCents),
       [CATCHUP_META.stubLabel]: plan.stub.label,
-      [CATCHUP_META.finalizeAt]: String(epoch(plan.paidThrough)),
+      // r3 N3: the stub is charged at 12:00Z of the paid-through day (the claim service floors it at now + 1 h,
+      // because Stripe rejects a past timestamp)
+      [CATCHUP_META.finalizeAt]: String(
+        epoch(
+          new Date(
+            Date.UTC(
+              plan.paidThrough.getUTCFullYear(),
+              plan.paidThrough.getUTCMonth(),
+              plan.paidThrough.getUTCDate(),
+              12,
+            ),
+          ),
+        ),
+      ),
     },
     subscription_data: {
       trial_end: epoch(plan.trialEndAt),

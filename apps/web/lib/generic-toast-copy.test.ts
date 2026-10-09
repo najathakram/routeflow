@@ -96,6 +96,21 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
+      API_ERROR_CODES.CATCHUP_SESSION_OPEN,
+      API_ERROR_CODES.CATCHUP_PENDING,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
+    ).toMatch(/invoiced directly/);
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
