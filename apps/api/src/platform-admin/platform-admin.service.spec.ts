@@ -2417,6 +2417,18 @@ describe("PlatformAdminService — audit provenance", () => {
       );
     });
 
+    // Row 195 (lead ruling): platform-admin create KEEPS allowing the test patterns (super-admin
+    // intent) but flags them, so the console can say "this will be a TEST tenant".
+    it("row 195 createTenant flags a test-pattern slug with a TEST-tenant notice", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "qa-smoke-2" });
+      expect(r.notice).toMatch(/TEST tenant/);
+    });
+
+    it("row 195 createTenant adds no notice for an ordinary slug", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
+      expect(r).not.toHaveProperty("notice");
+    });
+
     it("REG-743-F7 createTenant writes class PRODUCTION for an ordinary slug", async () => {
       await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
 

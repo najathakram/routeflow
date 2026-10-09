@@ -40,14 +40,29 @@ import {
 } from "../src/products/product-barcode-rules";
 import { lockBarcodeCodes, lockProductRow } from "../src/products/product-catalog-sync";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
-// paying-tenant.cjs has no .d.cts declaration file (unlike test-tenants.cjs), so it is required
-// rather than imported — informational-only use here (see the tenant guard below).
+// The guard libs have no .d.cts declaration files (unlike test-tenants.cjs), so they are required
+// rather than imported and typed by a local cast (see the tenant guard below).
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { isProtectedTenant } = require("../scripts/lib/paying-tenant.cjs") as {
-  isProtectedTenant: (
-    tenant: { status: string; deletedAt: Date | null | undefined; class: string },
+const { assertWritableTenant } = require("../scripts/lib/live-target-guard.cjs") as {
+  assertWritableTenant: (
+    tenant: {
+      id: string;
+      slug: string;
+      status: string;
+      deletedAt: Date | null | undefined;
+      class: string;
+    },
     sub: { planKey?: string | null; stripeSubId?: string | null } | null | undefined,
-  ) => boolean;
+    protectedSlugs: Set<string>,
+    opts?: { allowProtected?: unknown },
+  ) => string | null;
+};
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { loadProtectedSlugs } = require("../scripts/lib/protected-slugs.cjs") as {
+  loadProtectedSlugs: (
+    env: Record<string, string | undefined>,
+    dbUrl: string | null | undefined,
+  ) => Set<string>;
 };
 
 const BATCH_SIZE = 500;
@@ -75,6 +90,8 @@ export interface BackfillOpts {
   allTenants?: boolean;
   apply: boolean;
   liveTenantOverride?: string;
+  /** Row 195: loadProtectedSlugs() result. Required for any non-test tenant; never read from env here. */
+  protectedSlugs?: Set<string>;
 }
 
 /** Strip credentials from a Postgres connection string for safe logging. */
@@ -110,7 +127,7 @@ export async function backfillProductCatalogRows(
   prisma: PrismaClient,
   opts: BackfillOpts,
 ): Promise<BackfillCounts> {
-  const { tenantSlug, allTenants, apply, liveTenantOverride } = opts;
+  const { tenantSlug, allTenants, apply, liveTenantOverride, protectedSlugs } = opts;
 
   if (!tenantSlug && !allTenants) {
     throw new BackfillRefused("exactly one of --tenant=<slug> or --all-tenants is required");
@@ -161,20 +178,27 @@ export async function backfillProductCatalogRows(
             "(the owner's per-tenant yes)",
         );
       }
-      // The override IS the owner's per-tenant yes — still allowed even when protected (paying).
-      // This is informational only: a counts-only stderr warning, never a second refusal.
+      // Row 195: the live-tenant override is the owner's yes for an ordinary live tenant, NEVER for a
+      // protected one (paying, Stripe-linked, or listed in PROTECTED_TENANT_SLUGS): refuse, no override.
+      if (!protectedSlugs) {
+        throw new BackfillRefused("protected-tenant list not loaded for a non-test tenant");
+      }
       const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenant.id } });
-      if (
-        isProtectedTenant(
+      try {
+        assertWritableTenant(
           {
+            id: tenant.id,
+            slug: tenant.slug,
             status: tenant.status,
             deletedAt: tenant.deletedAt,
             class: tenant.class,
           },
           sub,
-        )
-      ) {
-        process.stderr.write("WARNING: protected (paying) tenant, owner override present\n");
+          protectedSlugs,
+        );
+      } catch {
+        // No override exists for this script; the guard's text names the id and arm only.
+        throw new BackfillRefused(`tenant ${tenant.id} is protected: refused (no override exists)`);
       }
     }
     tenants = [{ id: tenant.id, slug: tenant.slug }];
@@ -370,7 +394,10 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
 
   try {
-    const opts = parseArgs(process.argv.slice(2));
+    const opts = {
+      ...parseArgs(process.argv.slice(2)),
+      protectedSlugs: loadProtectedSlugs(process.env, dbUrl),
+    };
     const counts = await backfillProductCatalogRows(prisma, opts);
     console.log(JSON.stringify(counts));
   } catch (err) {

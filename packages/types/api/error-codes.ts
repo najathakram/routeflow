@@ -203,8 +203,18 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -514,6 +524,10 @@ export const API_ERROR_CODES = {
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
   /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
   /** A tenant time zone write named something that is not an IANA zone (400, SA-738). Nothing was written. */
