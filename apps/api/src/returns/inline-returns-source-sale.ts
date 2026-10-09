@@ -81,7 +81,7 @@ export async function resolveSourceSale(
 export function assertWalkInCoveredBySale(
   productId: string,
   productName: string,
-  allocated: ReadonlyArray<{ line: unknown | null; pieces: number }>,
+  allocated: ReadonlyArray<{ line: unknown; pieces: number }>,
 ): void {
   const over = allocated.filter((c) => !c.line).reduce((n, c) => n + c.pieces, 0);
   if (over <= 0) return;
