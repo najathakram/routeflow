@@ -283,6 +283,9 @@ describeDb("SA-740 walk-in source sale + capture locks, real Postgres", () => {
     expect(codeOf(err)).toBe("SOURCE_SALE_INVALID");
   }, 60_000);
 
+  // NOTE on proof strength: test 8 is the REAL red pin (it holds B's row lock on a raw session, shows the capture queued behind
+  // it through pg_blocking_pids, and fails on the old carrying-only lock). Test 8b is only a SMOKE race (two calls crossing the
+  // same two orders, asserting no deadlock text): it can pass by timing luck, so do NOT count it as proof of the lock order.
   it("8. a capture sourced on B (carried on A) WAITS for another transaction holding B's row lock: it takes the source order lock too", async () => {
     const s = await seed("source-lock");
     const url = requireLocalDatabaseUrl();
