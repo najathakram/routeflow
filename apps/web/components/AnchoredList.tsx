@@ -44,6 +44,7 @@ export function AnchoredList({
   children: React.ReactNode;
 }) {
   const [place, setPlace] = React.useState<Placement | null>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   const measure = React.useCallback(() => {
     const el = anchorRef.current;
@@ -73,13 +74,29 @@ export function AnchoredList({
     };
   }, [open, measure]);
 
+  // react-remove-scroll (inside every Radix Modal) preventDefaults document-level wheel / touchmove
+  // that originate outside the dialog's subtree, which would freeze this portalled list.
+  const showing = open && place !== null;
+  React.useEffect(() => {
+    const el = listRef.current;
+    if (!showing || !el) return;
+    const stop = (e: Event) => e.stopPropagation();
+    el.addEventListener("wheel", stop, { passive: true });
+    el.addEventListener("touchmove", stop, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", stop);
+      el.removeEventListener("touchmove", stop);
+    };
+  }, [showing]);
+
   if (!open || !place || typeof document === "undefined") return null;
 
   return createPortal(
     <div
+      ref={listRef}
       {...{ [LIST_ATTR]: "" }}
       className={cn(
-        "pointer-events-auto overflow-y-auto rounded-lg border border-surface-border bg-white shadow-dropdown",
+        "pointer-events-auto overflow-y-auto overscroll-contain rounded-lg border border-surface-border bg-white shadow-dropdown",
         className,
       )}
       style={{

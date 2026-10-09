@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { Modal } from "@routeflow/ui/web";
 import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
 import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
@@ -97,4 +98,30 @@ describe("combobox lists", () => {
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("button", { name: "case" })).toBeNull();
   });
+});
+
+describe("scrolling a portalled list inside a Radix Modal", () => {
+  // react-remove-scroll preventDefaults document-level wheel/touchmove outside its shard; the
+  // list is portalled outside the dialog, so it must stop those events before they get there.
+  it.each(["wheel", "touchmove"])(
+    "does not let %s reach a document-level preventDefault",
+    (type) => {
+      const guard = (e: Event) => e.preventDefault();
+      document.addEventListener(type, guard, { passive: false });
+      try {
+        render(
+          <Modal open onClose={jest.fn()} title="T">
+            <UnitCombobox value="" onChange={jest.fn()} />
+          </Modal>,
+        );
+        fireEvent.focus(screen.getByRole("textbox"));
+        const list = screen.getByRole("button", { name: "case" }).closest("[data-anchored-list]")!;
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        list.dispatchEvent(ev);
+        expect(ev.defaultPrevented).toBe(false);
+      } finally {
+        document.removeEventListener(type, guard);
+      }
+    },
+  );
 });
