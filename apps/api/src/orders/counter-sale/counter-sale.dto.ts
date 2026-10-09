@@ -15,10 +15,16 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { TENDER_RULES } from "@routeflow/pricing";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import type { CounterPaymentMethod } from "./counter-sale-payment";
 
-/** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
-export const COUNTER_SALE_METHODS = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
+/**
+ * The methods the counter takes: the pricing counter row itself (one source, never a second typed list).
+ * `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types mirrors it (API source never value-imports that
+ * package; counter-sale-methods-parity.spec.ts pins the two set-equal).
+ */
+export const COUNTER_SALE_METHODS = TENDER_RULES.counter.allowed as readonly CounterPaymentMethod[];
 
 /**
  * `CounterSaleItem` of the shared contract. `priceReason` maps to OrderItemDto.overrideReason. A `unitPrice` that
@@ -37,7 +43,7 @@ export class CounterSaleItemDto {
 
 /** `CounterSalePayment`: `amount` is cash tendered / amount paid; omitted = the exact balance. */
 export class CounterSalePaymentDto {
-  @IsIn(COUNTER_SALE_METHODS) method: (typeof COUNTER_SALE_METHODS)[number];
+  @IsIn(COUNTER_SALE_METHODS) method: CounterPaymentMethod;
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) amount?: number;
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
 }
