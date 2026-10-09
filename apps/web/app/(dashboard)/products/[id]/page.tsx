@@ -55,7 +55,6 @@ import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
@@ -70,6 +69,7 @@ import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
+import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
@@ -580,11 +580,6 @@ export default function ProductDetailPage() {
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
-  const handleDeleteProduct = () => {
-    setShowDeleteConfirm(false);
-    deleteFlow.start(id);
-  };
-
   // ── Crop helpers ──────────────────────────────────────────────────────────
 
   /** Called by the drop zone / file input — opens the crop modal queue. */
@@ -1018,15 +1013,12 @@ export default function ProductDetailPage() {
       )}
       {reactivateFlow.dialog}
       {deleteFlow.dialog}
-      <ConfirmDialog
+      <DeleteProductConfirm
+        id={id}
+        name={product.name}
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={handleDeleteProduct}
-        title="Delete product?"
-        description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
-        confirmLabel="Yes, delete"
-        variant="danger"
-        loading={deleteFlow.isPending}
+        flow={deleteFlow}
       />
       <div className="space-y-5 p-6">
         {/* Back */}
