@@ -157,15 +157,6 @@ export class SettingsController {
     const newZone =
       dto.timezone !== undefined ? prepareTenantTimeZoneChange(user, dto.timezone) : undefined;
 
-    // businessName and email are NOT editable by tenant admin (set by super admin).
-    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
-    const allowed = ["taxRate", "logoUrl"];
-    await Promise.all(
-      allowed
-        .filter((k) => dto[k] !== undefined)
-        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
-    );
-
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
     if (tenantId) {
@@ -188,7 +179,7 @@ export class SettingsController {
       if (dto.invoiceTerms !== undefined)
         configUpdate.invoiceTerms = typeof dto.invoiceTerms === "string" ? dto.invoiceTerms : "";
       // SA-738: a zone change commits WITH these fields and its audit row in one transaction, so a
-      // failed save changes nothing; without a zone the fields are written as before.
+      // failed save changes no TenantConfig field; without a zone the fields are written as before.
       if (newZone !== undefined)
         await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone, configUpdate });
       if (Object.keys(configUpdate).length > 0) {
@@ -225,6 +216,16 @@ export class SettingsController {
         }
       }
     }
+
+    // businessName and email are NOT editable by tenant admin (set by super admin).
+    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet). They
+    // are written LAST (SA-738): a 403/400 or a failed TenantConfig save leaves them untouched.
+    const allowed = ["taxRate", "logoUrl"];
+    await Promise.all(
+      allowed
+        .filter((k) => dto[k] !== undefined)
+        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
+    );
 
     return this.getSettings();
   }

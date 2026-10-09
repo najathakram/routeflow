@@ -255,6 +255,36 @@ describe("PATCH /settings: timezone writer (SA-738 R16-4)", () => {
     expect(committed).toEqual([]);
   });
 
+  // taxRate / logoUrl live in SystemConfig and are written LAST: a 403, a 400 or a failed TenantConfig
+  // save leaves them untouched.
+  it("a failed TenantConfig save (zone tx) leaves taxRate and logoUrl unwritten", async () => {
+    const { c, tx, set } = await build({ timezone: "America/New_York" });
+    tx.tenantConfig.upsert.mockRejectedValue(new Error("db down"));
+    await expect(
+      c.updateSettings({ timezone: "America/Chicago", taxRate: 5, logoUrl: "logo.png" }, admin),
+    ).rejects.toThrow("db down");
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("a failed TenantConfig save (fields only) leaves taxRate and logoUrl unwritten", async () => {
+    const { c, prisma, set } = await build({ timezone: "America/New_York" });
+    prisma.tenantConfig.upsert.mockRejectedValue(new Error("db down"));
+    await expect(
+      c.updateSettings({ city: "Austin", taxRate: 5, logoUrl: "logo.png" }, operator),
+    ).rejects.toThrow("db down");
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("when everything succeeds taxRate and logoUrl are written after the TenantConfig save", async () => {
+    const { c, tx, set } = await build({ timezone: "America/New_York" });
+    await c.updateSettings({ timezone: "America/Chicago", taxRate: 5, logoUrl: "logo.png" }, admin);
+    expect(set).toHaveBeenCalledWith("settings.taxRate", "5");
+    expect(set).toHaveBeenCalledWith("settings.logoUrl", "logo.png");
+    expect(tx.tenantConfig.upsert.mock.invocationCallOrder[0]).toBeLessThan(
+      set.mock.invocationCallOrder[0],
+    );
+  });
+
   it("the response shows the (resolved) zone after the write", async () => {
     const { c } = await build({ timezone: "America/Chicago" });
     expect((await c.updateSettings({ city: "Austin" }, operator)).timezone).toBe("America/Chicago");
