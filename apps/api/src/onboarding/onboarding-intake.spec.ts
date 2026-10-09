@@ -61,6 +61,11 @@ describe("intake section answers (#2159 S2)", () => {
         { partial: false },
       ),
     ).rejects.toMatchObject({ response: { code: "INTAKE_ANSWERS_INVALID" } });
+    for (const bad of ["+01:00", "EST", "Etc/GMT+5"]) {
+      await expect(
+        validateSectionAnswers("ACCOUNT", { ...ACCOUNT, timeZone: bad }, { partial: false }),
+      ).rejects.toMatchObject({ response: { code: "INTAKE_ANSWERS_INVALID" } });
+    }
     await expect(
       validateSectionAnswers(
         "ACCOUNT",

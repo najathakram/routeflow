@@ -1,8 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import { isTimeZone } from "class-validator";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { TENANT_ZONE_SELECT, resolveTenantZone } from "../common/tenant-time-zone";
+import { TENANT_ZONE_SELECT, canonicalWritableTimeZone } from "../common/tenant-time-zone";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { PrismaService } from "../prisma/prisma.service";
 
@@ -10,13 +9,13 @@ import type { PrismaService } from "../prisma/prisma.service";
 export const TENANT_TIMEZONE_CHANGED_ACTION = "TENANT_TIMEZONE_CHANGED";
 
 /**
- * A client-supplied zone -> the zone to store, or a 400 `INVALID_TIME_ZONE`. The same check the
- * `@IsTimeZone()` DTO writers run (class-validator's `isTimeZone`), PLUS the resolver's own
- * refusal of anything that would fall back to UTC (an offset such as "+01:00", a blank string).
+ * A client-supplied zone -> the zone to STORE (case-corrected), or a 400 `INVALID_TIME_ZONE`. The
+ * same predicate (`canonicalWritableTimeZone`) the DTO writers run through `@IsTenantTimeZone()`:
+ * an offset ("+01:00"), a fixed-offset alias ("EST", "Etc/GMT+5") and a blank string are refused.
  */
 export function assertValidTenantTimeZone(raw: unknown): string {
-  const value = typeof raw === "string" ? raw : "";
-  if (!isTimeZone(value) || resolveTenantZone(value).fallback) {
+  const value = canonicalWritableTimeZone(raw);
+  if (value === null) {
     throw new BadRequestException({
       code: API_ERROR_CODES.INVALID_TIME_ZONE,
       message: "timezone must be an IANA time zone such as America/Chicago",
@@ -25,7 +24,11 @@ export function assertValidTenantTimeZone(raw: unknown): string {
   return value;
 }
 
-/** TENANT_ADMIN, or SUPER_ADMIN (who satisfies every role in `RolesGuard`). Operators are refused. */
+/**
+ * TENANT_ADMIN, or SUPER_ADMIN. SUPER_ADMIN is allowed on purpose: `RolesGuard` lets it satisfy every
+ * role (so it reaches this route), and an impersonation token acts as a tenant admin; the audit row
+ * stamps `impersonatedBy`. Operators (and everyone else) are refused.
+ */
 export function canChangeTenantTimeZone(user: Pick<JwtPayload, "role"> | undefined): boolean {
   return user?.role === UserRole.TENANT_ADMIN || user?.role === UserRole.SUPER_ADMIN;
 }
@@ -60,7 +63,9 @@ export async function changeTenantTimeZone(
       where: { tenantId },
       select: TENANT_ZONE_SELECT,
     });
-    const previous: string | null = row?.timezone ?? null;
+    const stored: string | null = row?.timezone ?? null;
+    // compare on the canonical form, so a stored "america/chicago" is not rewritten to "America/Chicago"
+    const previous = (stored && canonicalWritableTimeZone(stored)) || stored;
     if (previous === zone) return { changed: false };
     await tx.tenantConfig.upsert({
       where: { tenantId },
@@ -75,7 +80,7 @@ export async function changeTenantTimeZone(
         action: TENANT_TIMEZONE_CHANGED_ACTION,
         entityType: "TenantConfig",
         entityId: tenantId,
-        meta: { old: previous, new: zone },
+        meta: { old: stored, new: zone },
       },
     });
     return { changed: true };
