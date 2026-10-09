@@ -305,6 +305,7 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
+      ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);
@@ -463,6 +464,7 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "UNIT_AWARE_LINE_UNVERIFIABLE",
     "CHANGE_REQUEST_PACK_CHANGED",
     "INVOICE_CHANGED_CONCURRENTLY",
+    "INVOICE_TAX_STATE_STALE",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);

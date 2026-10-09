@@ -86,6 +86,8 @@ const CODE_COPY: Record<string, string> = {
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
+    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:

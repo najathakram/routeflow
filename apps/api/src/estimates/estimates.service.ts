@@ -8,7 +8,13 @@ import {
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  computeLineSubtotal,
+  getTierPrice,
+  roundMoney,
+  sumInvoiceTotals,
+} from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -17,7 +23,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
-import { foldCategoryTax, loadManualLineContext } from "../invoices/manual-invoice-context";
+import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
 import { resolveLineUnits } from "../products/line-units";
 import { estimateConvertLineItems } from "./estimate-convert-lines";
@@ -525,12 +531,9 @@ export class EstimatesService {
       const isTaxExempt = !!est.customer?.isTaxExempt;
       // B294 (L-159): regular tax and levy both come from THIS call. est.taxAmount holds the quote's REGULAR
       // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
-      const regularTax = isTaxExempt
-        ? 0
-        : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
-      const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
+      zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 of BOTH taxes, snapshots zeroed
       const discount = Number(est.discount ?? 0);
-      const total = roundMoney(subtotal - discount + taxTotal);
+      const { tax: taxTotal, total } = sumInvoiceTotals(itemsData, { discount, isTaxExempt });
 
       try {
         const inv = await tx.invoice.create({
