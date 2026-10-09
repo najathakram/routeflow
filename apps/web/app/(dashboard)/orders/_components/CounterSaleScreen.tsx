@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { centsToDollars, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -31,7 +31,18 @@ import {
   useCreateCounterSale,
 } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
-import { attemptTender } from "@/lib/counter-split-tender";
+import {
+  addLeg,
+  attemptTender,
+  buildSplitPayments,
+  newSplitRows,
+  patchLeg,
+  removeLeg,
+  rowsFromWire,
+  summarizeSplit,
+  totalToCents,
+  type SplitLegRow,
+} from "@/lib/counter-split-tender";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
   COUNTER_DISCARD_COPY,
@@ -83,6 +94,7 @@ import {
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterReturnAction } from "./CounterReturnAction";
+import { SplitTenderPanel } from "./SplitTenderPanel";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
 interface PickedCustomer {
@@ -151,6 +163,8 @@ export function CounterSaleScreen() {
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
+  // Split payment: null = the plain single tender (unchanged); rows = the "Split payment" panel is open.
+  const [splitRows, setSplitRows] = React.useState<SplitLegRow[] | null>(null);
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -179,6 +193,9 @@ export function CounterSaleScreen() {
     setLines(held.lines as SaleLine[]);
     setCustomer((held.customer as PickedCustomer | null) ?? null);
     setMethod(held.method as CounterSalePaymentMethod);
+    // a held SPLIT sale shows (and replays) the exact legs it was rung with
+    const heldLegs = (held.dto as CounterSaleRequest | undefined)?.payments;
+    setSplitRows(Array.isArray(heldLegs) ? rowsFromWire(heldLegs) : null);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setOutcomeUnknown(true);
@@ -243,6 +260,11 @@ export function CounterSaleScreen() {
   const totals = cartTotals(lines, taxRate);
   const discounts = discountsTotal(lines); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
+  const splitSummary = splitRows
+    ? summarizeSplit({ rows: splitRows, totalCents: totalToCents(totals.total), isWalkIn })
+    : null;
+  // The split panel decides when Complete is offered: every rule holds (a walk-in has paid in full).
+  const splitBlocked = splitSummary !== null && splitSummary.problem !== null;
 
   const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
@@ -441,6 +463,7 @@ export function CounterSaleScreen() {
     setMethod("CASH");
     setTendered("");
     setReference("");
+    setSplitRows(null);
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -522,13 +545,19 @@ export function CounterSaleScreen() {
       );
       return null;
     }
-    const problem = validatePayment({
-      method,
-      total: totals.total,
-      tendered: tenderedNum,
-      reference,
-      isWalkIn,
-    });
+    if (splitSummary?.problem) {
+      setError(PAYMENT_PROBLEM_COPY[splitSummary.problem]);
+      return null;
+    }
+    const problem = splitRows
+      ? null
+      : validatePayment({
+          method,
+          total: totals.total,
+          tendered: tenderedNum,
+          reference,
+          isWalkIn,
+        });
     if (problem) {
       setError(PAYMENT_PROBLEM_COPY[problem]);
       return null;
@@ -537,17 +566,26 @@ export function CounterSaleScreen() {
     const dto: CounterSaleRequest = {
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
-      payment: {
-        method,
-        ...(method === "CASH" ? { amount: tenderAmount } : {}),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
-      },
+      // exactly one of `payment` / `payments`: a split sends every leg with its own amount
+      ...(splitRows
+        ? { payments: buildSplitPayments(splitRows) }
+        : {
+            payment: {
+              method,
+              ...(method === "CASH" ? { amount: tenderAmount } : {}),
+              ...(reference.trim() ? { reference: reference.trim() } : {}),
+            },
+          }),
     };
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
     estimateRef.current = {
       total: totals.total,
-      change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
+      change: splitSummary
+        ? centsToDollars(splitSummary.changeCents)
+        : method === "CASH"
+          ? changeDue(totals.total, tenderAmount)
+          : 0,
     };
     return send(attemptRef.current);
   };
@@ -971,7 +1009,7 @@ export function CounterSaleScreen() {
           {/* payment on the same screen */}
           <section aria-label="Payment" className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              {paymentMethodOptions(isWalkIn).map((m) => (
+              {(splitRows ? [] : paymentMethodOptions(isWalkIn)).map((m) => (
                 <button
                   key={m.method}
                   type="button"
@@ -992,7 +1030,7 @@ export function CounterSaleScreen() {
               ))}
             </div>
 
-            {method === "CASH" ? (
+            {!splitRows && method === "CASH" ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
                   {quickTenderOptions(totals.total).map((q) => (
@@ -1033,7 +1071,7 @@ export function CounterSaleScreen() {
               </div>
             ) : null}
 
-            {method === "CHECK" ? (
+            {!splitRows && method === "CHECK" ? (
               <label className="block text-sm">
                 Check number
                 <input
@@ -1045,6 +1083,32 @@ export function CounterSaleScreen() {
                 />
               </label>
             ) : null}
+
+            {splitRows && splitSummary ? (
+              <SplitTenderPanel
+                rows={splitRows}
+                summary={splitSummary}
+                isWalkIn={isWalkIn}
+                locked={locked}
+                onPatch={(id, patch) => setSplitRows((rows) => rows && patchLeg(rows, id, patch))}
+                onAdd={() => setSplitRows((rows) => rows && addLeg(rows))}
+                onRemove={(id) => setSplitRows((rows) => rows && removeLeg(rows, id))}
+                onBack={() => setSplitRows(null)}
+                onPointer={refocusAfterPointer}
+              />
+            ) : (
+              <button
+                type="button"
+                className={cn(TAP_TARGET, "text-sm text-brand-700 underline disabled:opacity-40")}
+                disabled={locked}
+                onClick={(e) => {
+                  setSplitRows(newSplitRows(method));
+                  refocusAfterPointer(e);
+                }}
+              >
+                Split payment
+              </button>
+            )}
           </section>
 
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
@@ -1151,7 +1215,12 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  splitBlocked
                 }
               >
                 Complete &amp; show receipt
@@ -1161,7 +1230,12 @@ export function CounterSaleScreen() {
                 variant="secondary"
                 onClick={() => void completeSale(true)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  splitBlocked
                 }
               >
                 Complete &amp; next sale
