@@ -537,7 +537,7 @@ export class BuyerController {
     const order = path
       ? await this.ordersService.findActiveOrder(ctx.customerId, {
           forMerge: true,
-          mergeAs: { audience: "buyer", explicit: path },
+          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, explicit: path },
         })
       : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
@@ -621,6 +621,7 @@ export class BuyerController {
               // The cart folds only into an order on the path it asked for (the SAME resolver as create).
               mergeAs: {
                 audience: "buyer",
+                role: UserRole.CUSTOMER,
                 ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
               },
             });

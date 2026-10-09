@@ -90,7 +90,7 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
-import { resolveFulfilPath } from "./fulfil-path-resolver";
+import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -1572,7 +1572,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
+      await assertNoBackdatedMerge(this, customerId, {
+        explicit: dto.fulfillPath,
+        ...fulfilCaller(user),
+      });
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1610,7 +1613,7 @@ export class OrdersService implements OnApplicationBootstrap {
       (await resolveFulfilPath(this.fulfilDeps(), {
         explicit: dto.fulfillPath,
         stored: customerRecord?.fulfillPath,
-        audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+        ...fulfilCaller(user),
       }));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
