@@ -506,6 +506,7 @@ export function CreateOrderModal({
     setSelectedCustomer(null);
     customerUndo.dismiss();
     setCustomerListOpen(true);
+    setBackdateOpen(false);
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -1119,6 +1120,10 @@ export function CreateOrderModal({
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
   // Business date of the order (blank = today).
   const [orderDate, setOrderDate] = React.useState("");
+  // Row 100: the Order date control sits behind a "Backdate this order" link; a date already chosen (a resumed draft) shows it.
+  const [backdateOpen, setBackdateOpen] = React.useState(false);
+  const showOrderDate = backdateOpen || !!orderDate;
+  const orderDateRef = React.useRef<HTMLInputElement>(null);
   // The server's upper bound is the end of the current UTC day (parseOrderDate).
   const maxOrderDate = new Date().toISOString().slice(0, 10);
 
@@ -2362,22 +2367,48 @@ export function CreateOrderModal({
                   className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
-                  Order date <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="order-date"
-                  type="date"
-                  max={maxOrderDate}
-                  value={orderDate}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <p className="text-[11px] leading-snug text-navy/70">
-                  The day the order actually happened. Leave blank for today.
-                </p>
-              </div>
+              {showOrderDate ? (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
+                    Order date <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <input
+                    id="order-date"
+                    ref={orderDateRef}
+                    type="date"
+                    max={maxOrderDate}
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="text-[11px] leading-snug text-navy/70">
+                    The day the order actually happened. Leave blank for today.{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderDate("");
+                        setBackdateOpen(false);
+                      }}
+                      className="font-medium text-brand-500 hover:underline"
+                    >
+                      Use today
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBackdateOpen(true);
+                      window.setTimeout(() => orderDateRef.current?.focus(), 0);
+                    }}
+                    className="min-h-10 text-sm font-medium text-brand-500 hover:underline"
+                  >
+                    Backdate this order
+                  </button>
+                </div>
+              )}
             </div>
 
             {isStaff && hasSalesAgents && (
