@@ -15,10 +15,8 @@
 // @routeflow/types (L-261: that package is raw TypeScript and `nest build` does not bundle it). The error codes
 // PARK_LIMIT / PARK_TAKEN are in @routeflow/types; the API carries literals of them, pinned by a parity spec.
 
-/** The register a request names when it names none. Equals `COUNTER_DEFAULT_REGISTER` of the quick-keys contract. */
-export const COUNTER_PARK_DEFAULT_REGISTER = "main";
-/** A register key is a short slug (the same rule the quick-keys settings apply to a register key). */
-export const COUNTER_PARK_REGISTER_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+// The default register and the register-key pattern are `COUNTER_DEFAULT_REGISTER` and `REGISTER_KEY_PATTERN` in
+// ./counter-register (the one source for every register-keyed counter feature).
 
 /** A parked cart expires this many hours after it was parked. */
 export const COUNTER_PARK_TTL_HOURS = 24;
