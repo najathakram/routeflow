@@ -15,7 +15,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
-import { TENDER_RULES } from "@routeflow/pricing";
+import { TENDER_METHOD_VALUES, TENDER_RULES, type TenderMethod } from "@routeflow/pricing";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import type { CounterPaymentMethod } from "./counter-sale-payment";
 
@@ -48,6 +48,17 @@ export class CounterSalePaymentDto {
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
 }
 
+/**
+ * One leg of a split tender. The method list is TENDER_METHOD_VALUES (so STORE_CREDIT gets its own coded 400,
+ * TENDER_METHOD_NOT_ALLOWED, from counter-sale-legs rather than a bare "must be one of"); the counter's own
+ * limits (leg count, one cash leg, ON_ACCOUNT alone, whole cents) are TENDER_RULES.counter's, read there.
+ */
+export class TenderLegDto {
+  @IsIn(TENDER_METHOD_VALUES) method: TenderMethod;
+  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) amount?: number;
+  @IsOptional() @IsString() @MaxLength(100) reference?: string;
+}
+
 /** `CounterSaleRequest` of the shared contract (packages/types/api/counter-sale.ts). */
 export class CounterSaleDto {
   @IsOptional() @IsUUID() customerId?: string;
@@ -60,9 +71,23 @@ export class CounterSaleDto {
   @Type(() => CounterSaleItemDto)
   items: CounterSaleItemDto[];
 
+  /** Exactly one of `payment` (the one-leg alias) and `payments` (resolveLegs refuses both and neither). */
+  @IsOptional()
   @ValidateNested()
   @Type(() => CounterSalePaymentDto)
-  payment: CounterSalePaymentDto;
+  payment?: CounterSalePaymentDto;
+
+  /**
+   * The split tender. The array is only bounded here against abuse: more legs than the counter allows is the
+   * coded 400 COUNTER_TOO_MANY_LEGS, which a tight @ArrayMaxSize would turn into an uncoded one.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => TenderLegDto)
+  payments?: TenderLegDto[];
 
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
 }

@@ -42,6 +42,7 @@ import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
+import { legGroupId } from "./counter-sale-tender";
 
 /**
  * POST /orders/counter-sale orchestration (SA-655, item C step 2). Every collaborator is a mock:
@@ -71,6 +72,8 @@ const cap = (counter: "always" | "optional" | "off", over: Partial<FulfilmentCap
 
 const staff = { sub: "op-1", role: "OPERATOR", tenantId: "t-1" } as never;
 const item = { productId: "p1", qty: 2, unitPrice: 5 };
+// Every leg-0 payment row is written with the sale's server-built group id, in the same create.
+const LEG0 = { paymentGroupId: legGroupId("ord-1", 0) };
 
 type Inv = { id: string; total: number; status: string; createdAt: Date; payments: any[] };
 
@@ -501,6 +504,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
+        LEG0,
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -522,11 +526,15 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 50 on 37.25: pays 37.25, change 12.75, balance 0", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CASH",
+          reference: undefined,
+        },
+        LEG0,
+      );
       expect(r).toEqual({
         orderId: "ord-1",
         orderNumber: "ORD-1",
@@ -544,11 +552,15 @@ describe("CounterSaleService.ring", () => {
 
     it("CARD exact: recorded as CREDIT_CARD with the reference; no change", async () => {
       const r = await service.ring(named({ method: "CARD", reference: "auth-77" }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CREDIT_CARD",
-        reference: "auth-77",
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CREDIT_CARD",
+          reference: "auth-77",
+        },
+        LEG0,
+      );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
     });
@@ -562,11 +574,15 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 20,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 20,
+          method: "CASH",
+          reference: undefined,
+        },
+        LEG0,
+      );
       expect(r).toMatchObject({
         paid: 20,
         balanceDue: 17.25,
@@ -602,7 +618,11 @@ describe("CounterSaleService.ring", () => {
         inv("inv-1", 40, [{ id: "cn-pay", amount: 10, method: "CREDIT_NOTE", status: "PAID" }]),
       ];
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }));
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.objectContaining({ amount: 30 }),
+        LEG0,
+      );
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       expect(r.change).toBeUndefined();
     });
@@ -799,7 +819,11 @@ describe("CounterSaleService.ring", () => {
       recordPayment.mockClear();
       const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }));
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-2",
+        expect.objectContaining({ amount: 20 }),
+        LEG0,
+      );
       expect(second).toMatchObject({
         total: 50,
         paid: 50,
