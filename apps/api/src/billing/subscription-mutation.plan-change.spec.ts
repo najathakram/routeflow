@@ -457,15 +457,17 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
     ...BASE_ITEM,
     price: { ...BASE_ITEM.price, unit_amount: cents, product: "prod_low" },
   });
-  const scheduled = {
+  // Built per TEST (a function), never at describe/collection time: a clock fuse started at collection
+  // can expire before the test runs on a slow host (no-collection-time-clock-fuse.spec.ts).
+  const scheduled = () => ({
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date(Date.now() + 2 * DAY),
-  };
+  });
 
   it("an early push left Stripe on the lowered price (9900): the upgrade restores the CURRENT price (24900, none) BEFORE it prorates, so the proration is (new - current), not (new - lowered)", async () => {
     const { svc, stripe, db } = make({
       realScheduledPrice: true,
-      sub: scheduled,
+      sub: scheduled(),
       stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
     });
     await svc.upgrade("t1", "SCALE", "admin");
@@ -485,7 +487,7 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
   });
 
   it("no early push (Stripe still on the current price) -> no restore call, only the upgrade push", async () => {
-    const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled });
+    const { svc, stripe } = make({ realScheduledPrice: true, sub: scheduled() });
     await svc.upgrade("t1", "SCALE", "admin");
     expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
   });
@@ -493,7 +495,7 @@ describe("upgrade(): a pre-renewal downgrade push is undone FIRST (R1 Option B)"
   it("a failed restore stops the upgrade BEFORE it pushes or writes anything (fail closed: never prorate from the lowered price)", async () => {
     const { svc, stripe, db, prisma } = make({
       realScheduledPrice: true,
-      sub: scheduled,
+      sub: scheduled(),
       stripeItems: [pushedLow(9900), ADDON_ITEM, KEEP_ITEM],
     });
     stripe.updateSubscription.mockRejectedValueOnce(new Error("stripe down"));
