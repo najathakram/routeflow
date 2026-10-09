@@ -68,8 +68,9 @@ describeDb("tenant units against real Postgres", () => {
   };
   /**
    * One sold line: `kind` order puts it on an OrderItem under a new order of `orderTenantId`, invoice on an
-   * InvoiceItem under a new invoice. The ITEM's own tenantId is left NULL on purpose: the check must reach
-   * lines through the parent order / invoice. `productId` may belong to ANOTHER tenant (isolation case).
+   * InvoiceItem under a new invoice. The item carries the SAME tenantId as its parent (the T6 NOT NULL
+   * guards refuse a NULL one); the production check joins through the parent either way. `productId` may
+   * belong to ANOTHER tenant (isolation case).
    */
   const line = async (
     kind: "order" | "invoice",
@@ -90,7 +91,15 @@ describeDb("tenant units against real Postgres", () => {
         },
       });
       return raw.orderItem.create({
-        data: { orderId: order.id, productId, qty: "1", unitPrice: "1.00", unitLabel, unitsPerBox },
+        data: {
+          orderId: order.id,
+          tenantId: orderTenantId,
+          productId,
+          qty: "1",
+          unitPrice: "1.00",
+          unitLabel,
+          unitsPerBox,
+        },
       });
     }
     const invoice = await raw.invoice.create({
@@ -105,6 +114,7 @@ describeDb("tenant units against real Postgres", () => {
     return raw.invoiceItem.create({
       data: {
         invoiceId: invoice.id,
+        tenantId: orderTenantId,
         productId,
         description: "line",
         qty: "1",
