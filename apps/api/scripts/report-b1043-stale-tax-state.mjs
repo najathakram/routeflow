@@ -15,14 +15,21 @@
  *   tax         = round(regularTax + categoryTax)
  *   total       = round(subtotal - discount + shipping + tax)
  * An invoice is STALE when round(stored subtotal) != computed subtotal OR round(stored taxAmount) !=
- * computed tax (the exact test the 409 will use); otherwise it is consistent. The total is not part
+ * computed tax OR (the customer is tax exempt and any line carries a nonzero levy snapshot, even when
+ * the stored tax is 0): the exact test the header-only PATCH's 409 uses. Otherwise it is consistent. The total is not part
  * of the test (the PATCH rewrites it).
  *
  * STALE REASONS (first match wins, in this order):
  *   1. subtotal      stored subtotal differs from the lines' subtotal.
- *   2. exempt        the customer is tax exempt and the stored tax is not 0 (the computed tax is 0).
+ *   2. exempt        the customer is tax exempt and the stored tax is not 0, OR any line carries a
+ *                    nonzero levy snapshot (categoryTaxAmount) even when the stored tax is 0.
  *   3. zeroRateTax   every line rate is 0 and the stored tax is > 0 (the B294 order-derived shape).
- *   4. rounding      |stored tax - computed tax| <= $0.01 per line (the B296 rate-precision drift).
+ *   4. ratePrecision RATE PRECISION (B296 / SA-761 T-1): |stored tax - computed tax| <= $0.01 per line.
+ *                    A line rate that needs more than 4 decimal places (e.g. 0.08875) is stored as
+ *                    Decimal(5,4), so the stored tax (made from the unrounded rate at create()) differs
+ *                    from the tax recomputed from the stored rates. FRESH drafts can land here, not
+ *                    only legacy rows. Only stored data is available, so this bucket is the home of
+ *                    that shape; a small drift from any other cause lands here too.
  *   5. other         any remaining tax mismatch.
  * Independently of the above, `foreignTenantRows` counts invoices with a NULL tenant or any line whose
  * tenant is NULL or differs from the invoice's (the invoice PATCH would 400 on it, B929); such an
@@ -59,7 +66,7 @@ const PAGE = 500;
 const DAY_MS = 86_400_000;
 
 /** The stale reasons, in precedence order; also the keys of every `byReason` block. */
-export const REASONS = ["subtotal", "exempt", "zeroRateTax", "rounding", "other"];
+export const REASONS = ["subtotal", "exempt", "zeroRateTax", "ratePrecision", "other"];
 export const AGE_BUCKETS = ["lt30d", "lt1y", "older"];
 
 const num = (v) => {
@@ -104,14 +111,16 @@ export function classifyInvoice(invoice, lines) {
 
   const subtotalDiffers = storedSubtotal !== computed.subtotal;
   const taxDiffers = storedTax !== computed.tax;
-  if (!subtotalDiffers && !taxDiffers) return { stale: false, reason: null, foreignTenant };
+  const exemptLevy = exempt && lines.some((l) => num(l.categoryTaxAmount) !== 0);
+  if (!subtotalDiffers && !taxDiffers && !exemptLevy)
+    return { stale: false, reason: null, foreignTenant };
 
   let reason;
   if (subtotalDiffers) reason = "subtotal";
-  else if (exempt && storedTax !== 0) reason = "exempt";
+  else if (exempt && (storedTax !== 0 || exemptLevy)) reason = "exempt";
   else if (lines.every((l) => num(l.taxRate) === 0) && storedTax > 0) reason = "zeroRateTax";
   else if (roundMoney(Math.abs(storedTax - computed.tax)) <= roundMoney(lines.length / 100))
-    reason = "rounding";
+    reason = "ratePrecision";
   else reason = "other";
   return { stale: true, reason, foreignTenant };
 }
@@ -276,15 +285,25 @@ export function selfTest() {
   eq(cls(inv("100.00", "4.00", { isTaxExempt: true }), [L("100.00", "0")]), "exempt", "reason 2");
   eq(
     cls(inv("100.00", "0.00", { isTaxExempt: true }), [L("100.00", "0.08", "5.00")]),
+    "exempt",
+    "exempt, levy snapshot, stored tax 0",
+  );
+  eq(
+    cls(inv("100.00", "0.00", { isTaxExempt: true }), [L("100.00", "0.08")]),
     "consistent",
-    "exempt, tax 0",
+    "exempt, clean",
+  );
+  eq(
+    cls(inv("400.00", "35.50"), [L("200.00", "0.0888"), L("200.00", "0.0888")]),
+    "ratePrecision",
+    "rate 0.08875 stored as 0.0888",
   );
   eq(cls(inv("100.00", "4.00"), [L("100.00", "0")]), "zeroRateTax", "reason 3");
-  eq(cls(inv("100.00", "8.01"), [L("100.00", "0.08")]), "rounding", "reason 4 (one cent)");
+  eq(cls(inv("100.00", "8.01"), [L("100.00", "0.08")]), "ratePrecision", "reason 4 (one cent)");
   eq(cls(inv("100.00", "8.02"), [L("100.00", "0.08")]), "other", "one line, two cents");
   eq(
     cls(inv("100.00", "8.02"), [L("50.00", "0.08"), L("50.00", "0.08")]),
-    "rounding",
+    "ratePrecision",
     "two lines, two cents",
   );
   eq(cls(inv("100.00", "9.00"), [L("100.00", "0.08")]), "other", "reason 5");
@@ -366,6 +385,9 @@ function printBlock(name, s) {
   console.log(
     `${name}: ${s.scanned} scanned, ${s.consistent} consistent, ${s.stale} stale ` +
       `(${s.tenantsAffected} of ${s.tenantsScanned} tenant bucket(s) affected)`,
+  );
+  console.log(
+    "  note: ratePrecision = rate needs >4 dp (B296 / SA-761 T-1); fresh drafts can land here, not only legacy; exempt includes a levy snapshot with stored tax 0",
   );
   console.log(`  stale by reason: ${REASONS.map((r) => `${r} ${s.byReason[r]}`).join(", ")}`);
   console.log(`  NULL- or foreign-tenant row (would 400, B929): ${s.foreignTenantRows}`);
