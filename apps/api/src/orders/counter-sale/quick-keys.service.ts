@@ -45,8 +45,9 @@ export class QuickKeysService {
     // One read for every id the grid could use. Liveness (active, this tenant) is judged by this read, so a
     // pinned product that went inactive, or a ranked one deactivated since the ranking was cached, takes no slot.
     const hidden = new Set(reg.hidden);
-    const pinned = reg.pinned.slice(0, reg.cap);
-    const wanted = [...new Set([...pinned, ...ranked.filter((id) => !hidden.has(id))])];
+    // Every pin is read, not just the first `cap`: a dead pin must not use up a slot a later live pin
+    // could fill. composeGridIds applies liveness first and the cap after.
+    const wanted = [...new Set([...reg.pinned, ...ranked.filter((id) => !hidden.has(id))])];
     const rows =
       wanted.length === 0
         ? []

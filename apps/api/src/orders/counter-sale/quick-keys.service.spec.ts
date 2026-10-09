@@ -136,6 +136,17 @@ describe("QuickKeysService.get: grid composition", () => {
     expect(ids(await s.svc.get())).toEqual(["b"]);
   });
 
+  it("dead pins ahead of the cap do not starve valid later pins", async () => {
+    const s = setup({
+      products: [prod("c"), prod("d"), prod("e")],
+      ranked: ["e"],
+      stored: { counter: { default: { pinned: ["x", "y", "c", "d"], hidden: [] }, cap: 2 } },
+    });
+    const res = await s.svc.get();
+    expect(ids(res)).toEqual(["c", "d"]);
+    expect(res.keys.map((k) => k.pinned)).toEqual([true, true]);
+  });
+
   it("sellLevel is BOX when unitsPerBox > 1, else UNIT", async () => {
     const s = setup({
       products: [
