@@ -2038,8 +2038,27 @@ describe("PlatformAdminService — audit provenance", () => {
 
       const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
       expect(args.where).toEqual({ id: TENANT_ID });
-      expect(args.include._count.select.products).toBe(true);
+      expect(args.include._count.select.products).toEqual({ where: { isActive: true } });
       expect(tenant.counts?.products).toBe(7);
+    });
+
+    it("SA-3 a tenant whose only products are inactive reports 0 products (not Ready)", async () => {
+      // The filtered relation count is what the DB returns for a tenant with only inactive products.
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 0 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.include._count.select.products.where).toEqual({ isActive: true });
+      expect(tenant.counts?.products).toBe(0);
     });
   });
 

@@ -272,7 +272,8 @@ export class PlatformAdminService {
               routes: true,
               customerLinks: true,
               // SA-3: the Readiness card's "Has at least one product" row (tenant-scoped relation count).
-              products: true,
+              // Active products only: a tenant whose products are all inactive has nothing to sell.
+              products: { where: { isActive: true } },
             },
           },
         },
