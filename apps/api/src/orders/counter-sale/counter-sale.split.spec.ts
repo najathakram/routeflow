@@ -535,6 +535,31 @@ describe("CounterSaleService.ring: split payments", () => {
       });
     });
 
+    it("a resumed CARD/CHECK leg is placed whole or not at all: an office payment that ate its room is 409, never a partial charge", async () => {
+      // card 30 + check 20 + cash 20 on 70. Card was taken; the office then took 25 on the invoice (no group id):
+      // only 15 of room is left for the 20 check leg. The old resume recorded a 15 check.
+      invoices = [
+        inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0), row("office", 25, "CASH", null)]),
+      ];
+      replay = true;
+      const err = await errorOf(
+        service.ring(
+          walkInSale({
+            payments: [
+              { method: "CARD", amount: 30 },
+              { method: "CHECK", amount: 20, reference: "1042" },
+              { method: "CASH", amount: 20 },
+            ],
+          }),
+          staff,
+          "key-1",
+        ),
+      );
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse().code).toBe("COUNTER_TENDER_CHANGED");
+      expect(recordPayment).not.toHaveBeenCalled();
+    });
+
     it("legacy partial then resume: a pre-split CASH 80 that died after inv1 resumes UNGROUPED, so the sale stays all-legacy", async () => {
       // mixed regulated sale: inv1 50 + inv2 20. The old code recorded inv1's 50 (no group id) and crashed.
       invoices = [inv("inv-1", 50, 1, [row("old", 50, "CASH", null)]), inv("inv-2", 20, 2)];

@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { centsToDollars, dollarsToCents, remainingCapacity, roundMoney } from "@routeflow/pricing";
+import { centsToDollars } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -27,7 +27,9 @@ import { AuditService } from "../../audit/audit.service";
 import { buildCounterSaleResponse } from "./counter-sale-readback";
 import {
   legGroupId,
+  assertNonCashShortfallsFit,
   assertStoredTenderMatches,
+  invoiceRoomCents,
   planSaleTender,
   readStoredTender,
   type InvoiceRow,
@@ -303,6 +305,7 @@ export class CounterSaleService {
     const plan = planSaleTender(invoices, legs);
     const stored = readStoredTender(orderId, invoices);
     assertStoredTenderMatches(stored, legs, plan.placements);
+    if (!plan.refusal) assertNonCashShortfallsFit(invoices, stored, legs, plan.placements);
     if (plan.refusal) {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (stored.byLeg.size === 0) planError = plan.refusal;
@@ -314,9 +317,7 @@ export class CounterSaleService {
           const have = (stored.byLeg.get(part.legIndex) ?? [])
             .filter((r) => r.invoiceId === part.invoiceId)
             .reduce((sum, r) => sum + r.amountCents, 0);
-          const room =
-            dollarsToCents(roundMoney(remainingCapacity(Number(row.total), row.payments))) -
-            (takenNow.get(row.id) ?? 0);
+          const room = invoiceRoomCents(row) - (takenNow.get(row.id) ?? 0);
           const due = Math.min(part.amountCents - have, room);
           if (due <= 0) continue;
           const leg = legs[part.legIndex];

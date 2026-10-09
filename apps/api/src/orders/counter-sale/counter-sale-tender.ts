@@ -195,3 +195,36 @@ export function assertStoredTenderMatches(
     }
   }
 }
+
+/** What an invoice can still take, in cents: its total less every non-void payment on it (stored tender included). */
+export function invoiceRoomCents(row: InvoiceRow): number {
+  return dollarsToCents(roundMoney(remainingCapacity(Number(row.total), row.payments)));
+}
+
+/**
+ * A non-cash leg is placed WHOLE or refused (a card is never charged part of what was asked). On a resume the
+ * shortfall of such a leg is what is still to be recorded; when an office payment has since eaten the invoice's
+ * room, recording the part that fits would break that rule, so the replay is refused 409 COUNTER_TENDER_CHANGED
+ * before anything more is written. A cash leg may be recorded partially (the rest is change).
+ */
+export function assertNonCashShortfallsFit(
+  invoices: InvoiceRow[],
+  stored: StoredTender,
+  legs: readonly CounterLeg[],
+  placements: TenderPlacement[],
+): void {
+  const taken = new Map<string, number>();
+  for (const part of placements) {
+    const row = invoices.find((i) => i.id === part.invoiceId)!;
+    const have = (stored.byLeg.get(part.legIndex) ?? [])
+      .filter((r) => r.invoiceId === part.invoiceId)
+      .reduce((sum, r) => sum + r.amountCents, 0);
+    const shortfall = part.amountCents - have;
+    if (shortfall <= 0) continue;
+    const room = invoiceRoomCents(row) - (taken.get(row.id) ?? 0);
+    if (legs[part.legIndex].method !== "CASH" && room < shortfall) {
+      throw changed(`payment ${part.legIndex + 1} no longer fits the balance`);
+    }
+    taken.set(row.id, (taken.get(row.id) ?? 0) + Math.min(shortfall, Math.max(0, room)));
+  }
+}
