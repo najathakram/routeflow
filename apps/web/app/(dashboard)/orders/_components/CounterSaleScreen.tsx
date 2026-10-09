@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundMoney, type ParkedCartPayload } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -83,6 +83,7 @@ import {
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { ParkedSales } from "./ParkedSales";
 
 interface PickedCustomer {
   id: string;
@@ -250,11 +251,14 @@ export function CounterSaleScreen() {
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
   // POS-2: a customer pick (or a revert to walk-in) re-prices the cart for them; Pay waits on the lookup. Display only.
+  // SA-748: a resumed parked cart bumps `repriceEpoch` so its lines are re-priced for display even when the customer is unchanged.
+  const [repriceEpoch, setRepriceEpoch] = React.useState(0);
   const reprice = useCounterReprice({
     customer,
     lines,
     setLines,
     locked: lineLocked,
+    epoch: repriceEpoch,
   });
   const repriceBlockedRef = React.useRef(false);
   repriceBlockedRef.current = reprice.blocked;
@@ -452,6 +456,18 @@ export function CounterSaleScreen() {
     setShipFailed(false);
     awaitingCustomerRef.current = false;
     refocus();
+  }
+
+  // SA-748: a resumed parked cart replaces the screen's cart, customer, method, tendered and reference (the same state a
+  // finished sale resets); the lines are then re-priced for display. No sale key exists yet: it is minted at Complete.
+  function restoreParked(p: ParkedCartPayload) {
+    resetSale();
+    setLines(p.lines as SaleLine[]);
+    setCustomer(p.customer as PickedCustomer | null);
+    setMethod(p.method as CounterSalePaymentMethod);
+    setTendered(p.tendered);
+    setReference(p.reference);
+    setRepriceEpoch((n) => n + 1);
   }
 
   // Sends one attempt. A 2xx releases the key. A FIRST attempt's refusal that proves nothing was written releases it too.
@@ -715,6 +731,21 @@ export function CounterSaleScreen() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
+        <ParkedSales
+          cart={{ lines, customer, method, tendered, reference }}
+          blocked={
+            locked ||
+            salePosting ||
+            createDraft.isPending ||
+            scanBusy ||
+            reprice.blocked ||
+            shipIntent
+          }
+          inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
+          canEditPrices={mayEditPrices}
+          onParked={resetSale}
+          onRestore={restoreParked}
+        />
         {gate.offerShipInstead ? (
           <Button
             className="min-h-[44px]"
