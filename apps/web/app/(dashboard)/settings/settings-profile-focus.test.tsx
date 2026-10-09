@@ -82,46 +82,20 @@ describe("Business profile — tax rate", () => {
   });
 });
 
-describe("Business profile — receipt footer", () => {
-  const FIXED = "That receipt text couldn't be saved. Keep it under 200 characters.";
-
-  it("is a 200-character plain-text field with a live counter, hydrated from GET", async () => {
-    get.mockResolvedValue({ data: { ...SAVED, receiptFooter: "Thanks!" } });
+describe("Business profile — receipt footer (until the API lands)", () => {
+  it("is disabled with 'Available soon'", async () => {
     renderWithProviders(<SettingsPage />);
-    const footer = await screen.findByLabelText("Receipt footer");
-    await waitFor(() => expect(footer).toHaveValue("Thanks!"));
-    expect(footer).toHaveAttribute("maxlength", "200");
-    expect(screen.getByText("7/200")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Receipt footer")).toBeDisabled();
+    expect(screen.getByText("Available soon")).toBeInTheDocument();
   });
 
-  it("PATCHes receiptFooter when changed and omits it when untouched", async () => {
+  it("a profile save never carries a receiptFooter key", async () => {
+    get.mockResolvedValue({ data: { ...SAVED, receiptFooter: "Thanks!" } });
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    const footer = await screen.findByLabelText("Receipt footer");
     await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
     await user.click(screen.getByRole("button", { name: /save changes/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
     expect(patch.mock.calls[0][1]).not.toHaveProperty("receiptFooter");
-
-    await user.type(footer, "Thank you!");
-    await user.click(screen.getByRole("button", { name: /save changes/i }));
-    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
-    expect(patch.mock.calls[1][1]).toEqual(
-      expect.objectContaining({ receiptFooter: "Thank you!" }),
-    );
-  });
-
-  it("shows FIXED copy on a 400, never the server's text", async () => {
-    const user = userEvent.setup();
-    patch.mockRejectedValue({
-      response: { status: 400, data: { message: "<img src=x onerror=alert(1)> raw server text" } },
-    });
-    renderWithProviders(<SettingsPage />);
-    const footer = await screen.findByLabelText("Receipt footer");
-    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
-    await user.type(footer, "Thank you!");
-    await user.click(screen.getByRole("button", { name: /save changes/i }));
-    expect(await screen.findByText(FIXED)).toBeInTheDocument();
-    expect(screen.queryByText(/raw server text/)).toBeNull();
   });
 });

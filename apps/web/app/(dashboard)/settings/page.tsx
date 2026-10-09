@@ -100,10 +100,6 @@ import { useInvalidFocus } from "@/lib/form-errors";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const RECEIPT_FOOTER_MAX = 200;
-const RECEIPT_FOOTER_REJECTED =
-  "That receipt text couldn't be saved. Keep it under 200 characters.";
-
 const profileSchema = z.object({
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
@@ -115,7 +111,6 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-  receiptFooter: z.string().max(RECEIPT_FOOTER_MAX).optional(),
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -132,11 +127,7 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    // A 400 is rendered below in fixed copy and skips the global toast. Any other error reaches
-    // the global toast AND the generic onError toast below (a pre-existing duplicate).
-    meta: { localErrorToast: (err: unknown) => (err as any)?.response?.status === 400 },
-    mutationFn: (data: Partial<ProfileFormValues>) =>
-      apiClient.patch("/settings", data).then((r) => r.data),
+    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -145,17 +136,7 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: (err: any, vars) => {
-      if (err?.response?.status === 400) {
-        // Never the server's text: fixed copy only.
-        toast({
-          title: "receiptFooter" in vars ? RECEIPT_FOOTER_REJECTED : "Failed to save settings",
-          variant: "error",
-        });
-        return;
-      }
-      toast({ title: "Failed to save settings", variant: "error" });
-    },
+    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -210,7 +191,6 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
-      receiptFooter: "",
     },
   });
 
@@ -227,7 +207,6 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
-        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -245,14 +224,8 @@ function BusinessProfileTab() {
   };
 
   const onSubmit = async (data: ProfileFormValues) => {
-    // receiptFooter rides along only when the operator changed it, so a profile save never
-    // depends on the field being accepted by the server when it was left alone.
-    const { receiptFooter, ...rest } = data;
-    const saved = (savedSettings?.receiptFooter as string | undefined) ?? "";
-    const payload: Partial<ProfileFormValues> =
-      (receiptFooter ?? "") !== saved ? { ...rest, receiptFooter: receiptFooter ?? "" } : rest;
     try {
-      await saveSettings.mutateAsync(payload);
+      await saveSettings.mutateAsync(data);
     } catch {
       // already reported by the mutation's onError
     }
@@ -402,17 +375,9 @@ function BusinessProfileTab() {
       </Card>
 
       <Card title="Receipt">
-        <Textarea
-          label="Receipt footer"
-          maxLength={RECEIPT_FOOTER_MAX}
-          rows={3}
-          register={register("receiptFooter")}
-          error={errors.receiptFooter?.message}
-        />
-        <p className="mt-1 flex justify-between text-xs text-navy/70">
-          <span>Plain text printed at the bottom of receipts</span>
-          <span>{`${(watch("receiptFooter") ?? "").length}/${RECEIPT_FOOTER_MAX}`}</span>
-        </p>
+        {/* Not wired yet: stays disabled and unregistered, so a save never carries receiptFooter. */}
+        <Textarea label="Receipt footer" rows={3} disabled defaultValue="" />
+        <p className="mt-1 text-xs text-navy/70">Available soon</p>
       </Card>
 
       <div className="flex justify-end">
