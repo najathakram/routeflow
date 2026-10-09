@@ -187,6 +187,20 @@ describe("CounterSaleScreen", () => {
     expect(screen.queryByText(/less than the total/)).toBeNull();
   });
 
+  it("row 238: the underpaid error renders INSIDE the sticky checkout bar, next to Complete (never off-screen below the fold)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("less than the total");
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(alert);
+    // and it sits before the actions, so the cashier reads why before the buttons
+    const actions = screen.getByTestId("counter-checkout-actions");
+    expect(alert.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");

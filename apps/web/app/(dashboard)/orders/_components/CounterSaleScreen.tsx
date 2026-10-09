@@ -1166,12 +1166,6 @@ export function CounterSaleScreen() {
             Print receipt automatically
           </label>
 
-          {error ? (
-            <p role="alert" className="text-sm text-red-700">
-              {error}
-            </p>
-          ) : null}
-
           {outcomeUnknown ? (
             <div
               role="alert"
@@ -1260,6 +1254,13 @@ export function CounterSaleScreen() {
                 {amountDue(totals.total, tenderedNum) > 0
                   ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
                   : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+              </p>
+            ) : null}
+
+            {/* The payment / sale error lives in the bar: below the fold it was out of sight at 390px (row 238). */}
+            {error ? (
+              <p role="alert" className="text-sm text-red-700">
+                {error}
               </p>
             ) : null}
 
