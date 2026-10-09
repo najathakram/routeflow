@@ -2,17 +2,37 @@
 
 import * as React from "react";
 import { Modal, Button } from "@routeflow/ui/web";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "./dialog-mobile-fit";
 
 /**
  * The products a bulk delete REFUSED (a family that still has active variants, a product with active
  * order items) and why, in a dialog that stays until dismissed - a toast would bury the list. The
- * reasons are the API's own fixed sentences for each refusal (`skipped[].reason`); the rest of the
- * selection was processed, which the dialog says so nobody re-selects it.
+ * lines are FIXED copy keyed by the API's machine `skipped[].code` - the server's `reason` text is never
+ * rendered; an unknown or missing code gets one neutral line. The rest of the selection was processed,
+ * which the dialog says so nobody re-selects it.
  */
 export interface SkippedProduct {
   id: string;
-  reason: string;
+  /** Machine code for why the product was refused (see API_ERROR_CODES). */
+  code?: string;
+  /** Legacy server sentence; kept on the type but never shown. */
+  reason?: string;
+}
+
+const SKIP_COPY: Readonly<Record<string, string>> = {
+  [API_ERROR_CODES.FAMILY_HAS_ACTIVE_VARIANTS]:
+    "This product still has active variants. Delete or archive its variants first.",
+  [API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS]:
+    "This product has active order items and cannot be deleted.",
+};
+const SKIP_FALLBACK = "This product could not be deleted.";
+
+export function skipCopy(code: string | undefined): string {
+  return (
+    (code !== undefined && Object.hasOwn(SKIP_COPY, code) ? SKIP_COPY[code] : undefined) ??
+    SKIP_FALLBACK
+  );
 }
 
 export function BulkDeleteSkipReport({
@@ -41,7 +61,7 @@ export function BulkDeleteSkipReport({
       </p>
       <ul className="max-h-64 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-navy">
         {skipped.map((s) => (
-          <li key={s.id}>{s.reason}</li>
+          <li key={s.id}>{skipCopy(s.code)}</li>
         ))}
       </ul>
     </Modal>

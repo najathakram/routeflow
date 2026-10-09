@@ -212,6 +212,8 @@ export const API_ERROR_CODES = {
   FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
   /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
   VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",

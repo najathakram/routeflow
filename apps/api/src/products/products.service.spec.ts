@@ -2331,7 +2331,13 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
     expect(result).toEqual({
       deleted: 1,
       softDeleted: 1,
-      skipped: [{ id: "prod-a", reason: expect.stringContaining("Product A") }],
+      skipped: [
+        {
+          id: "prod-a",
+          code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
+          reason: expect.stringContaining("Product A"),
+        },
+      ],
     });
 
     // A: skipped means untouched.

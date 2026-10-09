@@ -141,6 +141,13 @@ const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
   LAST_COST: CostingMethod.LAST_COST,
 };
 
+/** One product a bulk delete refused: a machine `code` (clients show fixed copy for it) and the legacy `reason` sentence. */
+export interface BulkDeleteSkip {
+  id: string;
+  code: string;
+  reason: string;
+}
+
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -1634,7 +1641,7 @@ export class ProductsService {
   async clearAll(): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     // Tenant-scoped by construction.
     //
@@ -1665,7 +1672,7 @@ export class ProductsService {
   async bulkDelete(ids: string[]): Promise<{
     deleted: number;
     softDeleted: number;
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: BulkDeleteSkip[];
   }> {
     if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
 
@@ -1693,12 +1700,13 @@ export class ProductsService {
       activeGroups.map((g) => g.productId).filter((id): id is string => !!id),
     );
 
-    const skipped: Array<{ id: string; reason: string }> = [];
+    const skipped: BulkDeleteSkip[] = [];
     const remaining: string[] = [];
     for (const id of ids) {
       if (activeIds.has(id)) {
         skipped.push({
           id,
+          code: API_ERROR_CODES.PRODUCT_HAS_ACTIVE_ORDER_ITEMS,
           reason: `${nameById.get(id) ?? id} has active order items and cannot be deleted`,
         });
         continue;
@@ -1776,6 +1784,7 @@ export class ProductsService {
       for (const id of refused) {
         skipped.push({
           id,
+          code: API_ERROR_CODES.FAMILY_HAS_ACTIVE_VARIANTS,
           reason: `${nameById.get(id) ?? id} has variants that are still active; delete or archive them first`,
         });
       }
