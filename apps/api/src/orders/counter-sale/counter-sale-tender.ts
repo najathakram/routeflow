@@ -96,17 +96,23 @@ export interface SaleTenderPlan {
   refusal?: string;
 }
 
-/** Each invoice's balance BEFORE any tender of this sale (total less wallet credit applied), in cents. */
+/**
+ * Each invoice's balance BEFORE any tender of this sale (total less wallet credit applied), in cents. Clamped at 0:
+ * credit above the total owes nothing (the sale is already committed, so this must never throw).
+ */
 export function preTenderBalances(
   invoices: InvoiceRow[],
 ): Array<{ id: string; balanceCents: number }> {
   return invoices.map((i) => ({
     id: i.id,
-    balanceCents: dollarsToCents(
-      roundMoney(
-        remainingCapacity(
-          Number(i.total),
-          (i.payments ?? []).filter((p) => !isTender(p)),
+    balanceCents: Math.max(
+      0,
+      dollarsToCents(
+        roundMoney(
+          remainingCapacity(
+            Number(i.total),
+            (i.payments ?? []).filter((p) => !isTender(p)),
+          ),
         ),
       ),
     ),

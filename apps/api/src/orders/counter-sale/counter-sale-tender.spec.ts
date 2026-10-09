@@ -60,6 +60,26 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
     });
   });
 
+  it("an invoice whose credit exceeds its total owes nothing (clamped at 0), not a MoneyInvariantError after the sale committed", () => {
+    const overCredited = inv("a", 40, [pay("cn", 50, "CREDIT_NOTE")]);
+    expect(planSaleTender([overCredited], [{ method: "CASH", amount: 20 }])).toEqual({
+      placements: [],
+      changeCents: 0,
+    });
+    // a split over an over-credited sibling plans against the other invoice only
+    const out = planSaleTender(
+      [overCredited, inv("b", 30)],
+      [
+        { method: "CARD", amount: 10 },
+        { method: "CASH", amount: 30 },
+      ],
+    );
+    expect(out.placements).toEqual([
+      { legIndex: 0, invoiceId: "b", amountCents: 1000 },
+      { legIndex: 1, invoiceId: "b", amountCents: 2000 },
+    ]);
+  });
+
   it("the plan is against the PRE-tender balance: stored tender rows do not shrink it, wallet credit does", () => {
     const stored = inv("a", 40, [pay("cn", 10, "CREDIT_NOTE"), pay("p1", 30, "CASH", "g")]);
     expect(planSaleTender([stored], [{ method: "CASH", amount: 30 }]).placements).toEqual([
