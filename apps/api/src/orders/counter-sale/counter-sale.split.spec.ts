@@ -51,6 +51,7 @@ describe("CounterSaleService.ring: split payments", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let invoices: Inv[];
   let written: boolean;
+  let replay: boolean;
   let createSale: jest.Mock;
   let recordPayment: jest.Mock;
   let walkIns: { getOrCreateWalkIn: jest.Mock };
@@ -79,8 +80,11 @@ describe("CounterSaleService.ring: split payments", () => {
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 70, 1)];
     written = false;
+    replay = false;
     createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
-      await sale?.beforeWrite?.({ total: total() });
+      // create() answers a replay from its pre-check, before pricing: it never calls beforeWrite then.
+      if (replay) sale?.onReplay?.({ id: "ord-1", counterSale: true });
+      else await sale?.beforeWrite?.({ total: total() });
       written = true;
       return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
     });
@@ -442,6 +446,191 @@ describe("CounterSaleService.ring: split payments", () => {
         staff,
       );
       expect(r).toMatchObject({ method: "CASH", paid: 70, change: 30, paymentRecorded: true });
+    });
+  });
+
+  describe("replay of a split under the same Idempotency-Key (tests 5, 6, 7, 9)", () => {
+    const G0 = legGroupId("ord-1", 0);
+    const G1 = legGroupId("ord-1", 1);
+    const split = (card = 30, cash = 50) => [
+      { method: "CARD", amount: card },
+      { method: "CASH", amount: cash },
+    ];
+    const row = (id: string, amount: number, method: string, group: string | null): Pay => ({
+      id,
+      amount,
+      method,
+      status: "PAID",
+      paymentGroupId: group,
+    });
+
+    it("card recorded, cash not: the replay records ONLY the cash leg, and the sale ends fully paid with change", async () => {
+      invoices = [inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0)])];
+      replay = true;
+      const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
+      expect(recordPayment.mock.calls.map((c) => [c[1].method, c[1].amount, c[2]])).toEqual([
+        ["CASH", 40, { paymentGroupId: G1 }],
+      ]);
+      expect(r).toMatchObject({
+        replayed: true,
+        paid: 70,
+        balanceDue: 0,
+        change: 10,
+        paymentRecorded: true,
+      });
+    });
+
+    it("a fully stored split replays with NO new row and the same answer", async () => {
+      invoices = [
+        inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0), row("p1", 40, "CASH", G1)]),
+      ];
+      replay = true;
+      const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ replayed: true, paid: 70, change: 10, paymentRecorded: true });
+    });
+
+    it("a held pre-deploy attempt: a seeded UNGROUPED card row + the old {payment} replay -> no second charge", async () => {
+      invoices = [inv("inv-1", 70, 1, [row("old", 70, "CREDIT_CARD", null)])];
+      replay = true;
+      const r = await service.ring(walkInSale({ payment: { method: "CARD" } }), staff, "key-1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({
+        replayed: true,
+        paid: 70,
+        balanceDue: 0,
+        paymentRecorded: true,
+        method: "CARD",
+      });
+    });
+
+    it("a short stored sum resumes: only the per-(leg, invoice) shortfall is recorded", async () => {
+      invoices = [inv("inv-1", 50, 1), inv("inv-2", 20, 2)];
+      invoices[0].payments = [row("p0", 20, "CREDIT_CARD", G0)]; // leg 0 planned 30 on inv-1
+      replay = true;
+      await service.ring(walkInSale({ payments: split() }), staff, "key-1");
+      expect(recordPayment.mock.calls.map((c) => [c[0], c[1].method, c[1].amount])).toEqual([
+        ["inv-1", "CREDIT_CARD", 10],
+        ["inv-1", "CASH", 20],
+        ["inv-2", "CASH", 20],
+      ]);
+    });
+
+    describe("COUNTER_TENDER_CHANGED (409) leaves everything as it was", () => {
+      const refused = async (body: any) => {
+        replay = true;
+        const err = await errorOf(service.ring(walkInSale(body), staff, "key-1"));
+        expect(err.getStatus()).toBe(409);
+        expect(err.getResponse().code).toBe("COUNTER_TENDER_CHANGED");
+        expect(recordPayment).not.toHaveBeenCalled();
+      };
+
+      it("a split meeting a pre-split attempt's ungrouped rows", async () => {
+        invoices = [inv("inv-1", 70, 1, [row("old", 30, "CREDIT_CARD", null)])];
+        await refused({ payments: split() });
+      });
+
+      it("leg 0's method differs from the stored one (ungrouped and grouped)", async () => {
+        invoices = [inv("inv-1", 70, 1, [row("old", 70, "CREDIT_CARD", null)])];
+        await refused({ payment: { method: "CASH" } });
+        invoices = [inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0)])];
+        await refused({
+          payments: [
+            { method: "CHECK", amount: 30, reference: "1" },
+            { method: "CASH", amount: 40 },
+          ],
+        });
+      });
+
+      it("a stored later leg has a different method", async () => {
+        invoices = [
+          inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0), row("p1", 40, "CHECK", G1)]),
+        ];
+        await refused({ payments: split() });
+      });
+
+      it("a stored leg index at or beyond the request's leg count", async () => {
+        invoices = [
+          inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0), row("p1", 40, "CASH", G1)]),
+        ];
+        await refused({ payment: { method: "CARD", amount: 30 } });
+      });
+
+      it("a stored leg sum above its planned placement (a smaller card amount this time)", async () => {
+        invoices = [inv("inv-1", 70, 1, [row("p0", 30, "CREDIT_CARD", G0)])];
+        await refused({ payments: split(20, 50) });
+      });
+
+      it("an amount above the plan on one invoice is never topped up on another", async () => {
+        invoices = [inv("inv-1", 50, 1), inv("inv-2", 20, 2)];
+        invoices[1].payments = [row("p0", 20, "CREDIT_CARD", G0)]; // leg 0 planned 30 on inv-1, 0 on inv-2
+        await refused({ payments: split() });
+      });
+    });
+
+    it("rows with no group id of this sale (an office payment later) are not part of a grouped replay", async () => {
+      invoices = [
+        inv("inv-1", 100, 1, [row("p0", 30, "CREDIT_CARD", G0), row("office", 20, "CASH", null)]),
+      ];
+      replay = true;
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 70 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      // office's 20 never counts as leg 1's cash: the cash leg's 70 is recorded, capped by capacity (50)
+      expect(recordPayment.mock.calls.map((c) => [c[1].method, c[2]])).toEqual([
+        ["CASH", { paymentGroupId: G1 }],
+      ]);
+    });
+  });
+
+  describe("invoices are read oldest first with a total order (test 9)", () => {
+    it("readInvoices orders by createdAt then id", async () => {
+      await service.ring(walkInSale({ payments: [{ method: "CASH", amount: 70 }] }), staff);
+      const reads = prisma.invoice.findMany.mock.calls.map((c: any[]) => c[0]);
+      expect(reads.length).toBeGreaterThan(0);
+      for (const r of reads) expect(r.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    });
+
+    it("two invoices created in the same instant are tendered in id order, whatever order storage hands them back", async () => {
+      // storage ignores ORDER BY in this mock: emulate the database honouring the requested order
+      const same = new Date(2026, 9, 4, 12, 0, 0);
+      const b = { ...inv("inv-b", 20, 1), createdAt: same };
+      const a = { ...inv("inv-a", 50, 1), createdAt: same };
+      invoices = [b, a];
+      prisma.invoice.findMany.mockImplementation(async ({ orderBy }: any) => {
+        const keys = (Array.isArray(orderBy) ? orderBy : [orderBy]).map(
+          (o: any) => Object.keys(o)[0],
+        );
+        const sorted = [...invoices].sort((x: any, y: any) => {
+          for (const k of keys) {
+            const d = x[k] < y[k] ? -1 : x[k] > y[k] ? 1 : 0;
+            if (d) return d;
+          }
+          return 0;
+        });
+        return sorted.map((i) => ({ ...i, payments: [...i.payments] }));
+      });
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 50 },
+          ],
+        }),
+        staff,
+      );
+      expect(recordPayment.mock.calls.map((c) => [c[0], c[1].amount])).toEqual([
+        ["inv-a", 30],
+        ["inv-a", 20],
+        ["inv-b", 20],
+      ]);
     });
   });
 });

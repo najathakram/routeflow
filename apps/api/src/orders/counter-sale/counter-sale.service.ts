@@ -27,6 +27,7 @@ import { AuditService } from "../../audit/audit.service";
 import { buildCounterSaleResponse } from "./counter-sale-readback";
 import {
   legGroupId,
+  assertStoredTenderMatches,
   planSaleTender,
   readStoredTender,
   type InvoiceRow,
@@ -301,6 +302,7 @@ export class CounterSaleService {
     // not "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const plan = planSaleTender(invoices, legs);
     const stored = readStoredTender(orderId, invoices);
+    assertStoredTenderMatches(stored, legs, plan.placements);
     if (plan.refusal) {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (stored.byLeg.size === 0) planError = plan.refusal;
@@ -430,7 +432,9 @@ export class CounterSaleService {
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
       include: { payments: true },
-      orderBy: { createdAt: "asc" },
+      // Oldest first, with the id as the tie-break: two invoices of one order can share a createdAt, and the
+      // tender is placed (and replayed) oldest-first, so the order must be total.
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
   }
 }

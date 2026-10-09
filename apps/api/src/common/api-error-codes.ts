@@ -224,6 +224,8 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
+  /** 409 from the counter-sale POST replay: the stored tender of this sale no longer matches the legs sent with the same Idempotency-Key. Check the sale; do not re-ring. */
+  COUNTER_TENDER_CHANGED: "COUNTER_TENDER_CHANGED",
   /** 400 from the counter-sale POST: both `payment` and `payments` were sent (or the body carries neither). Send exactly one. */
   COUNTER_PAYMENT_SHAPE_CONFLICT: "COUNTER_PAYMENT_SHAPE_CONFLICT",
   /** 400 from the counter-sale POST: more tender legs than the counter allows (TENDER_RULES.counter.maxLegs). */

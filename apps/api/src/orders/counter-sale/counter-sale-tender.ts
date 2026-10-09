@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import {
   TENDER_RULES,
   dollarsToCents,
@@ -9,6 +10,7 @@ import {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { uuidv5 } from "../../common/uuidv5";
 import type { CounterLegInput } from "./counter-sale-legs";
+import { toPrismaMethod } from "./counter-sale-payment";
 
 export type InvoiceRow = {
   id: string;
@@ -143,4 +145,44 @@ export function planSaleTender(invoices: InvoiceRow[], legs: CounterLegInput[]):
     return { ...none, refusal: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL };
   }
   return { placements: plan.placements, changeCents: plan.changeCents };
+}
+
+const changed = (why: string) =>
+  new ConflictException({
+    code: API_ERROR_CODES.COUNTER_TENDER_CHANGED,
+    message: `This sale's payment no longer matches what was already taken (${why}). Check the sale before taking payment again.`,
+  });
+
+/**
+ * A replay (same Idempotency-Key) must be the SAME tender, or a resume of it. Refused 409
+ * COUNTER_TENDER_CHANGED, before anything more is recorded, when the stored rows cannot be this request's
+ * legs: a split meeting a pre-split attempt's ungrouped rows, a stored leg this request does not have, a
+ * stored leg with another method, or a stored amount above the planned placement (per leg and invoice, so
+ * money is never topped up on another invoice). A stored amount BELOW the plan is an interrupted attempt:
+ * it resumes (only the shortfall is recorded).
+ */
+export function assertStoredTenderMatches(
+  stored: StoredTender,
+  legs: CounterLegInput[],
+  placements: TenderPlacement[],
+): void {
+  if (stored.legacy && legs.length > 1) throw changed("a one-payment sale replayed as a split");
+  for (const [idx, rows] of stored.byLeg) {
+    const leg = legs[idx];
+    if (!leg) throw changed(`payment ${idx + 1} is not in this request`);
+    const method = toPrismaMethod(leg.method as Parameters<typeof toPrismaMethod>[0]);
+    if (rows.some((r) => r.payment.method !== method)) {
+      throw changed(`payment ${idx + 1} was taken by another method`);
+    }
+    for (const invoiceId of new Set(rows.map((r) => r.invoiceId))) {
+      const have = rows
+        .filter((r) => r.invoiceId === invoiceId)
+        .reduce((s, r) => s + r.amountCents, 0);
+      const planned = placements
+        .filter((p) => p.legIndex === idx && p.invoiceId === invoiceId)
+        .reduce((s, p) => s + p.amountCents, 0);
+      if (have > planned)
+        throw changed(`payment ${idx + 1} was taken for more than this request asks`);
+    }
+  }
 }
