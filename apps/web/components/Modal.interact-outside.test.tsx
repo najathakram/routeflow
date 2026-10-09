@@ -29,7 +29,7 @@ describe("Modal onInteractOutside (opt-in)", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("a press inside a body-portalled AnchoredList is not an outside interaction", async () => {
+  const pressOnList = async (owner: (dialog: HTMLElement) => string) => {
     const onClose = jest.fn();
     render(
       <Modal open onClose={onClose} title="T">
@@ -38,10 +38,19 @@ describe("Modal onInteractOutside (opt-in)", () => {
     );
     const list = document.createElement("div");
     list.setAttribute("data-anchored-list", "");
+    list.setAttribute("data-anchored-owner", owner(screen.getByRole("dialog")));
     document.body.appendChild(list);
     await new Promise((r) => setTimeout(r, 20));
     fireEvent.pointerDown(list);
-    expect(onClose).not.toHaveBeenCalled();
     list.remove();
+    return onClose;
+  };
+
+  it("a press inside a list anchored in THIS dialog is not an outside interaction", async () => {
+    expect(await pressOnList((d) => d.id)).not.toHaveBeenCalled();
+  });
+
+  it("a list anchored in a different dialog does not exempt this one", async () => {
+    expect(await pressOnList(() => "some-other-dialog")).toHaveBeenCalled();
   });
 });

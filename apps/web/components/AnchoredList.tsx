@@ -22,6 +22,7 @@ export function isInsideAnchoredList(target: EventTarget | null): boolean {
 }
 
 interface Placement {
+  owner: string;
   left: number;
   width: number;
   top?: number;
@@ -55,6 +56,7 @@ export function AnchoredList({
     const flip = below < Math.min(maxHeight, 160) && above > below;
     const room = Math.max(flip ? above : below, 80);
     setPlace({
+      owner: el.closest('[role="dialog"]')?.id ?? "",
       left: r.left,
       width: r.width,
       maxHeight: Math.min(maxHeight, room),
@@ -94,7 +96,7 @@ export function AnchoredList({
   return createPortal(
     <div
       ref={listRef}
-      {...{ [LIST_ATTR]: "" }}
+      {...{ [LIST_ATTR]: "", "data-anchored-owner": place.owner }}
       className={cn(
         "pointer-events-auto overflow-y-auto overscroll-contain rounded-lg border border-surface-border bg-white shadow-dropdown",
         className,

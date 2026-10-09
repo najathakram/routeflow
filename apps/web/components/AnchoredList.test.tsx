@@ -125,3 +125,20 @@ describe("scrolling a portalled list inside a Radix Modal", () => {
     },
   );
 });
+
+describe("a combo's list inside its own Modal", () => {
+  it("a press on the list does not dismiss the dialog", async () => {
+    const onClose = jest.fn();
+    render(
+      <Modal open onClose={onClose} title="T">
+        <UnitCombobox value="" onChange={jest.fn()} />
+      </Modal>,
+    );
+    fireEvent.focus(screen.getByRole("textbox"));
+    await new Promise((r) => setTimeout(r, 20));
+    const list = screen.getByRole("button", { name: "case" }).closest("[data-anchored-list]")!;
+    expect(list.getAttribute("data-anchored-owner")).toBe(screen.getByRole("dialog").id);
+    fireEvent.pointerDown(list);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
