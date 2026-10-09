@@ -77,7 +77,8 @@ export type ReleaseOutcome =
  * by design): (1) in Stripe, decide what the tenant really paid; (2) void the superseded RfInvoices by hand
  * (platform-admin RfInvoice "void") ONLY for periods the card subscription now covers; (3) then, with a fresh
  * backup, clear the claim in ONE statement: UPDATE "TenantSubscription" SET "catchupState"=NULL,
- * "catchupSessionId"=NULL, "catchupInvoiceId"=NULL WHERE "tenantId"=<id> (keep the card subscription), or - to go
+ * "catchupSessionId"=NULL, "catchupInvoiceId"=NULL WHERE "tenantId"=<id> AND "catchupState" IS NOT NULL (keep the
+ * card subscription), or - to go
  * back to manual invoicing - cancel the Stripe subscription first and also set "stripeSubId"=NULL,
  * "externalPayment"=true in that statement. Never clear it while an invoice is still unpaid and retrying.
  *
