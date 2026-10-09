@@ -104,6 +104,7 @@ const FILES: Pin[] = [
     present: [
       "aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}",
       "aria-label={`Remove extra ${w.base.lowerOther}`}",
+      'li.sellBy === "unit" ? w.base.one : w.pack.one', // the price label follows the mode's word
     ],
   },
   {
