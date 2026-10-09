@@ -119,6 +119,10 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-1" }]);
     prisma.invoice.findMany.mockResolvedValue([paidInvoice()]);
+    // SA-749r2 item 9: the cash applied to the source sale (the cap reads it under the locks): $30 in cash on src-order-1
+    prisma.invoicePayment.findMany.mockResolvedValue([
+      { amount: 30, invoice: { orderId: "src-order-1" } },
+    ]);
     prisma.auditLog.create.mockResolvedValue({});
     prisma.auditLog.findFirst.mockResolvedValue(null);
     creditNotes = {
@@ -278,6 +282,53 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/);
     expect(rawCalls[1]).toMatch(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
     expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
+  });
+
+  describe("SA-749r2 item 9: a CASH refund may not exceed the cash applied to the sale minus earlier cash refunds", () => {
+    it("cash applied 20 of a 30.00 return: a CASH refund is 409 REFUND_EXCEEDS_CASH_PAID carrying the maximum, nothing written", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 20, invoice: { orderId: "src-order-1" } },
+      ]);
+      const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 20,
+        requested: 30,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("the same refund by CARD or CHECK is not capped (card and check limits wait for their own reports)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      for (const tender of ["CARD", "CHECK"]) {
+        prisma.return.updateMany.mockClear();
+        row = receivedReturn();
+        await expect(
+          service.refund("ret-1", { ...REFUND, tender }, OPERATOR),
+        ).resolves.toBeDefined();
+        expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it("an earlier cash refund of 12.00 on the sale leaves 18.00: a 30.00 cash refund is refused", async () => {
+      prisma.returnItem.findMany.mockResolvedValue([
+        { sourceOrderId: "src-order-1", subtotal: 12, taxAmount: 0, categoryTax: 0 },
+      ]);
+      const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 18,
+      });
+    });
+
+    it("the cap runs under the order and invoice locks, before the claim", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      await service.refund("ret-1", REFUND, OPERATOR).catch(() => undefined);
+      expect(rawCalls).toHaveLength(3); // Return, Orders, Invoices all taken before the refusal
+      expect(prisma.invoicePayment.findMany.mock.invocationCallOrder[0]).toBeGreaterThan(0);
+    });
   });
 
   describe("SA-740r2 item 6: the shared counter-close lock is the FIRST statement for a counter order", () => {

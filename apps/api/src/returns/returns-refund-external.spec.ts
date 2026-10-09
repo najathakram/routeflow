@@ -51,6 +51,10 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.return.findFirst.mockResolvedValue({ id: "ret-1", status: "RECEIVED" });
+    // SA-749r2 item 9: the cash applied to the order (the cap reads it under the locks): $100 in cash on ord-1
+    prisma.invoicePayment.findMany.mockResolvedValue([
+      { amount: 100, invoice: { orderId: "ord-1" } },
+    ]);
     const mod = await Test.createTestingModule({
       providers: [
         ReturnsService,
@@ -216,6 +220,41 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       setReturn();
       await refund({ tender });
       expect(prisma.return.updateMany.mock.calls[0][0].data.refundTender).toBe(column);
+    });
+  });
+
+  describe("SA-749r2 item 9: the cash cap applies to the STANDARD refund too", () => {
+    it("a CASH refund above the cash applied to the order (less earlier cash refunds) is 409 REFUND_EXCEEDS_CASH_PAID", async () => {
+      setReturn();
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 15, invoice: { orderId: "ord-1" } },
+      ]);
+      const err: any = await refund({ tender: "CASH" }).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 15,
+        requested: 20,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("an earlier cash refund of the order (unknown tender counts as cash) reduces the room", async () => {
+      setReturn();
+      prisma.return.findMany.mockResolvedValue([{ orderId: "ord-1", refundAmount: 90 }]);
+      expect((await refund({ tender: "CASH" }).catch((e) => e)).getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 10,
+      });
+    });
+
+    it("CARD, CHECK and an omitted tender are not capped", async () => {
+      setReturn();
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      for (const dto of [{ tender: "CARD" }, { tender: "CHECK" }, {}]) {
+        prisma.return.updateMany.mockClear();
+        await expect(refund(dto)).resolves.toBeDefined();
+      }
     });
   });
 

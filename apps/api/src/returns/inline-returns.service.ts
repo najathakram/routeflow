@@ -78,6 +78,7 @@ import {
   lockRefundOrders,
   type RefundTender,
 } from "./inline-return-refund";
+import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
 import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
@@ -1443,6 +1444,13 @@ export class InlineReturnsService {
       // paid in full AND none of it store credit (F4, read under the same invoice locks)
       const refusal = refundSourcesRefusal(src);
       if (refusal) throw refusal;
+      // SA-749r2 item 9: a CASH refund may not exceed the cash applied to each source sale minus earlier cash refunds on it
+      // (read under the order and invoice locks held here, so two refunds cannot both spend the same room)
+      await assertCashRefundWithinCap(tx, {
+        returnId: id,
+        tender: dto.tender,
+        perOrder: refundAmountsBySale(fresh.items as any[], amount),
+      });
 
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({

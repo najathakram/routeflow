@@ -54,6 +54,7 @@ import {
   resolveRefundInvoiceIds,
   type RefundTender,
 } from "./inline-return-refund";
+import { assertCashRefundWithinCap } from "./cash-refund-cap";
 import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import { refundTenderData } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
@@ -1378,6 +1379,14 @@ export class ReturnsService {
       });
       const refusal = refundSourcesRefusal(state);
       if (refusal) throw refusal;
+      // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
+      if (orderId) {
+        await assertCashRefundWithinCap(tx, {
+          returnId: id,
+          tender,
+          perOrder: new Map([[orderId, refundAmount]]),
+        });
+      }
       const claimed = await tx.return.updateMany({
         where: { id, status: "RECEIVED" },
         data: {

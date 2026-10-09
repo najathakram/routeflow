@@ -480,6 +480,8 @@ export const API_ERROR_CODES = {
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
   REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /** SA-749r2 item 9: a CASH refund above the cash applied to the sale minus the cash already refunded on it. 409; carries `maxCashRefund`. */
+  REFUND_EXCEEDS_CASH_PAID: "REFUND_EXCEEDS_CASH_PAID",
   /**
    * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
    * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
