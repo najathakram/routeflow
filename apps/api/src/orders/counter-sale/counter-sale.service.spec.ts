@@ -120,18 +120,21 @@ describe("CounterSaleService.ring", () => {
       return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
     });
     findReplayCandidateByKey = jest.fn(async () => null);
-    recordPayment = jest.fn(async (invoiceId: string, dto: any) => {
-      const target = invoices.find((i) => i.id === invoiceId)!;
-      if (target.payments.some((p) => p.status !== "VOID" && p.method !== "CREDIT_NOTE"))
-        throw new BadRequestException("Invoice is already fully paid");
-      target.payments.push({
-        id: `pay-${invoiceId}`,
-        amount: dto.amount,
-        method: dto.method,
-        status: "PAID",
-      });
-      return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
-    });
+    recordPayment = jest.fn(
+      async (invoiceId: string, dto: any, opts?: { paymentGroupId?: string }) => {
+        const target = invoices.find((i) => i.id === invoiceId)!;
+        if (target.payments.some((p) => p.status !== "VOID" && p.method !== "CREDIT_NOTE"))
+          throw new BadRequestException("Invoice is already fully paid");
+        target.payments.push({
+          id: `pay-${invoiceId}`,
+          amount: dto.amount,
+          method: dto.method,
+          status: "PAID",
+          paymentGroupId: opts?.paymentGroupId ?? null, // as the real create stores it
+        });
+        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+      },
+    );
     walkIn = { getOrCreateWalkIn: jest.fn().mockResolvedValue("cust-walkin") };
     reader = { get: jest.fn().mockResolvedValue(cap("optional")) };
     audit = { log: jest.fn().mockResolvedValue(undefined) };
@@ -745,18 +748,21 @@ describe("CounterSaleService.ring", () => {
 
     it("two concurrent same-key SHORT tenders record exactly ONE payment", async () => {
       // A slow recordPayment holds the race window open: without the lock both calls read 'no tender yet'.
-      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
-        await tick();
-        invoices
-          .find((i) => i.id === invoiceId)!
-          .payments.push({
-            id: `pay-${invoiceId}`,
-            amount: dto.amount,
-            method: dto.method,
-            status: "PAID",
-          });
-        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
-      });
+      recordPayment.mockImplementation(
+        async (invoiceId: string, dto: any, opts?: { paymentGroupId?: string }) => {
+          await tick();
+          invoices
+            .find((i) => i.id === invoiceId)!
+            .payments.push({
+              id: `pay-${invoiceId}`,
+              amount: dto.amount,
+              method: dto.method,
+              status: "PAID",
+              paymentGroupId: opts?.paymentGroupId ?? null, // as the real create stores it
+            });
+          return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+        },
+      );
       const [a, b] = await Promise.all([
         service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
         service.ring(named({ method: "CASH", amount: 20 }) as never, staff, "k"),
@@ -799,19 +805,22 @@ describe("CounterSaleService.ring", () => {
     it("a replay after a failed sibling allocation RESUMES: only the missing part is recorded, paid = total", async () => {
       invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
       let failSibling = true;
-      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
-        if (invoiceId === "inv-2" && failSibling)
-          throw new BadRequestException("regulated refused");
-        invoices
-          .find((i) => i.id === invoiceId)!
-          .payments.push({
-            id: `pay-${invoiceId}`,
-            amount: dto.amount,
-            method: dto.method,
-            status: "PAID",
-          });
-        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
-      });
+      recordPayment.mockImplementation(
+        async (invoiceId: string, dto: any, opts?: { paymentGroupId?: string }) => {
+          if (invoiceId === "inv-2" && failSibling)
+            throw new BadRequestException("regulated refused");
+          invoices
+            .find((i) => i.id === invoiceId)!
+            .payments.push({
+              id: `pay-${invoiceId}`,
+              amount: dto.amount,
+              method: dto.method,
+              status: "PAID",
+              paymentGroupId: opts?.paymentGroupId ?? null, // as the real create stores it
+            });
+          return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+        },
+      );
       const first = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       expect(first).toMatchObject({ paid: 30, balanceDue: 20, paymentRecorded: false });
 
@@ -860,18 +869,21 @@ describe("CounterSaleService.ring", () => {
 
     it("a replay whose resume still cannot record: paymentRecorded:false, NO change, balanceDue stays 20", async () => {
       invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
-      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
-        if (invoiceId === "inv-2") throw new BadRequestException("regulated refused");
-        invoices
-          .find((i) => i.id === invoiceId)!
-          .payments.push({
-            id: `pay-${invoiceId}`,
-            amount: dto.amount,
-            method: dto.method,
-            status: "PAID",
-          });
-        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
-      });
+      recordPayment.mockImplementation(
+        async (invoiceId: string, dto: any, opts?: { paymentGroupId?: string }) => {
+          if (invoiceId === "inv-2") throw new BadRequestException("regulated refused");
+          invoices
+            .find((i) => i.id === invoiceId)!
+            .payments.push({
+              id: `pay-${invoiceId}`,
+              amount: dto.amount,
+              method: dto.method,
+              status: "PAID",
+              paymentGroupId: opts?.paymentGroupId ?? null, // as the real create stores it
+            });
+          return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+        },
+      );
       await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       replay = true;
       const again = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
@@ -907,18 +919,21 @@ describe("CounterSaleService.ring", () => {
 
     it("a sibling-invoice allocation that throws reports paymentRecorded:false + a code, never a 500 or a silent true; paid/balance come from storage", async () => {
       invoices = [inv("inv-1", 30, [], 1), inv("inv-2", 20, [], 2)];
-      recordPayment.mockImplementation(async (invoiceId: string, dto: any) => {
-        if (invoiceId === "inv-2") throw new BadRequestException("regulated line refused");
-        invoices
-          .find((i) => i.id === invoiceId)!
-          .payments.push({
-            id: `pay-${invoiceId}`,
-            amount: dto.amount,
-            method: dto.method,
-            status: "PAID",
-          });
-        return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
-      });
+      recordPayment.mockImplementation(
+        async (invoiceId: string, dto: any, opts?: { paymentGroupId?: string }) => {
+          if (invoiceId === "inv-2") throw new BadRequestException("regulated line refused");
+          invoices
+            .find((i) => i.id === invoiceId)!
+            .payments.push({
+              id: `pay-${invoiceId}`,
+              amount: dto.amount,
+              method: dto.method,
+              status: "PAID",
+              paymentGroupId: opts?.paymentGroupId ?? null, // as the real create stores it
+            });
+          return { id: invoiceId, createdPaymentId: `pay-${invoiceId}` };
+        },
+      );
       const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       expect(r).toMatchObject({
         total: 50,
