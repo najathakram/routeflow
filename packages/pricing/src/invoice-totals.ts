@@ -11,9 +11,12 @@ import { computeLineSubtotal, roundMoney, type LineSubtotalInput } from "./prici
  * floats instead shows 0.30000000000000004-class drift (L-170: round before the value drives
  * anything).
  *
- * It is NOT the server's stored total. The server also (1) adds the regulated CATEGORY tax to the
- * invoice tax and (2) zeroes all tax for a tax-exempt customer; this estimate models neither, so a
- * footer can differ from the saved invoice for such lines or customers.
+ * B1043: the arithmetic below `computeInvoiceLineTotal` is `sumInvoiceTotals`, the ONE formula the
+ * server's invoice writers (create, edit, duplicate, estimate convert, the header-only PATCH) share
+ * with this footer. It models the regulated CATEGORY tax (`line.categoryTaxAmount`) and a
+ * tax-exempt customer (`opts.isTaxExempt`: $0 of BOTH taxes) when the caller passes them. A form that
+ * omits those inputs still gets the plain regular-tax estimate, so a footer can differ from the saved
+ * invoice for a levy line or an exempt customer the form did not tell it about.
  *
  * Pure and framework-free: web builder/edit forms and the estimate footer import it, never
  * re-deriving `qty * unitPrice` (over-charges a boxed line by `unitsPerBox`).
@@ -25,6 +28,8 @@ export interface InvoiceTotalsLine extends LineSubtotalInput {
   taxable?: boolean | null;
   /** This line's own tax rate as a fraction (0.08 = 8%). Wins over the invoice-level `taxRate`. */
   taxRate?: number | null;
+  /** This line's regulated CATEGORY (levy) tax in money. Folded into `tax` unless exempt. Default 0. */
+  categoryTaxAmount?: number | null;
 }
 
 export interface InvoiceTotalsOptions {
@@ -34,15 +39,45 @@ export interface InvoiceTotalsOptions {
   shipping?: number | null;
   /** Invoice-level tax rate as a fraction, applied to every line that is not `taxable: false`. */
   taxRate?: number | null;
+  /** Tax-exempt customer: $0 of BOTH the regular tax and the category tax. Default false. */
+  isTaxExempt?: boolean | null;
 }
 
 export interface InvoiceTotals {
   /** Each line's post-discount, boxed-aware, rounded total. Same order as input. */
   lineTotals: number[];
   subtotal: number;
+  /** `roundMoney(regularTax + categoryTax)` - what the invoice stores as its tax. */
   tax: number;
+  /** The sales-tax part: `exempt ? 0 : roundMoney(sum of line x rate)`. */
+  regularTax: number;
+  /** The regulated category (levy) part: `exempt ? 0 : roundMoney(sum of levy)`. */
+  categoryTax: number;
   discount: number;
   shipping: number;
+  total: number;
+}
+
+/** One already-priced line as `sumInvoiceTotals` reads it: its stored (post-discount) subtotal, rate and levy. */
+export interface SummedInvoiceLine {
+  subtotal: number;
+  /** This line's tax rate as a fraction. Default 0. */
+  taxRate?: number | null;
+  /** This line's regulated category tax in money. Default 0. */
+  categoryTaxAmount?: number | null;
+}
+
+export interface SumInvoiceTotalsOptions {
+  discount?: number | null;
+  shipping?: number | null;
+  isTaxExempt?: boolean | null;
+}
+
+export interface SummedInvoiceTotals {
+  subtotal: number;
+  regularTax: number;
+  categoryTax: number;
+  tax: number;
   total: number;
 }
 
@@ -69,22 +104,58 @@ export function computeInvoiceLineTotal(line: InvoiceTotalsLine): number {
   return roundMoney(before - finite(line.discount));
 }
 
+/**
+ * B1043: THE invoice-totals formula, over lines whose subtotals are already priced (stored rows, or
+ * `computeInvoiceLineTotal` outputs). Every writer and the client footer call this; none re-derives it.
+ *
+ *   subtotal    = round(sum s)
+ *   regularTax  = exempt ? 0 : round(sum s*r)      (summed UNROUNDED across lines, rounded ONCE)
+ *   categoryTax = exempt ? 0 : round(sum levy)
+ *   tax         = round(regularTax + categoryTax)
+ *   total       = round(subtotal - discount + shipping + tax)
+ *
+ * Pure: never mutates `lines`. Each line carries its own `taxRate` (mixed rates). Sums run in row order.
+ */
+export function sumInvoiceTotals(
+  lines: readonly SummedInvoiceLine[],
+  opts: SumInvoiceTotalsOptions = {},
+): SummedInvoiceTotals {
+  const exempt = opts.isTaxExempt === true;
+  const subtotal = roundMoney(lines.reduce((s, l) => s + finite(l.subtotal), 0));
+  const regularTax = exempt
+    ? 0
+    : roundMoney(lines.reduce((s, l) => s + finite(l.subtotal) * finite(l.taxRate), 0));
+  const categoryTax = exempt
+    ? 0
+    : roundMoney(lines.reduce((s, l) => s + finite(l.categoryTaxAmount), 0));
+  const tax = roundMoney(regularTax + categoryTax);
+  const total = roundMoney(subtotal - finite(opts.discount) + finite(opts.shipping) + tax);
+  return { subtotal, regularTax, categoryTax, tax, total };
+}
+
 export function computeInvoiceTotals(
   lines: readonly InvoiceTotalsLine[],
   opts: InvoiceTotalsOptions = {},
 ): InvoiceTotals {
   const lineTotals = lines.map(computeInvoiceLineTotal);
-  const subtotal = roundMoney(lineTotals.reduce((s, t) => s + t, 0));
   const defaultRate = finite(opts.taxRate);
-  const tax = roundMoney(
-    lines.reduce((s, line, i) => {
-      const rate =
-        line.taxRate != null ? finite(line.taxRate) : line.taxable === false ? 0 : defaultRate;
-      return s + lineTotals[i] * rate;
-    }, 0),
+  const summed = sumInvoiceTotals(
+    lines.map((line, i) => ({
+      subtotal: lineTotals[i],
+      taxRate:
+        line.taxRate != null ? finite(line.taxRate) : line.taxable === false ? 0 : defaultRate,
+      categoryTaxAmount: line.categoryTaxAmount,
+    })),
+    { discount: opts.discount, shipping: opts.shipping, isTaxExempt: opts.isTaxExempt },
   );
-  const discount = finite(opts.discount);
-  const shipping = finite(opts.shipping);
-  const total = roundMoney(subtotal - discount + shipping + tax);
-  return { lineTotals, subtotal, tax, discount, shipping, total };
+  return {
+    lineTotals,
+    subtotal: summed.subtotal,
+    tax: summed.tax,
+    regularTax: summed.regularTax,
+    categoryTax: summed.categoryTax,
+    discount: finite(opts.discount),
+    shipping: finite(opts.shipping),
+    total: summed.total,
+  };
 }
