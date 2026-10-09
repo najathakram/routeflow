@@ -35,6 +35,11 @@ describe("tax rate on the receipt", () => {
   it("carries the rate from the business profile, 8.25 as given", () => {
     expect(live({}, { taxRate: 8.25 }).taxRate).toBe(8.25);
   });
+  it("is null when the adjustment is not exactly tax on the subtotal (category tax, a reprice)", () => {
+    // 2 x 2.50 = 5.00; 8.25% = 0.41, so 5.41 is pure tax; 5.60 carries 0.19 of something else
+    expect(live({ receipt: sale({ total: 5.41 }) }, { taxRate: 8.25 }).taxRate).toBe(8.25);
+    expect(live({ receipt: sale({ total: 5.6 }) }, { taxRate: 8.25 }).taxRate).toBeNull();
+  });
   it("is null when the business charges no tax or the rate is unknown", () => {
     expect(live({}, { taxRate: 0 }).taxRate).toBeNull();
     expect(live({}, null).taxRate).toBeNull();
@@ -89,7 +94,7 @@ describe("a reprint keeps what the order stored", () => {
         .customerName,
     ).toBeNull();
   });
-  it("carries the tax rate too", () => {
-    expect(reprint().taxRate).toBe(8.25);
+  it("never labels a rate: the stored order read carries no invoice-item rate snapshot, and today's setting is not the sale's", () => {
+    expect(reprint().taxRate).toBeNull();
   });
 });

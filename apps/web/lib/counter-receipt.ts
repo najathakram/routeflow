@@ -69,7 +69,10 @@ export interface CounterReceiptModel {
   cashier: string | null;
   /** The customer's name for a named customer; null for a walk-in (nothing is printed). */
   customerName: string | null;
-  /** The business tax rate in percent (8.25), for the `Tax (8.25%)` label; null when none is charged or it is unknown. */
+  /**
+   * The tax rate in percent (8.25) for the `Tax (8.25%)` label; null (label "Tax and adjustments") unless the displayed
+   * adjustment is exactly `roundMoney(taxable x rate / 100)`. A reprint is always null: the order read has no rate snapshot.
+   */
   taxRate: number | null;
   /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
   subtotal: number;
@@ -205,6 +208,11 @@ export function buildCounterReceipt(input: {
   });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
+  const adjustment = roundMoney(receipt.total - netSubtotal);
+  const rate = rateOf(profile);
+  // The adjustment also carries category taxes and any reprice difference: name the rate only when it is the whole story.
+  const taxRate =
+    rate != null && adjustment === roundMoney((netSubtotal * rate) / 100) ? rate : null;
 
   return {
     header: receiptHeader(profile),
@@ -215,10 +223,10 @@ export function buildCounterReceipt(input: {
     lines: rows,
     cashier: clean(input.cashier) || null,
     customerName: clean(input.customerName) || null,
-    taxRate: rateOf(profile),
+    taxRate,
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
-    adjustment: roundMoney(receipt.total - netSubtotal),
+    adjustment,
     total: receipt.total,
     paid: receipt.paid,
     balanceDue: receipt.balanceDue,
@@ -361,7 +369,9 @@ export function receiptModelFromOrder(input: {
       order.customer && !order.customer.isWalkIn
         ? clean(order.customer.businessName) || null
         : null,
-    taxRate: rateOf(profile),
+    // No rate on a reprint: the sale's own rate is the InvoiceItem.taxRate snapshot, which `GET /orders/:id` does not return,
+    // and today's setting may differ from the rate in force when it was rung.
+    taxRate: null,
     subtotal,
     adjustment: roundMoney(order.total - subtotal),
     discounts: 0,
