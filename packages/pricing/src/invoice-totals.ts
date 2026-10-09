@@ -58,13 +58,17 @@ export interface InvoiceTotals {
   total: number;
 }
 
+/** A number, or a Prisma `Decimal` / numeric string read straight off a stored row (coerced with `Number`). */
+export type MoneyLike = number | string | { toString(): string };
+
 /** One already-priced line as `sumInvoiceTotals` reads it: its stored (post-discount) subtotal, rate and levy. */
 export interface SummedInvoiceLine {
-  subtotal: number;
+  /** The line's post-discount subtotal. Default 0. */
+  subtotal?: MoneyLike | null;
   /** This line's tax rate as a fraction. Default 0. */
-  taxRate?: number | null;
+  taxRate?: MoneyLike | null;
   /** This line's regulated category tax in money. Default 0. */
-  categoryTaxAmount?: number | null;
+  categoryTaxAmount?: MoneyLike | null;
 }
 
 export interface SumInvoiceTotalsOptions {
@@ -81,7 +85,7 @@ export interface SummedInvoiceTotals {
   total: number;
 }
 
-const finite = (n: number | null | undefined): number => {
+const finite = (n: MoneyLike | null | undefined): number => {
   const v = Number(n ?? 0);
   return Number.isFinite(v) ? v : 0;
 };

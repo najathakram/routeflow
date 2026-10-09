@@ -94,6 +94,15 @@ describe("sumInvoiceTotals — the one formula", () => {
     expect(t.total).toBe(308);
   });
 
+  it("reads a stored row as it comes: numeric strings and Decimal-like values coerce with Number", () => {
+    const dec = (v: string) => ({ toString: () => v });
+    const t = sumInvoiceTotals(
+      [{ subtotal: dec("10.00"), taxRate: dec("0.1000"), categoryTaxAmount: "1.5" }],
+      {},
+    );
+    expect(t).toEqual({ subtotal: 10, regularTax: 1, categoryTax: 1.5, tax: 2.5, total: 12.5 });
+  });
+
   it("is pure: never mutates its input lines", () => {
     const lines = [{ subtotal: 10, taxRate: 0.1, categoryTaxAmount: 1 }];
     const before = JSON.stringify(lines);
