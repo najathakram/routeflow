@@ -14,7 +14,7 @@ jest.mock("../common/db-locks", () => ({
 import { Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
-import { GENERATE_NOW_REPLAY_WINDOW_MS } from "./generate-replay";
+import { GENERATE_NOW_REPLAY_WINDOW_MS, lockTemplateThenFindReplay } from "./generate-replay";
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -38,6 +38,8 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let orders: { mergeAllPendingForCustomer: jest.Mock };
+  let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
+  let restrictions: { checkLinesSellable: jest.Mock };
   const decrement = decrementStockForSale as jest.Mock;
   const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
   const template = {
@@ -97,6 +99,8 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
     }).compile();
     service = mod.get(OrderTemplatesService);
     orders = mod.get(OrdersService);
+    notifications = mod.get(NotificationsService);
+    restrictions = mod.get(SellingRestrictionsService);
     prisma.getTenantId.mockReturnValue("test-tenant");
     prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }]);
     prisma.orderTemplate.findMany.mockResolvedValue([template]);
@@ -164,6 +168,71 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
     expect(prisma.order.create).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("1 created, 0 skipped"));
     log.mockRestore();
+  });
+
+  it("cron replay with a ban note: the customer is told the order went ahead, never 'was not sent'", async () => {
+    fakeCronClock();
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    const banned = {
+      ...template,
+      items: [
+        { productId: "p1", qty: 3, notes: null },
+        { productId: "p2", qty: 1, notes: null },
+      ],
+    };
+    prisma.orderTemplate.findMany.mockResolvedValue([banned]);
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p2", pricePerUnit: 10, unitsPerBox: null, trackedCategoryId: null },
+    ]);
+    restrictions.checkLinesSellable.mockResolvedValue({
+      outcome: "BLOCK",
+      reasons: [{ productId: "p1", productName: "Banned Cola", ruleId: "rule-1" }],
+    });
+    // unlocked check: nothing yet; locked re-read: the manual run's order for today is there
+    prisma.order.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "manual-order", templateId: "t1" });
+
+    await service.generateDailyOrders();
+
+    expect(prisma.order.create).not.toHaveBeenCalled(); // the cron placed nothing: it replayed
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    const msg = notifications.sendToCustomer.mock.calls[0][2] as string;
+    expect(msg).toContain("went ahead");
+    expect(msg).not.toContain("was not sent");
+  });
+
+  it("cron: the unlocked 'already generated today' check ignores a CANCELLED order, like the locked re-read", async () => {
+    fakeCronClock();
+    const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    prisma.order.findFirst.mockImplementation((args: any) =>
+      Promise.resolve(
+        args.where.status?.not === "CANCELLED" ? null : { id: "cancelled", status: "CANCELLED" },
+      ),
+    );
+
+    await service.generateDailyOrders();
+
+    expect(prisma.order.findFirst.mock.calls[0][0].where).toEqual({
+      templateId: "t1",
+      status: { not: "CANCELLED" },
+      createdAt: { gte: DAY_START },
+    });
+    expect(prisma.order.create).toHaveBeenCalledTimes(1); // the operator cancelled: today's run goes
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("1 created, 0 skipped"));
+  });
+
+  it("the template row lock is tenant-scoped", async () => {
+    const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(0),
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+
+    await lockTemplateThenFindReplay(tx, "t1", "tn-1", DAY_START);
+
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0];
+    expect((strings as string[]).join("?")).toContain('"tenantId"');
+    expect(values).toEqual(["t1", "tn-1"]);
   });
 
   it("accepted limit: an order that lost a merge is not a replay target, so a retry in the window places a new one", async () => {

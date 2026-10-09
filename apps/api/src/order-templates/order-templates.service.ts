@@ -512,13 +512,13 @@ export class OrderTemplatesService {
         }
 
         for (const template of templates) {
-          // Idempotency: skip if order already generated today for this template
-          const existing = await this.prisma.forTenant().order.findFirst({
-            where: {
-              templateId: template.id,
-              createdAt: { gte: startOfUtcDay(today) },
-            },
-          });
+          // Idempotency: skip if a live order was already generated today for this template (the same
+          // lookup the locked re-read uses, so a CANCELLED order never answers one check and not the other)
+          const existing = await findReplayOrder(
+            this.prisma.forTenant(),
+            template.id,
+            startOfUtcDay(today),
+          );
           if (existing) {
             totalSkipped++;
             continue;
@@ -555,8 +555,14 @@ export class OrderTemplatesService {
               err instanceof Error ? err.stack : String(err),
             );
           } finally {
+            // A replay means today's order exists (a manual run placed it; that path sends no ban
+            // notice), so the customer is told it went ahead, not that it was held.
             if (ctx.ban)
-              await this.notifyBanSkipped(template, ctx.ban, ctx.placed ? "ordered" : "held");
+              await this.notifyBanSkipped(
+                template,
+                ctx.ban,
+                ctx.placed || ctx.replayed ? "ordered" : "held",
+              );
           }
         }
       });
@@ -903,7 +909,12 @@ export class OrderTemplatesService {
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {
         // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
-        const prior = await lockTemplateThenFindReplay(tx, template.id, replaySince);
+        const prior = await lockTemplateThenFindReplay(
+          tx,
+          template.id,
+          restrictionTenantId,
+          replaySince,
+        );
         if (prior) {
           replayed = true;
           if (ctx) ctx.replayed = true;
