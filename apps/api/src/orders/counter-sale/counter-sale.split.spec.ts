@@ -22,6 +22,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import { legGroupId } from "./counter-sale-tender";
+import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 
 /**
  * Split payments on POST /orders/counter-sale (service level, collaborators mocked at the boundary).
@@ -801,6 +802,80 @@ describe("CounterSaleService.ring: split payments", () => {
       const r = await service.ring(named({ payment: { method: "ON_ACCOUNT" } }), staff);
       expect(r.payments).toBeUndefined();
       expect(r.method).toBe("ON_ACCOUNT");
+    });
+  });
+
+  describe("the split's rows feed the ONE cash-refund cap (test 11, SA-740r2's assertCashRefundWithinCap)", () => {
+    /** The cap's own payment read, answered from the ledger this sale actually wrote. */
+    const capTx = (earlier: Array<{ orderId: string; refundAmount: number }> = []) => ({
+      invoicePayment: {
+        findMany: jest.fn(async (args: any) =>
+          invoices
+            .filter((i) => !["VOID", "WRITTEN_OFF"].includes(i.status))
+            .flatMap((i) =>
+              i.payments
+                .filter((p) => p.method === args.where.method && p.status === args.where.status)
+                .map((p) => ({ amount: p.amount, invoice: { orderId: "ord-1" } })),
+            ),
+        ),
+      },
+      returnItem: { findMany: jest.fn(async () => []) },
+      return: { findMany: jest.fn(async () => earlier) },
+    });
+    const cashRefund = (
+      amount: number,
+      earlier?: Array<{ orderId: string; refundAmount: number }>,
+    ) =>
+      assertCashRefundWithinCap(capTx(earlier), {
+        returnId: "ret-now",
+        tender: "CASH",
+        perOrder: new Map([["ord-1", amount]]),
+      }).then(
+        () => null,
+        (e: any) => ({ status: e.getStatus(), code: e.getResponse().code }),
+      );
+
+    beforeEach(async () => {
+      // card 30 + cash 50 on a 70 sale: the cash row is 40 (change 10 is not stored), the card row is not cash
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 50 },
+          ],
+        }),
+        staff,
+      );
+    });
+
+    it("cash applied is the cash LEG's placed 40, never the 50 handed over nor the card's 30", async () => {
+      expect(await cashRefund(40)).toBeNull();
+      expect(await cashRefund(40.01)).toEqual({ status: 409, code: "REFUND_EXCEEDS_CASH_PAID" });
+    });
+
+    it("earlier refunds on the sale reduce the room: 40 cash, 20 refunded -> 20 fits, 20.01 is 409", async () => {
+      const earlier = [{ orderId: "ord-1", refundAmount: 20 }];
+      expect(await cashRefund(20, earlier)).toBeNull();
+      expect(await cashRefund(20.01, earlier)).toEqual({
+        status: 409,
+        code: "REFUND_EXCEEDS_CASH_PAID",
+      });
+    });
+
+    it("a sale with no cash leg (card 30 + check 40) has no cash room at all", async () => {
+      invoices = [inv("inv-1", 70, 1)];
+      recordPayment.mockClear();
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CHECK", amount: 40, reference: "1042" },
+          ],
+        }),
+        staff,
+        "key-2",
+      );
+      expect(await cashRefund(0.01)).toEqual({ status: 409, code: "REFUND_EXCEEDS_CASH_PAID" });
     });
   });
 });
