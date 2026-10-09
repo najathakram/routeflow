@@ -38,9 +38,12 @@ export function skipCopy(code: string | undefined): string {
 export function BulkDeleteSkipReport({
   skipped,
   onClose,
+  nameById,
 }: {
   skipped: readonly SkippedProduct[];
   onClose: () => void;
+  /** Product names from the selection the page already holds; an unknown id reads "A product". */
+  nameById?: ReadonlyMap<string, string>;
 }) {
   if (skipped.length === 0) return null;
   const n = skipped.length;
@@ -61,7 +64,10 @@ export function BulkDeleteSkipReport({
       </p>
       <ul className="max-h-64 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-navy">
         {skipped.map((s) => (
-          <li key={s.id}>{skipCopy(s.code)}</li>
+          <li key={s.id}>
+            <span className="font-medium">{nameById?.get(s.id) || "A product"}</span> -{" "}
+            {skipCopy(s.code)}
+          </li>
         ))}
       </ul>
     </Modal>

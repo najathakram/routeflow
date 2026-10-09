@@ -37,6 +37,38 @@ describe("BulkDeleteSkipReport", () => {
     ).toBeInTheDocument();
   });
 
+  it("names each refused product so two skips never read as identical lines", () => {
+    render(
+      <BulkDeleteSkipReport
+        skipped={skipped}
+        nameById={
+          new Map([
+            ["f1", "Cola family"],
+            ["p2", "Water case"],
+          ])
+        }
+        onClose={jest.fn()}
+      />,
+    );
+    const items = within(screen.getByRole("dialog")).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Cola family - This product still has active variants.");
+    expect(items[1]).toHaveTextContent("Water case - This product has active order items");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("RAW SERVER TEXT");
+  });
+
+  it("a skip whose name is not known reads 'A product', never blank or the id", () => {
+    render(
+      <BulkDeleteSkipReport
+        skipped={[{ id: "zzz-id", code: "FAMILY_HAS_ACTIVE_VARIANTS" }]}
+        nameById={new Map()}
+        onClose={jest.fn()}
+      />,
+    );
+    const item = within(screen.getByRole("dialog")).getByRole("listitem");
+    expect(item).toHaveTextContent("A product - This product still has active variants.");
+    expect(item).not.toHaveTextContent("zzz-id");
+  });
+
   it("an unknown or missing code gets one neutral fixed line, never the server text", () => {
     render(
       <BulkDeleteSkipReport
