@@ -43,6 +43,7 @@ export function usePosMode(): PosModeState {
   const [override, setOverride] = React.useState<boolean | null>(null);
   const [failed, setFailed] = React.useState(false);
   const save = useMutation<unknown, Error, boolean>({
+    meta: { localErrorToast: true }, // the switch renders its own inline failure
     mutationFn: (next) =>
       apiClient.patch("/users/me/preferences", { [POS_MODE_PREF_KEY]: next ? "true" : "false" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
@@ -70,11 +71,14 @@ export function usePosMode(): PosModeState {
 export type PosFinishStep = "confirm" | "invoice";
 
 export class PosFinishError extends Error {
+  /** The underlying axios `.response`, kept so callers can map the coded refusal. */
+  response?: unknown;
   constructor(
     public step: PosFinishStep,
     public cause: unknown,
   ) {
     super(`POS finish failed at ${step}`);
+    this.response = (cause as { response?: unknown } | null)?.response;
   }
 }
 
@@ -86,6 +90,7 @@ export class PosFinishError extends Error {
 export function usePosFinish() {
   const qc = useQueryClient();
   return useMutation<Order, PosFinishError, { orderId: string; invoice: boolean }>({
+    meta: { localErrorToast: true }, // the Create Order modal toasts which half is missing
     mutationFn: async ({ orderId, invoice }) => {
       let order: Order;
       try {
@@ -102,8 +107,9 @@ export function usePosFinish() {
       }
       return order;
     },
-    onSettled: () => {
+    onSettled: (_d, _e, vars) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
     },
   });

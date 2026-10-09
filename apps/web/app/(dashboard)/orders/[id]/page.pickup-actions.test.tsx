@@ -75,9 +75,9 @@ beforeEach(() => jest.clearAllMocks());
 afterEach(() => seedSession(null));
 
 describe("PICKUP order actions", () => {
-  it("CONFIRMED (POS mode, SA-763r): no Ready for pickup / Out for Delivery step; 'Hand over' is offered", async () => {
+  it("CONFIRMED (POS mode, SA-763r): Ready for pickup is secondary, no Out for Delivery; 'Hand over' is offered", async () => {
     await open("OPERATOR", "CONFIRMED", { fulfillPath: "PICKUP" });
-    expect(has(/^Ready for pickup$/)).toBe(false);
+    expect(has(/^Ready for pickup$/)).toBe(true);
     expect(has(/^Out for Delivery$/)).toBe(false);
     expect(has(/^Mark shipped$/)).toBe(false);
     expect(has(/^Hand over$/)).toBe(true);
@@ -92,7 +92,7 @@ describe("PICKUP order actions", () => {
 
   it("OUT_FOR_DELIVERY (Ready for pickup): 'Picked up' is the completion; Mark as Delivered is hidden", async () => {
     await open("OPERATOR", "OUT_FOR_DELIVERY", { fulfillPath: "PICKUP" });
-    expect(has(/^Picked up$/)).toBe(true);
+    expect(has(/^Hand over$/)).toBe(true);
     expect(has(/^Mark as Delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
@@ -166,7 +166,7 @@ describe("Picked up result survives the order refetch (the order flips to DELIVE
     fireEvent.click(screen.getByRole("button", { name: /^Hand over$/ }));
     const dialog = await screen.findByRole("dialog");
     await tender(dialog);
-    fireEvent.click(within(dialog).getByRole("button", { name: /^Picked up$/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Hand over$/ }));
   };
 
   it("payment not recorded: the alert and Retry are still on screen after the order refetches as DELIVERED", async () => {

@@ -2766,6 +2766,8 @@ export default function OrderDetailPage() {
               orderId={order.id}
               status={localStatus}
               onHandOver={() => setPickupOpen(true)}
+              onReadyForPickup={handleMarkShipped}
+              readyPending={updateStatus.isPending}
               onSwitchToDelivery={() => setPendingPath("ROUTE")}
             />
           )}
@@ -2833,7 +2835,10 @@ export default function OrderDetailPage() {
             <>
               <ActionTier tier="primary">
                 {order.fulfillPath === "PICKUP" ? (
-                  <PickupHandOverButton onOpen={() => setPickupOpen(true)} />
+                  <PickupHandOverButton
+                    onOpen={() => setPickupOpen(true)}
+                    label={isPos ? "Hand over" : undefined}
+                  />
                 ) : (
                   <Button
                     size="sm"

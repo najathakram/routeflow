@@ -1341,7 +1341,9 @@ export function CreateOrderModal({
           variant: "warning",
           action,
         });
-      });
+      })
+      // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
+      .finally(() => viewOrder?.(created.id));
   };
 
   const doSubmitOrder = (data: FormValues, options: SubmitOptions, lines: LineItem[]) => {
@@ -1793,7 +1795,12 @@ export function CreateOrderModal({
     >
       <form
         id="create-order-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={(e) => {
+          // An implicit submit (no button pressed) follows the primary action; "Confirm only" bypasses this
+          // (it calls handleSubmit itself), and a click on the primary already set the same value.
+          posFinishRef.current = "invoice";
+          return handleSubmit(onSubmit)(e);
+        }}
         noValidate
         onKeyDown={(e) => {
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.

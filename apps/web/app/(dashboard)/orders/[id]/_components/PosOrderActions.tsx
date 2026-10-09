@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { CheckCircle2, FileText, Printer, Truck, Wallet } from "lucide-react";
+import { Bell, CheckCircle2, FileText, Printer, Truck, Wallet } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -11,7 +11,8 @@ import { ActionTier } from "./ActionTier";
 
 type PosOrder = Pick<Order, "invoices">;
 
-const invoicesOf = (order: PosOrder) => order.invoices ?? [];
+/** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
+const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
 
 /**
  * POS-mode order page (SA-763r P-2): Confirmed -> Invoice (draft) -> Handed over. There is no Out-for-delivery
@@ -54,6 +55,7 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
         >
           {s.done && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}
           {s.label}
+          {s.done && <span className="sr-only"> (completed)</span>}
         </li>
       ))}
     </ol>
@@ -70,16 +72,21 @@ export function PosOrderActions({
   orderId,
   status,
   onHandOver,
+  onReadyForPickup,
+  readyPending,
   onSwitchToDelivery,
 }: {
   order: PosOrder;
   orderId: string;
   status: string;
   onHandOver: () => void;
+  /** "Ready for pickup": the customer notification (the order's OUT_FOR_DELIVERY step, kept out of the 3-step layout). */
+  onReadyForPickup: () => void;
+  readyPending?: boolean;
   onSwitchToDelivery: () => void;
 }) {
   const { toast } = useToast();
-  const createInvoice = useCreateInvoiceFromOrder();
+  const createInvoice = useCreateInvoiceFromOrder({ localErrorToast: true });
   const invoices = invoicesOf(order);
   const firstInvoice = invoices[0];
 
@@ -97,6 +104,20 @@ export function PosOrderActions({
   );
 
   if (status === "PENDING") return switchToDelivery;
+
+  const readyForPickup = (
+    <ActionTier tier="secondary">
+      <Button
+        size="sm"
+        variant="secondary"
+        leftIcon={<Bell className="h-4 w-4" />}
+        onClick={onReadyForPickup}
+        loading={readyPending}
+      >
+        {POS_COPY.readyForPickup}
+      </Button>
+    </ActionTier>
+  );
 
   if (status === "CONFIRMED") {
     const handOver = (primary: boolean) => (
@@ -139,6 +160,7 @@ export function PosOrderActions({
             {handOver(false)}
           </>
         )}
+        {readyForPickup}
         {switchToDelivery}
       </>
     );

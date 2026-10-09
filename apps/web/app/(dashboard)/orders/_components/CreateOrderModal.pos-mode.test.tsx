@@ -245,3 +245,33 @@ describe("CreateOrderModal: POS mode switch", () => {
     expect(screen.getByRole("button", { name: "Start a new one" })).toBeInTheDocument();
   });
 });
+
+describe("CreateOrderModal: POS mode landing and Enter", () => {
+  it("lands on the new order's page after Confirm & invoice (not the list)", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    const { onViewOrder } = await openWithLine();
+    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
+    expect(post).toHaveBeenCalledWith("/invoices/from-order/o1");
+  });
+
+  it("lands on the order page even when the invoice step failed", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    post.mockImplementation((url: string) =>
+      url === "/orders" ? Promise.resolve({ data: { id: "o1" } }) : Promise.reject(new Error("x")),
+    );
+    const { onViewOrder } = await openWithLine();
+    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
+  });
+
+  it("an implicit (Enter) submit follows the primary, even right after a Confirm only choice", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    await openWithLine();
+    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    fireEvent.submit(document.getElementById("create-order-form")!);
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/o1"));
+  });
+});

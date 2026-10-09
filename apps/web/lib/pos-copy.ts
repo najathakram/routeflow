@@ -23,6 +23,7 @@ export const POS_COPY = {
   stepInvoiceDraft: "Invoice (draft)",
   stepInvoice: "Invoice",
   stepHandedOver: "Handed over",
+  readyForPickup: "Ready for pickup",
   createInvoice: "Create invoice",
   handOver: "Hand over",
   recordPayment: "Record payment",

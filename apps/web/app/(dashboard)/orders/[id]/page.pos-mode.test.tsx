@@ -93,7 +93,7 @@ describe("POS order page: progress", () => {
     await open("DELIVERED", { invoices: INV("SENT") });
     const items = steps();
     expect(items.map((i) => i.getAttribute("data-done"))).toEqual(["true", "true", "true"]);
-    expect(items[1]).toHaveTextContent(/^Invoice$/);
+    expect(items[1]).toHaveTextContent(/^Invoice \(completed\)$/);
   });
 
   it("a counter sale and a ROUTE order get no POS progress", async () => {
@@ -107,7 +107,6 @@ describe("POS order page: one primary per state", () => {
     await open("CONFIRMED");
     expect(has(/^Create invoice$/)).toBe(true);
     expect(has(/^Out for Delivery$/)).toBe(false);
-    expect(has(/^Ready for pickup$/)).toBe(false);
     expect(has(/^Mark as Delivered$/)).toBe(false);
     expect(has(/^Mark delivered$/)).toBe(false);
   });
@@ -183,5 +182,81 @@ describe("POS order page: edit and switch", () => {
     expect(has(/^Edit Items$/)).toBe(true);
     expect(has(/^Create invoice$/)).toBe(false);
     expect(has(/^Switch to delivery$/)).toBe(false);
+  });
+});
+
+describe("POS order page: Ready for pickup, VOID invoices, a11y, hand-over label, refresh", () => {
+  it("every PICKUP order (portal or POS, not counterSale) offers Ready for pickup until handed over; Hand over is the primary once invoiced", async () => {
+    await open("CONFIRMED", { invoices: INV("DRAFT") });
+    expect(has(/^Ready for pickup$/)).toBe(true);
+    expect(has(/^Hand over$/)).toBe(true);
+    expect(has(/^Create invoice$/)).toBe(false);
+  });
+
+  it("Ready for pickup sends the customer notification step (PATCH status OUT_FOR_DELIVERY)", async () => {
+    patch.mockResolvedValue({ data: {} });
+    await open("CONFIRMED", { invoices: INV("DRAFT") });
+    fireEvent.click(screen.getByRole("button", { name: /^Ready for pickup$/ }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith(
+        "/orders/o1/status",
+        expect.objectContaining({ status: "OUT_FOR_DELIVERY" }),
+      ),
+    );
+  });
+
+  it("no Ready for pickup once handed over", async () => {
+    await open("DELIVERED", { invoices: INV("SENT") });
+    expect(has(/^Ready for pickup$/)).toBe(false);
+  });
+
+  it("a VOID invoice is not an invoice: Create invoice is still offered and the step is not done", async () => {
+    await open("CONFIRMED", { invoices: INV("VOID") });
+    expect(has(/^Create invoice$/)).toBe(true);
+    expect(steps()[1]).toHaveAttribute("data-done", "false");
+  });
+
+  it("DELIVERED with a VOID and a PAID invoice: Print, not Record payment", async () => {
+    await open("DELIVERED", {
+      invoices: [
+        { id: "i0", invoiceNumber: "INV-0", status: "VOID", total: 10, payments: [] },
+        { id: "i1", invoiceNumber: "INV-1", status: "PAID", total: 10, payments: [] },
+      ],
+    });
+    expect(hasLink(/^Record payment$/)).toBe(false);
+    expect(screen.getByRole("link", { name: /^Print invoice$/ })).toHaveAttribute(
+      "href",
+      "/invoices/i1",
+    );
+  });
+
+  it("completed steps carry screen-reader text", async () => {
+    await open("CONFIRMED");
+    expect(steps()[0]).toHaveTextContent("Confirmed (completed)");
+    expect(steps()[2]).not.toHaveTextContent("completed");
+  });
+
+  it("the hand-over dialog's confirm button reads Hand over for a POS order", async () => {
+    await open("CONFIRMED", { invoices: INV("DRAFT") });
+    fireEvent.click(screen.getByRole("button", { name: /^Hand over$/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /^Hand over$/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^Picked up$/ })).toBeNull();
+  });
+
+  it("Create invoice refreshes the order: the Create invoice button gives way to Hand over without a reload", async () => {
+    post.mockImplementation(() => {
+      get.mockImplementation((url: string) =>
+        Promise.resolve({
+          data: url === "/orders/o1" ? order("CONFIRMED", { invoices: INV("DRAFT") }) : [],
+        }),
+      );
+      return Promise.resolve({ data: [] });
+    });
+    await open("CONFIRMED");
+    fireEvent.click(screen.getByRole("button", { name: /^Create invoice$/ }));
+    await waitFor(() => expect(has(/^Create invoice$/)).toBe(false));
+    expect(has(/^Hand over$/)).toBe(true);
+    expect(steps()[1]).toHaveTextContent("Invoice (draft) (completed)");
   });
 });
