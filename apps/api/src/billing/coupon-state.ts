@@ -31,6 +31,24 @@ import { isPayingRow } from "./mrr.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import type { StripeService } from "./stripe.service";
 
+/**
+ * The database's clock (`clock_timestamp()`), the one clock every `couponSyncedAt` stamp and every sync's `t0`
+ * is taken from. Falls back to the app clock only where there is no raw client (a unit-test double).
+ */
+export async function dbClock(db: object): Promise<Date> {
+  try {
+    const raw = db as {
+      $queryRaw?: (s: TemplateStringsArray) => Promise<Array<{ now?: unknown }>>;
+    };
+    const rows = raw.$queryRaw ? await raw.$queryRaw`SELECT clock_timestamp() AS now` : [];
+    const now = rows?.[0]?.now;
+    if (now instanceof Date && !Number.isNaN(now.getTime())) return now;
+  } catch {
+    /* fall back below */
+  }
+  return new Date();
+}
+
 export interface ApplyCouponOptions {
   /** Why (a sync point, or a reset's cause): goes on the ledger event. */
   reason: string;
@@ -63,15 +81,17 @@ export async function applyCouponStateTx(
   tx: Prisma.TransactionClient,
   events: Pick<BillingEventService, "emit">,
   tenantId: string,
-  state: CouponState,
+  requested: CouponState,
   opts: ApplyCouponOptions & { tenantLockHeld: true },
 ): Promise<ApplyCouponResult> {
+  let state = requested;
   const row = await tx.tenantSubscription.findUnique({
     where: { tenantId },
     select: {
       couponFull: true,
       couponSyncedAt: true,
       stripeSubId: true,
+      externalPayment: true,
       planKey: true,
       basePriceSnapshot: true,
       discount: true,
@@ -79,6 +99,10 @@ export async function applyCouponStateTx(
     },
   });
   if (!row) return NOT_APPLIED;
+  // M5, re-read INSIDE the tx under the Tenant lock: a manual payer keeps its stripeSubId but is billed by RF
+  // invoices, so it is never couponFull. A sync that read externalPayment=false before an admin switched the
+  // tenant to manual billing (and then committed full=true, booking -X) is closed here, not by the caller.
+  if (row.externalPayment === true && state.full) state = { ...state, full: false };
   const wasFull = row.couponFull === true;
   if (opts.onlyStripeSubId !== undefined && row.stripeSubId !== opts.onlyStripeSubId) return STALE;
   const t0 = opts.syncedAt;
@@ -94,7 +118,7 @@ export async function applyCouponStateTx(
       couponFull: state.full,
       couponId: state.couponId,
       couponEndsAt: state.endsAt,
-      couponSyncedAt: t0 ?? new Date(),
+      couponSyncedAt: t0 ?? (await dbClock(tx)),
     },
   });
   if (count === 0) return STALE;
@@ -208,7 +232,8 @@ export async function syncCouponFromStripe(
   stripeSubId: string,
   reason: string,
 ): Promise<CouponSyncOutcome> {
-  const t0 = new Date();
+  // The DB clock, so t0 and a reset's stamp compare on ONE clock whatever each app host's skew is.
+  const t0 = await dbClock(deps.prisma);
   const row = await deps.prisma.tenantSubscription.findUnique({
     where: { tenantId },
     select: { stripeSubId: true, externalPayment: true },

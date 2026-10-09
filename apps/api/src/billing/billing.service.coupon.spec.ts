@@ -242,6 +242,26 @@ describe("coupon-unbilled: cancellation (M1, M5, F5) - C is value-red on master"
     expect(h.stripe.previewNextInvoice).not.toHaveBeenCalled();
   });
 
+  it("review nit: in the cancelled branch the reset runs AFTER the cancel-flag / downgrade-disarm write", async () => {
+    const h = build({
+      sub: { couponFull: true, couponId: "cp_pilot", downgradeToPlanKey: "GROWTH" },
+    });
+    const order: string[] = [];
+    const realUpdate = h.prisma.tenantSubscription.update;
+    h.prisma.tenantSubscription.update = jest.fn(async (a: any) => {
+      if ("cancelAtPeriodEnd" in a.data) order.push("cancel-flag");
+      return realUpdate(a);
+    });
+    const realMany = h.prisma.tenantSubscription.updateMany;
+    h.prisma.tenantSubscription.updateMany = jest.fn(async (a: any) => {
+      if ("couponFull" in a.data) order.push("coupon-reset");
+      return realMany(a);
+    });
+    await h.svc.onSubscriptionDeleted({ id: "sub_1", customer: "cus_1" });
+    expect(order).toEqual(["cancel-flag", "coupon-reset"]);
+    expect(h.w.sub.downgradeToPlanKey).toBeNull();
+  });
+
   it("customer.subscription.deleted on a coupon tenant: the same - books 0, columns reset", async () => {
     const h = build({ sub: { couponFull: true, couponId: "cp_pilot" } });
     await h.svc.onSubscriptionDeleted({ id: "sub_1", customer: "cus_1" });
@@ -305,6 +325,20 @@ describe("coupon-unbilled: reinstatement and dunning order (M1, F1)", () => {
     expect(h.w.sub.couponSyncedAt).toBeInstanceOf(Date);
     expect(h.ledger).toEqual([{ type: "coupon.billed", amountDelta: 99 }]);
     expect(h.w.sub.failedPaymentCount).toBe(1);
+  });
+
+  it("review nit: a payment_failed whose preview errors (anything but invoice_upcoming_none) logs an ERROR with the tenant id and rethrows", async () => {
+    const h = build({ sub: { couponFull: true } });
+    const errors: string[] = [];
+    jest.spyOn((h.svc as any).logger, "error").mockImplementation((m: unknown) => {
+      errors.push(String(m));
+    });
+    h.stripe.previewNextInvoice.mockRejectedValue(new Error("rate limited"));
+    await expect(h.svc.onPaymentFailed(INVOICE)).rejects.toThrow("rate limited");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("tenant t1");
+    expect(errors[0]).toContain("failed-payment count did not advance");
+    expect(h.w.sub.failedPaymentCount).toBe(0);
   });
 
   it("F1: payment_failed syncs BEFORE the non-idempotent increment - a throwing sync leaves the count untouched, so the redelivery counts once", async () => {

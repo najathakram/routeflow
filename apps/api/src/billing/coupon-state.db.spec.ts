@@ -156,6 +156,24 @@ describeDb("applyCouponState - the single writer (SA-736r, real Postgres)", () =
     expect(await ledgerSum(idActive)).toBe(99);
   });
 
+  it("M5 race (real rows): a full=true write that raced an admin's switch to manual billing is forced false - no -X", async () => {
+    const id = await tenantWithSub("manual");
+    // the sync read externalPayment=false; before its write commits the admin activates manual billing
+    await raw.tenantSubscription.update({
+      where: { tenantId: id },
+      data: { externalPayment: true },
+    });
+    const r = await applyCouponState(
+      deps,
+      id,
+      { full: true, couponId: "cp", endsAt: null },
+      { reason: "sync", syncedAt: new Date(Date.now() - 1000) },
+    );
+    expect(r.amountDelta).toBe(0);
+    expect((await subOf(id)).couponFull).toBe(false);
+    expect(await ledgerSum(id)).toBe(0);
+  });
+
   it("the Tenant lock is taken first: a held Tenant FOR UPDATE makes the writer wait, then complete", async () => {
     const id = await tenantWithSub("lock");
     let released = false;

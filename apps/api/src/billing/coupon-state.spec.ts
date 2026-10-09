@@ -375,6 +375,33 @@ describe("syncCouponFromStripe (M3, F1, M5)", () => {
     expect(stripe.previewNextInvoice).not.toHaveBeenCalled();
   });
 
+  it("M5 race: a sync that read externalPayment=false, then the admin switched to manual billing: the in-tx re-read forces full=false (no -X booked)", async () => {
+    const h = harness({ externalPayment: false });
+    const stripe = stripeFor(h);
+    // the pre-tx read (syncCouponFromStripe) says card-billed; the admin activation commits right after it
+    stripe.retrieveSubscriptionWithDiscounts.mockImplementation(async () => {
+      h.row.externalPayment = true;
+      return { status: "active", discounts: [{ source: { coupon: "cp_pilot" }, end: null }] };
+    });
+    const out = await syncCouponFromStripe({ ...h, stripe }, "t1", "sub_acme", "x");
+    expect(out).toMatchObject({ outcome: "applied" });
+    expect(h.row.couponFull).toBe(false);
+    expect(h.ledger).toEqual([]);
+  });
+
+  it("M5: applyCouponState itself never writes full=true onto an externalPayment row (the writer, not the caller, enforces it)", async () => {
+    const h = harness({ externalPayment: true, couponFull: false });
+    const r = await applyCouponState(
+      h,
+      "t1",
+      { full: true, couponId: "cp", endsAt: null },
+      { reason: "x", syncedAt: new Date(1) },
+    );
+    expect(r).toMatchObject({ applied: true, amountDelta: 0 });
+    expect(h.row.couponFull).toBe(false);
+    expect(h.ledger).toEqual([]);
+  });
+
   it("a replaced subscription id or a missing row is skipped before any Stripe call", async () => {
     const h = harness({ stripeSubId: "sub_new" });
     const stripe = stripeFor(h);
@@ -397,52 +424,131 @@ describe("syncCouponFromStripe (M3, F1, M5)", () => {
   });
 });
 
+/**
+ * The one-writer scanner (L-223). Walks a source's braces keeping a stack of the key/variable each `{` hangs
+ * off, and reports every mention of a coupon column that sits where it could WRITE:
+ *   - couponId / couponEndsAt / couponSyncedAt: ANY mention (they are read nowhere outside the writer);
+ *   - couponFull: only a `select` / `where` / `include` key, a `...Where` constant or a type annotation is fine -
+ *     inside `data` / `create` / `update` / `set` / `upsert`, or anywhere else, it is a violation.
+ */
+export function findCouponColumnWrites(source: string): string[] {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const found: string[] = [];
+  const stack: string[] = [];
+  const readOnlyKeys = new Set(["select", "where", "include", "orderBy"]);
+  const writeKeys = new Set(["data", "create", "update", "set", "upsert"]);
+  const re = /\{|\}|\bcoupon(Full|Id|EndsAt|SyncedAt)\b(\s*:)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code))) {
+    if (m[0] === "{") {
+      const before = code.slice(Math.max(0, m.index - 80), m.index);
+      stack.push(/([A-Za-z_$][\w$]*)\s*(?::|=|\(|=>)\s*$/.exec(before)?.[1] ?? "");
+    } else if (m[0] === "}") {
+      stack.pop();
+    } else {
+      const line = code.slice(0, m.index).split("\n").length;
+      const col = m[1];
+      const hasColon = !!m[2];
+      const readOnly = stack.some((k) => readOnlyKeys.has(k) || /Where$/.test(k));
+      const typeAnnotation =
+        col === "Full" && hasColon && /^\s*boolean\b/.test(code.slice(m.index + m[0].length));
+      const writeCtx = stack.some((k) => writeKeys.has(k));
+      if (col !== "Full") found.push(`line ${line}: coupon${col}`);
+      else if (writeCtx) found.push(`line ${line}: couponFull in a write object`);
+      else if (hasColon && !readOnly && !typeAnnotation) {
+        found.push(`line ${line}: couponFull outside select/where`);
+      }
+    }
+  }
+  return found;
+}
+
+/** Raw SQL that writes a coupon column of TenantSubscription. */
+export function findCouponRawSqlWrites(source: string): boolean {
+  return (
+    /UPDATE\s+"?TenantSubscription"?[\s\S]{0,600}?\bcoupon(Full|Id|EndsAt|SyncedAt)/i.test(
+      source,
+    ) ||
+    /INSERT\s+INTO\s+"?TenantSubscription"?[\s\S]{0,600}?\bcoupon(Full|Id|EndsAt|SyncedAt)/i.test(
+      source,
+    )
+  );
+}
+
 describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
-  const srcRoot = join(__dirname, "..");
+  const apiRoot = join(__dirname, "..", "..");
   const files: string[] = [];
-  const walk = (dir: string) => {
+  const walk = (dir: string, exts: string[]) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name);
-      if (e.isDirectory()) walk(full);
-      else if (e.name.endsWith(".ts") && !e.name.endsWith(".spec.ts")) files.push(full);
+      if (e.isDirectory()) {
+        if (["node_modules", "dist", "migrations", ".next"].includes(e.name)) continue;
+        walk(full, exts);
+      } else if (exts.some((x) => e.name.endsWith(x)) && !/\.spec\.ts$/.test(e.name)) {
+        files.push(full);
+      }
     }
   };
-  walk(srcRoot);
-  const strip = (s: string) =>
-    s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  walk(join(apiRoot, "src"), [".ts"]);
+  walk(join(apiRoot, "scripts"), [".ts", ".mjs", ".cjs", ".js"]);
+  walk(join(apiRoot, "prisma"), [".ts", ".mjs", ".cjs", ".js", ".sql"]);
+  const rel = (f: string) => f.slice(apiRoot.length).replace(/\\/g, "/");
+  // The writer itself; coupon-unbilled.ts only DEFINES the CouponState type and parses Stripe objects.
+  // The backfill script is exempt from the READ scan only: it selects the columns and calls the compiled
+  // writer; backfill-coupon-state-script.spec.ts pins that it never builds a write object or runs SQL.
+  const exempt = (f: string) =>
+    /\/billing\/coupon-(state|unbilled)\.ts$/.test(rel(f)) ||
+    rel(f) === "/scripts/backfill-coupon-state.mjs";
 
-  it("only coupon-state.ts mentions the three informational columns (they are written nowhere else)", () => {
-    const offenders = files.filter((f) => {
-      // coupon-unbilled.ts only DEFINES the CouponState type and parses Stripe objects (no write).
-      if (f.endsWith("coupon-state.ts") || f.endsWith("coupon-unbilled.ts")) return false;
-      return /\bcoupon(SyncedAt|EndsAt|Id)\b/.test(strip(readFileSync(f, "utf8")));
-    });
-    expect(offenders.map((f) => f.slice(srcRoot.length))).toEqual([]);
-  });
-
-  it("couponFull is only ever WRITTEN by coupon-state.ts: every other use is a select, a literal where, or an allow-listed CAS", () => {
-    const allowed = [
-      /couponFull:\s*(true|false)\b/,
-      /couponFull:\s*boolean\b/, // a type annotation
-      /couponFull:\s*priorSub\.couponFull/,
+  it("self-test: planted violations are caught, legitimate reads are not", () => {
+    const bad = [
+      "await tx.tenantSubscription.update({ where: { tenantId }, data: { couponFull: false } });",
+      "await tx.tenantSubscription.updateMany({ where: { tenantId }, data: { couponId: null } });",
+      "await prisma.tenantSubscription.create({ data: { tenantId, couponFull: true } });",
+      "await prisma.tenantSubscription.upsert({ where, update: { couponFull: true }, create: { tenantId } });",
+      "const x = { set: { couponEndsAt: d } };",
+      "const row = { couponFull: true }; // escapes a data: wrapper",
     ];
-    const bad: string[] = [];
-    for (const f of files) {
-      if (f.endsWith("coupon-state.ts") || f.endsWith("schema")) continue;
-      const lines = strip(readFileSync(f, "utf8")).split("\n");
-      lines.forEach((l, i) => {
-        if (!/couponFull\s*:/.test(l)) return;
-        if (allowed.some((re) => re.test(l))) return;
-        bad.push(`${f.slice(srcRoot.length)}:${i + 1}: ${l.trim()}`);
-      });
-    }
-    expect(bad).toEqual([]);
+    for (const src of bad)
+      expect([src, findCouponColumnWrites(src).length > 0]).toEqual([src, true]);
+    const good = [
+      "findMany({ where: { couponFull: false }, select: { couponFull: true } })",
+      "const payingWhere = { planKey: { not: null }, couponFull: false };",
+      "sub: { couponFull: boolean; planKey: string }",
+      "updateMany({ where: { tenantId, couponFull: priorSub.couponFull }, data: { planKey } })",
+      "const ok = row.couponFull === true;",
+    ];
+    for (const src of good) expect([src, findCouponColumnWrites(src)]).toEqual([src, []]);
+    expect(findCouponRawSqlWrites('UPDATE "TenantSubscription" SET "couponFull" = true')).toBe(
+      true,
+    );
+    expect(
+      findCouponRawSqlWrites(
+        'INSERT INTO "TenantSubscription" ("tenantId","couponId") VALUES (1,2)',
+      ),
+    ).toBe(true);
+    expect(findCouponRawSqlWrites('UPDATE "Tenant" SET "name" = 1')).toBe(false);
   });
 
-  it("no raw SQL writes the coupon columns", () => {
-    const bad = files.filter((f) =>
-      /UPDATE\s+"TenantSubscription"[^;]*coupon/i.test(readFileSync(f, "utf8")),
-    );
-    expect(bad).toEqual([]);
+  it("src, scripts and prisma (migrations excluded) hold no coupon-column write outside the writer", () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      if (exempt(f) || f.endsWith(".sql")) continue;
+      for (const hit of findCouponColumnWrites(readFileSync(f, "utf8"))) {
+        offenders.push(`${rel(f)}: ${hit}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("no raw SQL writes the coupon columns anywhere (src, scripts, prisma outside migrations)", () => {
+    const bad = files.filter((f) => !exempt(f) && findCouponRawSqlWrites(readFileSync(f, "utf8")));
+    expect(bad.map(rel)).toEqual([]);
+  });
+
+  it("the walk covers all three roots (a moved directory cannot silently empty the pin)", () => {
+    for (const root of ["src", "scripts", "prisma"]) {
+      expect(files.some((f) => rel(f).startsWith(`/${root}/`))).toBe(true);
+    }
   });
 });

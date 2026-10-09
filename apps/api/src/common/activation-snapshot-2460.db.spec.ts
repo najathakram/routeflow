@@ -342,6 +342,18 @@ describeDb(
       expect(await prisma.billingEvent.count({ where: { tenantId: id } })).toBe(1);
     });
 
+    // SA-736r M5 (review): the reset is UNCONDITIONAL - its "now" stamp makes a Stripe read that started before
+    // the activation stale, even for a tenant that was not couponFull when the admin clicked.
+    it("SA-736r M5: manual activation of a NON-coupon tenant still stamps couponSyncedAt, so an in-flight older sync cannot write", async () => {
+      const id = await makeTenant("stamp", TenantStatus.TRIAL);
+      const inFlight = new Date(Date.now() - 2000); // a sync whose Stripe read began before the activation
+      await activate(id);
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+      expect(sub.couponSyncedAt).not.toBeNull();
+      expect(sub.couponSyncedAt!.getTime()).toBeGreaterThan(inFlight.getTime());
+      expect(sub.externalPayment).toBe(true);
+    });
+
     it("renewing an already-ACTIVE legacy row (NULL snapshot) writes no snapshot and books nothing", async () => {
       const id = await makeTenant("legacy", TenantStatus.ACTIVE, {
         planKey: "STARTER",

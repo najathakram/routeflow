@@ -37,7 +37,8 @@ import {
   writeManualInvoiceNotice,
 } from "./manual-invoice-notice";
 import { isPayingRow } from "./mrr.service";
-import { resetCouponState } from "./coupon-state";
+import { applyCouponStateTx } from "./coupon-state";
+import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
@@ -1643,19 +1644,23 @@ export class SubscriptionMutationService {
     // to the SAME stripeSubId so a concurrent re-subscribe that already wrote a new pointer is
     // never clobbered. This is the one local write the READ_ONLY branch makes, and it happens
     // only after a confirmed provider outcome.
-    const released = await this.prisma.tenantSubscription.updateMany({
-      where: { tenantId, stripeSubId },
-      data: { stripeSubId: null },
+    // ONE tx (Tenant lock first): the pointer release and the coupon reset commit together - a crash can
+    // never leave a released pointer that still carries the old subscription's coupon columns.
+    await this.prisma.$transaction(async (tx) => {
+      await lockTenantForLedger(tx, tenantId);
+      const released = await tx.tenantSubscription.updateMany({
+        where: { tenantId, stripeSubId },
+        data: { stripeSubId: null },
+      });
+      // SA-736r M5: `couponFull` never outlives its Stripe subscription; a READ_ONLY tenant is not paying,
+      // so the reset books 0.
+      if (released.count > 0) {
+        await applyCouponStateTx(tx, this.events, tenantId, NO_COUPON, {
+          reason: "stripe_sub_released",
+          tenantLockHeld: true,
+        });
+      }
     });
-    // SA-736r M5: `couponFull` never outlives its Stripe subscription. Own tx (Tenant lock first); a
-    // READ_ONLY tenant is not paying, so this books 0.
-    if (released.count > 0) {
-      await resetCouponState(
-        { prisma: this.prisma, events: this.events },
-        tenantId,
-        "stripe_sub_released",
-      );
-    }
   }
 
   /**

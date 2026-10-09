@@ -2363,7 +2363,16 @@ export class BillingService {
     // SA-736r M3/F1: a failing invoice means the coupon no longer zeroes it. The sync runs BEFORE the
     // non-idempotent increment below: a throwing sync aborts here, before the count moves, and the redelivery
     // runs the whole handler once.
-    await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "payment_failed");
+    try {
+      await this.syncCoupon(sub.tenantId, sub.stripeSubId as string, "payment_failed");
+    } catch (err) {
+      // Rethrown (Stripe redelivers, and the count has not moved), but never silently: a PERSISTENT Stripe
+      // error here would keep failedPaymentCount from ever advancing, so it is an ERROR with the tenant id.
+      this.logger.error(
+        `payment_failed for tenant ${sub.tenantId}: the coupon sync failed, so the failed-payment count did not advance (${(err as Error)?.message}); Stripe will redeliver`,
+      );
+      throw err;
+    }
 
     // Dunning is counted, not enforced here: no status change. Grace and suspension stay with
     // suspendOverdueTenants (which re-checks Stripe); reinstatement stays with payment_succeeded,
@@ -2472,15 +2481,13 @@ ${updateLine}
           data: { status: "CANCELLED" },
         })
       ).count === 1;
-    // SA-736r M5/F5: the coupon columns never outlive their subscription. Own tx, whatever the status CAS
-    // returned (it misses TRIAL / READ_ONLY rows); after the transition, so cancelling a couponFull tenant
-    // books 0, and before the early return below.
-    await resetCouponState(
-      { prisma: this.prisma, events: this.events },
-      sub.tenantId,
-      `stripe_${reason}`,
-    );
     if (!cancelled) {
+      // SA-736r M5/F5: the status CAS missed (TRIAL / READ_ONLY / already CANCELLED), the columns still reset.
+      await resetCouponState(
+        { prisma: this.prisma, events: this.events },
+        sub.tenantId,
+        `stripe_${reason}`,
+      );
       this.logger.log(
         `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
       );
@@ -2495,6 +2502,15 @@ ${updateLine}
       where: { tenantId: sub.tenantId },
       data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
     });
+
+    // SA-736r M5: the coupon columns never outlive their subscription - reset AFTER the cancel flag and the
+    // downgrade disarm are written (own tx, Tenant lock first). The status CAS above already ran, so cancelling
+    // a couponFull tenant books 0.
+    await resetCouponState(
+      { prisma: this.prisma, events: this.events },
+      sub.tenantId,
+      `stripe_${reason}`,
+    );
 
     this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (${reason})`);
 

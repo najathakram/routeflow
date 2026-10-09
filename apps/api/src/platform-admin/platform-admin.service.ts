@@ -1224,13 +1224,13 @@ export class PlatformAdminService {
           }),
         ]);
 
-        if (before.subscription?.couponFull) {
-          await applyCouponStateTx(tx, this.billingEventService, id, NO_COUPON, {
-            reason: "manual_activation",
-            bookDelta: false,
-            tenantLockHeld: true,
-          });
-        }
+        // UNCONDITIONAL: the reset also stamps couponSyncedAt = now, so a Stripe read that started before this
+        // activation can never write its (now stale) state afterwards, even for a tenant that was not couponFull.
+        await applyCouponStateTx(tx, this.billingEventService, id, NO_COUPON, {
+          reason: "manual_activation",
+          bookDelta: false,
+          tenantLockHeld: true,
+        });
 
         if (wasPaying !== isPaying) {
           // SA-693 / S4: only BILLABLE add-ons cross into the ledger — a comp is a platform grant (never
