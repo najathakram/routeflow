@@ -1384,6 +1384,7 @@ export class ReturnsService {
         await assertCashRefundWithinCap(tx, {
           returnId: id,
           tender,
+          counterOrder: registerKey != null,
           perOrder: new Map([[orderId, refundAmount]]),
         });
       }
@@ -1535,6 +1536,8 @@ export class ReturnsService {
           select: {
             id: true,
             orderNumber: true,
+            // SA-740r2: the web requires a refund tender for a COUNTER order (the cash cap treats no tender as cash)
+            counterSale: true,
             // F08 B53: same creditable-invoice shape as processRefund, so
             // refundEstimate below is priced by the same billedBasisFor helper.
             invoices: {

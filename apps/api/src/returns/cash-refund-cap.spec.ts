@@ -42,12 +42,14 @@ const run = async (
   rows: Parameters<typeof fakeTx>[0],
   perOrder: Array<[string, number]>,
   tender: "CASH" | "CARD" | "CHECK" | null = "CASH",
+  counterOrder?: boolean,
 ) => {
   const f = fakeTx(rows);
   const out = await assertCashRefundWithinCap(f.tx, {
     returnId: "ret-now",
     tender,
     perOrder: new Map(perOrder),
+    counterOrder,
   }).then(
     () => null,
     (e: any) => ({ status: e.getStatus?.(), body: e.getResponse?.() }),
@@ -131,6 +133,37 @@ describe("assertCashRefundWithinCap", () => {
       expect(r.out).toBeNull();
       expect(r.tx.invoicePayment.findMany).not.toHaveBeenCalled();
     }
+  });
+
+  describe("an omitted tender on a COUNTER order is treated as cash (fail closed)", () => {
+    const pay = [{ amount: 40, invoice: { orderId: "o1" } }]; // a split sale: 40 cash + 60 card
+
+    it("a refund of 60 with no tender on a 40-cash split counter sale is 409 REFUND_EXCEEDS_CASH_PAID", async () => {
+      const { out } = await run({ pay }, [["o1", 60]], null, true);
+      expect(out?.body).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 40,
+        requested: 60,
+      });
+    });
+
+    it("within the cash it is fine, and the cap reads the sale", async () => {
+      const r = await run({ pay }, [["o1", 40]], null, true);
+      expect(r.out).toBeNull();
+      expect(r.tx.invoicePayment.findMany).toHaveBeenCalled();
+    });
+
+    it("an explicit CARD or CHECK tender on a counter order is still uncapped", async () => {
+      for (const tender of ["CARD", "CHECK"] as const) {
+        expect((await run({ pay }, [["o1", 60]], tender, true)).out).toBeNull();
+      }
+    });
+
+    it("a NON-counter order with no tender stays uncapped (the server tender is optional there)", async () => {
+      const r = await run({ pay }, [["o1", 60]], null, false);
+      expect(r.out).toBeNull();
+      expect(r.tx.invoicePayment.findMany).not.toHaveBeenCalled();
+    });
   });
 
   describe("what it reads", () => {

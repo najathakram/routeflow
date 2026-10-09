@@ -37,8 +37,11 @@ const received = {
   updatedAt: "2026-09-01T00:00:00.000Z",
 } as unknown as Return;
 
-async function openResolve() {
-  mockReturn = received;
+async function openResolve(counterSale = false) {
+  mockReturn = {
+    ...received,
+    order: { id: "o1", orderNumber: "ORD-1", counterSale },
+  } as unknown as Return;
   renderWithProviders(<ReturnDetailPage />);
   fireEvent.click(screen.getAllByRole("button", { name: /^resolve/i })[0]);
   return await screen.findByRole("dialog");
@@ -87,5 +90,37 @@ describe("Resolve Return: the refund tender (SA-740r2)", () => {
     fireEvent.click(within(dialog).getByRole("radio", { name: /store credit/i }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Resolve Return" }));
     expect(processMutate.mock.calls[0][0]).toEqual({ id: "ret-1", method: "CREDIT_NOTE" });
+  });
+});
+
+describe("Resolve Return on a COUNTER order: the tender is required (the cash cap treats none as cash)", () => {
+  it("the select starts with no value and Resolve stays disabled until a method is chosen", async () => {
+    const dialog = await openResolve(true);
+    fireEvent.click(within(dialog).getByRole("radio", { name: /refund \(cash/i }));
+    const select = within(dialog).getByLabelText(/refund by/i) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(within(dialog).queryByRole("option", { name: "Not recorded" })).toBeNull();
+    const resolve = within(dialog).getByRole("button", { name: "Resolve Return" });
+    expect(resolve).toBeDisabled();
+    fireEvent.change(select, { target: { value: "CARD" } });
+    expect(resolve).not.toBeDisabled();
+    fireEvent.click(resolve);
+    expect(processMutate.mock.calls[0][0]).toEqual({
+      id: "ret-1",
+      method: "EXTERNAL_REFUND",
+      tender: "CARD",
+    });
+  });
+
+  it("store credit on a counter order needs no tender", async () => {
+    const dialog = await openResolve(true);
+    expect(within(dialog).getByRole("button", { name: "Resolve Return" })).not.toBeDisabled();
+  });
+
+  it("a non-counter order keeps the select optional and starts with no value too", async () => {
+    const dialog = await openResolve(false);
+    fireEvent.click(within(dialog).getByRole("radio", { name: /refund \(cash/i }));
+    expect((within(dialog).getByLabelText(/refund by/i) as HTMLSelectElement).value).toBe("");
+    expect(within(dialog).getByRole("button", { name: "Resolve Return" })).not.toBeDisabled();
   });
 });

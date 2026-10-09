@@ -248,7 +248,20 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       });
     });
 
-    it("CARD, CHECK and an omitted tender are not capped", async () => {
+    it("a COUNTER order with no tender is capped as cash (fail closed): 409 over the cash taken", async () => {
+      setReturn({ counterSale: true });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 15, invoice: { orderId: "ord-1" } },
+      ]);
+      const err: any = await refund({}).catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 15,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("CARD, CHECK and an omitted tender (non-counter order) are not capped", async () => {
       setReturn();
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       for (const dto of [{ tender: "CARD" }, { tender: "CHECK" }, {}]) {

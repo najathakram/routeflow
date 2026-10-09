@@ -8,7 +8,8 @@
  *   stored as the amount actually placed (change excluded), so this is the cash that stayed.
  * - Earlier refunds count when their tender is CASH or UNKNOWN (`Return.refundTender` null): an unknown tender is never
  *   assumed to be card, so the cap fails closed. A card or check refund does not use cash room.
- * - Only a CASH refund is capped. Card and check limits wait for their own tender reports.
+ * - Only a CASH refund is capped (a counter order's refund with NO tender counts as cash). Card and check limits wait for their
+ *   own tender reports.
  */
 import { ConflictException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
@@ -63,11 +64,17 @@ export async function assertCashRefundWithinCap(
     /** this refund's own return: its row is never an "earlier" refund */
     returnId: string;
     tender: RefundTender | null | undefined;
+    /**
+     * A COUNTER order's refund with no tender is treated as CASH (fail closed, like an earlier refund with an unknown tender):
+     * the tender is optional on the server, so without this a clerk could leave it unset and take cash uncapped.
+     */
+    counterOrder?: boolean;
     /** this refund's amount per sale (source order id -> amount) */
     perOrder: ReadonlyMap<string, number>;
   },
 ): Promise<void> {
-  if (input.tender !== "CASH") return;
+  const asCash = input.tender === "CASH" || (!input.tender && input.counterOrder === true);
+  if (!asCash) return;
   const orderIds = [...input.perOrder.keys()].sort();
   if (orderIds.length === 0) return;
 

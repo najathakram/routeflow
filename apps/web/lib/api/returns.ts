@@ -52,7 +52,7 @@ export interface Return {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   orderId: string;
-  order?: { id: string; orderNumber: string };
+  order?: { id: string; orderNumber: string; counterSale?: boolean | null };
   status: ReturnStatus;
   reason: ReturnReason;
   notes?: string;

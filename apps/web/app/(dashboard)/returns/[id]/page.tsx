@@ -109,8 +109,11 @@ function ResolveReturnModal({
   isPending,
   refundEstimate,
   refundEstimateReason,
+  tenderRequired = false,
 }: {
   isOpen: boolean;
+  /** SA-740r2: a COUNTER order's recorded refund must say how it was paid (the cash cap treats none as cash). */
+  tenderRequired?: boolean;
   onClose: () => void;
   onConfirm: (method: RefundMethod, tender?: InlineRefundTender) => void;
   isPending: boolean;
@@ -151,6 +154,7 @@ function ResolveReturnModal({
               onConfirm(method, method === "EXTERNAL_REFUND" && tender ? tender : undefined)
             }
             loading={isPending}
+            disabled={method === "EXTERNAL_REFUND" && tenderRequired && !tender}
           >
             Resolve Return
           </Button>
@@ -198,7 +202,12 @@ function ResolveReturnModal({
             label="Refund by"
             value={tender}
             onChange={(e) => setTender(e.target.value as InlineRefundTender | "")}
-            options={[{ value: "", label: "Not recorded" }, ...TENDER_OPTIONS]}
+            options={[
+              ...(tenderRequired
+                ? [{ value: "", label: "Choose…" }]
+                : [{ value: "", label: "Not recorded" }]),
+              ...TENDER_OPTIONS,
+            ]}
           />
         )}
       </div>
@@ -820,6 +829,7 @@ export default function ReturnDetailPage() {
         isPending={processRefund.isPending}
         refundEstimate={ret.refundEstimate}
         refundEstimateReason={ret.refundEstimateReason}
+        tenderRequired={ret.order?.counterSale === true}
       />
 
       <ConfirmActionModal
