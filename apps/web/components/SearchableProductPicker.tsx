@@ -5,6 +5,7 @@ import { ChevronDown, Search, X, Check } from "lucide-react";
 import { cn, mergeRefs } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
+import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
 
 interface PickerProduct {
   id: string;
@@ -164,7 +165,11 @@ export function SearchableProductPicker({
   React.useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        !isInsideAnchoredList(e.target)
+      ) {
         setOpen(false);
       }
     };
@@ -275,58 +280,56 @@ export function SearchableProductPicker({
         )}
       </div>
 
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
-          {visibleProducts.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-navy/70">
-              {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
+      <AnchoredList anchorRef={containerRef} open={open} maxHeight={288}>
+        {visibleProducts.length === 0 ? (
+          <p className="px-3 py-2 text-xs text-navy/70">
+            {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
+          </p>
+        ) : (
+          <>
+            <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
+              {visibleProducts.length} result{visibleProducts.length === 1 ? "" : "s"}
+              {sourceProducts.length > visibleProducts.length + excludeSet.size && (
+                <> of {sourceProducts.length - excludeSet.size}</>
+              )}
             </p>
-          ) : (
-            <>
-              <p className="border-b border-surface-border px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-navy/70">
-                {visibleProducts.length} result{visibleProducts.length === 1 ? "" : "s"}
-                {sourceProducts.length > visibleProducts.length + excludeSet.size && (
-                  <> of {sourceProducts.length - excludeSet.size}</>
-                )}
-              </p>
-              <ul role="listbox">
-                {visibleProducts.map((p, idx) => (
-                  <li
-                    key={p.id}
-                    role="option"
-                    aria-selected={p.id === value}
-                    onMouseDown={(e) => {
-                      // mousedown so it fires before the input loses focus / closes
-                      e.preventDefault();
-                      handleSelect(p);
-                    }}
-                    onMouseEnter={() => setHighlight(idx)}
-                    className={cn(
-                      "flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-sm transition-colors",
-                      idx === highlight
-                        ? "bg-brand-50 text-brand-700"
-                        : "text-navy hover:bg-surface-raised",
-                    )}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 break-words" title={displayProductName(p)}>
-                        {displayProductName(p)}
-                      </p>
-                      {p.sku && <p className="truncate text-[11px] text-navy/70">SKU: {p.sku}</p>}
-                    </div>
-                    {p.isActive === false && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">
-                        Inactive
-                      </span>
-                    )}
-                    {p.id === value && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
+            <ul role="listbox">
+              {visibleProducts.map((p, idx) => (
+                <li
+                  key={p.id}
+                  role="option"
+                  aria-selected={p.id === value}
+                  onMouseDown={(e) => {
+                    // mousedown so it fires before the input loses focus / closes
+                    e.preventDefault();
+                    handleSelect(p);
+                  }}
+                  onMouseEnter={() => setHighlight(idx)}
+                  className={cn(
+                    "flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-sm transition-colors",
+                    idx === highlight
+                      ? "bg-brand-50 text-brand-700"
+                      : "text-navy hover:bg-surface-raised",
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 break-words" title={displayProductName(p)}>
+                      {displayProductName(p)}
+                    </p>
+                    {p.sku && <p className="truncate text-[11px] text-navy/70">SKU: {p.sku}</p>}
+                  </div>
+                  {p.isActive === false && (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">
+                      Inactive
+                    </span>
+                  )}
+                  {p.id === value && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" />}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </AnchoredList>
 
       {open && preview && previewPos && visibleProducts[highlight] && (
         <ProductPreviewPanel

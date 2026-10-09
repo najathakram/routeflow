@@ -67,7 +67,15 @@ export const Modal = ({
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
       <Dialog.Content
         onEscapeKeyDown={onEscapeKeyDown}
-        onInteractOutside={onInteractOutside}
+        onInteractOutside={(event) => {
+          // A dropdown list portalled to <body> (data-anchored-list) is part of this dialog.
+          const t = event.target;
+          if (t instanceof Element && t.closest("[data-anchored-list]")) {
+            event.preventDefault();
+            return;
+          }
+          onInteractOutside?.(event);
+        }}
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         className={cn(

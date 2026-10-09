@@ -28,4 +28,20 @@ describe("Modal onInteractOutside (opt-in)", () => {
     fireEvent.pointerDown(document.body);
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("a press inside a body-portalled AnchoredList is not an outside interaction", async () => {
+    const onClose = jest.fn();
+    render(
+      <Modal open onClose={onClose} title="T">
+        <p>body</p>
+      </Modal>,
+    );
+    const list = document.createElement("div");
+    list.setAttribute("data-anchored-list", "");
+    document.body.appendChild(list);
+    await new Promise((r) => setTimeout(r, 20));
+    fireEvent.pointerDown(list);
+    expect(onClose).not.toHaveBeenCalled();
+    list.remove();
+  });
 });

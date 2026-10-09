@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
+import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
 import { useProductCategories } from "@/lib/api/products";
 
 interface CategoryComboboxProps {
@@ -38,7 +39,11 @@ export function CategoryCombobox({
   // Close on outside click
   React.useEffect(() => {
     function handle(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        !isInsideAnchoredList(e.target)
+      ) {
         setOpen(false);
       }
     }
@@ -78,8 +83,8 @@ export function CategoryCombobox({
           className,
         )}
       />
-      {open && (
-        <ul className="absolute left-0 top-full z-50 mt-0.5 max-h-48 w-full overflow-y-auto rounded-lg border border-surface-border bg-white py-1 shadow-dropdown">
+      <AnchoredList anchorRef={containerRef} open={open}>
+        <ul className="py-1">
           {filtered.length > 0 ? (
             filtered.map((c) => (
               <li key={c}>
@@ -106,7 +111,7 @@ export function CategoryCombobox({
             </li>
           )}
         </ul>
-      )}
+      </AnchoredList>
     </div>
   );
 }
