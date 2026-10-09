@@ -1135,8 +1135,10 @@ export class ProductsService {
       // units_v1: a pack edit (unit word, size or regulated section) must not invalidate the levels on
       // this product. FIRST in the tx, before any other lock: the tenant units lock (a rename holds it
       // exclusive) and THIS product's lock (the one every level write takes). Whether the pack really
-      // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`: a stale
-      // echo of the old pack word would otherwise slip through (or write it back over a rename).
+      // moves is judged on the row read UNDER those locks, never on the pre-tx `existing`, so the levels
+      // are checked against the pack as it is NOW. That only RE-VALIDATES: a stale form that re-sends the
+      // old pack word when no level conflicts with it still writes that word back over a rename that
+      // committed meanwhile (an optimistic-concurrency guard on the form would be needed to stop that).
       if (
         dto.unit !== undefined ||
         dto.unitsPerBox !== undefined ||
