@@ -40,6 +40,7 @@ export function repriceLines(
       // R17-3: a percent or dollars-off edit is RE-APPLIED to the new customer's price; a hand-typed price (mode "set"),
       // or an edit this customer cannot take (over their price, a special tier with no reason), keeps its net.
       let net = l.unitPrice;
+      let reapplied = false;
       if (l.override.mode !== "set") {
         const again = resolveCounterPriceEdit(
           l.override.mode,
@@ -55,8 +56,10 @@ export function repriceLines(
           },
           l.override.reason,
         );
-        if (again.ok) net = again.unitPrice;
-        else if (again.refused === "AMOUNT_OVER_PRICE") {
+        if (again.ok) {
+          net = again.unitPrice;
+          reapplied = true;
+        } else if (again.refused === "AMOUNT_OVER_PRICE") {
           // The dollars off are bigger than this customer's price: the edit is DROPPED (never carried over from the
           // previous customer's figure), the line takes the customer's own price, and the note says so.
           const { override: _o, tierPrice: _t, priceEdited: _e, ...plain } = l;
@@ -71,8 +74,9 @@ export function repriceLines(
         changed += 1;
         return { ...plain, unitPrice, priceType };
       }
-      if (net !== l.unitPrice) {
-        changed += 1; // the edit followed the customer: updated, not kept
+      if (reapplied && (net !== l.unitPrice || (l.tierPrice ?? l.unitPrice) !== unitPrice)) {
+        // The edit was re-applied to this customer's price: updated, not kept, even when the figure lands on the same net.
+        changed += 1;
         return { ...l, unitPrice: net, tierPrice: unitPrice, priceType };
       }
       if ((l.tierPrice ?? l.unitPrice) === unitPrice) {
