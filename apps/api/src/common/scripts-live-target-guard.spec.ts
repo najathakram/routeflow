@@ -98,6 +98,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-addon-comp-candidates.mjs": "read-only",
   "apps/api/scripts/report-addon-default-grant-flip.mjs": "read-only",
   "apps/api/scripts/report-addon-gate-blast-radius.mjs": "read-only",
+  "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",
