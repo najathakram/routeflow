@@ -16,7 +16,12 @@ import { PREF } from "./preferences";
 export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig";
 export type SettingKind = "config" | "behaviour" | "preference" | "memo";
 export type SettingStatus =
-  "live" | "legacy" | "pending #1337" | "moves to policy (PR-3)" | "pending WS4";
+  | "live"
+  | "legacy"
+  | "pending #1337"
+  | "moves to policy (PR-3)"
+  | "pending WS4"
+  | "pending SA-762r API";
 
 export interface SettingRow {
   /** Exact key, or a prefix pattern ending in `*` (e.g. `margin.floor.category.*`). */
@@ -86,7 +91,15 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── systemConfig: settings controller writers ────────────────────────────────
   cfg("settings.taxRate", "/settings?tab=profile"),
   cfg("settings.logoUrl", "/settings?tab=profile"),
-  cfg("settings.receiptFooter", "/settings?tab=profile"),
+  // SA-762r: the Business profile "Receipt footer" field is built; PATCH /settings does not
+  // persist `receiptFooter` until the API PR lands, so the row is honest about it.
+  {
+    key: "settings.receiptFooter",
+    home: "systemConfig",
+    kind: "config",
+    status: "pending SA-762r API",
+    plannedSurface: "Settings → Business profile → Receipt footer (API write lands with SA-762r)",
+  },
   ...[
     "fromName",
     "fromEmail",
