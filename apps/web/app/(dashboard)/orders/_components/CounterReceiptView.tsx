@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { formatReceiptMoney as money, type CounterReceiptModel } from "@/lib/counter-receipt";
+import {
+  adjustmentLabel,
+  formatReceiptMoney as money,
+  type CounterReceiptModel,
+} from "@/lib/counter-receipt";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
@@ -143,7 +147,7 @@ export function CounterReceiptView({
         ) : null}
         {m.adjustment !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
-            <dt>Tax and adjustments</dt>
+            <dt>{adjustmentLabel(m.taxRatePercent)}</dt>
             <dd>{money(m.adjustment)}</dd>
           </div>
         ) : null}

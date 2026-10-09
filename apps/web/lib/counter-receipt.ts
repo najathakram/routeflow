@@ -85,7 +85,13 @@ export interface CounterReceiptModel {
   tenderedAsEntered: boolean;
   change: number | null;
   changeAsEntered: boolean;
+  /** the sale's single stored tax rate in percent (8.25 = 8.25%), only when it explains `adjustment`; else null */
+  taxRatePercent: number | null;
 }
+
+/** The adjustment row's label: "Tax (8.25%)" when one stored rate explains it, else "Tax and adjustments". */
+export const adjustmentLabel = (taxRatePercent: number | null | undefined): string =>
+  taxRatePercent == null ? "Tax and adjustments" : `Tax (${Number(taxRatePercent.toFixed(3))}%)`;
 
 /** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
 export const formatReceiptMoney = (n: number): string =>
@@ -218,6 +224,7 @@ export function buildCounterReceipt(input: {
     tenderedAsEntered,
     change,
     changeAsEntered,
+    taxRatePercent: null,
   };
 }
 
@@ -252,6 +259,10 @@ export interface ReprintSaleFacts {
   balanceDue: number;
   methods: ReadonlyArray<{ method: ReprintTender; amount: number }>;
   createdAt: string | Date;
+  /** cash handed over (the Today's-sales row's `cashTendered`); null/absent on a legacy sale: no Tendered / Change */
+  cashTendered?: number | null;
+  /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
+  taxRatePercent?: number | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
 }
@@ -332,6 +343,17 @@ export function receiptModelFromOrder(input: {
   const hasTender = sale.methods.length > 0;
   const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
+  const adjustment = roundMoney(order.total - subtotal);
+  const rate = sale.taxRatePercent;
+  // Name the rate only when it accounts for the whole adjustment (a re-price or credit must not read as tax).
+  const taxRatePercent =
+    rate != null && adjustment !== 0 && adjustment === roundMoney((subtotal * rate) / 100)
+      ? rate
+      : null;
+  const cashApplied = roundMoney(
+    sale.methods.filter((m) => m.method === "CASH").reduce((sum, m) => sum + m.amount, 0),
+  );
+  const tendered = sale.cashTendered ?? null;
   return {
     header: receiptHeader(profile),
     orderNumber: order.orderNumber,
@@ -341,7 +363,7 @@ export function receiptModelFromOrder(input: {
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal,
-    adjustment: roundMoney(order.total - subtotal),
+    adjustment,
     discounts: 0,
     total: order.total,
     paid,
@@ -353,9 +375,10 @@ export function receiptModelFromOrder(input: {
     methodLabel: hasTender
       ? sale.methods.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
       : null,
-    tendered: null,
+    tendered,
     tenderedAsEntered: false,
-    change: null,
+    change: tendered == null ? null : Math.max(0, roundMoney(tendered - cashApplied)),
     changeAsEntered: false,
+    taxRatePercent,
   };
 }
