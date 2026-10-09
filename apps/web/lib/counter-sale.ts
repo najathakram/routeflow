@@ -238,6 +238,10 @@ export function isCounterSaleIncomplete(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_INCOMPLETE;
 }
 
+/** POS-5: 403 PRICE_EDIT_NOT_PERMITTED (an edited price from a caller who may not change prices). Nothing was written. */
+export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
+  "You can't change prices. Reset the edited prices, or ask your account admin.";
+
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
@@ -249,6 +253,9 @@ export function counterSaleErrorCopy(err: unknown): string {
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
+  // POS-5: a refused price edit says so (and what to do), before the generic permission copy below.
+  if (status === 403 && res?.data?.code === API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED)
+    return COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY;
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
