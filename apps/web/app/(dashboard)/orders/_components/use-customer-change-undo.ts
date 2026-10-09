@@ -36,11 +36,18 @@ export function useCustomerChangeUndo<C, Cr>({
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const restoredCredits = React.useRef<Cr[] | null>(null);
   const focusSearch = React.useRef(false);
+  // The chip's "Change customer" x: Undo removes its own chip, so focus goes back here instead of to <body>.
+  const chipRef = React.useRef<HTMLButtonElement>(null);
+  const focusChip = React.useRef(false);
 
   React.useEffect(() => {
     if (focusSearch.current && !selectedCustomer) {
       focusSearch.current = false;
       searchInputRef.current?.focus();
+    }
+    if (focusChip.current && selectedCustomer) {
+      focusChip.current = false;
+      chipRef.current?.focus();
     }
   }, [selectedCustomer]);
 
@@ -65,6 +72,7 @@ export function useCustomerChangeUndo<C, Cr>({
   const undo = () => {
     if (!previous) return;
     restoredCredits.current = previous.credits;
+    focusChip.current = true;
     setSelectedCustomer(previous.customer);
     setFulfillPath(previous.fulfillPath);
     setPrevious(null);
@@ -76,6 +84,7 @@ export function useCustomerChangeUndo<C, Cr>({
     undo,
     dismiss: () => setPrevious(null),
     searchInputRef,
+    chipRef,
     /** Called by the customer-id effect: the credits to start from (Undo's, else none). */
     takeRestoredCredits,
   };

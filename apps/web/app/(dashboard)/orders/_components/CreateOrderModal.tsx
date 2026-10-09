@@ -505,6 +505,7 @@ export function CreateOrderModal({
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
     customerUndo.dismiss();
+    setCustomerListOpen(true);
     setCustomerError("");
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -1879,6 +1880,7 @@ export function CreateOrderModal({
                 </div>
                 <button
                   type="button"
+                  ref={customerUndo.chipRef}
                   onClick={customerUndo.change}
                   className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
                   title="Change customer"

@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -210,6 +212,15 @@ describe("PKG-4 customer search keyboard (F09, K1-K3)", () => {
     expect(mockCreateDraft).not.toHaveBeenCalled();
   });
 
+  it("row 205: the open-the-builder reset block also reopens the customer list (a closed list never carries over)", () => {
+    // Typing reopens the list anyway, so behaviour cannot tell; pin the reset effect itself.
+    const src = fs.readFileSync(path.join(__dirname, "CreateOrderModal.tsx"), "utf8");
+    const start = src.indexOf("if (!isOpen) return;\n    reset({");
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf("}, [", start));
+    expect(block).toMatch(/setCustomerListOpen\(true\)/);
+  });
+
   it("K3b: Escape with NO list open still dismisses and parks the draft (customer + a line)", async () => {
     const onClose = jest.fn();
     const user = userEvent.setup({ delay: null });
@@ -403,6 +414,16 @@ describe("PKG-4 Change customer + Undo (F11, K6/K7)", () => {
     expect(payload.customerId).toBe("c1");
     expect(payload.fulfillPath).toBe("SHIP");
     expect(payload.appliedCreditNotes).toEqual([{ creditNoteId: "cn1" }]);
+  });
+
+  it("row 205: after Undo, focus returns to the customer chip's x (the Undo chip is gone, so focus is never lost)", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await typeCustomer(user);
+    await user.click(screen.getByText(/Acme Market/).closest("button") as HTMLElement);
+    await user.click(chip()!);
+    await user.click(screen.getByRole("button", { name: /undo/i }));
+    expect(chip()).toHaveFocus();
   });
 
   it("picking a different customer after Change customer drops the Undo and the old credits", async () => {
