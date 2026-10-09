@@ -1688,7 +1688,7 @@ export default function ProductDetailPage() {
                         <input
                           value={(editDraft.unitSku as string) ?? ""}
                           onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
-                          placeholder="Same as case code"
+                          placeholder={`Same as ${UW.pack.lower} code`}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       ) : (
@@ -2573,7 +2573,7 @@ export default function ProductDetailPage() {
                 ref={variantUnitSkuRef}
                 value={variantForm.unitSku}
                 onChange={(e) => setVariantForm((f) => ({ ...f, unitSku: e.target.value }))}
-                placeholder="Leave blank if it matches the case code"
+                placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}
                 className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <BarcodeScannerButton

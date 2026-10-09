@@ -154,7 +154,21 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}products/[id]/page.tsx`,
-    gone: ['label="Units per case"', "} units`", "/ unit</p>", "(same as case code)"],
+    gone: [
+      'label="Units per case"',
+      "} units`",
+      "/ unit</p>",
+      "(same as case code)",
+      'placeholder="Same as case code"',
+      'placeholder="Leave blank if it matches the case code"',
+    ],
+    present: [
+      "placeholder={`Same as ${UW.pack.lower} code`}",
+      "placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}",
+      "≈ ${pu.toFixed(2)} / {UW.base.short.one}",
+      "— (same as {UW.pack.lower} code)",
+      "<PiecesPerBoxValue",
+    ],
   },
   { file: `${D}products/page.tsx`, gone: ['header: "Units / case"'] },
   {
