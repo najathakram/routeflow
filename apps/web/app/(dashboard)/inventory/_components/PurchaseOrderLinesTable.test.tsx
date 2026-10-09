@@ -9,7 +9,9 @@ import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the cost input is labelled by the default unit words (no per-product label on a PO line yet).
 const UW = unitWords();
-const UNIT_COST = new RegExp(`^Cost per (${UW.pack.lower}|${UW.base.lower})$`);
+// Per line: a boxed line is costed per box, a plain line per piece — never either-or.
+const COST_PER_BOX = `Cost per ${UW.pack.lower}`;
+const COST_PER_PIECE = `Cost per ${UW.base.lower}`;
 
 const products: CatalogProduct[] = [
   { id: "p-each", name: "Napkins", sku: "NAP", unitsPerBox: 1 },
@@ -128,7 +130,39 @@ describe("PurchaseOrderLinesTable", () => {
       />,
     );
     fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "7.5" } });
-    fireEvent.change(screen.getByLabelText(UNIT_COST), { target: { value: "2.25" } });
+    fireEvent.change(screen.getByLabelText(COST_PER_PIECE), { target: { value: "2.25" } });
     expect(seen.lines[0]).toMatchObject({ qty: "7.5", unitCost: "2.25" });
+  });
+
+  it("asserts the cost basis per line: a boxed line is per box, a plain line per piece", () => {
+    const seen = { lines: [] as EditLine[] };
+    render(
+      <Harness
+        seen={seen}
+        initial={[
+          line({ id: "l1", productId: "p-box", boxes: "1", pieces: "0", unitCost: "24" }),
+          line({ id: "l2", productId: "p-each", qty: "1", unitCost: "1" }),
+        ]}
+      />,
+    );
+    const [boxedRow, plainRow] = screen.getAllByRole("row").slice(-2);
+    expect(within(boxedRow).getByLabelText(COST_PER_BOX)).toBeInTheDocument();
+    expect(within(boxedRow).queryByLabelText(COST_PER_PIECE)).toBeNull();
+    expect(within(plainRow).getByLabelText(COST_PER_PIECE)).toBeInTheDocument();
+    expect(within(plainRow).queryByLabelText(COST_PER_BOX)).toBeNull();
+  });
+
+  it("the visible cost label is the input's own name (label-in-name) and the header says per box", () => {
+    const seen = { lines: [] as EditLine[] };
+    render(
+      <Harness
+        seen={seen}
+        initial={[line({ id: "l1", productId: "p-box", boxes: "1", pieces: "0", unitCost: "24" })]}
+      />,
+    );
+    expect(screen.getAllByText(COST_PER_BOX).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("columnheader", { name: /Cost per box/ })).toBeInTheDocument();
+    expect(screen.queryByText("Unit cost ($)")).toBeNull();
+    expect(screen.queryByText("Cost ($)")).toBeNull();
   });
 });

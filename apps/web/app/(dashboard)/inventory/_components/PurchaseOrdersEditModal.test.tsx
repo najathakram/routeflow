@@ -11,7 +11,9 @@ import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the cost input is labelled by the default unit words (no per-product label on a PO line yet).
 const UW = unitWords();
-const UNIT_COST = new RegExp(`^Cost per (${UW.pack.lower}|${UW.base.lower})$`);
+// Per line: a boxed line is costed per box, a plain line per piece — never either-or.
+const COST_PER_BOX = `Cost per ${UW.pack.lower}`;
+const COST_PER_PIECE = `Cost per ${UW.base.lower}`;
 
 const toast = jest.fn();
 jest.mock("@routeflow/ui/web", () => {
@@ -85,7 +87,7 @@ const renderModal = (p: PurchaseOrder, onClose = jest.fn()) => {
   return onClose;
 };
 const setCost = (v: string) =>
-  fireEvent.change(screen.getByLabelText(UNIT_COST), { target: { value: v } });
+  fireEvent.change(screen.getByLabelText(COST_PER_PIECE), { target: { value: v } });
 const setQty = (v: string) =>
   fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: v } });
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -105,7 +107,7 @@ describe("prefill", () => {
     expect(screen.getByLabelText("Expected Date")).toHaveValue("2026-10-01");
     expect(screen.getByLabelText("Notes")).toHaveValue("Dock 3");
     expect(screen.getByLabelText("Quantity")).toHaveValue(10);
-    expect(screen.getByLabelText(UNIT_COST)).toHaveValue(3);
+    expect(screen.getByLabelText(COST_PER_PIECE)).toHaveValue(3);
   });
 
   it("shows a boxed line as Boxes + Pieces and cost per box", () => {
@@ -117,7 +119,7 @@ describe("prefill", () => {
     );
     expect(screen.getByTitle("Boxes")).toHaveValue(2);
     expect(screen.getByTitle("Extra pieces")).toHaveValue(3);
-    expect(screen.getByLabelText(UNIT_COST)).toHaveValue(24);
+    expect(screen.getByLabelText(COST_PER_BOX)).toHaveValue(24);
   });
 
   // #1199 pin: a boxed line's subtotal AND the running total must be the ENTERED case cost x
@@ -144,7 +146,7 @@ describe("prefill", () => {
       }),
     );
     // Case cost reads back exact (derived from the stored total, not 0.9167 x 12 = 11.0004).
-    expect(screen.getByLabelText(UNIT_COST)).toHaveValue(11);
+    expect(screen.getByLabelText(COST_PER_BOX)).toHaveValue(11);
     expect(screen.getByTitle("Boxes")).toHaveValue(1000);
     expect(screen.getByTitle("Extra pieces")).toHaveValue(0);
     // Subtotal (the line) and Total (the footer) both read the exact entered figure.
@@ -254,7 +256,7 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     save();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.queryByText("Re-apply to inventory?")).toBeNull();
-    expect(screen.getByLabelText(UNIT_COST)).toHaveValue(4);
+    expect(screen.getByLabelText(COST_PER_PIECE)).toHaveValue(4);
     expect(mutate).not.toHaveBeenCalled();
   });
 
@@ -273,7 +275,7 @@ describe("RECEIVED — protected lines and the re-apply question", () => {
     const selects = screen.getAllByLabelText("Product");
     fireEvent.change(selects[1], { target: { value: "p1" } });
     fireEvent.change(screen.getAllByLabelText("Quantity")[1], { target: { value: "5" } });
-    fireEvent.change(screen.getAllByLabelText(UNIT_COST)[1], { target: { value: "2" } });
+    fireEvent.change(screen.getAllByLabelText(COST_PER_PIECE)[1], { target: { value: "2" } });
     save();
     fireEvent.click(screen.getByRole("button", { name: "Re-apply" }));
     const items = mutate.mock.calls[0][0].items;
@@ -355,7 +357,8 @@ describe("built from fresh data, once", () => {
     );
     expect(screen.getByText("Edit PO-2026-0001")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Loading…");
-    expect(screen.queryByLabelText(UNIT_COST)).toBeNull();
+    expect(screen.queryByLabelText(COST_PER_PIECE)).toBeNull();
+    expect(screen.queryByLabelText(COST_PER_BOX)).toBeNull();
   });
 
   it("waits for the product catalog too — a boxed line built before it arrives would flip shape", () => {
@@ -364,7 +367,8 @@ describe("built from fresh data, once", () => {
       <PurchaseOrdersEditModal po={po()} suppliers={suppliers} products={[]} onClose={jest.fn()} />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Loading…");
-    expect(screen.queryByLabelText(UNIT_COST)).toBeNull();
+    expect(screen.queryByLabelText(COST_PER_PIECE)).toBeNull();
+    expect(screen.queryByLabelText(COST_PER_BOX)).toBeNull();
   });
 
   it("uses the FRESH lines, not the stale list row (a line added since the list loaded must not be dropped)", () => {
@@ -454,7 +458,7 @@ describe("Escape (the modal is a hand-rolled overlay, so it must handle the key 
     expect(screen.getByRole("dialog", { name: "Re-apply to inventory?" })).toBeInTheDocument();
     esc();
     expect(screen.queryByRole("dialog", { name: "Re-apply to inventory?" })).toBeNull();
-    expect(screen.getByLabelText(UNIT_COST)).toHaveValue(4);
+    expect(screen.getByLabelText(COST_PER_PIECE)).toHaveValue(4);
     expect(mutate).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     // a second Escape now closes it

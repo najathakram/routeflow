@@ -141,12 +141,24 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}inventory/_components/PurchaseOrdersCreateModal.tsx`,
-    gone: [">Unit Cost ($)<", "Cost per unit", '"per unit"'],
+    gone: [">Unit Cost ($)<", "Cost per unit", '"per unit"', "Cost ($)"],
+    present: ["Cost per {UW.pack.lower} / {UW.base.lower}"],
     allow: ["boxes", "pieces"], // line-state field keys passed to updateLine, never shown
   },
   {
     file: `${D}inventory/_components/PurchaseOrderLinesTable.tsx`,
-    gone: ["Unit Cost ($)", "Cost per unit", '"per unit"', 'aria-label="Unit cost"'],
+    gone: [
+      "Unit Cost ($)",
+      "Cost per unit",
+      '"per unit"',
+      'aria-label="Unit cost"',
+      "Cost ($)",
+      "Unit cost ($)",
+    ],
+    present: [
+      "Cost per {UW.pack.lower} / {UW.base.lower}",
+      "Cost per {isBoxed ? UW.pack.lower : UW.base.lower}",
+    ],
   },
   {
     file: `${D}returns/_components/InlineReturnSection.tsx`,
