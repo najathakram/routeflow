@@ -2261,6 +2261,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2277,29 +2278,41 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("writes the supplied zone into the new TenantConfig row", async () => {
-      await service.createTenant({ ...dto, timezone: "America/Chicago" });
+      await service.createTenant(dto);
       expect(prisma.tenantConfig.create).toHaveBeenCalledWith({
         data: { tenantId: TENANT_ID, businessName: "Acme Wholesale", timezone: "America/Chicago" },
       });
     });
 
-    it("leaves the column default alone when no zone is supplied", async () => {
-      await service.createTenant(dto);
-      const data = prisma.tenantConfig.create.mock.calls[0][0].data;
-      expect(data).not.toHaveProperty("timezone");
+    it("stores the case-corrected name of a valid zone", async () => {
+      await service.createTenant({ ...dto, timezone: "america/chicago" });
+      expect(prisma.tenantConfig.create.mock.calls[0][0].data.timezone).toBe("America/Chicago");
     });
 
-    it("an invalid zone is a 400 INVALID_TIME_ZONE before any write", async () => {
-      const err = await service
-        .createTenant({ ...dto, timezone: "Mars/Phobos" })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
-      expect((err as BadRequestException).getResponse()).toMatchObject({
-        code: "INVALID_TIME_ZONE",
-      });
-      expect(prisma.tenant.create).not.toHaveBeenCalled();
-      expect(prisma.tenantConfig.create).not.toHaveBeenCalled();
+    it("records the zone in the TENANT_CREATED audit meta", async () => {
+      await service.createTenant(dto);
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AdminAuditAction.TENANT_CREATED,
+          meta: expect.objectContaining({ timezone: "America/Chicago" }),
+        }),
+      );
     });
+
+    // R16-4 + the SA ruling: no silent New York default. A missing zone, a non-zone, an offset and a
+    // fixed-offset alias are all a 400 INVALID_TIME_ZONE before any write.
+    it.each([undefined, null, "", "Mars/Phobos", "+01:00", "EST", "Etc/GMT+5"])(
+      "refuses %p with a 400 INVALID_TIME_ZONE before any write",
+      async (bad) => {
+        const err = await service.createTenant({ ...dto, timezone: bad }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "INVALID_TIME_ZONE",
+        });
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+        expect(prisma.tenantConfig.create).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // Phase 0 Task 10: the admin Create Tenant path used to hardcode a 7-day trial
@@ -2311,6 +2324,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2377,6 +2391,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2432,6 +2447,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Lite Co",
       adminEmail: "owner@acme-lite.example.com",
       adminUsername: "acme_lite_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2499,6 +2515,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Welcome Co",
       adminEmail: "owner@acme-welcome.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2600,6 +2617,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme WebUrl Co",
       adminEmail: "owner@acme-weburl.example.com",
       adminUsername: "acme_weburl",
+      timezone: "America/Chicago",
     } as any;
     const prevEnv = process.env.NODE_ENV;
     let configGet: jest.Mock;
@@ -3317,6 +3335,7 @@ describe("PlatformAdminService — audit provenance", () => {
         businessName: "Acme Wholesale",
         adminEmail: "owner@acme.example.com",
         adminUsername: "acme_owner",
+        timezone: "America/Chicago",
       } as any);
 
       expect(result.id).toBe(TENANT_ID);

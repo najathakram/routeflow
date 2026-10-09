@@ -286,9 +286,9 @@ export class PlatformAdminService {
   async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
-    // SA-738 R16-4: the creation-time zone, validated (400 INVALID_TIME_ZONE) before any write.
-    const timezone =
-      dto.timezone !== undefined ? assertValidTenantTimeZone(dto.timezone) : undefined;
+    // SA-738 R16-4: the creation-time zone is REQUIRED and validated (400 INVALID_TIME_ZONE) before any
+    // write; there is no silent default, so a tenant never lands on New York by accident.
+    const timezone = assertValidTenantTimeZone(dto.timezone);
 
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
     if (RESERVED_SLUGS.includes(slug.toLowerCase()))
@@ -352,7 +352,7 @@ export class PlatformAdminService {
       });
 
       await tx.tenantConfig.create({
-        data: { tenantId: tenant.id, businessName, ...(timezone ? { timezone } : {}) },
+        data: { tenantId: tenant.id, businessName, timezone },
       });
 
       await tx.expenseCategory.createMany({
@@ -425,7 +425,7 @@ export class PlatformAdminService {
       class: result.tenant.class,
       adminUsername: result.user.username,
       welcomeEmail,
-      ...(timezone ? { timezone } : {}),
+      timezone,
     });
 
     return {
