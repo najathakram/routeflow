@@ -345,4 +345,54 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       nothingWritten();
     });
   });
+
+  describe("B1047 - discount and shipping are rounded to cents at intake", () => {
+    it("header-only: discount 10.005 stores 10.01 and the total follows the stored cents", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()]);
+      await service.update("inv-1", { discount: 10.005 });
+      expect(written().discount).toBe(10.01);
+      expect(written().total).toBe(89.99);
+    });
+
+    it("header-only: shippingFee 2.004 stores 2.00", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row()]);
+      await service.update("inv-1", { shippingFee: 2.004 });
+      expect(written().shippingFee).toBe(2);
+      expect(written().total).toBe(102);
+    });
+
+    it("items rewrite: discount 10.005 stores 10.01 (the same intake)", async () => {
+      arrange({ subtotal: 100, taxAmount: 0, total: 100 }, [row({ id: "item-1" })]);
+      await service.update("inv-1", {
+        items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 100 }],
+        discount: 10.005,
+      });
+      expect(written().discount).toBe(10.01);
+      expect(written().total).toBe(89.99);
+    });
+
+    it("create(): discount 10.005 stores 10.01 and the total follows", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, id: "inv-new", items: [], payments: [], customer: {} }),
+      );
+      await service.create({
+        customerId: "cust-1",
+        items: [{ description: "Widget", qty: 1, unitPrice: 100 }],
+        discount: 10.005,
+      } as any);
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(Number(data.discount)).toBe(10.01);
+      expect(Number(data.total)).toBe(89.99);
+    });
+
+    it('a NEGATIVE stored subtotal is refused as such, not as "discount cannot exceed subtotal (-35)"', async () => {
+      arrange({ subtotal: -35, taxAmount: 0, total: -35 }, [
+        row({ subtotal: -35, unitPrice: 5, discount: 40 }),
+      ]);
+      const err: any = await service.update("inv-1", { discount: 1 }).catch((e) => e);
+      expect(err.status).toBe(400);
+      expect(err.message).toMatch(/subtotal cannot be negative/i);
+    });
+  });
 });

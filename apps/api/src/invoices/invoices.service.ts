@@ -180,6 +180,7 @@ import {
 import {
   assertNotOverpaidByEdit,
   assertStillDraft,
+  intakeMoney,
   loadLockedInvoiceForEdit,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
@@ -442,8 +443,8 @@ export class InvoicesService {
     // money-invariants.util.ts, shared with EstimatesService.convertToInvoice's pre-flight.
     assertNoNegativeLineSubtotal(itemsData);
 
-    const invDiscount = dto.discount ?? 0;
-    const shipping = dto.shippingFee ?? 0;
+    const invDiscount = intakeMoney(dto.discount, 0); // B1047: cents at intake
+    const shipping = intakeMoney(dto.shippingFee, 0);
     // RF-079: tax-exempt customers owe $0 tax regardless of line item tax rates.
     // Tax is derived from each line's stored post-discount subtotal — the SAME
     // basis as the line itself — so boxed/prorated lines are taxed on what they
@@ -3152,8 +3153,8 @@ export class InvoicesService {
           inv.customerId,
           editLines.filter((l) => !l.untouched).map((l) => l.data as any),
         );
-        const invDiscount = dto.discount ?? Number(cur.discount);
-        const shipping = dto.shippingFee ?? Number(cur.shippingFee);
+        const invDiscount = intakeMoney(dto.discount, cur.discount); // B1047: cents at intake
+        const shipping = intakeMoney(dto.shippingFee, cur.shippingFee);
         zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 levy on the stored snapshots too
         const {
           subtotal,

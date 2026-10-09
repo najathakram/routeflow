@@ -83,6 +83,13 @@ export function assertInvoiceTotalsSane(
       after.discount - after.subtotal > before.discount - before.subtotal + EPS;
     if (!worse) return;
   }
+  // B1047: lines that net NEGATIVE make "discount ($0.00) cannot exceed subtotal (-$35.00)" read like nonsense;
+  // the thing to fix is the lines.
+  if (after.subtotal < 0) {
+    throw new BadRequestException(
+      `Invoice subtotal cannot be negative (${formatMoney(after.subtotal)}). Check the line discounts.`,
+    );
+  }
   if (after.discount > after.subtotal) {
     throw new BadRequestException(
       `Invoice discount (${formatMoney(after.discount)}) cannot exceed subtotal (${formatMoney(after.subtotal)}).`,

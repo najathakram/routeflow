@@ -77,6 +77,10 @@ export function assertStillDraft(invoice: { status?: unknown }): void {
   }
 }
 
+/** The two header money fields rounded to cents at intake (B1047): 10.005 must not store as 10.00 while the total counts 10.01. */
+export const intakeMoney = (v: number | undefined, stored: unknown): number =>
+  v !== undefined ? roundMoney(v) : Number(stored ?? 0);
+
 /** True when two money figures differ by at least a cent (both sides rounded first, L-170). */
 const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Number(b)) !== 0;
 
@@ -94,8 +98,8 @@ export function planHeaderOnlyTotals(
   dto: { discount?: number; shippingFee?: number },
 ): { discount: number; shippingFee: number; total: number; subtotal: number } {
   const { invoice, storedRows, isTaxExempt } = locked;
-  const discount = dto.discount ?? Number(invoice.discount ?? 0);
-  const shippingFee = dto.shippingFee ?? Number(invoice.shippingFee ?? 0);
+  const discount = intakeMoney(dto.discount, invoice.discount);
+  const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
   const t = sumInvoiceTotals(storedRows, { discount, shipping: shippingFee, isTaxExempt });
   if (differs(t.subtotal, invoice.subtotal) || differs(t.tax, invoice.taxAmount)) {
     throw new ConflictException({
