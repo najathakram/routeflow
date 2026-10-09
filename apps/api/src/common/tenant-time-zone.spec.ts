@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import {
   FALLBACK_ZONE,
+  canonicalWritableTimeZone,
   configuredZone,
   isValidTimeZone,
   resetTenantZoneWarnings,
@@ -42,6 +43,19 @@ describe("resolveTenantZone (SA-738: one resolver, one fallback)", () => {
     expect(zoneFromConfig({ timezone: "Mars/Phobos" }).fallback).toBe(true);
   });
 
+  it("zoneFromConfig warns once per tenant, from the ZoneContext", () => {
+    resetTenantZoneWarnings();
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      zoneFromConfig(null, { tenantId: "t-ctx" });
+      zoneFromConfig(null, { tenantId: "t-ctx" });
+      zoneFromConfig(null);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("configuredZone is the zone only when the tenant really has one (null otherwise)", () => {
     expect(configuredZone({ timezone: "Asia/Tokyo" })).toBe("Asia/Tokyo");
     expect(configuredZone(null)).toBeNull();
@@ -52,6 +66,41 @@ describe("resolveTenantZone (SA-738: one resolver, one fallback)", () => {
     expect(isValidTimeZone(42)).toBe(false);
     expect(isValidTimeZone("-05:00")).toBe(false);
     expect(isValidTimeZone("Europe/London")).toBe(true);
+  });
+});
+
+describe("canonicalWritableTimeZone: the ONE predicate behind every writer of the zone", () => {
+  it("returns a real zone unchanged", () => {
+    expect(canonicalWritableTimeZone("America/Chicago")).toBe("America/Chicago");
+    expect(canonicalWritableTimeZone("UTC")).toBe("UTC");
+  });
+
+  it("corrects letter case to the runtime's own name", () => {
+    expect(canonicalWritableTimeZone("america/chicago")).toBe("America/Chicago");
+    expect(canonicalWritableTimeZone("ASIA/TOKYO")).toBe("Asia/Tokyo");
+    expect(canonicalWritableTimeZone("utc")).toBe("UTC");
+  });
+
+  it.each([
+    "",
+    "Mars/Phobos",
+    "+01:00",
+    "-05:00",
+    "EST",
+    "mst",
+    "HST",
+    "Etc/GMT+5",
+    "Etc/GMT-14",
+    42,
+    null,
+    undefined,
+  ])("refuses %p (not a zone, an offset, or a fixed-offset alias)", (bad) => {
+    expect(canonicalWritableTimeZone(bad)).toBeNull();
+  });
+
+  it("is stricter than the lenient READ check (a stored legacy alias still reads as itself)", () => {
+    expect(isValidTimeZone("EST")).toBe(true);
+    expect(canonicalWritableTimeZone("EST")).toBeNull();
   });
 });
 

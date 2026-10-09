@@ -85,7 +85,7 @@ export class SettingsController {
           ...TENANT_ZONE_SELECT,
         },
       });
-      timezone = zoneFromConfig(config, tenantId).zone;
+      timezone = zoneFromConfig(config, { tenantId }).zone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;

@@ -327,7 +327,7 @@ export class InvoicesService {
     return {
       notes: cfg?.invoiceNotes ?? null,
       terms: cfg?.invoiceTerms ?? null,
-      timezone: configuredZone(cfg, tenantId),
+      timezone: configuredZone(cfg, { tenantId }),
     };
   }
 
@@ -2500,7 +2500,7 @@ export class InvoicesService {
       });
       tenantNotes = cfg?.invoiceNotes ?? null;
       tenantTerms = cfg?.invoiceTerms ?? null;
-      tenantTimezone = configuredZone(cfg, tenantId);
+      tenantTimezone = configuredZone(cfg, { tenantId });
     }
 
     // A backdated order bills on its business date, and the payment term runs from

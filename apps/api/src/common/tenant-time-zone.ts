@@ -22,8 +22,10 @@ export const FALLBACK_ZONE = "UTC";
 export const TENANT_ZONE_SELECT = { timezone: true } as const;
 
 /**
- * True when `raw` is a non-empty IANA zone name the runtime's Intl knows. UTC-offset forms
- * ("+01:00") are refused: a tenant's day boundary must follow DST rules, not a fixed offset.
+ * READ-side check: true when `raw` is a non-empty zone name the runtime's Intl knows. UTC-offset
+ * forms ("+01:00") are refused. Deliberately lenient about legacy aliases ("EST", "US/Eastern") so
+ * a value already stored keeps resolving to itself; WRITES use the stricter
+ * `canonicalWritableTimeZone` below.
  */
 export function isValidTimeZone(raw: unknown): raw is string {
   if (typeof raw !== "string" || raw.length === 0 || !/^[A-Za-z]/.test(raw)) return false;
@@ -35,6 +37,32 @@ export function isValidTimeZone(raw: unknown): raw is string {
   }
 }
 
+/** Fixed-offset names: a DST-less zone silently moves a tenant's day boundary twice a year. */
+const FIXED_OFFSET_ZONE = /^(?:EST|MST|HST)$|^Etc\/GMT[+-]\d+$/i;
+
+let canonicalByLower: Map<string, string> | null = null;
+function canonicalNames(): Map<string, string> {
+  if (!canonicalByLower) {
+    canonicalByLower = new Map(
+      [...Intl.supportedValuesOf("timeZone"), "UTC"].map((n) => [n.toLowerCase(), n]),
+    );
+  }
+  return canonicalByLower;
+}
+
+/**
+ * WRITE-side check and normalisation, the ONE predicate behind every writer of the zone (the
+ * settings PATCH, create-tenant, the messaging quiet-hours DTO and the onboarding intake DTO).
+ * Returns the name to store, or null to refuse: a real IANA name Intl knows, not an offset
+ * ("+01:00") and not a fixed-offset alias ("EST", "Etc/GMT+5"). A name that differs from the
+ * runtime's own list only by letter case is returned in the list's case ("america/chicago" ->
+ * "America/Chicago"); any other valid name is returned as typed.
+ */
+export function canonicalWritableTimeZone(raw: unknown): string | null {
+  if (!isValidTimeZone(raw) || FIXED_OFFSET_ZONE.test(raw)) return null;
+  return canonicalNames().get(raw.toLowerCase()) ?? raw;
+}
+
 /** A stored zone value (or nothing) -> a usable zone. Pure; any non-empty string is Intl-checked. */
 export function resolveTenantZone(raw: string | null | undefined): ResolvedZone {
   if (isValidTimeZone(raw)) return { zone: raw, fallback: false };
@@ -43,14 +71,14 @@ export function resolveTenantZone(raw: string | null | undefined): ResolvedZone 
 
 /**
  * The same, from a `TenantConfig` row read with `TENANT_ZONE_SELECT` (null = no row). Pass
- * `tenantId` to get the one-warn-per-tenant-per-process log when the fallback is used.
+ * the `ZoneContext` to get the one-warn-per-tenant-per-process log when the fallback is used.
  */
 export function zoneFromConfig(
   cfg: { timezone?: string | null } | null | undefined,
-  tenantId?: string,
+  ctx?: ZoneContext,
 ): ResolvedZone {
   const resolved = resolveTenantZone(cfg ? cfg.timezone : null);
-  if (resolved.fallback && tenantId) warnOnce(tenantId);
+  if (resolved.fallback && ctx?.tenantId) warnOnce(ctx.tenantId);
   return resolved;
 }
 
@@ -61,9 +89,9 @@ export function zoneFromConfig(
  */
 export function configuredZone(
   cfg: { timezone?: string | null } | null | undefined,
-  tenantId?: string,
+  ctx?: ZoneContext,
 ): string | null {
-  const { zone, fallback } = zoneFromConfig(cfg, tenantId);
+  const { zone, fallback } = zoneFromConfig(cfg, ctx);
   return fallback ? null : zone;
 }
 
@@ -98,7 +126,7 @@ export async function resolveZone(prisma: ZonePrisma, ctx: ZoneContext): Promise
     where: { tenantId: ctx.tenantId },
     select: TENANT_ZONE_SELECT,
   });
-  return zoneFromConfig(cfg, ctx.tenantId);
+  return zoneFromConfig(cfg, ctx);
 }
 
 /**

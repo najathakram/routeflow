@@ -111,8 +111,9 @@ export class LowStockDigestService {
     } | null,
     now: Date,
   ): Promise<void> {
-    // SA-738: the one resolver — a tenant with no row or an invalid zone is on UTC, like every other server path.
-    const { zone: timeZone } = zoneFromConfig(config, tenantId);
+    // SA-738: the batched-read exception to resolveZone (one query for ALL tenants, then this pure
+    // resolver per tenant) — a tenant with no row or an invalid zone is on UTC, like every other server path.
+    const { zone: timeZone } = zoneFromConfig(config, { tenantId });
     const { dateKey, hour } = readLocalDateAndHour(now, timeZone);
     if (hour !== 7) return;
     if (sentForDayKey(config?.lowStockDigestSentForDay ?? null) === dateKey) return;
