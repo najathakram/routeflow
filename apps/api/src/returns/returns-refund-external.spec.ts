@@ -223,6 +223,21 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     });
   });
 
+  describe("SA-758 CR-2: refundedAt is the DATABASE clock", () => {
+    it("the claim stamps refundedAt with the transaction's clock_timestamp()", async () => {
+      const dbTime = new Date("2026-10-08T20:00:00.123Z");
+      setReturn({ counterSale: true });
+      const q = jest.fn().mockResolvedValue([{ now: dbTime }]);
+      const base = prisma.tenantTransaction.getMockImplementation()!;
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        base((tx: any) => fn({ ...tx, $queryRaw: q })),
+      );
+      await refund();
+      expect(prisma.return.updateMany.mock.calls[0][0].data.refundedAt).toEqual(dbTime);
+      expect(raw[0].text).toMatch(/pg_advisory_xact_lock_shared/);
+    });
+  });
+
   describe("SA-749r2 item 9: the cash cap applies to the STANDARD refund too", () => {
     it("a CASH refund above the cash applied to the order (less earlier cash refunds) is 409 REFUND_EXCEEDS_CASH_PAID", async () => {
       setReturn();

@@ -26,6 +26,20 @@ export function registerKeyOfOrder(
   return order.registerKey ?? COUNTER_DEFAULT_REGISTER;
 }
 
+/**
+ * The database clock (`clock_timestamp()`), read on the caller's transaction AFTER the close lock is granted. A refund stamps
+ * `refundedAt` with this, the clock the close reads its cutoff from (SA-750r2), so a refund committed after a cutoff can never
+ * be stamped before it by a skewed app clock. Falls back to the app clock only when the driver returns no row (mocked clients).
+ */
+export async function dbClockNow(tx: {
+  $queryRaw: (strings: TemplateStringsArray, ...values: any[]) => Promise<unknown>;
+}): Promise<Date> {
+  const rows = (await tx.$queryRaw`SELECT clock_timestamp() AS now`) as
+    Array<{ now?: Date }> | undefined;
+  const now = rows?.[0]?.now;
+  return now instanceof Date ? now : new Date();
+}
+
 /** Takes the SHARED close lock on the caller's own transaction. MUST be the transaction's first statement. */
 export async function lockCounterClose(
   tx: { $executeRaw: (strings: TemplateStringsArray, ...values: any[]) => Promise<unknown> },

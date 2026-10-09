@@ -331,6 +331,29 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     });
   });
 
+  describe("SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock", () => {
+    it("the claim stamps refundedAt with clock_timestamp() of the transaction, after the lock and before the claim", async () => {
+      const dbTime = new Date("2026-10-08T20:00:00.123Z");
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      const q = jest.fn().mockResolvedValue([{ now: dbTime }]);
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $queryRaw: q,
+          $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+            rawCalls.push(strings.join("?").replace(/\s+/g, " ").trim());
+            rawValues.push(values);
+            return Promise.resolve(0);
+          }),
+        }),
+      );
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(prisma.return.updateMany.mock.calls[0][0].data.refundedAt).toEqual(dbTime);
+      expect(rawCalls[0]).toMatch(/pg_advisory_xact_lock_shared/);
+      expect(q).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("SA-740r2 item 6: the shared counter-close lock is the FIRST statement for a counter order", () => {
     it("counter order: counter-close, then Return, Orders, Invoices; the key is tenant:register (Order.registerKey ?? main)", async () => {
       prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });

@@ -79,7 +79,7 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
   refundTenderData,
@@ -1452,6 +1452,8 @@ export class InlineReturnsService {
         perOrder: refundAmountsBySale(fresh.items as any[], amount),
       });
 
+      // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
+      const refundedAt = await dbClockNow(tx);
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({
         where: {
@@ -1465,7 +1467,7 @@ export class InlineReturnsService {
         data: {
           status: "REFUNDED",
           refundAmount: amount,
-          refundedAt: new Date(),
+          refundedAt,
           // SA-740r: the tender of record, written in the SAME CAS as refundedAt (CARD is stored as CREDIT_CARD)
           ...refundTenderData(dto.tender),
         },

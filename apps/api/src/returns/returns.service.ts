@@ -55,7 +55,7 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
-import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import { refundTenderData } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
@@ -1388,13 +1388,15 @@ export class ReturnsService {
           perOrder: new Map([[orderId, refundAmount]]),
         });
       }
+      // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
+      const refundedAt = await dbClockNow(tx);
       const claimed = await tx.return.updateMany({
         where: { id, status: "RECEIVED" },
         data: {
           status: "REFUNDED",
           refundMethod: EXTERNAL_REFUND_METHOD,
           refundAmount,
-          refundedAt: new Date(),
+          refundedAt,
           ...refundTenderData(tender),
         },
       });

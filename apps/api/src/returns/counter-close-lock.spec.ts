@@ -7,9 +7,25 @@
 import {
   COUNTER_DEFAULT_REGISTER,
   counterCloseKeyOf,
+  dbClockNow,
   lockCounterClose,
   registerKeyOfOrder,
 } from "./counter-close-lock";
+
+describe("dbClockNow: refundedAt comes from the database clock", () => {
+  it("reads clock_timestamp() on the caller's transaction and returns that instant", async () => {
+    const at = new Date("2026-10-08T20:00:00.123Z");
+    const seen: string[] = [];
+    const tx = {
+      $queryRaw: (strings: TemplateStringsArray) => {
+        seen.push(strings.join("?").replace(/\s+/g, " ").trim());
+        return Promise.resolve([{ now: at }]);
+      },
+    };
+    expect(await dbClockNow(tx)).toEqual(at);
+    expect(seen).toEqual(["SELECT clock_timestamp() AS now"]);
+  });
+});
 
 describe("counter-close lock helpers", () => {
   it("the default register is main, and the key is tenantId:registerKey", () => {
