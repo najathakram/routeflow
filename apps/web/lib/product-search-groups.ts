@@ -17,7 +17,7 @@ export interface PickerRow {
   kind?: string | null;
   parentProductId?: string | null;
   variantName?: string | null;
-  parent?: { id?: string; name: string } | null;
+  parent?: { id?: string; name: string; kind?: string | null } | null;
   variants?: PickerRow[];
 }
 
@@ -67,7 +67,8 @@ export function groupSearchRows<T extends PickerRow>(
       parent = {
         id: parentId,
         name: r.parent.name,
-        kind: "FAMILY",
+        // Keep the parent's real kind; only a parent whose kind is unknown is assumed a FAMILY.
+        kind: r.parent.kind ?? "FAMILY",
         parentProductId: null,
         isActive: true,
         variants: [],

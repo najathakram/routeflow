@@ -13,7 +13,7 @@ interface Row {
   kind?: string;
   variantName?: string;
   parentProductId?: string | null;
-  parent?: { id: string; name: string } | null;
+  parent?: { id: string; name: string; kind?: string } | null;
   variants?: Row[];
 }
 
@@ -41,6 +41,16 @@ describe("groupSearchRows (B1215 C6)", () => {
     expect(rows[0].name).toBe("Sample Pod");
     expect(rows[0].variants?.map((v) => v.id)).toEqual(["v1"]);
     expect(expandedIds.has("f1")).toBe(true);
+  });
+
+  it("keeps the real kind of a re-attached parent that is not a FAMILY", () => {
+    const hit: Row = {
+      ...variant("v1", "s1", "Sample Std", "Strawberry"),
+      parent: { id: "s1", name: "Sample Std", kind: "STANDARD" },
+    };
+    const { rows } = groupSearchRows([hit]);
+    expect(rows[0].id).toBe("s1");
+    expect(rows[0].kind).toBe("STANDARD");
   });
 
   it("merges several matching variants of one missing parent into one group", () => {
