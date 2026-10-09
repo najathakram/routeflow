@@ -681,6 +681,56 @@ describe("SA-744r2: calendar windows in the issuer", () => {
     expect(h.invoices[0]).toMatchObject({ cycle: "ANNUAL" });
   });
 
+  // Review SHOULD (fail closed): a CLIPPED ANNUAL window (an old-shape invoice issued ahead covers its first
+  // days) is not issued at a full annual price for fewer days; the existing review notice is raised instead.
+  it("a clipped ANNUAL window is NOT issued or emailed: the review notice is raised once, the builder never runs", async () => {
+    const aheadOldShape = inv({
+      periodKey: "2025-12-04T00:00:00.000Z",
+      periodStart: D("2025-12-04T00:00:00.000Z"),
+      periodEnd: D("2026-12-04T00:00:00.000Z"),
+    });
+    const s = sub({
+      cycle: "ANNUAL",
+      periodStart: D("2025-12-01T12:00:00.000Z"),
+      periodEnd: D("2026-12-01T12:00:00.000Z"),
+    });
+    const h = make({ subs: [s], invoices: [aheadOldShape] });
+    const now = D("2026-11-28T00:20:00.000Z");
+    const windows = await h.svc.windowsFor(s as any, now);
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({ needsRuling: true });
+    expect(iso(windows[0].periodStart)).toBe("2026-12-04T00:00:00.000Z");
+
+    const summary = await h.svc.runIssueDue(now);
+    await h.svc.runIssueDue(now); // a rerun adds no second notice
+    expect(summary).toMatchObject({ issued: 0, needsRuling: ["tenant-acme"] });
+    expect(h.invoices.filter((i) => i.id !== aheadOldShape.id)).toHaveLength(0);
+    expect(h.builder.build).not.toHaveBeenCalled();
+    expect(h.mailer.sendAuto).not.toHaveBeenCalled();
+    const notices = h.audits.filter((a) => a.action === "RF_INVOICE_IRREGULAR_PERIOD");
+    expect(notices).toHaveLength(1);
+    expect(JSON.stringify(notices[0])).toContain("needs a ruling");
+  });
+
+  it("guard: a legacy ANNUAL catch-up (unaligned both ends, no clip) still issues at the annual price", async () => {
+    const prior = inv({
+      periodKey: "2024-10-12T00:00:00.000Z",
+      periodStart: D("2024-10-12T00:00:00.000Z"),
+      periodEnd: D("2025-10-12T00:00:00.000Z"),
+    });
+    const s = sub({
+      cycle: "ANNUAL",
+      periodStart: D("2025-10-12T00:00:00.000Z"),
+      periodEnd: D("2026-10-12T00:00:00.000Z"),
+    });
+    const h = make({ subs: [s], invoices: [prior] });
+    const windows = await h.svc.windowsFor(s as any, D("2025-10-13T00:20:00.000Z"));
+    expect(windows).toHaveLength(1);
+    expect(windows[0].needsRuling).toBeUndefined();
+    const r = await h.svc.issuePeriod(s as any, windows[0], D("2025-10-13T00:20:00.000Z"));
+    expect(r.status).toBe("issued");
+  });
+
   it("the IRREGULAR notice shows the inclusive end (end - 1 day)", async () => {
     const h = make({
       subs: [

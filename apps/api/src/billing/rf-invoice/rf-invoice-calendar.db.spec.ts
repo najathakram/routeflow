@@ -6,7 +6,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
-import { RfInvoiceIssuerService } from "./rf-invoice-issuer.service";
+import { RfInvoiceIssuerService, type IssueResult } from "./rf-invoice-issuer.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
@@ -98,7 +98,7 @@ describeDb("RfInvoice calendar windows (DB)", () => {
 
     const rolled = sub("2026-11-01T12:00:00.000Z", "2026-12-01T12:00:00.000Z");
     const now2 = D("2026-11-02T00:20:00.000Z");
-    const results = [];
+    const results: IssueResult[] = [];
     for (const w of await svc.windowsFor(rolled as any, now2)) {
       results.push(await svc.issuePeriod(rolled as any, w, now2));
     }

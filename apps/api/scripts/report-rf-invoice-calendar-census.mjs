@@ -9,8 +9,14 @@
  *      end is not within the snap of a B(m) - old-shape invoices, with status, period and amount;
  *   C. the void-and-reissue candidates (M2 deploy ruling): OPEN invoices whose periodStart >= the
  *      subscription's periodEnd (issued ahead). PAID ones and a current-period OPEN one are LEFT as they are;
- *   D. cycle-label mismatches (B863): windows of 300+ days labelled MONTHLY (they will price as ANNUAL),
- *      and ANNUAL rows whose last window is under 300 days. A 364-day annual row counts as ANNUAL.
+ *   D. cycle-label mismatches (B863): windows of 300+ days labelled MONTHLY are FLAGGED for the owner (a
+ *      365-day row labelled MONTHLY); the roll prices a row as ANNUAL from 360 days (effectiveCycle), so a
+ *      300-359 day window is flagged but keeps its label. ANNUAL-labelled rows whose last window is under
+ *      300 days are flagged too. A 364-day row is ANNUAL.
+ *   E. external rows with NO periodStart (not invoice candidates, but rollCycles still rolls them): the window
+ *      the roll will write, by label.
+ *   Plan-only estimates: an unaligned MONTHLY row's first prorated amount from basePriceSnapshot (add-ons are
+ *   not included; ANNUAL rows get none because the snapshot is monthly).
  *
  * Output: COUNTS by default. `--owner-ids` adds internal ids (tenant / invoice ids, never a slug or a
  * name) for the owner only. `--self-test` runs the pure part with no database.
@@ -40,12 +46,33 @@ export const READ_ONLY_SESSION = [
 const iso = (d) => d.toISOString();
 const windowDays = (a, b) => (b.getTime() - a.getTime()) / DAY;
 
+/** The first invoice's plan-only prorated amount (merged: plus one full month), or null when unknowable. */
+function planOnlyEstimate(base, cycle, frac, merged) {
+  if (cycle !== "MONTHLY" || base == null || !Number.isFinite(Number(base))) return null;
+  const prorated = Math.round(((Number(base) * frac.daysRemaining) / frac.daysInCycle) * 100) / 100;
+  return Math.round((prorated + (merged ? Number(base) : 0)) * 100) / 100;
+}
+
 /**
  * Pure. `subs`: { tenantId, cycle, periodStart, periodEnd }[]; `invoices`: { id, tenantId, status,
  * periodStart, periodEnd, amount }[] (non-VOID). Returns the four lists (rows carry internal ids only).
  */
-export function classifyCensus(subs, invoices) {
-  const out = { unaligned: [], oldShapeInvoices: [], voidReissue: [], cycleMismatch: [] };
+export function classifyCensus(subs, invoices, nullStartSubs = []) {
+  const out = {
+    unaligned: [],
+    oldShapeInvoices: [],
+    voidReissue: [],
+    cycleMismatch: [],
+    nullStartRoll: [],
+  };
+  for (const s of nullStartSubs) {
+    const w = cal.nextBillingWindow(s.periodEnd, s.cycle === "ANNUAL" ? "ANNUAL" : "MONTHLY");
+    out.nullStartRoll.push({
+      tenantId: s.tenantId,
+      cycle: s.cycle,
+      rollsTo: [iso(w.periodStart), iso(w.periodEnd)],
+    });
+  }
   const byTenant = new Map(subs.map((s) => [s.tenantId, s]));
   for (const s of subs) {
     const cycle = cal.effectiveCycle(s.cycle, s.periodStart, s.periodEnd);
@@ -61,6 +88,12 @@ export function classifyCensus(subs, invoices) {
         alignmentDays: frac.daysRemaining,
         daysInCycle: frac.daysInCycle,
         merged: cycle === "MONTHLY" && next.periodEnd.getTime() !== b1.getTime(),
+        planOnlyEstimate: planOnlyEstimate(
+          s.basePriceSnapshot,
+          cycle,
+          frac,
+          next.periodEnd.getTime() !== b1.getTime(),
+        ),
       });
     }
     const days = windowDays(s.periodStart, s.periodEnd);
@@ -147,6 +180,45 @@ export function selfTest() {
     r.voidReissue.length === 1 && r.voidReissue[0].invoiceId === "i1",
     "only the OPEN invoice issued ahead is a void/re-issue candidate",
   );
+  // E: a null-periodStart external row rolls onto the calendar by its label
+  const e = classifyCensus(
+    [],
+    [],
+    [{ tenantId: "t-n", cycle: "MONTHLY", periodEnd: D("2026-11-22T00:00:00Z") }],
+  );
+  must(
+    e.nullStartRoll.length === 1 &&
+      e.nullStartRoll[0].rollsTo.join() === "2026-11-22T00:00:00.000Z,2026-12-01T12:00:00.000Z",
+    "E: null-periodStart row rolls to the alignment window by label",
+  );
+  // plan-only estimate: 99 x 9.5/30 = 31.35 (MONTHLY); merged adds a full month; ANNUAL gets none
+  const withBase = classifyCensus(
+    [
+      {
+        ...sub("t-p", "MONTHLY", "2026-10-12T00:00:00Z", "2026-11-22T00:00:00Z"),
+        basePriceSnapshot: 99,
+      },
+      {
+        ...sub("t-m", "MONTHLY", "2026-10-30T00:00:00Z", "2026-11-29T00:00:00Z"),
+        basePriceSnapshot: 99,
+      },
+      {
+        ...sub("t-y", "ANNUAL", "2025-10-12T00:00:00Z", "2026-10-22T00:00:00Z"),
+        basePriceSnapshot: 99,
+      },
+    ],
+    [],
+  );
+  const est = Object.fromEntries(withBase.unaligned.map((u) => [u.tenantId, u.planOnlyEstimate]));
+  must(est["t-p"] === 31.35, "t-p plan-only estimate 31.35");
+  must(est["t-m"] === 107.25, "t-m merged: 2.5/30 x 99 + 99 = 107.25");
+  must(est["t-y"] === null, "ANNUAL rows get no estimate");
+  // a 300-359 day MONTHLY-labelled window is flagged but does not price as ANNUAL
+  const flagged = classifyCensus(
+    [sub("t-f", "MONTHLY", "2025-12-01T12:00:00Z", "2026-11-01T12:00:00Z")],
+    [],
+  );
+  must(flagged.cycleMismatch.length === 1, "a 335-day MONTHLY row is flagged (300+)");
   return "self-test ok";
 }
 
@@ -166,7 +238,7 @@ async function main() {
     for (const sql of READ_ONLY_SESSION) await client.query(sql);
     const subs = (
       await client.query(
-        `SELECT s."tenantId", s."cycle"::text AS cycle, s."periodStart", s."periodEnd"
+        `SELECT s."tenantId", s."cycle"::text AS cycle, s."periodStart", s."periodEnd", s."basePriceSnapshot"
            FROM "TenantSubscription" s JOIN "Tenant" t ON t."id" = s."tenantId"
           WHERE s."externalPayment" = true AND s."stripeSubId" IS NULL AND s."planKey" IS NOT NULL
             AND s."cancelAtPeriodEnd" = false AND s."periodStart" IS NOT NULL AND s."periodEnd" IS NOT NULL
@@ -180,7 +252,16 @@ async function main() {
         [subs.map((s) => s.tenantId)],
       )
     ).rows;
-    const r = classifyCensus(subs, invoices);
+    const nullStart = (
+      await client.query(
+        `SELECT s."tenantId", s."cycle"::text AS cycle, s."periodEnd"
+           FROM "TenantSubscription" s JOIN "Tenant" t ON t."id" = s."tenantId"
+          WHERE s."externalPayment" = true AND s."stripeSubId" IS NULL AND s."planKey" IS NOT NULL
+            AND s."periodStart" IS NULL AND s."periodEnd" IS NOT NULL
+            AND t."class" = 'PRODUCTION' AND t."deletedAt" IS NULL AND t."status" = 'ACTIVE'`,
+      )
+    ).rows;
+    const r = classifyCensus(subs, invoices, nullStart);
     const merged = r.unaligned.filter((u) => u.merged).length;
     console.log(`RF candidates: ${subs.length}`);
     console.log(
@@ -189,6 +270,7 @@ async function main() {
     console.log(`B. old-shape invoices (ahead / unaligned): ${r.oldShapeInvoices.length}`);
     console.log(`C. OPEN issued ahead - void and re-issue candidates: ${r.voidReissue.length}`);
     console.log(`D. cycle-label mismatches: ${r.cycleMismatch.length}`);
+    console.log(`E. external rows with no periodStart (roll by label): ${r.nullStartRoll.length}`);
     if (ownerIds) console.log(JSON.stringify(r, null, 2));
     await client.query("ROLLBACK");
   } finally {

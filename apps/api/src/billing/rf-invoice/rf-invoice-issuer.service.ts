@@ -44,6 +44,12 @@ export const RF_INVOICE_CANDIDATE_WHERE = {
 export interface IssueWindow {
   periodStart: Date;
   periodEnd: Date;
+  /**
+   * SA-744r2 (review): an ANNUAL window whose start was CLIPPED by an old-shape invoice issued ahead is not a
+   * shape the helper prices (fewer than 12 months from an unaligned start). It is NEVER issued or emailed at a
+   * full annual price for fewer days: `issuePeriod` raises the review notice instead and writes nothing.
+   */
+  needsRuling?: boolean;
 }
 
 /** The subscription fields the issuer reads (the cron's `select`, and what DB-3 / PR2 pass in). */
@@ -62,7 +68,8 @@ export interface IssuerSubscription {
 export type IssueResult =
   | { status: "issued"; invoice: { id: string; number: string } }
   | { status: "exists" }
-  | { status: "no_price" };
+  | { status: "no_price" }
+  | { status: "needs_ruling" };
 
 export interface IssueDueSummary {
   mode: RfInvoicingMode;
@@ -72,6 +79,8 @@ export interface IssueDueSummary {
   failed: number;
   /** Tenants a period was due for but whose price cannot be resolved. */
   unpriced: string[];
+  /** Tenants whose due ANNUAL window was clipped by an old-shape invoice: not issued, a notice raised. */
+  needsRuling: string[];
   /** Tenants skipped because their period ended long ago (rollCycles lagging); no invoice was issued. */
   stale: string[];
 }
@@ -110,6 +119,7 @@ export class RfInvoiceIssuerService {
       existing: 0,
       failed: 0,
       unpriced: [],
+      needsRuling: [],
       stale: [],
     };
     if (mode === "off") return summary;
@@ -148,7 +158,9 @@ export class RfInvoiceIssuerService {
           const r = await this.issuePeriod(sub, window, now);
           if (r.status === "issued") summary.issued++;
           else if (r.status === "exists") summary.existing++;
-          else if (!summary.unpriced.includes(sub.tenantId)) summary.unpriced.push(sub.tenantId);
+          else if (r.status === "needs_ruling") {
+            if (!summary.needsRuling.includes(sub.tenantId)) summary.needsRuling.push(sub.tenantId);
+          } else if (!summary.unpriced.includes(sub.tenantId)) summary.unpriced.push(sub.tenantId);
         }
       } catch (e) {
         summary.failed++;
@@ -200,9 +212,13 @@ export class RfInvoiceIssuerService {
     if (next.periodStart.getTime() - now.getTime() > leadDays * DAY_MS) return windows;
     const clipped = await this.clipToUninvoiced(sub.tenantId, next);
     if (!clipped) return windows;
-    windows.push(clipped);
-
     const parts = windowParts(clipped.periodStart, clipped.periodEnd, cycle);
+    // A clipped ANNUAL window (start moved by an old-shape invoice, parts no longer 12 months) is not priced.
+    const clippedAnnual =
+      cycle === "ANNUAL" &&
+      clipped.periodStart.getTime() !== next.periodStart.getTime() &&
+      parts === null;
+    windows.push(clippedAnnual ? { ...clipped, needsRuling: true } : clipped);
     const alignmentOnly = parts?.length === 1 && parts[0].kind === "ALIGN";
     if (
       alignmentOnly &&
@@ -271,6 +287,15 @@ export class RfInvoiceIssuerService {
 
     // M4 (B863): a last window of 360+ days is ANNUAL whatever the label says; the label is not rewritten.
     const cycle = effectiveCycle(sub.cycle, sub.periodStart, sub.periodEnd);
+    if (window.needsRuling) {
+      await this.raiseOnce(
+        sub.tenantId,
+        RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
+        periodKey,
+        `No RouteFlow invoice was issued for the ANNUAL window ${window.periodStart.toISOString().slice(0, 10)} to ${new Date(window.periodEnd.getTime() - DAY_MS).toISOString().slice(0, 10)} (inclusive): an invoice issued in the old shape already covers its first days, so a full annual price would bill fewer days. It needs a ruling.`,
+      );
+      return { status: "needs_ruling" };
+    }
     const draft = await this.builder.build(sub.tenantId, cycle, window);
     if (!draft.ok) {
       await this.raiseOnce(
