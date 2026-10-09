@@ -132,7 +132,8 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    // A 400 is rendered below in fixed copy; every other error reaches the global toast.
+    // A 400 is rendered below in fixed copy and skips the global toast. Any other error reaches
+    // the global toast AND the generic onError toast below (a pre-existing duplicate).
     meta: { localErrorToast: (err: unknown) => (err as any)?.response?.status === 400 },
     mutationFn: (data: Partial<ProfileFormValues>) =>
       apiClient.patch("/settings", data).then((r) => r.data),
@@ -196,6 +197,8 @@ function BusinessProfileTab() {
     formState: { errors, isSubmitting },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
+    // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
+    shouldFocusError: false,
     defaultValues: {
       businessName: "",
       email: "",

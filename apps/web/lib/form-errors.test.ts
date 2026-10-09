@@ -30,7 +30,7 @@ describe("fixFieldsTitle", () => {
 
 describe("onInvalidFocus", () => {
   it("toasts the count and scrolls to and focuses the first aria-invalid field", () => {
-    jest.useFakeTimers();
+    jest.useFakeTimers({ doNotFake: [] });
     document.body.innerHTML = `
       <input id="ok" />
       <input id="first" aria-invalid="true" />
@@ -46,7 +46,7 @@ describe("onInvalidFocus", () => {
   });
 
   it("does nothing when there are no errors", () => {
-    jest.useFakeTimers();
+    jest.useFakeTimers({ doNotFake: [] });
     document.body.innerHTML = `<input id="x" aria-invalid="true" />`;
     const toast = jest.fn();
     onInvalidFocus({}, toast);

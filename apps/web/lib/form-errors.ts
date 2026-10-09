@@ -34,12 +34,17 @@ export function onInvalidFocus(errors: unknown, toast: ToastFn): void {
   const n = countFieldErrors(errors);
   if (n === 0) return;
   toast({ title: fixFieldsTitle(n), variant: "error" });
-  setTimeout(() => {
+  // The aria-invalid attributes land with the next render: wait a frame, retry once if absent.
+  const focusFirst = (retry: boolean) => {
     const el = document.querySelector<HTMLElement>('[aria-invalid="true"]');
-    if (!el) return;
+    if (!el) {
+      if (retry) requestAnimationFrame(() => focusFirst(false));
+      return;
+    }
     el.scrollIntoView?.({ block: "center", behavior: "smooth" });
     el.focus({ preventScroll: true });
-  }, 0);
+  };
+  requestAnimationFrame(() => focusFirst(true));
 }
 
 /** Hook form of {@link onInvalidFocus}: `handleSubmit(onSubmit, useInvalidFocus())`. */
