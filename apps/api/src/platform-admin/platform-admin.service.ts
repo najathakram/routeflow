@@ -5,6 +5,7 @@ import {
   ConflictException,
   BadRequestException,
   InternalServerErrorException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -69,7 +70,15 @@ import {
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
 import { escapeHtml } from "../common/html-escape";
-import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
+import {
+  CUSTOM_FEE_UNCHANGED,
+  isPricePushFailure,
+  mergeOverride,
+  priceOverrideAudit,
+  priceOverrideOf,
+  publicPush,
+  sameOverride,
+} from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
@@ -1641,9 +1650,10 @@ export class PlatformAdminService {
   }
 
   /**
-   * Set or clear a tenant's custom price override, then sync any live Stripe
-   * subscription to the new resolved price (owner decision: `proration_behavior:
-   * "none"` — applies from the next billing cycle, never mid-period).
+   * Set or clear a tenant's custom price override. SA-733 D8: STRIPE FIRST — a live subscription is
+   * repriced before the row is written, so a Stripe failure leaves the old fee untouched (503) and a
+   * local failure after Stripe succeeded puts Stripe back. `dto.effective` picks the proration mode:
+   * `next_cycle` (default) = `none`, `now_prorated` = `create_prorations`.
    */
   async updateTenantPriceOverride(id: string, dto: UpdateTenantPriceDto, adminId: string | null) {
     await this._findOrThrow(id);
@@ -1654,13 +1664,32 @@ export class PlatformAdminService {
     // negotiated fee, leave Stripe billing the old amount, and tell the admin it failed.
     const existing = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId: id },
-      select: { priceOverrideMonthly: true, planKey: true, basePriceSnapshot: true },
+      select: {
+        priceOverrideMonthly: true,
+        priceOverrideAnnual: true,
+        planKey: true,
+        basePriceSnapshot: true,
+        updatedAt: true,
+      },
     });
     const nextMonthly =
       dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
     if (nextMonthly == null) {
       // Throws BadRequestException when the catalog can't price this tenant's plan.
       await this.platformPricingService.resolveCatalogPricing(id);
+    }
+
+    const effective = dto.effective ?? "next_cycle";
+    const before = await this.platformPricingService.resolveTenantPricing(id).catch(() => null);
+    const pushed = await this.billingService.pushResolvedPriceToStripe(id, {
+      effective,
+      proposed: mergeOverride(existing, dto),
+      version: existing?.updatedAt,
+    });
+    if (isPricePushFailure(pushed)) {
+      throw new ServiceUnavailableException(
+        `Stripe did not accept the price change (${pushed.reason}) — the price override was NOT saved. Retry shortly.`,
+      );
     }
 
     // A custom-priced plan applied BEFORE its negotiated fee was entered leaves
@@ -1670,7 +1699,7 @@ export class PlatformAdminService {
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
     // null-snapshot case back-fills — a set snapshot is already-reconciled data
     // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
-    await this.prisma.$transaction(async (tx) => {
+    const localWrite = this.prisma.$transaction(async (tx) => {
       // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
       // activation serialises here.
       await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
@@ -1684,9 +1713,23 @@ export class PlatformAdminService {
           status: true,
           class: true,
           deletedAt: true,
-          subscription: { select: { planKey: true, basePriceSnapshot: true } },
+          subscription: {
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              priceOverrideMonthly: true,
+              priceOverrideAnnual: true,
+            },
+          },
         },
       });
+      // D8: Stripe was repriced from the pre-lock read — a fee that moved since would leave Stripe and the
+      // row disagreeing, so refuse (the catch below puts Stripe back) rather than overwrite it.
+      if (!sameOverride(row.subscription, existing)) {
+        throw new ConflictException(
+          "The tenant's price override changed while this update was in flight — reload and retry.",
+        );
+      }
       const backfillBase =
         dto.monthly != null &&
         row.subscription?.planKey != null &&
@@ -1719,20 +1762,34 @@ export class PlatformAdminService {
         );
       }
     });
+    try {
+      await localWrite;
+    } catch (err) {
+      // The row was not written. If Stripe was already repriced, put it back; a failed revert leaves
+      // Stripe ahead of the database, so say so in the audit trail where an admin will find it.
+      if (pushed.undo && !(await this.billingService.revertPricePush(id, pushed.undo))) {
+        await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
+          kind: "price_override_stripe_ahead",
+          effective,
+          ...publicPush(pushed),
+        });
+      }
+      throw err;
+    }
 
     const [sync, pricing] = await Promise.all([
-      this.billingService.syncStripeSubscriptionPrice(id),
+      this.billingService.syncStripeSubscriptionPrice(id, { pushed }),
       this.platformPricingService.resolveTenantPricing(id),
     ]);
 
-    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
-      kind: "price_override",
-      monthly: dto.monthly ?? null,
-      annual: dto.annual ?? null,
-      sync,
-    });
+    await this.recordAdminAction(
+      id,
+      adminId,
+      AdminAuditAction.TENANT_CONFIG_UPDATED,
+      priceOverrideAudit({ dto, effective, before, after: pricing, sync }),
+    );
 
-    return { ...pricing, sync };
+    return { ...pricing, sync: publicPush(sync) };
   }
 
   /**
