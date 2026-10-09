@@ -202,7 +202,7 @@ describe("checkout.session.completed (the claim advances; nothing is voided yet)
     h.stripe.client.invoiceItems.create.mockImplementationOnce(async (params: any) => {
       idAtItemTime.push(h.sub().catchupInvoiceId); // what the claim stored when the item was created
       h.stripe.calls.push("invoiceItems.create");
-      return { id: "ii_1", invoice: params.invoice };
+      return { id: "ii_1", invoice: params.invoice, metadata: params.metadata ?? {} };
     });
 
     await h.svc.onSessionCompleted(

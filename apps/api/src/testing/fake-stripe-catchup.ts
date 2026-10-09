@@ -116,7 +116,7 @@ export function fakeStripeCatchup(
         }),
       },
       invoiceItems: {
-        create: jest.fn(async (params: any) => {
+        create: jest.fn(async (params: any, _opts?: unknown) => {
           calls.push("invoiceItems.create");
           const inv = invoices.get(params.invoice);
           if (inv) inv.amountDue = (inv.amountDue ?? 0) + params.amount;
