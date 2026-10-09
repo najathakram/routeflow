@@ -308,8 +308,8 @@ describe("InvoicesService — update() line preservation", () => {
     describe("SA-203 review fixes", () => {
       const line = (over: any = {}) =>
         legacy({ id: "a", qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12, subtotal: 22, ...over });
-      const linked = () => {
-        prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1" });
+      const linked = (over: Record<string, unknown> = {}) => {
+        prisma.invoice.findUnique.mockResolvedValue({ ...draftInvoice, orderId: "ord-1", ...over });
         prisma.order.findFirst.mockResolvedValue({
           status: "DELIVERED",
           orderNumber: "1",
@@ -381,8 +381,10 @@ describe("InvoicesService — update() line preservation", () => {
       });
 
       it("1b: a discount/shipping-only save on an order-linked invoice still runs the full coverage recompute (short-delivered lines shrink, refused lines cancel); identical rows are skipped inside it", async () => {
-        arrange([line()]);
-        linked();
+        const row = line();
+        arrange([row]);
+        // B1043 (F1): the header-only PATCH trusts the stored header only when it matches the lines.
+        linked({ subtotal: row.subtotal, total: row.subtotal });
         await service.update("inv-box", { discount: 5 } as any);
         expect(resync).toHaveBeenCalledTimes(1);
         expect(resync.mock.calls[0][2]).toBeUndefined(); // no changed-set: NOT the items-save mode
