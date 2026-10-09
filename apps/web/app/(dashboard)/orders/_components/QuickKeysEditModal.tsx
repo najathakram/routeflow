@@ -53,6 +53,7 @@ export function QuickKeysEditModal({ keys, cap, onClose }: Props) {
         open
         onClose={onClose}
         title="Edit quick keys"
+        closeClassName="min-h-[44px] min-w-[44px]"
         footer={
           <Button variant="secondary" className="min-h-[44px]" onClick={onClose}>
             Cancel
