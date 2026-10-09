@@ -112,11 +112,11 @@ const operatorPayload = {
 };
 
 const customerPayload = {
+  ...operatorPayload,
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
-  status: "ACTIVE" as const,
-  forcePasswordChange: false,
+  tenantId: "test-tenant",
 };
 
 describe("OrdersService", () => {

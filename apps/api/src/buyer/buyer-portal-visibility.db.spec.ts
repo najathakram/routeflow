@@ -46,7 +46,7 @@ import { Test } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -528,7 +528,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           (await findScanMatches(
             prisma.forTenant(),
             normalizeScanCode(f.rowCodes[p.id]),
-            buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+            buyerVisibleProductWhere(noBuyerRestrictions(f.tenantId)),
           )) !== null,
         ...(opts.write
           ? {

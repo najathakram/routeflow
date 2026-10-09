@@ -91,6 +91,7 @@ import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
+import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1405,6 +1406,8 @@ export class CustomersService {
       }
       return null;
     }
+
+    await assertProductIdNotFamily(this.prisma, dto.productId, "customer price"); // B1216
 
     return this.prisma.forTenant().customerPrice.upsert({
       where: {
