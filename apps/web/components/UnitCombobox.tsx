@@ -27,6 +27,8 @@ export function UnitCombobox({
 }: UnitComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
+  const [active, setActive] = React.useState(-1);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const allUnits = React.useMemo(
@@ -65,15 +67,27 @@ export function UnitCombobox({
         autoComplete="off"
         onChange={(e) => {
           onChange(e.target.value);
+          setActive(-1);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setOpen(true);
+            const last = filtered.length - 1;
+            setActive((a) => (e.key === "ArrowDown" ? Math.min(a + 1, last) : Math.max(a - 1, 0)));
+            return;
+          }
           if (e.key === "Escape") setOpen(false);
           if (e.key === "Enter" && open) {
-            // If exactly one match, select it; otherwise keep typed value
-            if (filtered.length === 1) {
-              onChange(filtered[0]);
+            // A highlighted option wins; if exactly one match, select it; otherwise keep typed value
+            const pick =
+              active >= 0 ? filtered[active] : filtered.length === 1 ? filtered[0] : null;
+            if (pick != null) {
+              onChange(pick);
               setOpen(false);
               e.preventDefault();
             } else {
@@ -86,11 +100,11 @@ export function UnitCombobox({
           className,
         )}
       />
-      <AnchoredList anchorRef={containerRef} open={open}>
-        <ul className="py-1">
+      <AnchoredList anchorRef={containerRef} open={open} id={listId}>
+        <ul role="listbox" className="py-1">
           {filtered.length > 0 ? (
-            filtered.map((u) => (
-              <li key={u}>
+            filtered.map((u, i) => (
+              <li key={u} role="option" id={`${listId}-${i}`} aria-selected={i === active}>
                 <button
                   type="button"
                   onMouseDown={() => {

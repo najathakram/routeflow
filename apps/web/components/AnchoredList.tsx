@@ -33,12 +33,15 @@ interface Placement {
 export function AnchoredList({
   anchorRef,
   open,
+  id,
   maxHeight = 192,
   className,
   children,
 }: {
   anchorRef: React.RefObject<HTMLElement | null>;
   open: boolean;
+  /** Element id for the list, so the input can reference it with aria-controls. */
+  id?: string;
   /** Preferred maximum height in px; clamped to the room actually available. */
   maxHeight?: number;
   className?: string;
@@ -96,6 +99,7 @@ export function AnchoredList({
   return createPortal(
     <div
       ref={listRef}
+      id={id}
       {...{ [LIST_ATTR]: "", "data-anchored-owner": place.owner }}
       className={cn(
         "pointer-events-auto overflow-y-auto overscroll-contain rounded-lg border border-surface-border bg-white shadow-dropdown",

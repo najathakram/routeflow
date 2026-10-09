@@ -102,6 +102,7 @@ export function SearchableProductPicker({
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const listId = React.useId();
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const excludeSet = React.useMemo(() => new Set(excludeIds ?? []), [excludeIds]);
@@ -257,6 +258,10 @@ export function SearchableProductPicker({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={
+            open && visibleProducts[highlight] ? `${listId}-${highlight}` : undefined
+          }
           disabled={disabled}
           className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/30 focus:outline-none disabled:cursor-not-allowed"
         />
@@ -280,7 +285,7 @@ export function SearchableProductPicker({
         )}
       </div>
 
-      <AnchoredList anchorRef={containerRef} open={open} maxHeight={288}>
+      <AnchoredList anchorRef={containerRef} open={open} id={listId} maxHeight={288}>
         {visibleProducts.length === 0 ? (
           <p className="px-3 py-2 text-xs text-navy/70">
             {search.trim() ? "No matches." : (emptyHint ?? "No products yet.")}
@@ -297,6 +302,7 @@ export function SearchableProductPicker({
               {visibleProducts.map((p, idx) => (
                 <li
                   key={p.id}
+                  id={`${listId}-${idx}`}
                   role="option"
                   aria-selected={p.id === value}
                   onMouseDown={(e) => {

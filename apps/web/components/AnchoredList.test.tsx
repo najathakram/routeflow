@@ -143,3 +143,24 @@ describe("a combo's list inside its own Modal", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 });
+
+describe("combobox a11y across the portal", () => {
+  it.each([
+    ["UnitCombobox", () => <UnitCombobox value="" onChange={jest.fn()} />],
+    ["CategoryCombobox", () => <CategoryCombobox value="" onChange={jest.fn()} />],
+  ])("%s: aria-controls and aria-activedescendant follow ArrowDown", (_n, make) => {
+    render(<div role="dialog">{make()}</div>);
+    const input = screen.getByRole("textbox");
+    expect(input).not.toHaveAttribute("aria-controls");
+    fireEvent.focus(input);
+    const list = document.getElementById(input.getAttribute("aria-controls")!)!;
+    expect(list).toHaveAttribute("data-anchored-list");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    const options = screen.getAllByRole("option");
+    expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+    expect(list.contains(options[1])).toBe(true);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).not.toHaveAttribute("aria-controls");
+  });
+});
