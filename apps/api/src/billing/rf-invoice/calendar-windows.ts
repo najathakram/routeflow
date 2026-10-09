@@ -86,7 +86,7 @@ export function monthsBetween(a: Date, b: Date): number {
  * the period so its window is under 360 days.
  */
 export function effectiveCycle(
-  label: Cycle | string,
+  label: string,
   periodStart: Date | null,
   periodEnd: Date | null,
 ): Cycle {
