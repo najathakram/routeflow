@@ -69,7 +69,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     if (!answered) return; // in flight or failed: the old prices stay
     const before = linesRef.current;
     const r = repriceLines(before, tierFor);
-    if (r.changed) setLines((cur) => repriceLines(cur, tierFor).lines);
+    if (r.lines !== before) setLines((cur) => repriceLines(cur, tierFor).lines);
     if (appliedKeyRef.current !== key) {
       const text = before.length
         ? repriceNote(
@@ -96,7 +96,17 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     setLines((cur) =>
       cur.map((l) => {
         const o = old.find((p) => p.tempId === l.tempId);
-        return o ? { ...l, unitPrice: o.unitPrice, priceType: o.priceType } : l;
+        if (!o) return l;
+        // POS-5: an edited line's price state (net, tier price, choice) goes back with the prices.
+        const { override: _o, tierPrice: _t, priceEdited: _e, ...rest } = l;
+        return {
+          ...rest,
+          unitPrice: o.unitPrice,
+          priceType: o.priceType,
+          ...(o.override
+            ? { tierPrice: o.tierPrice, override: o.override, priceEdited: true as const }
+            : {}),
+        };
       }),
     );
     setNote(null);

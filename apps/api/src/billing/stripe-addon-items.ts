@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { toCents } from "@routeflow/pricing";
 
 /**
  * SA-690 option A: a trial's add-ons are billed at the CARD CHECKOUT. Each unbilled self-serve
@@ -19,16 +19,6 @@ export const CHECKOUT_ADDON_SKUS_KEY = "addonSkus";
 /** The `expand` list that makes a retrieved subscription carry each item's product metadata. */
 export const CHECKOUT_ADDON_EXPAND = ["items.data.price.product"];
 
-/** A dollar price as integer cents — rounded to cents first, so float noise never moves a cent. */
-export function toCents(dollars: unknown): number {
-  return Math.round(roundMoney(Number(dollars)) * 100);
-}
-
-/** Integer cents as a dollar figure, rounded like every other money write. */
-export function fromCents(cents: number): number {
-  return roundMoney(cents / 100);
-}
-
 /** One add-on's checkout line: a MONTHLY inline price at the catalog amount, tagged with its SKU. */
 export function checkoutAddonLineItem(a: {
   sku: string;
@@ -39,7 +29,7 @@ export function checkoutAddonLineItem(a: {
   return {
     price_data: {
       currency: "usd",
-      unit_amount: toCents(a.monthlyPrice),
+      unit_amount: toCents(Number(a.monthlyPrice)),
       recurring: { interval: "month" as const },
       product_data: {
         name: `RouteFlow add-on — ${a.name}`,

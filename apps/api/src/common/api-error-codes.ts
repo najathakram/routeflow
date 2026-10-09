@@ -104,6 +104,9 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+  // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+  ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
   HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
   CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
   CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -164,6 +167,9 @@ export const API_ERROR_CODES = {
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
+  PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
+  PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
+  SCHEDULED_PRICE_CHANGE_REFUSED: "SCHEDULED_PRICE_CHANGE_REFUSED",
   PROFILE_PLAN_CHANGED: "PROFILE_PLAN_CHANGED",
   HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
   HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
@@ -226,6 +232,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**

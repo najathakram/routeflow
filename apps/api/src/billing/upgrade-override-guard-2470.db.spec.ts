@@ -106,6 +106,7 @@ describeDb("#2470 upgrade() loses the race to a concurrent Pricing change (real 
       noop, // tenantMirror
       noop, // featureOverrides
       planTransitionStub,
+      noop, // stripe
     );
     mutation = new SubscriptionMutationService(
       prisma as any,

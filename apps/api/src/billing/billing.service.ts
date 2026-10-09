@@ -3,10 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   BadRequestException,
   ConflictException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
@@ -14,7 +16,15 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
+import {
+  type PricePushOptions,
+  type PricePushResult,
+  priceOverrideIdempotencyKey,
+  prorationAllowedFor,
+  prorationBehaviorFor,
+  itemUnitAmount,
+} from "./price-override";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -29,6 +39,7 @@ import {
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import {
   CHECKOUT_ADDON_EXPAND,
   CHECKOUT_ADDON_SKUS_KEY,
@@ -48,6 +59,10 @@ import {
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
+  PARKED_CHECKOUT_ESCALATE_AFTER_DAYS,
+  STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+  STRIPE_CHECKOUT_PARK_RESOLVED_ACTION,
+  STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
 } from "./config-snapshot-audit.constants";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
@@ -86,6 +101,19 @@ type DuplicateVerdict = {
 class DuplicateCheckoutSignal extends Error {
   constructor(readonly verdict: DuplicateVerdict) {
     super(`duplicate checkout: ${verdict.reason}`);
+  }
+}
+
+/**
+ * B1158: a paid checkout was PARKED (the superseded subscription's bank payment is still processing): nothing was
+ * applied or cancelled; the webhook fails so Stripe redelivers, and the hourly sweep re-judges it. A ConflictException
+ * subtype so the sweep can tell "still parked" from any other retryable conflict.
+ */
+class SupersededPaymentProcessingError extends ConflictException {
+  constructor() {
+    super(
+      "The superseded subscription's payment is still processing — the checkout is parked and retried.",
+    );
   }
 }
 
@@ -167,6 +195,8 @@ export class BillingService {
     // SA-690 option A: the unbilled self-serve add-ons ride the card checkout as line items, and the
     // completion adopts the resulting Stripe items onto their rows (see SubscriptionMutationService).
     private readonly mutations: SubscriptionMutationService,
+    // R1 option B: the `invoice.upcoming` trigger of a scheduled downgrade's Stripe price push.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
   ) {}
 
   /**
@@ -485,13 +515,14 @@ export class BillingService {
    *
    * Also reconciles the MRR ledger (basePriceSnapshot + a signed BillingEvent
    * `amountDelta`) so reported revenue follows the price actually charged.
+   *
+   * D8: `opts.pushed` is a push the caller already made Stripe-first (before writing the override), so
+   * only the ledger half runs here; `opts.effective` / `proposed` / `version` shape a push made here.
    */
-  async syncStripeSubscriptionPrice(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async syncStripeSubscriptionPrice(
+    tenantId: string,
+    opts?: PricePushOptions & { pushed?: PricePushResult },
+  ): Promise<PricePushResult> {
     // Resolve FIRST: an unresolvable price (isCustom plan with no custom fee) must be a
     // clean no-op result, not a thrown 400 out of a "sync" call — callers fan this out.
     let pricing: Awaited<ReturnType<PlatformPricingService["resolveTenantPricing"]>>;
@@ -504,7 +535,7 @@ export class BillingService {
       return { synced: false, reason: "price_unresolvable" };
     }
 
-    const result = await this.pushResolvedPriceToStripe(tenantId);
+    const result = opts?.pushed ?? (await this.pushResolvedPriceToStripe(tenantId, opts));
     // Reported MRR must follow the money: basePriceSnapshot is what MrrService prices
     // every paying tenant from, and Σ BillingEvent.amountDelta is what it reconciles
     // against — so a price change writes BOTH, whatever Stripe did.
@@ -513,12 +544,10 @@ export class BillingService {
   }
 
   /** The Stripe half of `syncStripeSubscriptionPrice` (no ledger side effects). */
-  private async pushResolvedPriceToStripe(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async pushResolvedPriceToStripe(
+    tenantId: string,
+    opts?: PricePushOptions,
+  ): Promise<PricePushResult> {
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub?.stripeSubId) {
       return { synced: false, reason: "no_active_stripe_subscription" };
@@ -538,7 +567,10 @@ export class BillingService {
       return { synced: false, reason: "stripe_retrieve_failed" };
     }
 
-    if (stripeSub.status !== "active" && stripeSub.status !== "trialing") {
+    // SA-733r M7: past_due / unpaid are live — an owner price change must reach their next invoice.
+    // A Stripe-side `paused` (or incomplete) subscription is skipped: a price change made while it is
+    // paused does NOT reach Stripe, so the resume path (B3) must reconcile the price on resume.
+    if (!isLiveStripeSubscriptionStatus(stripeSub.status)) {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 
@@ -563,10 +595,31 @@ export class BillingService {
           ? "year"
           : "month";
 
-    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const priceData = opts?.proposed
+      ? await this.pricing.checkoutPriceData(tenantId, interval, opts.proposed)
+      : await this.pricing.checkoutPriceData(tenantId, interval);
+    const effective = opts?.effective ?? "next_cycle";
+    // A mid-period proration on a delinquent subscription would pile onto an invoice nobody pays: past_due /
+    // unpaid always take the change at the next invoice, whatever was asked.
+    const proration = prorationAllowedFor(stripeSub.status)
+      ? prorationBehaviorFor(effective)
+      : "none";
+    const key = priceOverrideIdempotencyKey({
+      tenantId,
+      amountCents: priceData.unit_amount,
+      proration, // the mode actually SENT: an active -> past_due flip between attempts must not reuse a key
+      version: opts?.version,
+      itemPriceId: item.price?.id,
+      attempt: randomUUID(), // a retry after a cached 5xx must really be sent (the lock + the unchanged check make it safe)
+    });
     const oldAmount =
-      typeof item.price?.unit_amount === "number" ? item.price.unit_amount / 100 : undefined;
-    const newAmount = priceData.unit_amount / 100;
+      typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
+    const newAmount = fromCents(priceData.unit_amount);
+    // Same cents on the same interval: nothing to change. Re-saving a price with now_prorated would only
+    // add net-zero proration lines to the customer's invoice, so Stripe is left alone.
+    if (item.price?.unit_amount === priceData.unit_amount) {
+      return { synced: true, unchanged: true, oldAmount, newAmount, proration: "none" };
+    }
 
     // Stripe requires a `product` ID on inline price_data for a subscription-item
     // update — `product_data` is a Checkout-session-only shape and is REJECTED here
@@ -576,9 +629,10 @@ export class BillingService {
       typeof item.price?.product === "string" ? item.price.product : item.price?.product?.id;
     if (!productId) {
       try {
-        const product = await this.stripe.client.products.create({
-          name: priceData.product_data.name,
-        });
+        const product = await this.stripe.client.products.create(
+          { name: priceData.product_data.name },
+          { idempotencyKey: `${key}:product` },
+        );
         productId = product.id;
       } catch (err) {
         this.logger.error(
@@ -595,23 +649,45 @@ export class BillingService {
       product: productId,
     };
 
+    // Logged BEFORE the write (until the needsReconcile column lands): if the process dies between Stripe's reply
+    // and the local commit, this line, with its key, is how an operator finds the push to reconcile.
+    this.logger.log(
+      `billing.price_override.push ${JSON.stringify({
+        tenantId,
+        stripeSubId: sub.stripeSubId,
+        idempotencyKey: key,
+        priorAmountCents: item.price?.unit_amount ?? null,
+        basePriceCents: priceData.unit_amount,
+        proration,
+        effective,
+      })}`,
+    );
     try {
-      await this.stripe.updateSubscription(sub.stripeSubId, {
-        items: [{ id: item.id, price_data: updatePriceData }],
-        proration_behavior: "none",
-      });
+      await this.stripe.updateSubscription(
+        sub.stripeSubId,
+        { items: [{ id: item.id, price_data: updatePriceData }], proration_behavior: proration },
+        { idempotencyKey: key },
+      );
     } catch (err) {
       this.logger.error(
         `Failed to sync Stripe subscription price for tenant ${tenantId}`,
         err as Error,
       );
-      return { synced: false, reason: "stripe_update_failed" };
+      // A lost RESPONSE is not a failed update: Stripe may have applied it. Re-read the item; if it already
+      // bills the new amount the push is applied, otherwise it is a failure the caller must refuse.
+      const reread = await this.stripe.getSubscription(sub.stripeSubId).catch(() => null);
+      if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
+        return { synced: false, reason: "stripe_update_failed" };
+      }
+      this.logger.warn(
+        `Stripe price update for tenant ${tenantId} errored but the item already bills ${newAmount} — treating it as applied`,
+      );
     }
 
     this.logger.log(
-      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=none)`,
+      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=${proration})`,
     );
-    return { synced: true, oldAmount, newAmount };
+    return { synced: true, oldAmount, newAmount, proration };
   }
 
   /**
@@ -746,6 +822,10 @@ export class BillingService {
         await this.onPaymentSucceeded(event.data.object);
         break;
 
+      case "invoice.upcoming":
+        await this.onInvoiceUpcoming(event.data.object);
+        break;
+
       case "invoice.payment_failed":
         await this.onPaymentFailed(event.data.object);
         break;
@@ -822,12 +902,12 @@ export class BillingService {
    * trail row and the platform notice (once per session, written together). Raised only when it would be news:
    *  - the session was not paid: nothing was charged;
    *  - it was applied already (its APPLIED row, or the stored subscription IS this one): a late retry of a
-   *    session that was handled — the cancellation arrives through customer.subscription.deleted;
-   *  - the tenant is on a different LIVE subscription (the A applied, sub_A cancelled, B applied, A retried
-   *    sequence): it is billed fine, and an alert would send an operator to refund a legitimate charge.
-   * The flag-off apply writes no APPLIED row, so "stored is live" is the signal that works for both flags. A
-   * Stripe error reading the stored subscription rethrows (only resource_missing means not live): the webhook is
-   * retried. Best-effort otherwise: a failing write never changes the 200.
+   *    session that was handled — the cancellation arrives through customer.subscription.deleted.
+   * B1157: a LIVE stored subscription no longer silences it. Every apply path now writes the APPLIED marker in its
+   * apply transaction (flag on or off, plan or not), so the A applied, sub_A cancelled, B applied, A retried
+   * sequence is silent through A's marker — while a paid session that was NEVER applied alerts even when the
+   * tenant is billed fine by another subscription (an operator must refund the orphan charge). Best-effort: a
+   * failing write never changes the 200.
    */
   private async noticePaidSessionAlreadyCancelled(
     session: any,
@@ -840,7 +920,6 @@ export class BillingService {
     const storedSubId = stored?.stripeSubId ?? null;
     if (storedSubId === subscriptionId) return;
     if (session.id && (await this.hasAppliedMarker(tenantId, session.id))) return;
-    if (storedSubId && (await this.storedSubscriptionIsLive(storedSubId))) return;
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { name: true, slug: true },
@@ -899,9 +978,31 @@ export class BillingService {
     await this.mutations.adoptCheckoutAddons(tenantId, stripeSub, adoptCtx);
   }
 
+  /** The APPLIED marker row of a checkout session: written by EVERY apply path, inside its apply transaction. */
+  private async writeAppliedMarker(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sessionId: string,
+    meta: Prisma.InputJsonObject,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId,
+        action: STRIPE_CHECKOUT_APPLIED_ACTION,
+        entityType: STRIPE_CHECKOUT_ENTITY,
+        entityId: sessionId,
+        meta,
+      },
+    });
+  }
+
   /** Has this checkout session already been APPLIED? (its marker row, written in the apply transaction) */
-  private async hasAppliedMarker(tenantId: string, sessionId: string): Promise<boolean> {
-    const row = await this.prisma.auditLog.findFirst({
+  private async hasAppliedMarker(
+    tenantId: string,
+    sessionId: string,
+    db: { auditLog: Pick<Prisma.TransactionClient["auditLog"], "findFirst"> } = this.prisma,
+  ): Promise<boolean> {
+    const row = await db.auditLog.findFirst({
       where: {
         tenantId,
         entityType: STRIPE_CHECKOUT_ENTITY,
@@ -951,10 +1052,6 @@ export class BillingService {
     }
   }
 
-  private async storedSubscriptionIsLive(storedSubId: string): Promise<boolean> {
-    return (await this.readStoredSubscription(storedSubId)).live;
-  }
-
   /**
    * B1155: a checkout is about to be applied over a stored subscription that is NOT live but NOT cancelled
    * either (paused / incomplete): it would be left behind, alive in Stripe, with nothing in RouteFlow pointing
@@ -982,6 +1079,209 @@ export class BillingService {
       });
       if (!isTerminalStripeSubscriptionStatus(again?.status)) throw err;
     }
+  }
+
+  /**
+   * B1158: the superseded-subscription cancel, guarded by a fresh re-read of that subscription RIGHT BEFORE it
+   * (the status read at the top of the handler is stale by now, and a bank payment may be in flight on it):
+   *  - now LIVE: do NOT cancel — a retryable throw, so the redelivery re-judges the checkout as a duplicate;
+   *  - terminal / gone: nothing to cancel, the checkout applies;
+   *  - its latest invoice's PaymentIntent is `processing` (ACH / SEPA): PARK the checkout — nothing cancelled, nothing
+   *    applied, ONE trail row + ONE platform notice per session — and fail the webhook so Stripe redelivers (the
+   *    hourly sweep resolves it);
+   *  - otherwise: cancel, as before.
+   */
+  private async cancelSupersededUnlessProcessing(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const fresh = await this.stripe.getSubscriptionPaymentState(storedSubId);
+    if (isLiveStripeSubscriptionStatus(fresh.status)) {
+      throw new ConflictException(
+        "The superseded subscription became live while this checkout was being applied — the checkout is retried.",
+      );
+    }
+    // A bank payment in flight parks the checkout even when the status already reads terminal: the payment
+    // may still settle, so nothing is applied or cancelled until it resolves.
+    if (fresh.paymentProcessing) {
+      await this.parkCheckoutForProcessingPayment(
+        session,
+        tenantId,
+        stripeSub,
+        existing,
+        storedSubId,
+      );
+      throw new SupersededPaymentProcessingError();
+    }
+    if (fresh.status === null || isTerminalStripeSubscriptionStatus(fresh.status)) return;
+    await this.cancelSupersededSubscription(storedSubId, fresh.status);
+  }
+
+  /** The durable half of a park: the trail row and its platform notice, written together (once per session). */
+  private async parkCheckoutForProcessingPayment(
+    session: any,
+    tenantId: string,
+    stripeSub: any,
+    existing: { stripeCustomerId?: string | null } | null,
+    storedSubId: string,
+  ): Promise<void> {
+    const newSubId: string = stripeSub.id;
+    const trail = this.checkoutCustomerTrail(session, existing, stripeSub);
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    const message =
+      `Paid checkout for ${label} is parked: the tenant's previous subscription ${storedSubId} has a bank payment ` +
+      `still processing; the new paid checkout ${session.id ?? "?"} / subscription ${newSubId} is parked, NOT applied; ` +
+      `nothing was cancelled. RouteFlow re-checks hourly and resolves it automatically (payment succeeds: the new ` +
+      `subscription is treated as a duplicate and cancelled, with a refund notice; payment fails: the new checkout ` +
+      `is applied); do not cancel either subscription by hand.`;
+    this.logger.warn(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing", storedSubId, newSubId, ...trail },
+      {
+        action: STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION,
+        rethrow: true,
+        alsoWrite: tenant
+          ? (tx) =>
+              writeAdminNotice(tx, {
+                tenantId,
+                action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+                message,
+                meta: {
+                  reason: "superseded_payment_processing",
+                  checkoutSessionId: session.id ?? null,
+                  storedSubId,
+                  newSubId,
+                },
+              })
+          : undefined,
+      },
+    );
+  }
+
+  /**
+   * B1158: hourly, re-run the SAME checkout handling (`onCheckoutCompleted`, the webhook's own path) for every
+   * parked checkout that has no resolution row yet. Handled (applied, or judged a duplicate and cancelled) writes
+   * the PARK_RESOLVED row; parked again (payment still processing) stays open — and once it has been open longer
+   * than PARKED_CHECKOUT_ESCALATE_AFTER_DAYS, ONE escalation notice asks for a manual reconcile in Stripe. One row
+   * failing never stops the others. Idempotent across runs and replicas (LeaderCron; every write dedupes on the
+   * session under the same advisory lock the webhook takes).
+   */
+  @LeaderCron("0 * * * *", "billing.reconcileParkedCheckouts")
+  async reconcileParkedCheckouts(): Promise<void> {
+    if (!this.stripe.isConfigured) return;
+    // Open parks only: NOT EXISTS a resolution row for the same entity, in the query itself (Prisma cannot
+    // express a NOT EXISTS across rows of one table). `escalated` = an ESCALATED row exists for the entity.
+    const parked = await this.prisma.$queryRaw<
+      { entityId: string; tenantId: string | null; createdAt: Date; escalated: boolean }[]
+    >`
+      SELECT a."entityId", a."tenantId", a."createdAt",
+        EXISTS (
+          SELECT 1 FROM "AuditLog" e
+          WHERE e."entityType" = a."entityType" AND e."entityId" = a."entityId"
+            AND e."action" = ${STRIPE_CHECKOUT_PARK_ESCALATED_ACTION}
+        ) AS "escalated"
+      FROM "AuditLog" a
+      WHERE a."entityType" = ${STRIPE_CHECKOUT_ENTITY}
+        AND a."action" = ${STRIPE_CHECKOUT_PAYMENT_PROCESSING_ACTION}
+        AND a."entityId" IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "AuditLog" r
+          WHERE r."entityType" = a."entityType" AND r."entityId" = a."entityId"
+            AND r."action" = ${STRIPE_CHECKOUT_PARK_RESOLVED_ACTION}
+        )
+      ORDER BY a."createdAt" ASC`;
+    // An escalated park already told the platform; re-run it once a day (the UTC-midnight run), not hourly.
+    const dailyRun = new Date(Date.now()).getUTCHours() === 0;
+    for (const row of parked) {
+      if (row.escalated && !dailyRun) continue;
+      try {
+        await this.reconcileParkedCheckout(row.entityId, row.createdAt);
+      } catch (err) {
+        this.logger.error(
+          `billing.reconcileParkedCheckouts: parked checkout ${row.entityId} could not be re-run (${(err as Error)?.message}) — left open, retried next hour`,
+        );
+        // A re-run that keeps failing must not hide an old park: escalate once from the row's own ids.
+        // Passes a partial `{ id }` session: escalateParkedCheckout reads only `session.id`.
+        if (
+          row.tenantId &&
+          Date.now() - row.createdAt.getTime() >
+            PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000
+        ) {
+          await this.escalateParkedCheckout({ id: row.entityId }, row.tenantId, true).catch((e) =>
+            this.logger.error(
+              `billing.reconcileParkedCheckouts: escalation for ${row.entityId} failed (${(e as Error)?.message})`,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  private async reconcileParkedCheckout(sessionId: string, parkedAt: Date): Promise<void> {
+    const session = await this.stripe.getCheckoutSession(sessionId);
+    const tenantId: string | null = session?.metadata?.tenantId ?? null;
+    try {
+      await this.onCheckoutCompleted(session);
+    } catch (err) {
+      if (!(err instanceof SupersededPaymentProcessingError)) throw err;
+      const ageMs = Date.now() - parkedAt.getTime();
+      if (tenantId && ageMs > PARKED_CHECKOUT_ESCALATE_AFTER_DAYS * 24 * 3600 * 1000) {
+        await this.escalateParkedCheckout(session, tenantId);
+      }
+      return; // still parked: stays open
+    }
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "park_resolved" },
+      { action: STRIPE_CHECKOUT_PARK_RESOLVED_ACTION, rethrow: true },
+    );
+  }
+
+  private async escalateParkedCheckout(
+    session: any,
+    tenantId: string,
+    rerunFailing = false,
+  ): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    if (!tenant) return;
+    const label = tenant.name ?? tenant.slug ?? tenantId;
+    const message =
+      `Paid checkout ${session.id} for ${label} has been parked for more than ` +
+      `${PARKED_CHECKOUT_ESCALATE_AFTER_DAYS} days: the previous subscription's bank payment is still processing. ` +
+      `Nothing was applied or cancelled${rerunFailing ? "; the hourly re-run itself is failing for this session" : ""} — manual reconcile in Stripe now.`;
+    this.logger.error(`Tenant ${tenantId}: ${message}`);
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "superseded_payment_processing_escalated" },
+      {
+        action: STRIPE_CHECKOUT_PARK_ESCALATED_ACTION,
+        rethrow: true,
+        alsoWrite: (tx) =>
+          writeAdminNotice(tx, {
+            tenantId,
+            action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+            message,
+            meta: {
+              reason: "superseded_payment_processing_escalated",
+              checkoutSessionId: session.id ?? null,
+            },
+          }),
+      },
+    );
   }
 
   /**
@@ -1422,14 +1722,16 @@ export class BillingService {
     }
     // B1155: this checkout is going to REPLACE a stored subscription that is neither live nor cancelled
     // (paused / incomplete): cancel that one first, so it is not left alive and unreferenced.
-    if (
-      storedSubId &&
-      storedSubId !== subscriptionId &&
-      !stored.live &&
-      stored.status &&
-      !isTerminalStripeSubscriptionStatus(stored.status)
-    ) {
-      await this.cancelSupersededSubscription(storedSubId, stored.status);
+    if (storedSubId && storedSubId !== subscriptionId && !stored.live && stored.status) {
+      // Also for an already-terminal early status: the guard re-reads the payment state, and a bank payment
+      // still processing on it parks the checkout instead of applying it (it may yet settle).
+      await this.cancelSupersededUnlessProcessing(
+        session,
+        tenantId,
+        stripeSub,
+        existingOverride,
+        storedSubId,
+      );
     }
     /** Re-judged under the tenant row lock, from the row as it is NOW (a racing completion or a manual
      *  activation may have committed since the read above). A moved stored id is a retryable conflict. */
@@ -1643,17 +1945,9 @@ export class BillingService {
                 }
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
                 if (session.id) {
-                  await tx.auditLog.create({
-                    data: {
-                      tenantId,
-                      action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                      entityType: STRIPE_CHECKOUT_ENTITY,
-                      entityId: session.id,
-                      meta: {
-                        fromPlanKey: transition.fromPlanKey,
-                        toPlanKey: transition.toPlanKey,
-                      },
-                    },
+                  await this.writeAppliedMarker(tx, tenantId, session.id, {
+                    fromPlanKey: transition.fromPlanKey,
+                    toPlanKey: transition.toPlanKey,
                   });
                 }
                 return row;
@@ -1700,13 +1994,26 @@ export class BillingService {
         }
       } else {
         // Flag OFF (or a checkout that names no plan / a stale one): no plan-transition hook, but the same
-        // tenant row lock (house order: first statement) and the same under-the-lock duplicate re-check as
+        // per-session lock first, then the tenant row lock (the hook path's order) and the same under-the-lock duplicate re-check as
         // the hook path, so a racing completion or manual activation can never be overwritten.
         upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
           this.prisma.$transaction(async (tx) => {
+            // B1157: this path writes the APPLIED marker too (so the paid-but-cancelled notice can tell an
+            // applied session from a never-applied one), under the same one-processor-per-session lock.
+            if (session.id) {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+              if (await this.hasAppliedMarker(tenantId, session.id, tx)) return ALREADY_APPLIED;
+            }
             await lockTenantForLedger(tx, tenantId);
             await recheckUnderLock(tx);
-            return tx.tenantSubscription.upsert(upsertArgs);
+            const row = await tx.tenantSubscription.upsert(upsertArgs);
+            if (session.id) {
+              await this.writeAppliedMarker(tx, tenantId, session.id, {
+                toPlanKey: planKeyForCheckout,
+                subscriptionId,
+              });
+            }
+            return row;
           }, CHECKOUT_TX_OPTIONS),
         );
       }
@@ -1939,6 +2246,37 @@ export class BillingService {
       return null;
     }
     return sub;
+  }
+
+  /**
+   * R1 option B: Stripe announces the renewal days ahead. If the tenant has a scheduled downgrade, its price is
+   * pushed NOW, before the invoice is cut. The event rides the existing StripeBillingEvent ledger (a redelivery of
+   * the same event id never reaches here twice) and the push itself is idempotent (Stripe already billing the
+   * target is a no-op). A lock collision or an unreadable Stripe THROWS: the webhook fails and Stripe redelivers,
+   * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
+   * redelivery could never succeed.
+   */
+  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+    if (!this.scheduledPrice) return;
+    const sub = await this.matchStripeSubscription(
+      stripeInvoiceSubscriptionId(invoice),
+      invoice?.customer,
+      "invoice.upcoming",
+    );
+    if (!sub) return;
+    try {
+      const out = await this.scheduledPrice.apply(sub.tenantId);
+      if (out.applied) {
+        this.logger.log(
+          `invoice.upcoming: scheduled downgrade price pushed for tenant ${sub.tenantId} (${out.priorAmountCents} -> ${out.amountCents} cents)`,
+        );
+      }
+    } catch (err) {
+      if (!(err instanceof BadRequestException)) throw err;
+      this.logger.error(
+        `invoice.upcoming: the scheduled downgrade price for tenant ${sub.tenantId} cannot be applied - fix it in Stripe before the renewal: ${err.message}`,
+      );
+    }
   }
 
   private async onPaymentFailed(invoice: any): Promise<void> {

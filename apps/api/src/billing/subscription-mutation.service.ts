@@ -5,11 +5,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
@@ -17,13 +18,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
-import {
-  CheckoutAddonItem,
-  checkoutAddonItems,
-  checkoutAddonLineItem,
-  fromCents,
-  toCents,
-} from "./stripe-addon-items";
+import { CheckoutAddonItem, checkoutAddonItems, checkoutAddonLineItem } from "./stripe-addon-items";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -59,11 +54,15 @@ import {
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
-import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import { CUSTOM_FEE_UNCHANGED, priceOverrideOf, prorationAllowedFor } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { randomUUID } from "crypto";
+import { manualPayContext, readRetiredAddons } from "./addon-retirement";
+import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
+import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
 export interface SubscribeInput {
   planKey: string;
@@ -112,6 +111,8 @@ export interface PlanChangePreview {
    *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
    *  made the UI demand consent to a deactivation that would never happen. */
   seatAckRequired: boolean;
+  /** UPGRADE only (B1103): the add-ons the target plan already includes — switched off at commit. */
+  retiredAddons?: { sku: string; name: string }[];
 }
 
 /**
@@ -141,6 +142,9 @@ const ADDON_ENABLE_BILLING_FAILED =
   "We couldn't turn this add-on on because billing didn't go through. Nothing was changed. Please try again.";
 const ADDON_DISABLE_BILLING_FAILED =
   "We couldn't turn this add-on off because billing didn't go through. It is still on. Please try again.";
+/** The retryable 409 copy when another change to this account's plan is still in flight. */
+const UPGRADE_BUSY =
+  "Your plan is already being changed. Please wait a moment, then check your plan before trying again.";
 const ADDON_ANNUAL_NOT_SUPPORTED =
   "Add-ons can't be added to an annual plan online yet. Please contact support.";
 
@@ -250,6 +254,8 @@ export class SubscriptionMutationService {
     // Lane B A2b: downgrade -> snapshot the tenant's feature config, upgrade -> restore it, INSIDE
     // the same transaction as the plan write (live flag entitlements.configSnapshot, default off).
     private readonly planTransition: PlanTransitionConfigService,
+    // R1 option B: `resume()` undoes a pre-renewal downgrade price push.
+    @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -775,6 +781,7 @@ export class SubscriptionMutationService {
           downgradeToPlanKey: true,
           cancelAtPeriodEnd: true,
           priceOverrideMonthly: true, // #2223: an override row's upgrade quotes 0
+          stripeSubId: true, // R2: a trialing / past_due / unpaid subscription quotes 0
         },
       }),
     ]);
@@ -896,7 +903,7 @@ export class SubscriptionMutationService {
       // #2223 / SA-444a: an override row keeps its negotiated fee — quote 0 and say why.
       const override = priceOverrideOf(priorSub);
       const proratedNow =
-        override != null
+        override != null || !(await this.stripeProrates(priorSub.stripeSubId))
           ? 0
           : this.proration.proratedDiff(
               {
@@ -906,10 +913,20 @@ export class SubscriptionMutationService {
               },
               newMonthly - oldMonthly,
             );
+      // B1103: the add-ons the new plan includes are switched off (and stop billing) at commit.
+      const retiredAddons = (
+        await readRetiredAddons(this.prisma, tenantId, version.addonSkus, toKey)
+      ).map((a) => ({ sku: a.code, name: a.name }));
       // upgrade() writes `cancelAtPeriodEnd: false` — say so before the tenant commits.
       const notes = [
         ...(override != null ? [CUSTOM_FEE_UNCHANGED] : []),
         ...(priorSub.cancelAtPeriodEnd ? [CANCELLATION_REVOKED_WARNING] : []),
+        ...(retiredAddons.length
+          ? [
+              `Now included in ${publishedTargetDef?.name ?? toKey}, so switched off: ` +
+                `${retiredAddons.map((a) => a.name).join(", ")}.`,
+            ]
+          : []),
       ];
       return {
         action: "UPGRADE",
@@ -918,6 +935,7 @@ export class SubscriptionMutationService {
         keepsRenewalAt: priorSub.periodEnd,
         fromPlanKey: fromKey,
         seatAckRequired: false,
+        retiredAddons,
         ...(notes.length ? { warning: notes.join(" ") } : {}),
       };
     }
@@ -971,8 +989,35 @@ export class SubscriptionMutationService {
     };
   }
 
-  /** Upgrade to a higher plan — instant, with the prorated price difference charged now. */
-  async upgrade(tenantId: string, planKey: string, actorId?: string) {
+  /**
+   * Whether a mid-period upgrade on this Stripe subscription is prorated at all (read-only, best effort). A
+   * trialing, past_due or unpaid subscription takes proration `none` (lead ruling R2), so the preview must not
+   * quote a charge. No subscription, Stripe off or an unreadable Stripe keep the local estimate.
+   */
+  private async stripeProrates(stripeSubId: string | null | undefined): Promise<boolean> {
+    if (!stripeSubId || !this.stripe.isConfigured) return true;
+    try {
+      return prorationAllowedFor((await this.stripe.getSubscription(stripeSubId)).status);
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Upgrade to a higher plan — instant, with the prorated price difference charged now. Serialised per tenant on
+   * the `tenant-price` lock (SA-733 D8): every read below, the Stripe push, the local write and any revert run
+   * inside it, so a second attempt sees the first one's result ("not an upgrade") instead of racing it.
+   */
+  upgrade(tenantId: string, planKey: string, actorId?: string) {
+    // A tenant-facing endpoint: a SHORT wait (a double-click burst must not pin the small tenant-price pool for
+    // the long admin wait) and tenant-safe copy on the retryable 409.
+    return underTenantPriceLock(tenantId, () => this.upgradeLocked(tenantId, planKey, actorId), {
+      waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
+      busyMessage: UPGRADE_BUSY,
+    });
+  }
+
+  private async upgradeLocked(tenantId: string, planKey: string, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
@@ -1028,7 +1073,7 @@ export class SubscriptionMutationService {
     // figures re-agree). The prorated CHARGE below still nets against the catalog entitlement.
     const override = priceOverrideOf(sub);
     const newBase = override ?? newMonthly;
-    const proratedNow =
+    const quotedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
     const transition = {
@@ -1039,8 +1084,39 @@ export class SubscriptionMutationService {
       actor: { id: actorId ?? null },
     };
     const preparedTransition = await this.planTransition.prepare(transition);
+    // R1 Option B: if a pre-renewal push already moved Stripe onto the scheduled DOWNGRADE's lower price, put the
+    // current plan's price back FIRST. Disarming the schedule (below) would otherwise leave Stripe on the lowered
+    // price and the upgrade would prorate from it - an overcharge. Fails closed (throws) before any upgrade push.
+    if (sub.stripeSubId && sub.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreIfPushedLocked(tenantId, sub.downgradeToPlanKey, {
+        mustBeCleared: false,
+      });
+    }
+    const { manualPay, tenantLabel } = await manualPayContext(
+      this.prisma,
+      tenantId,
+      this.stripe.isConfigured,
+      sub,
+    );
+    // SA-733r M7: Stripe FIRST (one update: new price + retired add-on items); `flow.settle` puts it back if
+    // the write below throws.
+    const flow = await beginStripeFirstPlanChange(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      planChangeArgs({
+        tenantId,
+        sub,
+        version,
+        def,
+        proration: "create_prorations",
+        retireAddons: true,
+        actorId,
+      }),
+    );
+    // Lead ruling R2 / S1: Stripe sends proration `none` on a trialing, past_due or unpaid subscription, so
+    // there is NO charge to quote - the response, the ledger payload and the email must not claim one.
+    const proratedNow = flow.ctx.proration === "none" ? 0 : quotedNow;
 
-    await this.prisma.$transaction(async (tx) => {
+    const written = this.prisma.$transaction(async (tx) => {
       // The hook FIRST, exactly like subscribe()/updatePlan()/the cron: every site takes the
       // snapshot/config row locks before the subscription/tenant rows, so two concurrent plan
       // changes for one tenant can never wait on each other in opposite orders (deadlock). If the
@@ -1063,6 +1139,10 @@ export class SubscriptionMutationService {
       const amountDelta = roundMoney(
         (isPaying ? newBase : 0) - (wasPaying ? Number(sub.basePriceSnapshot ?? 0) : 0),
       );
+      // B1103: the add-ons the new plan includes stop billing — rows off, MRR to 0 once, STOP notice. BEFORE the
+      // plan write on purpose: "paying" is judged from the plan the tenant is leaving, so a planKey-NULL
+      // (manual-activation) row, whose add-on never reached the ledger, books nothing for it.
+      await flow.retireAddons(tx, this.events, { manualPay, tenantLabel, actorId });
       // Optimistic guard: only apply if still on the expected plan (blocks a concurrent
       // double-upgrade from re-emitting the delta). Matches the STORED key (null matches
       // IS NULL), never the resolved one. #2470: and the negotiated fee it read (null matches
@@ -1102,10 +1182,17 @@ export class SubscriptionMutationService {
       await this.events.emit(
         tenantId,
         BILLING_EVENTS.PLAN_CHANGED,
-        { fromPlan: fromKey, toPlan: planKey, instant: true, prorated: proratedNow },
+        {
+          fromPlan: fromKey,
+          toPlan: planKey,
+          instant: true,
+          prorated: proratedNow,
+          ...(flow.ctx.idempotencyKey ? { stripeIdempotencyKey: flow.ctx.idempotencyKey } : {}),
+        },
         { amountDelta, actorId, tx },
       );
     }, this.planTransition.transactionOptions(preparedTransition));
+    await flow.settle(written);
 
     this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
@@ -1447,6 +1534,11 @@ export class SubscriptionMutationService {
       });
       await this.events.emit(tenantId, BILLING_EVENTS.SUBSCRIPTION_RESUMED, {}, { actorId, tx });
     });
+    // R1 option B: the downgrade this clears may already have had its LOWER price pushed for the renewal
+    // (invoice.upcoming / the 48 h sweep) - put Stripe back on the plan the tenant is keeping.
+    if (sub.stripeSubId && sub.downgradeToPlanKey) {
+      await this.scheduledPrice?.restoreAfterScheduleCleared(tenantId, sub.downgradeToPlanKey);
+    }
     return this.subscription.getSubscription(tenantId);
   }
 
@@ -2321,7 +2413,7 @@ export class SubscriptionMutationService {
         row.id,
         billed.itemId,
         // The same cents the item was created at, through the pricing helpers (never inline rounding).
-        fromCents(toCents(skuDef.monthlyPrice)),
+        fromCents(toCents(Number(skuDef.monthlyPrice))),
         quantity,
         row.quantity,
         expectedItemId,
@@ -2463,7 +2555,7 @@ export class SubscriptionMutationService {
     const mine = (lines ?? []).filter((ii: any) => !before.has(String(ii.id)));
     if (mine.length === 0) return null;
     const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
-    return roundMoney(cents / 100);
+    return fromCents(cents);
   }
 
   /**
@@ -2573,7 +2665,7 @@ export class SubscriptionMutationService {
           proration_behavior: "create_prorations",
           price_data: {
             currency: "usd",
-            unit_amount: toCents(skuDef.monthlyPrice),
+            unit_amount: toCents(Number(skuDef.monthlyPrice)),
             recurring: { interval: "month" },
             product: product.id,
           },

@@ -159,6 +159,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     customer: string;
     latestInvoice: string | null;
     items: any[];
+    /** B1158: the latest invoice's PaymentIntent is `processing` (a bank debit in flight). */
+    paymentProcessing?: boolean;
   }
 
   async function rig(opts: {
@@ -259,6 +261,11 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           latest_invoice: sub.latestInvoice,
           items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
         };
+      }),
+      getSubscriptionPaymentState: jest.fn(async (id: string) => {
+        const sub = subs[id];
+        if (!sub) return { status: null, paymentProcessing: false };
+        return { status: sub.status, paymentProcessing: sub.paymentProcessing ?? false };
       }),
       cancelSubscription: jest.fn(async (id: string) => {
         if (cancelFailures > 0) {
@@ -774,6 +781,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         {} as any,
         {} as any,
         planTransitionStub(flagOn),
+        {} as any, // stripe — no stripeSubId, so no plan-change push
       );
     const activateManually = (flagOn: boolean, tenantId: string) =>
       platformAdmin(flagOn).activateManualSubscription(
@@ -1206,6 +1214,74 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
+    it("B1158: an incomplete stored subscription whose bank payment is PROCESSING is never cancelled — the checkout is parked (one trail row, one notice), nothing applied; delivered twice keeps one of each", async () => {
+      const r = await twoSessions();
+      await prisma.tenantSubscription.update({
+        where: { tenantId: r.tenantId },
+        data: { stripeSubId: "sub_old" },
+      });
+      r.addSub("sub_old", { items: [], status: "incomplete", paymentProcessing: true });
+
+      await expect(r.completed()).rejects.toThrow();
+      await expect(r.completed()).rejects.toThrow();
+
+      expect((await sub(r)).stripeSubId).toBe("sub_old");
+      expect(r.stripe.cancelSubscription).not.toHaveBeenCalled();
+      const parked = await prisma.auditLog.findMany({
+        where: { entityId: r.sessionId, action: "STRIPE_CHECKOUT_PAYMENT_PROCESSING" },
+      });
+      expect(parked).toHaveLength(1);
+      const told = await prisma.auditLog.findMany({
+        where: { tenantId: r.tenantId, action: "STRIPE_PAID_CHECKOUT_NOT_APPLIED" },
+      });
+      expect(told).toHaveLength(1);
+      expect((told[0].meta as any).reason).toBe("superseded_payment_processing");
+      expect((await r.rows())[0]).toMatchObject({ stripeItemId: null });
+    });
+
+    it("B1158 sweep selection (real SQL): an OPEN park is re-run, a RESOLVED one never is, an ESCALATED one only at the UTC-midnight run", async () => {
+      const r = await twoSessions();
+      const tag = randomUUID().slice(0, 8);
+      const ids = { open: `cs_open_${tag}`, resolved: `cs_res_${tag}`, escalated: `cs_esc_${tag}` };
+      const audit = (entityId: string, action: string) =>
+        prisma.auditLog.create({
+          data: {
+            tenantId: r.tenantId,
+            action,
+            entityType: "stripe_checkout_session",
+            entityId,
+            meta: {},
+          },
+        });
+      await audit(ids.open, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.resolved, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.resolved, "STRIPE_CHECKOUT_PARK_RESOLVED");
+      await audit(ids.escalated, "STRIPE_CHECKOUT_PAYMENT_PROCESSING");
+      await audit(ids.escalated, "STRIPE_CHECKOUT_PARK_ESCALATED");
+
+      const rerun = jest
+        .spyOn(r.billing as any, "reconcileParkedCheckout")
+        .mockResolvedValue(undefined);
+      const mine = () =>
+        rerun.mock.calls.map((c) => c[0] as string).filter((id) => Object.values(ids).includes(id));
+      const at = (iso: string) => jest.spyOn(Date, "now").mockReturnValue(new Date(iso).getTime());
+      try {
+        const noon = at("2030-01-01T12:00:00Z");
+        await (r.billing as any).reconcileParkedCheckouts();
+        noon.mockRestore();
+        expect(mine()).toEqual([ids.open]);
+
+        rerun.mockClear();
+        const midnight = at("2030-01-01T00:30:00Z");
+        await (r.billing as any).reconcileParkedCheckouts();
+        midnight.mockRestore();
+        expect(mine().sort()).toEqual([ids.escalated, ids.open].sort());
+      } finally {
+        rerun.mockRestore();
+        jest.restoreAllMocks();
+      }
+    });
+
     it("4: a stored subscription Stripe no longer knows is not live either", async () => {
       const r = await twoSessions();
       await prisma.tenantSubscription.update({
@@ -1268,6 +1344,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         stub(),
         stub(),
         planTransitionStub(false),
+        stub(), // stripe — rollCycles never downgrades
+        stub(), // scheduledPrice
       ).rollCycles();
     };
 

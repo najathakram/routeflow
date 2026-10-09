@@ -57,7 +57,7 @@ describe("creditsPendingFromOrder (replay hint)", () => {
 describe("copy", () => {
   it("is the same fixed sentence as web", () => {
     expect(CREDITS_PENDING_COPY).toBe(
-      "The order was saved, but the credit notes weren't applied. Apply them on the order.",
+      "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
     );
   });
 });
