@@ -3,9 +3,15 @@
 import * as React from "react";
 import { useQueries } from "@tanstack/react-query";
 import { Button, Modal } from "@routeflow/ui/web";
-import { QUICK_KEYS_MAX_CAP, QUICK_KEYS_MAX_HIDDEN, type QuickKey } from "@routeflow/types";
+import {
+  QUICK_KEYS_MAX_CAP,
+  QUICK_KEYS_MAX_HIDDEN,
+  type QuickKey,
+  type QuickKeysSettings,
+} from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { displayProductName } from "@/lib/product-display";
+import { quickKeyLabel } from "@/lib/counter-quick-key-label";
 import { useProducts } from "@/lib/api/products";
 import {
   buildQuickKeysPatch,
@@ -15,6 +21,8 @@ import {
 
 /** Fixed copy: a failed save never shows the server's own text. */
 export const QUICK_KEYS_SAVE_FAILED_COPY = "Couldn't save your quick keys. Try again.";
+export const QUICK_KEYS_LOAD_FAILED_COPY =
+  "Couldn't load your quick keys. Close this and try again.";
 const UNKNOWN_NAME = "Unavailable product";
 const SEARCH_STEP = 8;
 const SEARCH_MAX = 40;
@@ -36,14 +44,38 @@ interface Props {
  * only while the editor is open, so every open starts from the saved lists.
  */
 export function QuickKeysEditModal({ keys, cap, onClose }: Props) {
-  const { data: saved } = useQuickKeysSettings();
+  const { data: saved, isError } = useQuickKeysSettings();
+  // Never edit from defaults: until the saved settings are known, a Save would reset the tenant's cap and window and
+  // wipe the hidden list. Loading and a failed read show a fixed line and offer no Save.
+  if (!saved) {
+    return (
+      <Modal
+        open
+        onClose={onClose}
+        title="Edit quick keys"
+        footer={
+          <Button variant="secondary" className="min-h-[44px]" onClick={onClose}>
+            Cancel
+          </Button>
+        }
+      >
+        <p className="text-sm text-navy/70" data-testid="quick-keys-loading">
+          {isError ? QUICK_KEYS_LOAD_FAILED_COPY : "Loading your quick keys…"}
+        </p>
+      </Modal>
+    );
+  }
+  return <QuickKeysEditor keys={keys} cap={cap} onClose={onClose} saved={saved} />;
+}
+
+function QuickKeysEditor({ keys, cap, onClose, saved }: Props & { saved: QuickKeysSettings }) {
   const save = useSaveQuickKeys();
   const [pinned, setPinned] = React.useState<string[]>(
-    () => saved?.counter?.default?.pinned ?? keys.filter((k) => k.pinned).map((k) => k.productId),
+    () => saved.counter?.default?.pinned ?? keys.filter((k) => k.pinned).map((k) => k.productId),
   );
-  const [hidden, setHidden] = React.useState<string[]>(() => saved?.counter?.default?.hidden ?? []);
+  const [hidden, setHidden] = React.useState<string[]>(() => saved.counter?.default?.hidden ?? []);
   const [names, setNames] = React.useState<Record<string, string>>(() =>
-    Object.fromEntries(keys.map((k) => [k.productId, k.name])),
+    Object.fromEntries(keys.map((k) => [k.productId, quickKeyLabel(k)])),
   );
   const [failed, setFailed] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -244,11 +276,11 @@ export function QuickKeysEditModal({ keys, cap, onClose }: Props) {
             <ul className="divide-y rounded border">
               {ranked.map((k) => (
                 <li key={k.productId} className="flex items-center gap-2 px-2 py-1">
-                  <span className="min-w-0 flex-1 break-words">{k.name}</span>
+                  <span className="min-w-0 flex-1 break-words">{quickKeyLabel(k)}</span>
                   <button
                     type="button"
                     className={BTN}
-                    aria-label={`Hide ${k.name}`}
+                    aria-label={`Hide ${quickKeyLabel(k)}`}
                     onClick={() => hide(k.productId)}
                   >
                     Hide

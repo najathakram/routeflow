@@ -823,10 +823,10 @@ export function CounterSaleScreen() {
           {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}
           <QuickKeysGrid
             locked={lineLocked}
-            onAdd={(key) => {
+            onAdd={(key, e) => {
               if (lineLocked || saleInFlight() || receipt) return;
               addProduct(key.product, key.sellLevel, 1);
-              refocus();
+              refocusAfterPointer(e); // a keyboard activation keeps focus on the key, like the tender buttons
             }}
           />
 

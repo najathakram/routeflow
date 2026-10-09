@@ -158,10 +158,63 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
     expect(total()).toHaveTextContent("$2.00"); // tier 2, not the 2.50 walk-in price
   });
 
-  it("hands focus back to the scan field after a tap", async () => {
+  it("hands focus back to the scan field after a POINTER tap", async () => {
     renderWithProviders(<CounterSaleScreen />);
-    fireEvent.click(await colaKey());
+    fireEvent.click(await colaKey(), { detail: 1 });
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+  });
+
+  it("a KEYBOARD activation (detail 0) keeps focus on the key so Tab/Enter can walk the grid", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const cola = await colaKey();
+    const water = await screen.findByTestId("quick-key-p-water");
+    cola.focus();
+    fireEvent.click(cola, { detail: 0 });
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(cola).toHaveFocus();
+    water.focus();
+    fireEvent.click(water, { detail: 0 });
+    await waitFor(() => expect(lines()).toHaveLength(2));
+    expect(water).toHaveFocus();
+  });
+
+  it("two variants with the same variant name read as 'Parent - Variant' on their keys", async () => {
+    const variant = (id: string, parent: string) => ({
+      id,
+      name: "Strawberry",
+      variantName: "Strawberry",
+      parentProductId: `${id}-parent`,
+      parent: { name: parent },
+      pricePerUnit: 4,
+      unit: "each",
+      unitsPerBox: null,
+      isActive: true,
+    });
+    quickKeysAnswer = async () => ({
+      data: {
+        register: "main",
+        cap: 12,
+        keys: [
+          {
+            productId: "v-a",
+            name: "Strawberry",
+            sellLevel: "UNIT",
+            pinned: false,
+            product: variant("v-a", "Brand A"),
+          },
+          {
+            productId: "v-b",
+            name: "Strawberry",
+            sellLevel: "UNIT",
+            pinned: false,
+            product: variant("v-b", "Brand B"),
+          },
+        ],
+      },
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("quick-key-v-a")).toHaveTextContent("Brand A - Strawberry");
+    expect(screen.getByTestId("quick-key-v-b")).toHaveTextContent("Brand B - Strawberry");
   });
 
   it("shows no price on a key", async () => {

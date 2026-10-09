@@ -68,6 +68,54 @@ const names = () =>
     .queryAllByRole("listitem")
     .map((li) => li.querySelector("span")?.textContent);
 
+describe("QuickKeysEditModal: settings not loaded", () => {
+  it("never offers Save while the saved settings are loading: nothing can be sent from defaults", async () => {
+    get.mockImplementation((url: string) =>
+      url === "/settings" ? new Promise(() => {}) : Promise.resolve({ data: {} }),
+    );
+    renderWithProviders(<QuickKeysEditModal keys={KEYS} cap={12} onClose={onClose} />);
+    expect(await screen.findByTestId("quick-keys-loading")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("a failed settings read shows a fixed line and no Save", async () => {
+    get.mockImplementation((url: string) =>
+      url === "/settings"
+        ? Promise.reject({ response: { status: 500, data: { message: "RAW" } } })
+        : Promise.resolve({ data: {} }),
+    );
+    renderWithProviders(<QuickKeysEditModal keys={KEYS} cap={12} onClose={onClose} />);
+    expect(
+      await screen.findByText("Couldn't load your quick keys. Close this and try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByText(/RAW/)).toBeNull();
+  });
+});
+
+describe("QuickKeysEditModal: variant names", () => {
+  it("the pinned list reads 'Parent - Variant' for a variant key", async () => {
+    const variant: QuickKey = {
+      productId: "p-a",
+      name: "Strawberry",
+      sellLevel: "UNIT",
+      pinned: true,
+      product: {
+        id: "p-a",
+        name: "Strawberry",
+        variantName: "Strawberry",
+        parentProductId: "f",
+        parent: { name: "Brand A" },
+      },
+    };
+    savedQuickKeys = { counter: { default: { pinned: ["p-a"], hidden: [] } } };
+    renderWithProviders(<QuickKeysEditModal keys={[variant]} cap={12} onClose={onClose} />);
+    await screen.findByTestId("quick-keys-editor");
+    expect(names()).toEqual(["Brand A - Strawberry"]);
+  });
+});
+
 describe("QuickKeysEditModal", () => {
   it("lists the saved pins in order with 'n of cap pinned'", async () => {
     await open();

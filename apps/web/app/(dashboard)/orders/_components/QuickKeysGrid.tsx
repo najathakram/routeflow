@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Pin } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import type { QuickKey } from "@routeflow/types";
 import { useQuickKeys } from "@/lib/api/counter-quick-keys";
+import { quickKeyLabel } from "@/lib/counter-quick-key-label";
 import { QuickKeysEditModal } from "./QuickKeysEditModal";
 
 /** The one localStorage key of the section's collapsed state ("1" = collapsed). */
@@ -31,7 +32,8 @@ interface Props {
   /** A held / in-flight / frozen cart: every key is off and a tap adds nothing. */
   locked: boolean;
   /** The scan add path: the screen adds `key.product` at `key.sellLevel`, once, at the customer's tier. */
-  onAdd: (key: QuickKey) => void;
+  /** The click event is passed through so the screen can apply its keyboard-vs-pointer focus rule. */
+  onAdd: (key: QuickKey, e: React.MouseEvent) => void;
 }
 
 /**
@@ -102,9 +104,9 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
                       "relative flex min-h-[44px] w-full flex-col items-center justify-center gap-1 rounded border bg-white px-1 py-2 text-center text-xs leading-tight",
                       "hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-navy disabled:opacity-40",
                     )}
-                    onClick={() => {
+                    onClick={(e) => {
                       if (locked) return;
-                      onAdd(k);
+                      onAdd(k, e);
                     }}
                   >
                     {k.pinned ? (
@@ -123,7 +125,7 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
                         className="h-8 w-8 rounded object-cover"
                       />
                     ) : null}
-                    <span className="line-clamp-2 w-full break-words">{k.name}</span>
+                    <span className="line-clamp-2 w-full break-words">{quickKeyLabel(k)}</span>
                     {k.pinned ? <span className="sr-only">Pinned</span> : null}
                   </button>
                 </li>
