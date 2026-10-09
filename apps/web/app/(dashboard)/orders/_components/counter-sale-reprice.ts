@@ -19,6 +19,8 @@ export interface RepriceResult {
   lines: SaleLine[];
   changed: number;
   kept: number;
+  /** Discounts removed because they were larger than the new customer's price (also counted in `changed`). */
+  dropped: number;
 }
 
 export function repriceLines(
@@ -27,6 +29,7 @@ export function repriceLines(
 ): RepriceResult {
   let changed = 0;
   let kept = 0;
+  let dropped = 0;
   let touched = false;
   const next = lines.map((l) => {
     if (!l.tierPrices) return l;
@@ -53,6 +56,14 @@ export function repriceLines(
           l.override.reason,
         );
         if (again.ok) net = again.unitPrice;
+        else if (again.refused === "AMOUNT_OVER_PRICE") {
+          // The dollars off are bigger than this customer's price: the edit is DROPPED (never carried over from the
+          // previous customer's figure), the line takes the customer's own price, and the note says so.
+          const { override: _o, tierPrice: _t, priceEdited: _e, ...plain } = l;
+          changed += 1;
+          dropped += 1;
+          return { ...plain, unitPrice, priceType };
+        }
       }
       if (withinStaffOverrideTolerance(net, unitPrice)) {
         // POS-5: the net now IS the customer's price: no override, a plain line.
@@ -86,7 +97,12 @@ export function repriceLines(
     changed += 1;
     return { ...l, unitPrice, priceType };
   });
-  return { lines: changed || kept || touched ? next : (lines as SaleLine[]), changed, kept };
+  return {
+    lines: changed || kept || touched ? next : (lines as SaleLine[]),
+    changed,
+    kept,
+    dropped,
+  };
 }
 
 /**
@@ -98,10 +114,17 @@ export function repriceNote(
   changed: number,
   kept: number,
   tierName?: string,
+  dropped = 0,
 ): string | null {
   const keptText = kept === 1 ? "1 edited price kept." : `${kept} edited prices kept.`;
+  const droppedText =
+    dropped === 1
+      ? "Discount removed — it was larger than this customer's price."
+      : `${dropped} discounts removed — they were larger than this customer's price.`;
   const who = tierName ? `${name} (${tierName})` : name;
   if (changed === 0 && kept === 0) return null;
   const updated = `Prices updated for ${who}.`;
-  return kept > 0 ? `${updated} ${keptText}` : updated;
+  return [updated, kept > 0 ? keptText : "", dropped > 0 ? droppedText : ""]
+    .filter(Boolean)
+    .join(" ");
 }

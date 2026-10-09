@@ -161,11 +161,14 @@ describe("repriceLines: a percent or dollars-off edit is RE-APPLIED to the new c
     expect(r).toMatchObject({ changed: 0, kept: 1 });
   });
 
-  it("an edit the new customer cannot take (dollars off beyond their price) keeps the net and says kept", () => {
+  it("dollars off LARGER than the new customer's price is DROPPED: their own tier price, counted as changed + dropped, never kept", () => {
     const l = off({ mode: "amount", value: 9, reason: "x" }, 1);
     const r = repriceLines([l], () => 2); // 9 off an 8.00 price is refused
-    expect(r.lines[0]).toMatchObject({ unitPrice: 1, tierPrice: 8 });
-    expect(r).toMatchObject({ changed: 0, kept: 1 });
+    expect(r.lines[0]).toMatchObject({ unitPrice: 8, priceType: "SPECIAL" });
+    expect("override" in r.lines[0]).toBe(false);
+    expect("tierPrice" in r.lines[0]).toBe(false);
+    expect("priceEdited" in r.lines[0]).toBe(false);
+    expect(r).toMatchObject({ changed: 1, kept: 0, dropped: 1 });
   });
 
   it("a special-tier customer's edit with no reason on file cannot be re-applied: the net is kept", () => {
@@ -187,5 +190,76 @@ describe("repriceLines: a percent or dollars-off edit is RE-APPLIED to the new c
     const twice = repriceLines(once.lines, () => 2);
     expect(twice.lines[0]).toBe(once.lines[0]);
     expect(twice).toMatchObject({ changed: 0, kept: 0 });
+  });
+});
+
+describe("repriceNote: a dropped discount is named (R17-3)", () => {
+  it("one dropped discount", () => {
+    expect(repriceNote("Acme", 1, 0, undefined, 1)).toBe(
+      "Prices updated for Acme. Discount removed — it was larger than this customer's price.",
+    );
+  });
+  it("several, and alongside a kept hand-typed price", () => {
+    expect(repriceNote("Acme", 2, 1, "Tier 2", 2)).toBe(
+      "Prices updated for Acme (Tier 2). 1 edited price kept. 2 discounts removed — they were larger than this customer's price.",
+    );
+  });
+  it("no drop, same text as before", () => {
+    expect(repriceNote("Acme", 1, 0)).toBe("Prices updated for Acme.");
+  });
+});
+
+describe("repriceLines: R17-3 on a boxed line and a round trip", () => {
+  // a case of 12: box price 120.00 at tier 1, 96.00 at tier 2 (unitPrice is the BOX price)
+  const box = (over: Partial<SaleLine>): SaleLine => ({
+    tempId: "b",
+    productId: "pb",
+    name: "Case",
+    unitPrice: 120,
+    qty: 12,
+    unitsPerBox: 12,
+    boxes: 1,
+    pieces: 0,
+    priceType: "STANDARD",
+    tierPrices: { pricePerUnit: 120, priceTier2: 96 },
+    ...over,
+  });
+
+  it("10% off a boxed line is 10% off the new BOX price", () => {
+    const l = box({
+      unitPrice: 108,
+      tierPrice: 120,
+      priceEdited: true,
+      override: { mode: "percent", value: 10, reason: "x" },
+    });
+    const r = repriceLines([l], () => 2);
+    expect(r.lines[0]).toMatchObject({ unitPrice: 86.4, tierPrice: 96 });
+    expect(r).toMatchObject({ changed: 1, kept: 0, dropped: 0 });
+  });
+
+  it("$ off a boxed line is dollars off the BOX", () => {
+    const l = box({
+      unitPrice: 110,
+      tierPrice: 120,
+      priceEdited: true,
+      override: { mode: "amount", value: 10, reason: "x" },
+    });
+    const r = repriceLines([l], () => 2);
+    expect(r.lines[0]).toMatchObject({ unitPrice: 86, tierPrice: 96 });
+    expect(r).toMatchObject({ changed: 1, kept: 0, dropped: 0 });
+  });
+
+  it("walk-in -> named -> walk-in returns the original net exactly (percent and $ off)", () => {
+    for (const override of [
+      { mode: "percent" as const, value: 10, reason: "x" },
+      { mode: "amount" as const, value: 1, reason: "x" },
+    ]) {
+      const net = override.mode === "percent" ? 9 : 9;
+      const l = line({ unitPrice: net, tierPrice: 10, priceEdited: true, override });
+      const named = repriceLines([l], () => 2).lines;
+      const back = repriceLines(named, () => 1).lines;
+      expect(back[0]).toMatchObject({ unitPrice: 9, tierPrice: 10, priceType: "STANDARD" });
+      expect(back[0].override).toEqual(override);
+    }
   });
 });
