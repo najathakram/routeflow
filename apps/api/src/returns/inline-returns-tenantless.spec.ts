@@ -57,7 +57,9 @@ describe("InlineReturnsService: refund endpoints refuse a tenantless session (ro
     p.then(
       () => null,
       (e: any) =>
-        e instanceof ForbiddenException ? e.getResponse()?.code : (e?.message ?? "other"),
+        e instanceof ForbiddenException
+          ? (e.getResponse() as { code?: string }).code
+          : (e?.message ?? "other"),
     );
 
   it("refund() is a 403 REFUND_NOT_ALLOWED before any read or lock", async () => {
