@@ -455,11 +455,35 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     await createThroughSheet();
     const banner = await screen.findByTestId("create-banner");
     expect(banner).toHaveAttribute("role", "alert");
-    expect(banner).toHaveTextContent("Failed to create tenant");
+    expect(banner).toHaveTextContent("Could not create the tenant. Try again.");
     await waitFor(() => expect(banner).toHaveFocus());
     expect(scrollIntoView.mock.instances).toContain(banner);
     // input kept
     expect(screen.getByLabelText(/slug/i)).toHaveValue("acme");
+  });
+
+  it("a 500 with server text shows the fixed sentence, never the server message", async () => {
+    setPost({
+      "/platform-admin/tenants": () => httpError(500, { message: "secret server text" }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("create-banner");
+    expect(banner).toHaveTextContent("Could not create the tenant. Try again.");
+    expect(banner).not.toHaveTextContent("secret server text");
+  });
+
+  it("a blank trial length opens no review sheet (never '?-day trial')", async () => {
+    await renderPage();
+    fillForm();
+    fireEvent.change(screen.getByLabelText("Trial length (days)"), { target: { value: "" } });
+    fireEvent.click(formCreate());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (screen.getByLabelText("Trial length (days)") as HTMLInputElement).validity.valueMissing,
+    ).toBe(true);
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("a taken slug focuses and scrolls to the slug field, says so inline, and keeps the input", async () => {

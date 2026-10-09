@@ -386,12 +386,8 @@ export default function AdminCreateTenantPage() {
           refusedField = first;
           return;
         }
-        const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response
-          ?.data?.message;
-        setError(
-          safeTextErrorCopy(err) ??
-            (Array.isArray(msg) ? msg.join(", ") : (msg ?? "Failed to create tenant")),
-        );
+        // Never echo the server's free text: only the fixed sentence or the safe-text refusal copy.
+        setError(safeTextErrorCopy(err) ?? "Could not create the tenant. Try again.");
         settle();
         return;
       }

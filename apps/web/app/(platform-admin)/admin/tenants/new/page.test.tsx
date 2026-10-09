@@ -421,7 +421,7 @@ describe("create-tenant business profile", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
     await submit();
-    await screen.findByText("Failed to create tenant");
+    await screen.findByText("Could not create the tenant. Try again.");
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 

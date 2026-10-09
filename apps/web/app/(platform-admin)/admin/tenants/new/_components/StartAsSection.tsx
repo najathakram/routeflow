@@ -119,6 +119,7 @@ export function StartAsSection({
             min={1}
             max={90}
             inputMode="numeric"
+            required
             value={value.trialDays}
             onChange={(e) => set({ trialDays: e.target.value })}
             className={`${FIELD} sm:max-w-[10rem]`}
