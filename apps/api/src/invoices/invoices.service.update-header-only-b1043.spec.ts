@@ -37,6 +37,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { sumInvoiceTotals } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService.update() — B1043 the header-only PATCH on the one builder", () => {
@@ -393,6 +394,92 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       const err: any = await service.update("inv-1", { discount: 1 }).catch((e) => e);
       expect(err.status).toBe(400);
       expect(err.message).toMatch(/subtotal cannot be negative/i);
+    });
+  });
+
+  describe("parity property - the header-only totals equal the items branch with the same lines sent unchanged", () => {
+    const fixtures: Array<[string, Record<string, unknown>[]]> = [
+      [
+        "unit lines at two rates",
+        [
+          row({ id: "a", qty: 3, unitPrice: 2.5, subtotal: 7.5, taxRate: 0.08 }),
+          row({ id: "b", qty: 1, unitPrice: 40, subtotal: 40, taxRate: 0 }),
+        ],
+      ],
+      [
+        "a line discount",
+        [row({ id: "a", qty: 2, unitPrice: 10, discount: 3, subtotal: 17, taxRate: 0.05 })],
+      ],
+      [
+        "a boxed line (2 boxes + 6 of 24)",
+        [
+          row({
+            id: "a",
+            qty: 54,
+            boxes: 2,
+            pieces: 6,
+            unitsPerBox: 24,
+            unitPrice: 12.9,
+            subtotal: 29.03,
+            taxRate: 0.0725,
+          }),
+        ],
+      ],
+      [
+        "a regulated line with a levy",
+        [
+          row({
+            id: "a",
+            qty: 1,
+            unitPrice: 100,
+            subtotal: 100,
+            taxRate: 0,
+            categoryTaxAmount: 5,
+            trackedCategoryId: "cat-1",
+          }),
+        ],
+      ],
+      [
+        "a legacy negative line beside a good one",
+        [
+          row({ id: "a", qty: 1, unitPrice: 5, discount: 50, subtotal: -45, taxRate: 0 }),
+          row({ id: "b", qty: 1, unitPrice: 100, subtotal: 100, taxRate: 0 }),
+        ],
+      ],
+    ];
+
+    const payload = (lines: Record<string, unknown>[]) =>
+      lines.map((l) => ({
+        id: l.id,
+        description: l.description,
+        qty: l.qty,
+        unitPrice: l.unitPrice,
+        discount: l.discount,
+        boxes: l.boxes,
+        pieces: l.pieces,
+        unitsPerBox: l.unitsPerBox,
+        taxRate: l.taxRate,
+      }));
+
+    it.each(fixtures)("%s", async (_name, lines) => {
+      // The fixture only counts when its stored totals ARE the builder's totals (F1).
+      const t = sumInvoiceTotals(lines as any[], {});
+      const stored = { subtotal: t.subtotal, taxAmount: t.tax, total: t.total };
+      arrange(stored, lines);
+      await service.update("inv-1", { discount: 2, shippingFee: 3 });
+      const header = written();
+
+      prisma.invoice.update.mockClear();
+      arrange(stored, lines);
+      await service.update("inv-1", { items: payload(lines) as any, discount: 2, shippingFee: 3 });
+      const items = written();
+
+      expect(header.total).toBe(items.total);
+      expect(header.discount).toBe(items.discount);
+      expect(header.shippingFee).toBe(items.shippingFee);
+      // and the tax/subtotal the items branch re-derived equal what the header-only branch trusted
+      expect(items.subtotal).toBe(stored.subtotal);
+      expect(items.taxAmount).toBe(stored.taxAmount);
     });
   });
 });
