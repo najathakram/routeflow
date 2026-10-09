@@ -8,8 +8,8 @@ import { CreateCustomerDto } from "../customers/dto/create-customer.dto";
 import { UpdateCustomerDto } from "../customers/dto/update-customer.dto";
 
 /**
- * SA-650: PICKUP exists in the DB enum. The CUSTOMER write DTOs and PATCH fulfill-path refuse it (a
- * customer never has a PICKUP default). The ORDER create DTO accepts the whole enum: the one resolver
+ * SA-650: PICKUP exists in the DB enum. The CUSTOMER write DTOs refuse it (a customer never has a PICKUP
+ * default); the staff order switch PATCH fulfill-path accepts it for POS mode (SA-763r, below). The ORDER create DTO accepts the whole enum: the one resolver
  * refuses PICKUP where the business does not offer it (fulfil-path-resolver.spec.ts, pinned at create in
  * orders.fulfil-path-create.spec.ts). List filters (read) accept it.
  */
@@ -20,10 +20,18 @@ async function fulfillPathErrors(cls: new () => object, value: string) {
 }
 
 const WRITE_DTOS: Array<[string, new () => object]> = [
-  ["UpdateFulfillPathDto", UpdateFulfillPathDto],
   ["CreateCustomerDto", CreateCustomerDto],
   ["UpdateCustomerDto", UpdateCustomerDto],
 ];
+
+describe("PATCH fulfill-path (SA-763r R3): the staff order switch takes the whole enum the staff may pick", () => {
+  it("UpdateFulfillPathDto accepts ROUTE, SHIP and PICKUP and refuses anything else", async () => {
+    for (const v of ["ROUTE", "SHIP", "PICKUP"]) {
+      expect(await fulfillPathErrors(UpdateFulfillPathDto, v)).toHaveLength(0);
+    }
+    expect((await fulfillPathErrors(UpdateFulfillPathDto, "DRONE")).length).toBeGreaterThan(0);
+  });
+});
 
 describe("customer write DTOs refuse FulfillPath PICKUP (SA-650)", () => {
   it.each(WRITE_DTOS)("%s rejects PICKUP", async (_n, cls) => {

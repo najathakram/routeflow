@@ -16,6 +16,7 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
@@ -86,17 +87,21 @@ export async function updateShipmentImpl(
 
 /**
  * Ad-hoc trips + fulfillment mode: change an order's fulfillment path
- * (ROUTE ↔ SHIP) while it's still open. Locked once the order has left the
+ * (ROUTE ↔ SHIP ↔ PICKUP) while it's still open. Locked once the order has left the
  * "open" states — a shipped/delivered/cancelled order's fulfillment history
  * shouldn't move out from under its trip/shipment records after the fact —
- * and locked toward SHIP while the order sits on a live run.
+ * and locked toward SHIP or PICKUP while the order sits on a live run.
  */
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
   dto: UpdateFulfillPathDto,
-  _user?: JwtPayload,
+  user?: JwtPayload,
 ) {
+  // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
+  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
+    throw new ForbiddenException("You don't have access to switch an order to pickup.");
+  }
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
   // silently disables that check — which would leak another tenant's order
@@ -136,11 +141,16 @@ export async function updateFulfillPathImpl(
     order.routeRunStopId != null &&
     run != null &&
     (run.status === RouteRunStatus.SCHEDULED || run.status === RouteRunStatus.IN_PROGRESS);
-  if (dto.fulfillPath === FulfillPath.SHIP && onActiveRun) {
+  if (
+    (dto.fulfillPath === FulfillPath.SHIP || dto.fulfillPath === FulfillPath.PICKUP) &&
+    onActiveRun
+  ) {
     throw new BadRequestException(
       `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
-      }. Remove it from the run before switching it to shipping.`,
+      }. Remove it from the run before switching it to ${
+        dto.fulfillPath === FulfillPath.PICKUP ? "pickup" : "shipping"
+      }.`,
     );
   }
   return self.prisma.forTenant().order.update({
