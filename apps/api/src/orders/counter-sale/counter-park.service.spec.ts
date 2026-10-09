@@ -9,6 +9,7 @@ import {
   COUNTER_PARK_MAX_BYTES,
   COUNTER_PARK_MAX_LINES,
   COUNTER_PARK_MAX_PER_REGISTER,
+  COUNTER_PARK_MAX_PER_TENANT,
   COUNTER_PARK_RETRY_WINDOW_MS,
   COUNTER_PARK_TTL_HOURS,
 } from "@routeflow/pricing";
@@ -272,6 +273,7 @@ describe("CounterParkService.park", () => {
       expect(e).toBeInstanceOf(ConflictException);
       expect((e as ConflictException).getResponse()).toMatchObject({
         code: API_ERROR_CODES.PARK_LIMIT,
+        scope: "register",
       });
       expect(t.db.rows).toHaveLength(10);
     });
@@ -292,12 +294,45 @@ describe("CounterParkService.park", () => {
       t.db.rows[1].expiresAt = new Date(NOW.getTime() - 1); // expired: no longer open
       await expect(t.park({ id: id(23) })).resolves.toBeDefined();
     });
-    it("takes the transaction-scoped advisory lock FIRST, keyed by (counter-park, tenant:register), then replay, cap, insert", async () => {
+    it("a tenant-wide cap bounds the class however many registers there are: the 51st open cart is 409 PARK_LIMIT (scope tenant)", async () => {
+      const t = setup();
+      // 5 registers x 10 = 50 open carts, each register exactly at its own cap
+      let n = 1;
+      for (let r = 1; r <= 5; r++) {
+        for (let i = 0; i < COUNTER_PARK_MAX_PER_REGISTER; i++) {
+          await t.park({ id: id(n++), registerKey: `till-${r}` });
+        }
+      }
+      expect(t.db.rows).toHaveLength(COUNTER_PARK_MAX_PER_TENANT);
+      // a brand-new register (its own count is 0) is still refused: the tenant is full
+      const e = await t.park({ id: id(900), registerKey: "till-6" }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect((e as ConflictException).getResponse()).toMatchObject({
+        code: API_ERROR_CODES.PARK_LIMIT,
+        scope: "tenant",
+      });
+      expect(t.db.rows).toHaveLength(COUNTER_PARK_MAX_PER_TENANT);
+      // a replay of an existing cart is still its stored row, and another tenant has its own 50
+      await expect(t.park({ id: id(3), registerKey: "till-1" })).resolves.toMatchObject({
+        replayed: true,
+      });
+      t.setTenant(OTHER_TENANT);
+      await expect(t.park({ id: id(901), registerKey: "till-6" })).resolves.toBeDefined();
+      t.setTenant(TENANT);
+      // a resumed cart frees a slot for any register
+      t.db.rows[0].resumedAt = NOW;
+      await expect(t.park({ id: id(902), registerKey: "till-6" })).resolves.toBeDefined();
+    });
+    it("takes the transaction-scoped advisory lock FIRST, keyed by (counter-park, tenant), then replay, cap, insert", async () => {
       const t = setup();
       await t.park({ registerKey: "front-2" });
       const sqls = t.db.statements.map((s) => s.sql);
       expect(sqls[0]).toContain("pg_advisory_xact_lock(hashtext(?), hashtext(?))");
-      expect(t.db.statements[0].values).toEqual(["counter-park", `${TENANT}:front-2`]);
+      // ONE lock per tenant, whatever the register: it serialises the per-register and the tenant-wide count together
+      expect(t.db.statements[0].values).toEqual(["counter-park", TENANT]);
       expect(sqls[1]).toContain('WHERE "id" = ? AND "tenantId" = ?');
       expect(sqls[2]).toContain("count(*)");
       expect(sqls[3]).toContain('ON CONFLICT ("id") DO NOTHING');

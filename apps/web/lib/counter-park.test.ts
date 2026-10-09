@@ -2,6 +2,7 @@ import { COUNTER_PARK_MAX_LINES, COUNTER_PARK_STALE_HOURS } from "@routeflow/pri
 import { validCustomer, validLine } from "./counter-sale";
 import {
   PARK_LIMIT_COPY,
+  PARK_TENANT_LIMIT_COPY,
   PARK_TAKEN_COPY,
   PARK_TOO_BIG_COPY,
   PARK_TOO_MANY_LINES_COPY,
@@ -84,6 +85,21 @@ describe("fixed copy, never the server message", () => {
     expect(PARK_LIMIT_COPY).toBe(
       "This register already has 10 parked sales. Resume or discard one first.",
     );
+  });
+  it("PARK_LIMIT with scope tenant names the whole-shop cap; scope register or none keeps the register copy", () => {
+    const scoped = (scope?: string) => ({
+      response: {
+        status: 409,
+        data: { code: "PARK_LIMIT", scope, message: "SERVER SECRET MESSAGE" },
+      },
+    });
+    expect(parkErrorCopy(scoped("tenant"))).toBe(PARK_TENANT_LIMIT_COPY);
+    expect(PARK_TENANT_LIMIT_COPY).toBe(
+      "Too many sales are parked across the shop (50). Resume or discard one first.",
+    );
+    expect(parkErrorCopy(scoped("register"))).toBe(PARK_LIMIT_COPY);
+    expect(parkErrorCopy(scoped(undefined))).toBe(PARK_LIMIT_COPY);
+    expect(PARK_TENANT_LIMIT_COPY).not.toContain("SERVER SECRET");
   });
   it("PARK_TAKEN (404) on resume and on discard", () => {
     expect(resumeErrorCopy(err(404, "PARK_TAKEN"))).toBe(PARK_TAKEN_COPY);

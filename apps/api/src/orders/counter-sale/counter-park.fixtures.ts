@@ -66,6 +66,16 @@ export class FakeParkDb {
       return [{ id: hit.id, label: hit.label, createdAt: hit.createdAt, payload: hit.payload }];
     }
 
+    if (sql.startsWith("SELECT count(*) FILTER")) {
+      // (registerKey, tenantId, now): this register's open carts and the whole tenant's
+      const [registerKey, tenantId, now] = values as [string, string, Date];
+      return [
+        {
+          registerOpen: this.open(tenantId, registerKey, now).length,
+          tenantOpen: this.openAll(tenantId, now).length,
+        },
+      ];
+    }
     if (sql.startsWith("SELECT count(*)")) {
       const [tenantId, registerKey, now] = values as [string, string, Date];
       return [{ n: this.open(tenantId, registerKey, now).length }];
@@ -121,6 +131,12 @@ export class FakeParkDb {
         });
     }
     throw new Error(`FakeParkDb: unrecognised statement: ${sql}`);
+  }
+
+  openAll(tenantId: string, now: Date): FakeRow[] {
+    return this.rows.filter(
+      (r) => r.tenantId === tenantId && r.resumedAt === null && r.expiresAt > now,
+    );
   }
 
   open(tenantId: string, registerKey: string, now: Date): FakeRow[] {

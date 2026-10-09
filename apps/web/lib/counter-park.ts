@@ -1,5 +1,6 @@
 import {
   COUNTER_PARK_MAX_PER_REGISTER,
+  COUNTER_PARK_MAX_PER_TENANT,
   COUNTER_PARK_STALE_HOURS,
   sanitizeParkedPayload,
   type ParkedCartPayload,
@@ -14,6 +15,7 @@ import { COUNTER_SALES_DISABLED_COPY } from "./counter-sale";
  * Every refusal has FIXED copy: the server's own message is never shown.
  */
 
+export const PARK_TENANT_LIMIT_COPY = `Too many sales are parked across the shop (${COUNTER_PARK_MAX_PER_TENANT}). Resume or discard one first.`;
 export const PARK_LIMIT_COPY = `This register already has ${COUNTER_PARK_MAX_PER_REGISTER} parked sales. Resume or discard one first.`;
 export const PARK_TAKEN_COPY = "That parked sale was already taken back or has expired.";
 export const PARK_TOO_BIG_COPY =
@@ -33,7 +35,8 @@ export const PARK_CHANGED_COPY =
 export const PARKED_EDITED_PRICES_COPY =
   "This sale has edited prices and you can't change prices. Remove those items, or ask your account admin to finish it.";
 
-type ErrLike = { response?: { status?: number; data?: { code?: unknown } } } | null | undefined;
+type ErrLike =
+  { response?: { status?: number; data?: { code?: unknown; scope?: unknown } } } | null | undefined;
 const statusOf = (err: unknown) => (err as ErrLike)?.response?.status;
 const codeOf = (err: unknown) => (err as ErrLike)?.response?.data?.code;
 
@@ -43,7 +46,12 @@ export function parkErrorCopy(err: unknown): string {
   const code = codeOf(err);
   if (status === 403 && code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
-  if (status === 409 && code === API_ERROR_CODES.PARK_LIMIT) return PARK_LIMIT_COPY;
+  if (status === 409 && code === API_ERROR_CODES.PARK_LIMIT) {
+    // `scope` says which cap was hit; a body without it (an older server) keeps the register wording.
+    return (err as ErrLike)?.response?.data?.scope === "tenant"
+      ? PARK_TENANT_LIMIT_COPY
+      : PARK_LIMIT_COPY;
+  }
   if (status === 413) return PARK_TOO_BIG_COPY;
   if (status === 400) return PARK_INVALID_COPY;
   return PARK_FAILED_COPY;

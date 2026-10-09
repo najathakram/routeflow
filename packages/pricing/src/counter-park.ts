@@ -22,6 +22,17 @@
 export const COUNTER_PARK_TTL_HOURS = 24;
 /** At most this many open parked carts per (tenant, register): the 11th is 409 PARK_LIMIT. */
 export const COUNTER_PARK_MAX_PER_REGISTER = 10;
+/**
+ * At most this many open parked carts per TENANT, across every register. The per-register cap alone is not a bound while a
+ * register key is free-form (and once several registers ship, 10 x registers is): this makes the stored volume
+ * (50 x {@link COUNTER_PARK_MAX_BYTES} = 3.2 MB per tenant) a class bound that holds however many registers there are. Both caps
+ * are checked under ONE advisory lock keyed by the tenant.
+ */
+export const COUNTER_PARK_MAX_PER_TENANT = 50;
+
+/** Which cap a 409 PARK_LIMIT refers to (`scope` in the error body), so the screen can word it. */
+export type ParkLimitScope = "register" | "tenant";
+
 /** A parked cart holds at most this many lines. */
 export const COUNTER_PARK_MAX_LINES = 200;
 /** The rebuilt payload may be at most this many bytes of JSON. */

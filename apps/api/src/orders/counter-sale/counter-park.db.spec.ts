@@ -18,7 +18,7 @@ import { NotFoundException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import { COUNTER_PARK_MAX_PER_REGISTER } from "@routeflow/pricing";
+import { COUNTER_PARK_MAX_PER_REGISTER, COUNTER_PARK_MAX_PER_TENANT } from "@routeflow/pricing";
 import { deriveFulfilmentCapability } from "../../billing/fulfilment-capability";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
@@ -127,6 +127,13 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     actorB = await makeUser("B", 0);
   }, 120_000);
 
+  // The tenant-wide cap counts every register, so each scenario starts from an empty table for both tenants.
+  beforeEach(async () => {
+    await raw.counterParkedCart.deleteMany({
+      where: { tenantId: { in: Object.values(tenants).filter(Boolean) } },
+    });
+  });
+
   afterAll(async () => {
     await raw?.counterParkedCart.deleteMany({
       where: { tenantId: { in: Object.values(tenants).filter(Boolean) } },
@@ -232,6 +239,34 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     // another register and another tenant are untouched by the cap
     await expect(park("A", { registerKey: "cap-2" })).resolves.toBeDefined();
     await expect(park("B", { registerKey: "cap" })).resolves.toBeDefined();
+  });
+
+  it("the tenant-wide cap holds under one lock: 60 parallel parks over 6 registers leave exactly 50 rows, the other 10 are 409 PARK_LIMIT (scope tenant)", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 60 }, (_, i) => outcome(park("A", { registerKey: `till-${i % 6}` }))),
+    );
+    const won = results.filter((r) => r.ok);
+    const lost = results.filter((r) => !r.ok);
+    expect(won).toHaveLength(COUNTER_PARK_MAX_PER_TENANT);
+    expect(lost).toHaveLength(60 - COUNTER_PARK_MAX_PER_TENANT);
+    for (const r of lost) {
+      expect(codeOf((r as { error: unknown }).error)).toBe(API_ERROR_CODES.PARK_LIMIT);
+      expect(
+        ((r as { error: { getResponse: () => { scope?: string } } }).error.getResponse() ?? {})
+          .scope,
+      ).toBe("tenant");
+    }
+    expect(await raw.counterParkedCart.count({ where: { tenantId: tenants.A } })).toBe(
+      COUNTER_PARK_MAX_PER_TENANT,
+    );
+    // a fresh register is refused too while the tenant is full; another tenant has its own 50; a discard frees a slot
+    await expect(park("A", { registerKey: "till-new" })).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.PARK_LIMIT, scope: "tenant" },
+    });
+    await expect(park("B", { registerKey: "till-new" })).resolves.toBeDefined();
+    const any = await raw.counterParkedCart.findFirst({ where: { tenantId: tenants.A } });
+    await asA(() => service.discard(any!.id));
+    await expect(park("A", { registerKey: "till-new" })).resolves.toBeDefined();
   });
 
   it("ON CONFLICT replay: the same id twice (even in parallel) is one row; another tenant's id is 409 and reveals nothing", async () => {

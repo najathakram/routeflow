@@ -12,12 +12,14 @@ import {
   COUNTER_PARK_MAX_BYTES,
   COUNTER_PARK_MAX_LINES,
   COUNTER_PARK_MAX_PER_REGISTER,
+  COUNTER_PARK_MAX_PER_TENANT,
   COUNTER_PARK_PAGE_SIZE,
   REGISTER_KEY_PATTERN,
   COUNTER_PARK_RETRY_WINDOW_MS,
   COUNTER_PARK_TTL_HOURS,
   sanitizeParkedPayload,
   type ParkCartResponse,
+  type ParkLimitScope,
   type ParkedCartListItem,
   type ParkedCartListResponse,
   type ResumeParkedCartResponse,
@@ -147,8 +149,9 @@ export class CounterParkService {
     return retryOnTxConflict("counter-park.park", () =>
       this.prisma.tenantTransaction(async (tx: unknown): Promise<ParkCartResponse> => {
         const db = tx as TxRaw;
-        // Every park of this register queues here; released at commit/rollback.
-        await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${COUNTER_PARK_LOCK_FAMILY}), hashtext(${`${tenantId}:${registerKey}`}))`;
+        // Every park of this TENANT queues here (one lock for both caps, so the per-register and the tenant-wide count are
+        // read and written together whatever the register); released at commit/rollback. Contention is negligible.
+        await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${COUNTER_PARK_LOCK_FAMILY}), hashtext(${tenantId}))`;
 
         // 1. Replay: the same id, in THIS tenant, parked on THIS register, is the stored row (not counted against the cap).
         const stored = await db.$queryRaw<ParkedRow[]>`
@@ -170,16 +173,24 @@ export class CounterParkService {
           };
         }
 
-        // 2. Cap, under the lock, before the insert.
-        const open = await db.$queryRaw<Array<{ n: number }>>`
-          SELECT count(*)::int AS "n"
+        // 2. Caps, under the lock, before the insert: this register's open carts, then the whole tenant's.
+        const open = await db.$queryRaw<Array<{ registerOpen: number; tenantOpen: number }>>`
+          SELECT count(*) FILTER (WHERE "registerKey" = ${registerKey})::int AS "registerOpen",
+                 count(*)::int AS "tenantOpen"
             FROM "CounterParkedCart"
-           WHERE "tenantId" = ${tenantId} AND "registerKey" = ${registerKey}
-             AND "resumedAt" IS NULL AND "expiresAt" > ${now}`;
-        if ((open[0]?.n ?? 0) >= COUNTER_PARK_MAX_PER_REGISTER) {
+           WHERE "tenantId" = ${tenantId} AND "resumedAt" IS NULL AND "expiresAt" > ${now}`;
+        if ((open[0]?.registerOpen ?? 0) >= COUNTER_PARK_MAX_PER_REGISTER) {
           throw new ConflictException({
             code: API_ERROR_CODES.PARK_LIMIT,
+            scope: "register" satisfies ParkLimitScope,
             message: "This register already holds the maximum number of parked sales.",
+          });
+        }
+        if ((open[0]?.tenantOpen ?? 0) >= COUNTER_PARK_MAX_PER_TENANT) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.PARK_LIMIT,
+            scope: "tenant" satisfies ParkLimitScope,
+            message: "Too many sales are parked across the registers.",
           });
         }
 
