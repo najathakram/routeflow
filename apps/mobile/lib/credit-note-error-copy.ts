@@ -78,20 +78,43 @@ export function refusalCopy(code: string | null | undefined): string {
 
 /** SA-628 (B946): the refund of a return that would credit a line past its value (a credit note or an earlier refund already took part of it). */
 export const RETURN_REFUND_OVER_LINE_HEADROOM_COPY =
-  "This refund would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier refund). Refund it outside RouteFlow, or issue the credit note manually.";
+  "This refund would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.";
 
 /** B965: a standard return of a product that was sold on lines with different pack sizes has no single piece count to refund. */
 export const RETURN_MIXED_UNIT_PRODUCT_COPY =
-  "This product was sold in different units on this order (for example boxes and loose pieces), so RouteFlow can't price this return as one quantity. Credit it per line with an inline return, or refund it manually.";
+  "This product was sold in different units on this order (for example boxes and loose pieces), so RouteFlow can't price this return as one quantity. Credit it per line with an inline return, or cancel the return.";
 
 /** B959: nothing the customer returned was billed on the order. */
 export const RETURN_NOTHING_BILLED_COPY =
-  "None of the returned items were billed on this order, so there is nothing to refund. Cancel the return, or credit it manually if a refund is owed.";
+  "None of the returned items were billed on this order, so there is nothing to refund. Cancel the return.";
 
-/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_NOTHING_BILLED and RETURN_MIXED_UNIT_PRODUCT (by `response.data.code`), else the caller's own text. */
+/**
+ * SA-740r2 item 2: a recorded (cash / card / check) refund of a STANDARD return needs the order's invoices paid in full. The exits
+ * are named: store credit when billable, else cancel the return (never "refund it outside RouteFlow").
+ */
+export const REFUND_NEEDS_PAID_INVOICE_COPY =
+  "A cash, card or check refund needs every invoice for these goods to be paid in full. Give store credit instead, or cancel the return.";
+
+/** F4: a sale paid (partly) with store credit goes back as store credit. */
+export const REFUND_PAID_WITH_STORE_CREDIT_COPY =
+  "This was paid with store credit, so it goes back as store credit. Give store credit instead.";
+
+/** SA-749r2 item 9: a cash refund above the cash taken for the sale (less cash already refunded). */
+export const REFUND_EXCEEDS_CASH_PAID_COPY =
+  "That is more cash than was taken for this sale, less any cash already refunded. Refund the rest by card or check, or give store credit.";
+
+/**
+ * The refund toast text: the fixed copy for REFUND_NEEDS_PAID_INVOICE, REFUND_PAID_WITH_STORE_CREDIT, REFUND_EXCEEDS_CASH_PAID,
+ * RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_NOTHING_BILLED and RETURN_MIXED_UNIT_PRODUCT (by `response.data.code`), else the
+ * caller's own text. Never the server message for these codes.
+ */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
+  if (code === API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE) return REFUND_NEEDS_PAID_INVOICE_COPY;
+  if (code === API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT)
+    return REFUND_PAID_WITH_STORE_CREDIT_COPY;
+  if (code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID) return REFUND_EXCEEDS_CASH_PAID_COPY;
   if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
   if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;
   return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM

@@ -3,6 +3,10 @@ import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   RETURN_MIXED_UNIT_PRODUCT_COPY,
+  RETURN_NOTHING_BILLED_COPY,
+  REFUND_EXCEEDS_CASH_PAID_COPY,
+  REFUND_NEEDS_PAID_INVOICE_COPY,
+  REFUND_PAID_WITH_STORE_CREDIT_COPY,
   UNCONFIRMED_COPY,
   creditNoteErrorCopy,
   refundErrorMessage,
@@ -104,5 +108,40 @@ describe("refundErrorMessage (SA-628, B946)", () => {
       refundErrorMessage({ response: { data: { code: "OTHER" } } }, "named invoice text"),
     ).toBe("named invoice text");
     expect(refundErrorMessage(new Error("x"), undefined)).toBeUndefined();
+  });
+});
+
+describe("SA-740r2: the refund refusals have fixed copy that names the exits", () => {
+  const err = (code: string) => ({ response: { data: { code, message: "RAW SERVER TEXT" } } });
+
+  it.each([
+    ["REFUND_NEEDS_PAID_INVOICE", REFUND_NEEDS_PAID_INVOICE_COPY],
+    ["REFUND_PAID_WITH_STORE_CREDIT", REFUND_PAID_WITH_STORE_CREDIT_COPY],
+    ["REFUND_EXCEEDS_CASH_PAID", REFUND_EXCEEDS_CASH_PAID_COPY],
+  ])("%s is mapped to its fixed copy, never the server text", (code, copy) => {
+    expect(refundErrorMessage(err(code), "other")).toBe(copy);
+    expect(copy).not.toMatch(/RAW SERVER/);
+  });
+
+  it("the exit of a refused STANDARD refund is store credit when billable, else cancel the return", () => {
+    expect(REFUND_NEEDS_PAID_INVOICE_COPY).toMatch(/store credit/i);
+    expect(REFUND_NEEDS_PAID_INVOICE_COPY).toMatch(/cancel the return/i);
+    expect(RETURN_NOTHING_BILLED_COPY).toMatch(/cancel the return/i);
+    expect(RETURN_REFUND_OVER_LINE_HEADROOM_COPY).toMatch(/store credit/i);
+    expect(RETURN_REFUND_OVER_LINE_HEADROOM_COPY).toMatch(/cancel the return/i);
+    expect(RETURN_MIXED_UNIT_PRODUCT_COPY).toMatch(/cancel the return/i);
+  });
+
+  it("no refusal copy sends the operator to refund 'outside RouteFlow' or to settle it 'manually'", () => {
+    for (const copy of [
+      REFUND_NEEDS_PAID_INVOICE_COPY,
+      REFUND_PAID_WITH_STORE_CREDIT_COPY,
+      REFUND_EXCEEDS_CASH_PAID_COPY,
+      RETURN_NOTHING_BILLED_COPY,
+      RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+      RETURN_MIXED_UNIT_PRODUCT_COPY,
+    ]) {
+      expect(copy).not.toMatch(/outside RouteFlow|manually/i);
+    }
   });
 });
