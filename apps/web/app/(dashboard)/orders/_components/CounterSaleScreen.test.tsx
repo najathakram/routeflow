@@ -1,6 +1,7 @@
 import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
 import {
@@ -199,6 +200,56 @@ describe("CounterSaleScreen", () => {
     // and it sits before the actions, so the cashier reads why before the buttons
     const actions = screen.getByTestId("counter-checkout-actions");
     expect(alert.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe("row 112: the scroll area ends below the sticky bar", () => {
+    const realDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    let roCallbacks: Array<() => void> = [];
+    beforeEach(() => {
+      roCallbacks = [];
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 180 : 0;
+        },
+      });
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+        constructor(cb: () => void) {
+          roCallbacks.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      };
+    });
+    afterEach(() => {
+      if (realDescriptor)
+        Object.defineProperty(HTMLElement.prototype, "offsetHeight", realDescriptor);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+      delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+    });
+
+    it("the screen reserves the bar's height at its bottom (below md), so line 2 and Cash/Card can scroll clear of it", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+      expect(root.className).toMatch(/pb-\[calc\(1rem\+var\(--counter-bar-h/);
+      expect(root.className).toMatch(/\bmd:pb-4\b/);
+    });
+
+    it("follows the bar when it grows (an error appears in it)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 232 : 0;
+        },
+      });
+      act(() => roCallbacks.forEach((cb) => cb()));
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("232px"));
+    });
   });
 
   describe("row 237: one scan-focus owner", () => {

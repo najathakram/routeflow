@@ -278,6 +278,21 @@ export function CounterSaleScreen() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [receipt, locked]);
+  // Row 112: the sticky checkout bar floats over the page below md; the screen reserves its measured height at the bottom so
+  // the last cart line and the Cash/Card buttons can always scroll clear of it (the bar grows with an error or a change line).
+  const barRef = React.useRef<HTMLDivElement>(null);
+  const [barHeight, setBarHeight] = React.useState(0);
+  React.useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const measure = () => setBarHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // the bar unmounts behind the receipt view and comes back for the next sale: measure again then
+  }, [receipt]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -800,7 +815,8 @@ export function CounterSaleScreen() {
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl space-y-4 p-4"
+      className="mx-auto w-full max-w-5xl space-y-4 p-4 pb-[calc(1rem+var(--counter-bar-h,0px))] md:pb-4"
+      style={{ "--counter-bar-h": `${barHeight}px` } as React.CSSProperties}
       data-testid="counter-sale-screen"
       data-counter-screen
     >
@@ -1254,6 +1270,7 @@ export function CounterSaleScreen() {
           ) : null}
 
           <div
+            ref={barRef}
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
