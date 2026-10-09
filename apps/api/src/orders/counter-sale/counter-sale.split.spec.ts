@@ -505,6 +505,29 @@ describe("CounterSaleService.ring: split payments", () => {
       });
     });
 
+    it("legacy partial then resume: a pre-split CASH 80 that died after inv1 resumes UNGROUPED, so the sale stays all-legacy", async () => {
+      // mixed regulated sale: inv1 50 + inv2 20. The old code recorded inv1's 50 (no group id) and crashed.
+      invoices = [inv("inv-1", 50, 1, [row("old", 50, "CASH", null)]), inv("inv-2", 20, 2)];
+      replay = true;
+      const r = await service.ring(
+        walkInSale({ payment: { method: "CASH", amount: 80 } }),
+        staff,
+        "key-1",
+      );
+      // inv2's 20 is written WITHOUT a group id: a grouped row would make readStoredTender drop the legacy 50
+      expect(recordPayment.mock.calls.map((c) => [c[0], c[1].amount, c[2]])).toEqual([
+        ["inv-2", 20, undefined],
+      ]);
+      expect(r).toMatchObject({
+        paid: 70,
+        balanceDue: 0,
+        change: 10,
+        paymentRecorded: true,
+        paymentId: "old",
+      });
+      expect(r.payments).toEqual([{ method: "CASH", amount: 70, paymentIds: ["old", "pay-1"] }]);
+    });
+
     it("a short stored sum resumes: only the per-(leg, invoice) shortfall is recorded", async () => {
       invoices = [inv("inv-1", 50, 1), inv("inv-2", 20, 2)];
       invoices[0].payments = [row("p0", 20, "CREDIT_CARD", G0)]; // leg 0 planned 30 on inv-1

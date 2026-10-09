@@ -327,7 +327,9 @@ export class CounterSaleService {
               method: toPrismaMethod(leg.method)!,
               reference: leg.reference,
             } as never,
-            { paymentGroupId: legGroupId(orderId, part.legIndex) },
+            // A pre-split attempt's rows are ungrouped: finishing it with a grouped row would make the replay rule
+            // (once any grouped row exists, ungrouped rows are not the tender) drop the rows already taken.
+            stored.legacy ? undefined : { paymentGroupId: legGroupId(orderId, part.legIndex) },
           );
           takenNow.set(row.id, (takenNow.get(row.id) ?? 0) + due);
         }
