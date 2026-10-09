@@ -287,7 +287,7 @@ export function PriceEditor({
             off it needs a reason (below), as the server requires. */}
         <section className="space-y-1">
           <label className="block text-xs font-medium text-navy/70">
-            {packed ? `${li.sellBy === "unit" ? w.base.one : w.pack.one} price` : "Price"}
+            {packed ? `${w.pack.one} price` : "Price"}
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">

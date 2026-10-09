@@ -99,12 +99,6 @@ describe("PriceEditor", () => {
       expect(screen.getByText("Box price")).toBeInTheDocument();
     });
 
-    it("in Piece mode the price label follows the mode's unit word, never 'Box price'", () => {
-      setup(boxed({ sellBy: "unit" }));
-      expect(screen.getByText("Piece price")).toBeInTheDocument();
-      expect(screen.queryByText("Box price")).not.toBeInTheDocument();
-    });
-
     it("but a pack of 1 is just 'Price', as in the row", () => {
       setup(boxed({ unitsPerBox: 1, boxes: 2, qty: 2 }));
       expect(screen.getByText("Price")).toBeInTheDocument();
