@@ -185,6 +185,14 @@ describe("repriceLines: a percent or dollars-off edit is RE-APPLIED to the new c
     expect(r).toMatchObject({ changed: 1, kept: 0 });
   });
 
+  it("a re-applied edit whose net lands on the SAME number is still changed, never kept (decided by the re-apply, not by comparing values)", () => {
+    // tierPrice was stored as 9.99; the customer's price is 10.00; 10% off either way rounds to a net of 9.00.
+    const l = off({ mode: "percent", value: 10 }, 9, { tierPrice: 9.99 });
+    const r = repriceLines([l], () => 1);
+    expect(r.lines[0]).toMatchObject({ unitPrice: 9, tierPrice: 10, priceType: "STANDARD" });
+    expect(r).toMatchObject({ changed: 1, kept: 0, dropped: 0 });
+  });
+
   it("is idempotent: a second pass changes nothing", () => {
     const once = repriceLines([off({ mode: "percent", value: 10, reason: "x" }, 9)], () => 2);
     const twice = repriceLines(once.lines, () => 2);
