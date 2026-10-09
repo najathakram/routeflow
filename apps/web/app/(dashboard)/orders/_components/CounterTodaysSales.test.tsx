@@ -543,3 +543,139 @@ describe("CounterTodaysSales", () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+describe("Last 7 days (Train 4 b)", () => {
+  const dayCalls = () =>
+    todayCalls().filter((c) => (c[1] as { params?: { day?: string } })?.params?.day);
+  const daySummary = (over: Partial<TodaysSalesSummary> = {}): TodaysSalesSummary => ({
+    ...SUMMARY,
+    refunds: { count: 1, cash: 2, card: 1, check: 0, other: 0, total: 3, tenderKnown: true },
+    ...over,
+  });
+  const serveWeek = (fail?: string) =>
+    get.mockImplementation((url: string, cfg?: { params?: { page?: number; day?: string } }) => {
+      if (url !== "/orders/counter-sale/today") return Promise.resolve({ data: {} });
+      const day = cfg?.params?.day;
+      if (!day) return Promise.resolve({ data: page1() });
+      if (day === fail)
+        return Promise.reject({ response: { status: 500, data: { message: "RAW" } } });
+      return Promise.resolve({
+        data: { ...resp([], { summary: daySummary() }), meta: { ...resp([]).meta, day } },
+      });
+    });
+  const toggle = () => screen.getByRole("button", { name: "Last 7 days" });
+
+  it("fetches nothing for the week until the toggle is pressed, then one call per day, newest first, summary only", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    expect(dayCalls()).toHaveLength(0);
+    fireEvent.click(toggle());
+    await waitFor(() => expect(dayCalls()).toHaveLength(7));
+    expect(dayCalls().map((c) => (c[1] as { params: { day: string } }).params.day)).toEqual([
+      "2026-10-07",
+      "2026-10-06",
+      "2026-10-05",
+      "2026-10-04",
+      "2026-10-03",
+      "2026-10-02",
+      "2026-10-01",
+    ]);
+    for (const c of dayCalls()) {
+      expect((c[1] as { params: { page: number; limit: number } }).params).toMatchObject({
+        page: 1,
+        limit: 1,
+      });
+    }
+  });
+
+  it("shows a week total and one block per day with sales, tender mix, refunds by tender, store credit, on account and cash expected", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    const total = await screen.findByTestId("week-total");
+    expect(within(total).getByText("14 sales")).toBeInTheDocument(); // 7 days x 2
+    expect(within(total).getByTestId("week-total-in-cash")).toHaveTextContent("$210.00");
+    expect(within(total).getByTestId("week-total-refunds-card")).toHaveTextContent("$7.00");
+    expect(within(total).getByTestId("week-total-store-credit-used")).toHaveTextContent("$28.00");
+    expect(within(total).getByTestId("week-total-on-account")).toHaveTextContent("$49.00");
+    expect(within(total).getByTestId("week-total-cash-expected")).toHaveTextContent("$175.00");
+    expect(screen.getAllByTestId(/^week-day-\d{4}-\d{2}-\d{2}$/)).toHaveLength(7);
+    const first = screen.getByTestId("week-day-2026-10-07");
+    expect(within(first).getByText("2 sales")).toBeInTheDocument();
+    expect(within(first).getByTestId("week-day-2026-10-07-in-cash")).toHaveTextContent("$30.00");
+  });
+
+  it("'Today' goes back to the list of today's sales", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    await screen.findByTestId("week-total");
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(await screen.findByTestId("today-summary")).toBeInTheDocument();
+    expect(screen.queryByTestId("week-total")).toBeNull();
+  });
+
+  it("Download CSV hands over the days oldest first plus a Total row, named for the range", async () => {
+    serveWeek();
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    await screen.findByTestId("week-total");
+    const created: Blob[] = [];
+    URL.createObjectURL = jest.fn((b: Blob) => (created.push(b), "blob:csv"));
+    URL.revokeObjectURL = jest.fn();
+    let named = "";
+    const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      named = this.download;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+    expect(named).toBe("counter-sales-2026-10-01-to-2026-10-07.csv");
+    const text = await new Promise<string>((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.readAsText(created[0]!);
+    });
+    const lines = text.trim().split("\r\n");
+    expect(lines).toHaveLength(9); // header + 7 days + Total
+    expect(lines[1]!.startsWith("2026-10-01,")).toBe(true);
+    expect(lines[7]!.startsWith("2026-10-07,")).toBe(true);
+    expect(lines[8]!.startsWith("Total,14,315.00,")).toBe(true);
+    click.mockRestore();
+  });
+
+  it("Print prints only this report (the counter screen is hidden for the print) and cleans up", async () => {
+    serveWeek();
+    const print = jest.fn();
+    window.print = print;
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    await screen.findByTestId("week-total");
+    expect(document.body.classList.contains("counter-reprint-open")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Print" }));
+    expect(print).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    await waitFor(() =>
+      expect(document.body.classList.contains("counter-reprint-open")).toBe(false),
+    );
+  });
+
+  it("a day that fails shows fixed copy with Retry (never the server text), and no partial total", async () => {
+    serveWeek("2026-10-04");
+    await open();
+    await screen.findByTestId("today-summary");
+    fireEvent.click(toggle());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not load the last 7 days.");
+    expect(alert.textContent).not.toMatch(/RAW/);
+    expect(screen.queryByTestId("week-total")).toBeNull();
+    serveWeek(); // the day recovers
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByTestId("week-total")).toBeInTheDocument();
+  });
+});
