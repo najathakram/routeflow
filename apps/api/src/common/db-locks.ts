@@ -113,6 +113,7 @@ export const LOCK_FAMILIES = [
   "policy-write",
   "counter-tender",
   "fulfilment-settings",
+  "tenant-price",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -189,6 +190,11 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
+  // `tenant-price` (SA-733 D8): every writer of a tenant's Stripe price (the super-admin price override,
+  // admin updatePlan, upgrade(), the scheduled-downgrade cron, the plan-price fan-out), keyed on the tenant
+  // id. The lock is held ACROSS the Stripe calls (seconds), but these are rare admin/cron actions: a small
+  // pool, like `billing`.
+  "tenant-price": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

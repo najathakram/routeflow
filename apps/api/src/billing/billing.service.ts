@@ -15,6 +15,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { fromCents, roundMoney } from "@routeflow/pricing";
+import {
+  type PricePushOptions,
+  type PricePushResult,
+  priceOverrideIdempotencyKey,
+  prorationAllowedFor,
+  prorationBehaviorFor,
+  itemUnitAmount,
+  STRIPE_PRICE_PUSH_STATUSES,
+} from "./price-override";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -502,13 +511,14 @@ export class BillingService {
    *
    * Also reconciles the MRR ledger (basePriceSnapshot + a signed BillingEvent
    * `amountDelta`) so reported revenue follows the price actually charged.
+   *
+   * D8: `opts.pushed` is a push the caller already made Stripe-first (before writing the override), so
+   * only the ledger half runs here; `opts.effective` / `proposed` / `version` shape a push made here.
    */
-  async syncStripeSubscriptionPrice(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async syncStripeSubscriptionPrice(
+    tenantId: string,
+    opts?: PricePushOptions & { pushed?: PricePushResult },
+  ): Promise<PricePushResult> {
     // Resolve FIRST: an unresolvable price (isCustom plan with no custom fee) must be a
     // clean no-op result, not a thrown 400 out of a "sync" call — callers fan this out.
     let pricing: Awaited<ReturnType<PlatformPricingService["resolveTenantPricing"]>>;
@@ -521,7 +531,7 @@ export class BillingService {
       return { synced: false, reason: "price_unresolvable" };
     }
 
-    const result = await this.pushResolvedPriceToStripe(tenantId);
+    const result = opts?.pushed ?? (await this.pushResolvedPriceToStripe(tenantId, opts));
     // Reported MRR must follow the money: basePriceSnapshot is what MrrService prices
     // every paying tenant from, and Σ BillingEvent.amountDelta is what it reconciles
     // against — so a price change writes BOTH, whatever Stripe did.
@@ -530,12 +540,10 @@ export class BillingService {
   }
 
   /** The Stripe half of `syncStripeSubscriptionPrice` (no ledger side effects). */
-  private async pushResolvedPriceToStripe(tenantId: string): Promise<{
-    synced: boolean;
-    reason?: string;
-    oldAmount?: number;
-    newAmount?: number;
-  }> {
+  async pushResolvedPriceToStripe(
+    tenantId: string,
+    opts?: PricePushOptions,
+  ): Promise<PricePushResult> {
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub?.stripeSubId) {
       return { synced: false, reason: "no_active_stripe_subscription" };
@@ -555,7 +563,10 @@ export class BillingService {
       return { synced: false, reason: "stripe_retrieve_failed" };
     }
 
-    if (stripeSub.status !== "active" && stripeSub.status !== "trialing") {
+    // SA-733r M7: past_due / unpaid are live — an owner price change must reach their next invoice.
+    // A Stripe-side `paused` (or incomplete) subscription is skipped: a price change made while it is
+    // paused does NOT reach Stripe, so the resume path (B3) must reconcile the price on resume.
+    if (!STRIPE_PRICE_PUSH_STATUSES.includes(stripeSub.status)) {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 
@@ -580,10 +591,30 @@ export class BillingService {
           ? "year"
           : "month";
 
-    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const priceData = opts?.proposed
+      ? await this.pricing.checkoutPriceData(tenantId, interval, opts.proposed)
+      : await this.pricing.checkoutPriceData(tenantId, interval);
+    const effective = opts?.effective ?? "next_cycle";
+    // A mid-period proration on a delinquent subscription would pile onto an invoice nobody pays: past_due /
+    // unpaid always take the change at the next invoice, whatever was asked.
+    const proration = prorationAllowedFor(stripeSub.status)
+      ? prorationBehaviorFor(effective)
+      : "none";
+    const key = priceOverrideIdempotencyKey({
+      tenantId,
+      amountCents: priceData.unit_amount,
+      proration, // the mode actually SENT: an active -> past_due flip between attempts must not reuse a key
+      version: opts?.version,
+      itemPriceId: item.price?.id,
+    });
     const oldAmount =
       typeof item.price?.unit_amount === "number" ? fromCents(item.price.unit_amount) : undefined;
     const newAmount = fromCents(priceData.unit_amount);
+    // Same cents on the same interval: nothing to change. Re-saving a price with now_prorated would only
+    // add net-zero proration lines to the customer's invoice, so Stripe is left alone.
+    if (item.price?.unit_amount === priceData.unit_amount) {
+      return { synced: true, unchanged: true, oldAmount, newAmount, proration: "none" };
+    }
 
     // Stripe requires a `product` ID on inline price_data for a subscription-item
     // update — `product_data` is a Checkout-session-only shape and is REJECTED here
@@ -593,9 +624,10 @@ export class BillingService {
       typeof item.price?.product === "string" ? item.price.product : item.price?.product?.id;
     if (!productId) {
       try {
-        const product = await this.stripe.client.products.create({
-          name: priceData.product_data.name,
-        });
+        const product = await this.stripe.client.products.create(
+          { name: priceData.product_data.name },
+          { idempotencyKey: `${key}:product` },
+        );
         productId = product.id;
       } catch (err) {
         this.logger.error(
@@ -613,22 +645,31 @@ export class BillingService {
     };
 
     try {
-      await this.stripe.updateSubscription(sub.stripeSubId, {
-        items: [{ id: item.id, price_data: updatePriceData }],
-        proration_behavior: "none",
-      });
+      await this.stripe.updateSubscription(
+        sub.stripeSubId,
+        { items: [{ id: item.id, price_data: updatePriceData }], proration_behavior: proration },
+        { idempotencyKey: key },
+      );
     } catch (err) {
       this.logger.error(
         `Failed to sync Stripe subscription price for tenant ${tenantId}`,
         err as Error,
       );
-      return { synced: false, reason: "stripe_update_failed" };
+      // A lost RESPONSE is not a failed update: Stripe may have applied it. Re-read the item; if it already
+      // bills the new amount the push is applied, otherwise it is a failure the caller must refuse.
+      const reread = await this.stripe.getSubscription(sub.stripeSubId).catch(() => null);
+      if (itemUnitAmount(reread, item.id) !== priceData.unit_amount) {
+        return { synced: false, reason: "stripe_update_failed" };
+      }
+      this.logger.warn(
+        `Stripe price update for tenant ${tenantId} errored but the item already bills ${newAmount} — treating it as applied`,
+      );
     }
 
     this.logger.log(
-      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=none)`,
+      `Synced Stripe subscription price for tenant ${tenantId}: ${oldAmount ?? "?"} -> ${newAmount} (${interval}, proration_behavior=${proration})`,
     );
-    return { synced: true, oldAmount, newAmount };
+    return { synced: true, oldAmount, newAmount, proration };
   }
 
   /**

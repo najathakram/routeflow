@@ -307,6 +307,58 @@ describe("PlatformPricingService", () => {
     });
   });
 
+  // ─── resolveTenantPricingWith / checkoutPriceData(proposed) — SA-733 D8 Stripe-first ──────────
+
+  describe("a PROPOSED override (priced before the row is written)", () => {
+    const arrange = (row: { monthly: number | null; annual: number | null }) => {
+      prisma.tenant.findUnique.mockResolvedValue(
+        makeTenant({
+          subscription: {
+            planKey: "GROWTH",
+            priceOverrideMonthly: row.monthly,
+            priceOverrideAnnual: row.annual,
+          },
+        }),
+      );
+      catalog.getVersionForTenant.mockResolvedValue(
+        makeVersion([makeDefinition({ planKey: "GROWTH", name: "Growth", monthlyPrice: 249 })]),
+      );
+    };
+
+    it("prices from the proposal, not the stored override", async () => {
+      arrange({ monthly: 150, annual: null });
+      const result = await service.resolveTenantPricingWith("tenant-1", {
+        monthly: 120,
+        annual: null,
+      });
+      expect(result).toMatchObject({ monthly: 120, annual: 1200, source: "override" });
+    });
+
+    it("a proposal that clears both columns falls back to the catalog", async () => {
+      arrange({ monthly: 150, annual: 1400 });
+      const result = await service.resolveTenantPricingWith("tenant-1", {
+        monthly: null,
+        annual: null,
+      });
+      expect(result).toMatchObject({ monthly: 249, source: "catalog" });
+    });
+
+    it("checkoutPriceData(proposed) emits whole cents of the proposed fee (19.99 -> 1999)", async () => {
+      arrange({ monthly: 150, annual: null });
+      const priceData = await service.checkoutPriceData("tenant-1", "month", {
+        monthly: 19.99,
+        annual: null,
+      });
+      expect(priceData.unit_amount).toBe(1999);
+    });
+
+    it("checkoutPriceData without a proposal still reads the stored override", async () => {
+      arrange({ monthly: 150, annual: null });
+      const priceData = await service.checkoutPriceData("tenant-1", "month");
+      expect(priceData.unit_amount).toBe(15000);
+    });
+  });
+
   // ─── checkoutPriceData ──────────────────────────────────────────────────────
 
   describe("checkoutPriceData", () => {
