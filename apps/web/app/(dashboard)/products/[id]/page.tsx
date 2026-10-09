@@ -37,7 +37,6 @@ import {
   useProduct,
   useProducts,
   useUpdateProduct,
-  useDeleteProduct,
   useUploadProductImages,
   useDeleteProductImage,
   useCreateProduct,
@@ -70,7 +69,7 @@ import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
-import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
@@ -308,7 +307,7 @@ export default function ProductDetailPage() {
   const updateProduct = useUpdateProduct();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
-  const deleteProduct = useDeleteProduct();
+  const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -581,17 +580,9 @@ export default function ProductDetailPage() {
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
-  const handleDeleteProduct = async () => {
-    try {
-      await deleteProduct.mutateAsync(id);
-      toast({ title: "Product deleted", variant: "success" });
-      router.push("/products");
-    } catch (err: any) {
-      // READ_ONLY already got the global "workspace is read-only" toast.
-      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete product"));
-    } finally {
-      setShowDeleteConfirm(false);
-    }
+  const handleDeleteProduct = () => {
+    setShowDeleteConfirm(false);
+    deleteFlow.start(id);
   };
 
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -1026,6 +1017,7 @@ export default function ProductDetailPage() {
         />
       )}
       {reactivateFlow.dialog}
+      {deleteFlow.dialog}
       <ConfirmDialog
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
@@ -1034,7 +1026,7 @@ export default function ProductDetailPage() {
         description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
         confirmLabel="Yes, delete"
         variant="danger"
-        loading={deleteProduct.isPending}
+        loading={deleteFlow.isPending}
       />
       <div className="space-y-5 p-6">
         {/* Back */}

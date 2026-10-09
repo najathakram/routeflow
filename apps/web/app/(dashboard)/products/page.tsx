@@ -50,6 +50,7 @@ import {
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -742,6 +743,8 @@ export default function ProductsPage() {
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  // What the last bulk delete refused and why (#3323): shown in a dialog, not buried in a toast.
+  const [skipReport, setSkipReport] = React.useState<SkippedProduct[]>([]);
   const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
@@ -1114,9 +1117,9 @@ export default function ProductsPage() {
       if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
         title: parts.join(", "),
-        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
+      if (skipped.length > 0) setSkipReport(skipped);
     } catch (err) {
       if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete products"));
     }
@@ -1446,6 +1449,8 @@ export default function ProductsPage() {
           setShowAssignToSection(false);
         }}
       />
+
+      <BulkDeleteSkipReport skipped={skipReport} onClose={() => setSkipReport([])} />
 
       {/* Bulk delete confirmation */}
       <ConfirmDialog
