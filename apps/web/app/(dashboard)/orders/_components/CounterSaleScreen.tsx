@@ -98,6 +98,8 @@ interface PickedCustomer {
   email?: string | null;
   pricingTier?: number | null;
   fulfillPath?: string | null;
+  /** the system walk-in customer record (a pick of it is still a walk-in on the receipt) */
+  isWalkIn?: boolean | null;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -800,7 +802,7 @@ export function CounterSaleScreen() {
           profile={settings}
           fallbackMethod={method}
           headingRef={receiptHeadingRef}
-          customerName={customer?.businessName}
+          customer={customer}
         />
         <div className="flex flex-wrap gap-2 print:hidden">
           <Button className={RECEIPT_BTN} onClick={() => window.print()}>

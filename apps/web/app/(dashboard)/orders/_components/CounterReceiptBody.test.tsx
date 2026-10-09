@@ -129,7 +129,7 @@ describe("CounterReceiptBody", () => {
         receipt={RECEIPT}
         lines={LINES}
         enteredTender={null}
-        customerName="Acme Market"
+        customer={{ businessName: "Acme Market", isWalkIn: false }}
       />,
     );
     expect(screen.getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Market");

@@ -48,11 +48,19 @@ describe("tax rate on the receipt", () => {
 
 describe("customer name on the receipt", () => {
   it("prints a named customer", () => {
-    expect(live({ customerName: " Acme Market " }).customerName).toBe("Acme Market");
+    expect(
+      live({ customer: { businessName: " Acme Market ", isWalkIn: false } }).customerName,
+    ).toBe("Acme Market");
   });
   it("prints nothing for a walk-in (no name given)", () => {
     expect(live().customerName).toBeNull();
-    expect(live({ customerName: "  " }).customerName).toBeNull();
+    expect(live({ customer: { businessName: "  " } }).customerName).toBeNull();
+    expect(live({ customer: null }).customerName).toBeNull();
+  });
+  it("prints nothing when the clerk picked the system walk-in customer (same rule as a reprint)", () => {
+    expect(
+      live({ customer: { businessName: "Walk-in customer", isWalkIn: true } }).customerName,
+    ).toBeNull();
   });
 });
 

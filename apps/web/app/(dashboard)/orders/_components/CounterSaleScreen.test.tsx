@@ -565,6 +565,23 @@ describe("CounterSaleScreen", () => {
     expect(push).toHaveBeenCalledWith("/orders?action=new&ship=1&preselect=SHIP");
   });
 
+  it.each([
+    ["the system walk-in record", { isWalkIn: true }, false],
+    ["a named customer", { isWalkIn: false }, true],
+  ])("receipt Customer line when %s was picked", async (_n, flag, shown) => {
+    customersFor = [{ id: "c1", businessName: "Walk-in customer", ...flag }];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "walk" } });
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in customer" }));
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await screen.findByTestId("counter-sale-receipt");
+    if (shown) expect(screen.getByTestId("receipt-customer")).toBeInTheDocument();
+    else expect(screen.queryByTestId("receipt-customer")).toBeNull();
+  });
+
   it("a business with the counter off shows nothing to sell with", () => {
     gate = {
       showButton: false,

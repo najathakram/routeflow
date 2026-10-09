@@ -119,6 +119,17 @@ function lineDetail(l: ReceiptLineInput): string {
 
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 
+/**
+ * The ONE rule for the receipt's `Customer:` line, shared by the live receipt and the reprint: nothing for no customer or
+ * the system walk-in record (`isWalkIn`), else the trimmed business name.
+ */
+export function receiptCustomerName(
+  customer: { businessName?: string | null; isWalkIn?: boolean | null } | null | undefined,
+): string | null {
+  if (!customer || customer.isWalkIn) return null;
+  return clean(customer.businessName) || null;
+}
+
 const rateOf = (profile: ReceiptBusinessProfile | null | undefined): number | null => {
   const r = profile?.taxRate;
   return typeof r === "number" && Number.isFinite(r) && r > 0 ? r : null;
@@ -145,8 +156,8 @@ export function buildCounterReceipt(input: {
   /** the method the clerk rang, used when the response does not echo one */
   fallbackMethod?: CounterSalePaymentMethod;
   cashier?: string | null;
-  /** the named customer on the sale; omit (or blank) for a walk-in */
-  customerName?: string | null;
+  /** the customer on the sale (as picked or as stored); null / the system walk-in prints no Customer line */
+  customer?: { businessName?: string | null; isWalkIn?: boolean | null } | null;
   /** set only for a recovered cash sale: what the clerk entered (the server stores no cash tendered) */
   enteredTender: number | null;
   profile: ReceiptBusinessProfile | null | undefined;
@@ -222,7 +233,7 @@ export function buildCounterReceipt(input: {
     dateLabel: formatSaleTime(now, profile?.timezone || undefined),
     lines: rows,
     cashier: clean(input.cashier) || null,
-    customerName: clean(input.customerName) || null,
+    customerName: receiptCustomerName(input.customer),
     taxRate,
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
@@ -365,10 +376,7 @@ export function receiptModelFromOrder(input: {
     dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
     lines: rows,
     cashier: clean(input.cashier) || null,
-    customerName:
-      order.customer && !order.customer.isWalkIn
-        ? clean(order.customer.businessName) || null
-        : null,
+    customerName: receiptCustomerName(order.customer),
     // No rate on a reprint: the sale's own rate is the InvoiceItem.taxRate snapshot, which `GET /orders/:id` does not return,
     // and today's setting may differ from the rate in force when it was rung.
     taxRate: null,
