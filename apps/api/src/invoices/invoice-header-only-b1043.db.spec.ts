@@ -291,9 +291,12 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     // T6 validated InvoiceItem_tenantId_nn on real data, so a NULL row can only exist where the
     // constraint is absent. Lift it in the THROWAWAY spec database only (never routeflow_dev), restore after.
     const [{ db }] = await prisma.$queryRaw<Array<{ db: string }>>`SELECT current_database() AS db`;
-    if (!/^rf_dbspec_/.test(db)) {
-      console.warn(`skipping the NULL-tenant case: ${db} is not a throwaway rf_dbspec_* database`);
-      return;
+    // Never a silent pass: on any other database the case FAILS with the reason (a shared dev database must
+    // not have its constraint lifted). `routeflow_test` is the CI service database, throwaway by construction.
+    if (!/^(rf_dbspec_|routeflow_test$)/.test(db)) {
+      throw new Error(
+        `the NULL-tenant case needs a throwaway database (rf_dbspec_* or routeflow_test), not ${db}: run it via npm run local:test:db`,
+      );
     }
     await prisma.$executeRawUnsafe(
       `ALTER TABLE "InvoiceItem" DROP CONSTRAINT IF EXISTS "InvoiceItem_tenantId_nn"`,
@@ -308,6 +311,19 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     }
   });
 
+  /** Polls pg_stat_activity until some other backend waits on a lock; throws after `timeoutMs`. */
+  async function waitForLockWaiter(timeoutMs = 15_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`;
+      if (n > 0) return;
+      if (Date.now() > deadline) throw new Error("no backend ever waited on the invoice lock");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
   it("B1045: a discount PATCH queued behind a line edit reads the NEW lines; the final total matches the final lines", async () => {
     const s = await seed("race");
     const patch = { discount: 5 };
@@ -320,7 +336,9 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
         (v) => ({ ok: v }),
         (e) => ({ err: e }),
       );
-      await new Promise((r) => setTimeout(r, 1200)); // the PATCH is now parked on the lock (or, unlocked, has already read the old lines)
+      // Not a fixed sleep: wait until a backend is actually parked on a row lock (the PATCH's FOR UPDATE on
+      // fixed code; its UPDATE, AFTER it read the old lines, on the unlocked code), bounded so a hang fails.
+      await waitForLockWaiter();
       await tx.invoiceItem.create({
         data: {
           tenantId: s.tenantId,
@@ -379,5 +397,46 @@ describeDb("header-only invoice PATCH on the one builder - real Postgres (B1043/
     expect(Number(order!.shippingFee)).toBe(7);
     const after = await prisma.regulatedSalesLedger.findMany({ where: { invoiceId: s.inv.id } });
     expect(after.map((r) => r.id)).toEqual([ledger.id]);
+  });
+
+  it("B296 pin (Lead ruling B): a fresh draft with a >4-decimal rate is 409 on a header-only PATCH, never a silent re-tax; re-saving its lines recovers it", async () => {
+    // create() taxes with the UNROUNDED rate (0.08875 -> 88.75 on $1,000) while InvoiceItem.taxRate is
+    // Decimal(5,4) (0.0888 -> 88.80). SA-761 T-1 (sitting 4) widens the column and retires this pin.
+    const s = await seed("b296");
+    const created: any = await run(s.tenantId, () =>
+      invoicesService.create({
+        customerId: s.customerId,
+        items: [{ description: "Widget", qty: 10, unitPrice: 100, taxRate: 0.08875 }],
+      } as any),
+    );
+    const stored = await reload(created.id);
+    expect(Number(stored!.taxAmount)).toBe(88.75);
+    const line = (await prisma.invoiceItem.findMany({ where: { invoiceId: created.id } }))[0];
+    expect(Number(line.taxRate)).toBe(0.0888);
+
+    await expect(
+      run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 })),
+    ).rejects.toMatchObject({ status: 409, response: { code: "INVOICE_TAX_STATE_STALE" } });
+    expect(Number((await reload(created.id))!.discount)).toBe(0);
+
+    // The recovery the 409 asks for: re-save the lines (the stored rate comes back from the column).
+    await run(s.tenantId, () =>
+      invoicesService.update(created.id, {
+        items: [
+          {
+            id: line.id,
+            description: "Widget",
+            qty: 10,
+            unitPrice: 100,
+            taxRate: Number(line.taxRate),
+          },
+        ],
+      } as any),
+    );
+    expect(Number((await reload(created.id))!.taxAmount)).toBe(88.8);
+    await run(s.tenantId, () => invoicesService.update(created.id, { discount: 1 }));
+    const after = await reload(created.id);
+    expect(Number(after!.discount)).toBe(1);
+    expect(Number(after!.total)).toBe(1087.8);
   });
 });
