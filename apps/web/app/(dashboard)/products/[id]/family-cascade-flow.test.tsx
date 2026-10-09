@@ -160,11 +160,12 @@ describe("deleting a family that still has active variants", () => {
     mount(<Deleter />);
     reject(del, 409, cascade409);
     fireEvent.click(screen.getByText("delete"));
-    expect(await screen.findByText("Deactivate the variants too?")).toBeInTheDocument();
+    expect(await screen.findByText("Delete the variants too?")).toBeInTheDocument();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
+    expect(screen.getByText(/Continuing deletes them along with it/)).toBeInTheDocument();
     expect(del).toHaveBeenCalledTimes(1);
     expect(del).toHaveBeenLastCalledWith("/products/f1", undefined);
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete all" }));
     await waitFor(() => expect(del).toHaveBeenCalledTimes(2));
     expect(del).toHaveBeenLastCalledWith("/products/f1", { params: { confirmCascade: "true" } });
     await waitFor(() => expect(toasts().some((t) => t.title === "Product deleted")).toBe(true));
@@ -178,7 +179,7 @@ describe("deleting a family that still has active variants", () => {
     await waitFor(() => expect(toasts()).toHaveLength(1));
     expect(toasts()[0]).toMatchObject({ title: "Failed to delete product", variant: "error" });
     expect(toasts()[0].description).toContain("Reload and try again");
-    expect(screen.queryByText("Deactivate the variants too?")).toBeNull();
+    expect(screen.queryByText("Delete the variants too?")).toBeNull();
     expect(JSON.stringify(toasts())).not.toContain("RAW");
   });
 });

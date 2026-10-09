@@ -29,7 +29,7 @@ export function useDeleteProductFlow(opts?: { onDeleted?: (id: string) => void }
       onError: (err) => {
         // READ_ONLY already got the global "workspace is read-only" toast.
         if (isReadOnlyRefusal(err)) return;
-        const prompt = confirmCascade ? null : getFamilyCascadePrompt(err);
+        const prompt = confirmCascade ? null : getFamilyCascadePrompt(err, "delete");
         if (prompt) {
           setCascade({ id, prompt });
           return;
