@@ -93,15 +93,9 @@ describe("OrderTemplatesService.generateDailyOrders — UTC day window (B955)", 
 
     await service.generateDailyOrders();
 
-    expect(prisma.order.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          templateId: "t1",
-          status: { not: "CANCELLED" },
-          createdAt: { gte: new Date("2026-01-15T00:00:00.000Z") },
-        },
-      }),
-    );
+    expect(prisma.order.findFirst).toHaveBeenCalledWith({
+      where: { templateId: "t1", createdAt: { gte: new Date("2026-01-15T00:00:00.000Z") } },
+    });
   });
 
   it("selects templates by the UTC ISO weekday (23:30Z Wednesday is already Thursday in Tokyo)", async () => {

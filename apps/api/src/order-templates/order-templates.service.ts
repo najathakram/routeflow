@@ -512,13 +512,15 @@ export class OrderTemplatesService {
         }
 
         for (const template of templates) {
-          // Idempotency: skip if a live order was already generated today for this template (the same
-          // lookup the locked re-read uses, so a CANCELLED order never answers one check and not the other)
-          const existing = await findReplayOrder(
-            this.prisma.forTenant(),
-            template.id,
-            startOfUtcDay(today),
-          );
+          // Idempotency: skip if ANY order (even a since-CANCELLED one) was already generated today for
+          // this template. Cron-only rule: an order the operator cancelled is not placed again at 06:00.
+          // Manual "Generate now" is different on purpose (findReplayOrder ignores cancelled orders).
+          const existing = await this.prisma.forTenant().order.findFirst({
+            where: {
+              templateId: template.id,
+              createdAt: { gte: startOfUtcDay(today) },
+            },
+          });
           if (existing) {
             totalSkipped++;
             continue;

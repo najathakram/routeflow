@@ -202,12 +202,16 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
     expect(msg).not.toContain("was not sent");
   });
 
-  it("cron: the unlocked 'already generated today' check ignores a CANCELLED order, like the locked re-read", async () => {
+  it("cron: an order generated today and then CANCELLED still counts, so the cron does not place it again", async () => {
     fakeCronClock();
     const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    // A manual run placed today's order and the operator cancelled it. The cron's unlocked check has no
+    // status filter, so it still sees that row; a status-filtered lookup would find nothing and re-place it.
     prisma.order.findFirst.mockImplementation((args: any) =>
       Promise.resolve(
-        args.where.status?.not === "CANCELLED" ? null : { id: "cancelled", status: "CANCELLED" },
+        args.where.status
+          ? null
+          : { id: "manual-cancelled", status: "CANCELLED", templateId: "t1" },
       ),
     );
 
@@ -215,11 +219,22 @@ describe("OrderTemplatesService generation replay (B1054)", () => {
 
     expect(prisma.order.findFirst.mock.calls[0][0].where).toEqual({
       templateId: "t1",
-      status: { not: "CANCELLED" },
       createdAt: { gte: DAY_START },
     });
-    expect(prisma.order.create).toHaveBeenCalledTimes(1); // the operator cancelled: today's run goes
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("1 created, 0 skipped"));
+    expect(prisma.order.create).not.toHaveBeenCalled(); // no new order on live tenants' recurring flow
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("0 created, 1 skipped"));
+    log.mockRestore();
+  });
+
+  it("manual Generate now still ignores a CANCELLED order (the operator ran again on purpose)", async () => {
+    prisma.order.findFirst.mockResolvedValue(null);
+
+    await service.generateOrder("t1");
+
+    for (const c of prisma.order.findFirst.mock.calls) {
+      expect((c[0] as any).where.status).toEqual({ not: "CANCELLED" });
+    }
+    expect(prisma.order.create).toHaveBeenCalledTimes(1);
   });
 
   it("the template row lock is tenant-scoped", async () => {
