@@ -96,6 +96,7 @@ import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
+import { useInvalidFocus } from "@/lib/form-errors";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -223,9 +224,10 @@ function BusinessProfileTab() {
   const onSubmit = async (data: ProfileFormValues) => {
     await saveSettings.mutateAsync(data);
   };
+  const onInvalid = useInvalidFocus();
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -362,11 +364,12 @@ function BusinessProfileTab() {
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/70">%</span>
           </div>
+          <p className="mt-1 text-xs text-navy/70">Charged on counter sales and invoices</p>
         </div>
       </Card>
 
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>
+        <Button type="submit" loading={isSubmitting}>
           Save Changes
         </Button>
       </div>
