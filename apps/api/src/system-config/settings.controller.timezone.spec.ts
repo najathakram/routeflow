@@ -72,7 +72,9 @@ describe("GET /settings: tenant timezone (SA-738, one resolver)", () => {
       order: prisma.order,
       invoicePayment: prisma.invoicePayment,
       return: prisma.return,
+      creditNote: prisma.creditNote,
     }));
+    prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.order.findMany.mockResolvedValue([]);
     prisma.order.count.mockResolvedValue(0);
     const counter = new CounterSaleTodayService(prisma as never);
@@ -200,6 +202,57 @@ describe("PATCH /settings: timezone writer (SA-738 R16-4)", () => {
     expect(call.create).not.toHaveProperty("timezone");
     expect(tx.tenantConfig.upsert).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("the zone, the other TenantConfig fields and the audit row are ONE write on the tx", async () => {
+    const { c, prisma, tx } = await build({ timezone: "America/New_York" });
+    await c.updateSettings({ timezone: "America/Chicago", city: "Austin" }, admin);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(tx.tenantConfig.upsert).toHaveBeenCalledTimes(1);
+    expect(tx.tenantConfig.upsert.mock.calls[0][0]).toEqual({
+      where: { tenantId: "t1" },
+      create: { tenantId: "t1", city: "Austin", timezone: "America/Chicago" },
+      update: { city: "Austin", timezone: "America/Chicago" },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("an unchanged zone still saves the other fields, in the tx, with no audit row", async () => {
+    const { c, prisma, tx } = await build({ timezone: "America/Chicago" });
+    await c.updateSettings({ timezone: "America/Chicago", city: "Austin" }, admin);
+    expect(tx.tenantConfig.upsert.mock.calls[0][0].update).toEqual({ city: "Austin" });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  // The zone used to commit in its OWN transaction before the other fields were written, so a
+  // failed field write left the new zone behind. Model a real rollback: writes are staged and only
+  // "commit" when the tx callback returns; the field write (the upsert carrying `city`) throws.
+  it("a failed field write rolls the zone and its audit row back: nothing is committed", async () => {
+    const { c, prisma } = await build({ timezone: "America/New_York" });
+    const committed: string[] = [];
+    prisma.tenantTransaction = jest.fn(async (fn: any) => {
+      const staged: string[] = [];
+      const journalTx = {
+        tenantConfig: {
+          findUnique: jest.fn().mockResolvedValue({ timezone: "America/New_York" }),
+          upsert: jest.fn(async (args: any) => {
+            staged.push(`config:${JSON.stringify(args.update)}`);
+            if ("city" in args.update) throw new Error("field write failed");
+          }),
+        },
+        auditLog: { create: jest.fn(async () => void staged.push("audit")) },
+      };
+      const result = await fn(journalTx);
+      committed.push(...staged);
+      return result;
+    });
+    prisma.tenantConfig.upsert = jest.fn().mockRejectedValue(new Error("field write failed"));
+    await expect(
+      c.updateSettings({ timezone: "America/Chicago", city: "Austin" }, admin),
+    ).rejects.toThrow("field write failed");
+    expect(committed).toEqual([]);
   });
 
   it("the response shows the (resolved) zone after the write", async () => {

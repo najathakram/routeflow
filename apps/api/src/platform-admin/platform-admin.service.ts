@@ -286,8 +286,8 @@ export class PlatformAdminService {
   async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
-    // SA-738 R16-4: the creation-time zone is REQUIRED and validated (400 INVALID_TIME_ZONE) before any
-    // write; there is no silent default, so a tenant never lands on New York by accident.
+    // SA-738 R16-4: the creation-time zone is REQUIRED (no silent New York default). The DTO refuses at
+    // the pipe; this is the service backstop for non-HTTP callers (400 INVALID_TIME_ZONE, before any write).
     const timezone = assertValidTenantTimeZone(dto.timezone);
 
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];

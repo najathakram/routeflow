@@ -169,8 +169,6 @@ export class SettingsController {
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
     if (tenantId) {
-      if (newZone !== undefined)
-        await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone });
       const configUpdate: Record<string, unknown> = {};
       if (dto.ownerName !== undefined)
         configUpdate.ownerName = typeof dto.ownerName === "string" ? dto.ownerName : "";
@@ -189,12 +187,18 @@ export class SettingsController {
         configUpdate.invoiceNotes = typeof dto.invoiceNotes === "string" ? dto.invoiceNotes : "";
       if (dto.invoiceTerms !== undefined)
         configUpdate.invoiceTerms = typeof dto.invoiceTerms === "string" ? dto.invoiceTerms : "";
+      // SA-738: a zone change commits WITH these fields and its audit row in one transaction, so a
+      // failed save changes nothing; without a zone the fields are written as before.
+      if (newZone !== undefined)
+        await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone, configUpdate });
       if (Object.keys(configUpdate).length > 0) {
-        await this.prisma.tenantConfig.upsert({
-          where: { tenantId },
-          create: { tenantId, ...configUpdate },
-          update: configUpdate,
-        });
+        if (newZone === undefined) {
+          await this.prisma.tenantConfig.upsert({
+            where: { tenantId },
+            create: { tenantId, ...configUpdate },
+            update: configUpdate,
+          });
+        }
 
         // Anything we just updated shows on the invoice header (address /
         // phone / customer email / business name) or on the body (notes /
