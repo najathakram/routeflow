@@ -96,6 +96,8 @@ describeDb("tenant units against real Postgres", () => {
           tenantId: orderTenantId,
           productId,
           qty: "1",
+          // The unitLine split CHECK: a unit line with a pack size > 1 and qty > 0 must say boxes/pieces.
+          boxes: 1,
           unitPrice: "1.00",
           unitLabel,
           unitsPerBox,
@@ -118,6 +120,7 @@ describeDb("tenant units against real Postgres", () => {
         productId,
         description: "line",
         qty: "1",
+        boxes: 1,
         unitPrice: "1.00",
         subtotal: "1.00",
         unitLabel,
