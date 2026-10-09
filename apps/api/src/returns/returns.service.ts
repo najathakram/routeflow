@@ -54,6 +54,7 @@ import {
   resolveRefundInvoiceIds,
   type RefundTender,
 } from "./inline-return-refund";
+import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import { refundTenderData } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
@@ -1153,6 +1154,9 @@ export class ReturnsService {
             // `id` feeds the order-scoped headroom aggregate in billedBasisFor.
             id: true,
             orderNumber: true,
+            // SA-740r2 item 6: a counter order's refund takes the counter-close lock on its register
+            counterSale: true,
+            registerKey: true,
             // F08 B53: the creditable/VOID decision must be made IN CODE
             // (billedBasisFor), never as a DB-level status filter here — excluding
             // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
@@ -1341,13 +1345,20 @@ export class ReturnsService {
    * (RECEIVED -> REFUNDED) carries the amount, `refundedAt` and the optional tender (`Return.refundTender`; omitted -> null).
    */
   private async recordExternalRefund(
-    ret: { id: string; orderId?: string | null; order?: { id?: string } | null },
+    ret: {
+      id: string;
+      orderId?: string | null;
+      order?: { id?: string; counterSale?: boolean | null; registerKey?: string | null } | null;
+    },
     refundAmount: number,
     tender: RefundTender | undefined,
   ) {
     const id = ret.id;
     const tenantId = this.prisma.getTenantId();
+    // SA-740r2 item 6: the shared counter-close lock is the FIRST statement (a counter order's refund counts in the drawer)
+    const registerKey = registerKeyOfOrder(ret.order);
     return this.prisma.tenantTransaction(async (tx: any) => {
+      if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id },

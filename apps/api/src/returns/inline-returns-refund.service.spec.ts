@@ -280,6 +280,38 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
   });
 
+  describe("SA-740r2 item 6: the shared counter-close lock is the FIRST statement for a counter order", () => {
+    it("counter order: counter-close, then Return, Orders, Invoices; the key is tenant:register (Order.registerKey ?? main)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawCalls).toHaveLength(4);
+      expect(rawCalls[0]).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
+      );
+      expect(rawValues[0]).toEqual(["test-tenant:main"]);
+      expect(rawCalls[1]).toMatch(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/);
+      expect(rawCalls[2]).toMatch(/FROM "Order" WHERE id IN/);
+      expect(rawCalls[3]).toMatch(/FROM "Invoice" WHERE id IN/);
+      // the register is read from the CARRYING order, tenant-scoped
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "ord-carrying" } }),
+      );
+    });
+
+    it("a named register is keyed as tenant:register", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: "till-2" });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawValues[0]).toEqual(["test-tenant:till-2"]);
+    });
+
+    it("a non-counter order takes no close lock (its refund is not a till event)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: false, registerKey: null });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawCalls).toHaveLength(3);
+      expect(rawCalls.some((c) => c.includes("counter-close"))).toBe(false);
+    });
+  });
+
   it("F7: the Return FOR UPDATE carries an explicit, BOUND tenant predicate (never string-built SQL)", async () => {
     await service.refund("ret-1", REFUND, OPERATOR);
     expect(rawCalls[0]).toBe(

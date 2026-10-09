@@ -241,6 +241,26 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     });
   });
 
+  describe("SA-740r2 item 6: a counter order's refund takes the shared counter-close lock FIRST", () => {
+    it("counter order: counter-close (tenant:register), then Return, Order, Invoices", async () => {
+      setReturn({ counterSale: true, registerKey: null });
+      await refund();
+      expect(raw[0].text).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
+      );
+      expect(raw[0].values).toEqual(["test-tenant:main"]);
+      expect(raw).toHaveLength(4);
+      expect(raw[1].text).toMatch(/FROM "Return" WHERE id/);
+    });
+
+    it("a named register is keyed tenant:register; refundedAt is set after the lock (the claim is the last write)", async () => {
+      setReturn({ counterSale: true, registerKey: "till-2" });
+      await refund();
+      expect(raw[0].values).toEqual(["test-tenant:till-2"]);
+      expect(prisma.return.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(0);
+    });
+  });
+
   describe("lock order inside the claim's transaction", () => {
     it("Return, then the order, then the order's creditable invoices; the paid-in-full read follows the invoice lock", async () => {
       setReturn();

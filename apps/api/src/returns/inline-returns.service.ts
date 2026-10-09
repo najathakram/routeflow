@@ -78,6 +78,7 @@ import {
   lockRefundOrders,
   type RefundTender,
 } from "./inline-return-refund";
+import { lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
   refundTenderData,
@@ -1368,7 +1369,18 @@ export class InlineReturnsService {
       return this.refundReplay(this.prisma.forTenant(), pre, dto.tender, expected);
     }
 
+    // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
+    // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
+    // for refunds in flight and a refund's `refundedAt` (the app clock) can never land behind a close's cutoff.
+    const registerKey = registerKeyOfOrder(
+      await this.prisma.forTenant().order.findFirst({
+        where: { id: pre.orderId },
+        select: { counterSale: true, registerKey: true },
+      }),
+    );
+
     const outcome: { replay?: any } = await this.prisma.tenantTransaction(async (tx: any) => {
+      if (registerKey) await lockCounterClose(tx, tenantId, registerKey);
       // F7: the tenant predicate is explicit (bound), like the Order/Invoice locks right after it
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
       const fresh = await tx.return.findFirst({
