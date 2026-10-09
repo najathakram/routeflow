@@ -92,3 +92,82 @@ describe("catch-up webhook routing", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenant stays ACTIVE, no trial email", () => {
+  function makeUpdated() {
+    const prisma: any = {
+      tenantSubscription: {
+        findFirst: jest.fn(async () => ({
+          tenantId: "t1",
+          stripeSubId: "sub_1",
+          stripeCustomerId: "cus_1",
+          tenant: { id: "t1", slug: "qa-acme", name: "Acme" },
+        })),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      tenant: { updateMany: jest.fn(), update: jest.fn() },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const notification: any = {
+      notifySuspended: jest.fn(),
+      notifyCancelled: jest.fn(),
+      notifyTrialEnding: jest.fn(),
+    };
+    const email: any = { send: jest.fn() };
+    const billing = new BillingService(
+      prisma,
+      {} as any,
+      email,
+      { invalidate: jest.fn() } as any,
+      { emit: jest.fn() } as any,
+      {} as any,
+      notification,
+      {} as any,
+      {} as any,
+    );
+    return { billing, prisma, notification, email };
+  }
+
+  it("customer.subscription.updated with status trialing writes the period + cancel flag only - no tenant status, no email", async () => {
+    const h = makeUpdated();
+    await h.billing.handleWebhookEvent({
+      id: "evt_1",
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_1",
+          customer: "cus_1",
+          status: "trialing",
+          cancel_at_period_end: false,
+          metadata: { catchup: "prepaid" },
+          trial_end: 1793534400,
+          items: {
+            data: [
+              { id: "si_1", current_period_start: 1790856000, current_period_end: 1793534400 },
+            ],
+          },
+        },
+      },
+    });
+    expect(h.prisma.tenant.updateMany).not.toHaveBeenCalled();
+    expect(h.prisma.tenant.update).not.toHaveBeenCalled();
+    expect(h.notification.notifySuspended).not.toHaveBeenCalled();
+    expect(h.notification.notifyCancelled).not.toHaveBeenCalled();
+    expect(h.notification.notifyTrialEnding).not.toHaveBeenCalled();
+    expect(h.email.send).not.toHaveBeenCalled();
+    const written = h.prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect(Object.keys(written).sort()).toEqual(["cancelAtPeriodEnd", "periodEnd", "periodStart"]);
+  });
+
+  it("customer.subscription.trial_will_end has no handler: Stripe's trial reminder never becomes our email", async () => {
+    const h = makeUpdated();
+    await h.billing.handleWebhookEvent({
+      id: "evt_2",
+      type: "customer.subscription.trial_will_end",
+      data: { object: { id: "sub_1", customer: "cus_1", status: "trialing" } },
+    });
+    expect(h.notification.notifyTrialEnding).not.toHaveBeenCalled();
+    expect(h.email.send).not.toHaveBeenCalled();
+    expect(h.prisma.tenantSubscription.update).not.toHaveBeenCalled();
+  });
+});

@@ -30,6 +30,7 @@ import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { CatchupClaimService } from "./catchup-claim.service";
+import { CatchupCheckoutService } from "./catchup-checkout.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -58,6 +59,8 @@ import { CatchupClaimService } from "./catchup-claim.service";
     ScheduledPriceChangeService,
     // SA-733r3 N2: the October catch-up claim lifecycle (webhook entry points + the hourly sweep).
     CatchupClaimService,
+    // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
+    CatchupCheckoutService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -85,6 +88,7 @@ import { CatchupClaimService } from "./catchup-claim.service";
     ScheduledPriceChangeService,
     // The platform-admin RfInvoice queue refuses payments while a claim is held.
     CatchupClaimService,
+    CatchupCheckoutService,
     BillingService,
     PlatformPricingService,
     AddonService,

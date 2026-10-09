@@ -8,6 +8,7 @@ import { TenantMirrorService } from "./tenant-mirror.service";
 import { PlatformAdminBuyersController } from "./platform-admin-buyers.controller";
 import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
 import { RfInvoicesController } from "./rf-invoices.controller";
+import { CatchupAdminController } from "./catchup-admin.controller";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
@@ -29,7 +30,12 @@ import { BillingModule } from "../billing/billing.module";
     EmailModule,
     BillingModule,
   ],
-  controllers: [PlatformAdminController, PlatformAdminBuyersController, RfInvoicesController],
+  controllers: [
+    PlatformAdminController,
+    PlatformAdminBuyersController,
+    RfInvoicesController,
+    CatchupAdminController,
+  ],
   providers: [
     PlatformAdminService,
     PlatformConfigService,

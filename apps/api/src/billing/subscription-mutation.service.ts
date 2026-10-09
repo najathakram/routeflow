@@ -1802,6 +1802,8 @@ export class SubscriptionMutationService {
   async checkoutAddonLines(
     tenantId: string,
     interval: "month" | "year",
+    // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
+    opts: { quiet?: boolean } = {},
   ): Promise<{ lineItems: ReturnType<typeof checkoutAddonLineItem>[]; skus: string[] }> {
     const none = { lineItems: [], skus: [] };
     // SA-693: a comp is a platform grant — never billed, so never a line and never a reason to refuse.
@@ -1843,7 +1845,8 @@ export class SubscriptionMutationService {
         this.logger.warn(
           `Checkout for tenant ${tenantId}: add-on "${code}" has quantity ${String(oldest.quantity)} — no line`,
         );
-        await this.announceCheckoutQuantityMissing(tenantId, code, def.name, oldest);
+        if (!opts.quiet)
+          await this.announceCheckoutQuantityMissing(tenantId, code, def.name, oldest);
         continue;
       }
       billable.push({ def, quantity });
