@@ -8,8 +8,8 @@ import { formatReceiptMoney as money, type CounterReceiptModel } from "@/lib/cou
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
  * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
  */
-/** 8.25 -> "8.25", 8 -> "8", 7.5 -> "7.5" (no trailing zeros). */
-const taxRateText = (rate: number): string => String(Number(rate.toFixed(3)));
+/** The stored rate as is (a free-precision percent), no rounding: 8.25 -> "8.25", 8 -> "8", 9.0625 -> "9.0625". */
+const taxRateText = (rate: number): string => String(rate);
 
 export function CounterReceiptView({
   model: m,
