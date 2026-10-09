@@ -451,19 +451,10 @@ test.describe("Operator — Tenant Dashboard", () => {
       .getByRole("button", { name: /add as new product/i })
       .first()
       .click();
-    const createModal = page.getByRole("heading", { name: "New Product" }).locator("xpath=../..");
-    await expect(
-      createModal.getByText("Name *", { exact: true }).locator("xpath=..").locator("input"),
-    ).toHaveValue("ACME COLA 24PK");
-    // The quick-create modal labels this "Price per unit *" (ProductCreateModal.tsx);
-    // the "$" sits in a sibling span, so the input is still a descendant of the
-    // label's parent. The old "Price ($)" text matched nothing.
-    await expect(
-      createModal
-        .getByText("Price per unit *", { exact: true })
-        .locator("xpath=..")
-        .locator("input"),
-    ).toHaveValue("26.00");
+    const createModal = page.getByRole("dialog", { name: "New Product" });
+    await expect(createModal.getByLabel("Name *", { exact: true })).toHaveValue("ACME COLA 24PK");
+    // The label follows the unit ("Price per unit *" until one is chosen).
+    await expect(createModal.getByLabel("Price per unit *", { exact: true })).toHaveValue("26.00");
     await expect(page.getByText(/suggested from invoice cost/i)).toBeVisible();
     // Close without creating (don't pollute the seeded catalog).
     await page.getByRole("dialog").getByRole("button", { name: /close/i }).click();

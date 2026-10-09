@@ -9,14 +9,9 @@
  * submitting — the "Create Product" button is never clicked, so nothing is
  * saved to the tenant's catalog.
  *
- * Selectors mirror the existing quick-create-modal pattern in
- * 02-operator.spec.ts (`getByRole("heading", ...).locator("xpath=../..")`,
- * then `getByText(label, { exact: true }).locator("xpath=..").locator(...)`):
- * the form's labels are plain text, not `<label for>`-linked to their inputs,
- * so `getByLabel` cannot resolve most of them. The pack-size input is the one
- * exception — `PackSizePrompt` gives it a real `aria-label="Pieces per box"`
- * — which conveniently disambiguates it from the form's OWN plain-text
- * "Pieces per box" field (same visible label text, no aria-label of its own).
+ * Selectors scope to the dialog by role and name and use the form's linked labels
+ * (`getByLabel`): the create form lives in the shared Modal. The pack-size input
+ * is told apart by `PackSizePrompt`'s own `aria-label="Pieces per box"`.
  */
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
@@ -33,9 +28,9 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
   /** Opens the create-product modal; returns its heading and a scope for the whole panel. */
   async function openCreateModal(page: Page) {
     await page.getByRole("button", { name: "New Product", exact: true }).click();
-    const heading = page.getByRole("heading", { name: "New Product" });
+    const modal = page.getByRole("dialog", { name: "New Product" });
+    const heading = modal.getByRole("heading", { name: "New Product" });
     await expect(heading).toBeVisible({ timeout: 10_000 });
-    const modal = heading.locator("xpath=../..");
     return { heading, modal };
   }
 
@@ -46,11 +41,11 @@ test.describe("Operator — Product-create pack-size prompt (WP2-14)", () => {
   }
 
   function nameField(modal: Locator) {
-    return modal.getByText("Name *", { exact: true }).locator("xpath=..").locator("input");
+    return modal.getByLabel("Name *", { exact: true });
   }
 
   function unitField(modal: Locator) {
-    return modal.getByText("Unit *", { exact: true }).locator("xpath=..").locator("input");
+    return modal.getByLabel("Unit *", { exact: true });
   }
 
   /** The pack-size prompt's own count input — see the file header on why `getByLabel` disambiguates. */
