@@ -7,7 +7,11 @@ import {
   type TenderMethod,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import { assertPaymentShape, type CounterPaymentInput } from "./counter-sale-payment";
+import {
+  assertPaymentShape,
+  type CounterPaymentInput,
+  type CounterPaymentMethod,
+} from "./counter-sale-payment";
 
 /**
  * Split-payment request rules for POST /orders/counter-sale, read from TENDER_RULES.counter (never a second
@@ -24,6 +28,9 @@ export interface CounterLegInput {
   amount?: number;
   reference?: string;
 }
+
+/** A leg that passed `assertLegsShape`: its method is one the counter takes (STORE_CREDIT was refused). */
+export type CounterLeg = Omit<CounterLegInput, "method"> & { method: CounterPaymentMethod };
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });
 
@@ -45,7 +52,10 @@ export function resolveLegs(body: {
 }
 
 /** What the request alone decides. Throws a coded 400. */
-export function assertLegsShape(legs: readonly CounterLegInput[], walkIn: boolean): void {
+export function assertLegsShape(
+  legs: readonly CounterLegInput[],
+  walkIn: boolean,
+): asserts legs is readonly CounterLeg[] {
   if (legs.length > RULE.maxLegs) {
     throw refuse(
       API_ERROR_CODES.COUNTER_TOO_MANY_LEGS,

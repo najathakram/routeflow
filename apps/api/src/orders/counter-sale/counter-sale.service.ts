@@ -36,7 +36,7 @@ import {
   assertLegsAgainstTotal,
   assertLegsShape,
   resolveLegs,
-  type CounterLegInput,
+  type CounterLeg,
 } from "./counter-sale-legs";
 import {
   FULFILMENT_CAPABILITY_READER,
@@ -291,7 +291,7 @@ export class CounterSaleService {
    * carry the server-built group id written in the payment's own create, so a replay knows which leg a row is.
    */
   private async tender(
-    legs: CounterLegInput[],
+    legs: readonly CounterLeg[],
     orderId: string,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
@@ -324,7 +324,7 @@ export class CounterSaleService {
             part.invoiceId,
             {
               amount: centsToDollars(due),
-              method: toPrismaMethod(leg.method as CounterPaymentMethod)!,
+              method: toPrismaMethod(leg.method)!,
               reference: leg.reference,
             } as never,
             { paymentGroupId: legGroupId(orderId, part.legIndex) },

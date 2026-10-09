@@ -6,7 +6,7 @@ import type {
   CounterSaleTenderLine,
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import type { CounterLegInput } from "./counter-sale-legs";
+import type { CounterLeg } from "./counter-sale-legs";
 import { isTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
 
 export { isTender, type InvoiceRow };
@@ -37,7 +37,7 @@ export function counterMethodOf(
  * attempt's ungrouped rows are leg 0's), so an office payment on the same invoice is never the sale's tender.
  */
 export function buildCounterSaleResponse(input: {
-  legs?: Array<Pick<CounterLegInput, "method" | "amount">>;
+  legs?: ReadonlyArray<Pick<CounterLeg, "method" | "amount">>;
   order: { id: string; orderNumber: string | null } | null;
   invoices: InvoiceRow[];
   replayed: boolean;

@@ -9,7 +9,7 @@ import {
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { uuidv5 } from "../../common/uuidv5";
-import type { CounterLegInput } from "./counter-sale-legs";
+import type { CounterLeg } from "./counter-sale-legs";
 import { toPrismaMethod } from "./counter-sale-payment";
 
 export type InvoiceRow = {
@@ -121,7 +121,10 @@ export function preTenderBalances(
  * places nothing although cash was handed over, refuses the whole tender (COUNTER_PAYMENT_EXCEEDS_TOTAL) so
  * the clerk takes the payment again against the balance the server now shows.
  */
-export function planSaleTender(invoices: InvoiceRow[], legs: CounterLegInput[]): SaleTenderPlan {
+export function planSaleTender(
+  invoices: InvoiceRow[],
+  legs: readonly CounterLeg[],
+): SaleTenderPlan {
   const none: SaleTenderPlan = { placements: [], changeCents: 0 };
   const balances = preTenderBalances(invoices);
   const owing = balances.reduce((sum, b) => sum + b.balanceCents, 0);
@@ -163,14 +166,14 @@ const changed = (why: string) =>
  */
 export function assertStoredTenderMatches(
   stored: StoredTender,
-  legs: CounterLegInput[],
+  legs: readonly CounterLeg[],
   placements: TenderPlacement[],
 ): void {
   if (stored.legacy && legs.length > 1) throw changed("a one-payment sale replayed as a split");
   for (const [idx, rows] of stored.byLeg) {
     const leg = legs[idx];
     if (!leg) throw changed(`payment ${idx + 1} is not in this request`);
-    const method = toPrismaMethod(leg.method as Parameters<typeof toPrismaMethod>[0]);
+    const method = toPrismaMethod(leg.method);
     if (rows.some((r) => r.payment.method !== method)) {
       throw changed(`payment ${idx + 1} was taken by another method`);
     }
