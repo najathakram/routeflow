@@ -56,6 +56,66 @@ describeDb("tenant units against real Postgres", () => {
     tenantUnitId: string | null,
   ) => raw.productUnit.create({ data: { tenantId, productId, label, factorToBase, tenantUnitId } });
 
+  /** A customer of `tenantId` (orders and invoices need one). */
+  const customerOf = async (tenantId: string) => {
+    const tag = randomUUID().slice(0, 8);
+    const u = await raw.user.create({
+      data: { email: `${tag}@example.test`, username: `u-${tag}`, role: "CUSTOMER", tenantId },
+    });
+    return raw.customer.create({
+      data: { userId: u.id, businessName: `Units ${tag}`, contactName: "T", tenantId },
+    });
+  };
+  /**
+   * One sold line: `kind` order puts it on an OrderItem under a new order of `orderTenantId`, invoice on an
+   * InvoiceItem under a new invoice. The ITEM's own tenantId is left NULL on purpose: the check must reach
+   * lines through the parent order / invoice. `productId` may belong to ANOTHER tenant (isolation case).
+   */
+  const line = async (
+    kind: "order" | "invoice",
+    orderTenantId: string,
+    productId: string,
+    unitLabel: string,
+    unitsPerBox: number | null,
+  ) => {
+    const c = await customerOf(orderTenantId);
+    if (kind === "order") {
+      const order = await raw.order.create({
+        data: {
+          customerId: c.id,
+          status: "PENDING",
+          subtotal: "1.00",
+          total: "1.00",
+          tenantId: orderTenantId,
+        },
+      });
+      return raw.orderItem.create({
+        data: { orderId: order.id, productId, qty: "1", unitPrice: "1.00", unitLabel, unitsPerBox },
+      });
+    }
+    const invoice = await raw.invoice.create({
+      data: {
+        invoiceNumber: `INV-UNITS-${randomUUID().slice(0, 8)}`,
+        customerId: c.id,
+        subtotal: "1.00",
+        total: "1.00",
+        tenantId: orderTenantId,
+      },
+    });
+    return raw.invoiceItem.create({
+      data: {
+        invoiceId: invoice.id,
+        productId,
+        description: "line",
+        qty: "1",
+        unitPrice: "1.00",
+        subtotal: "1.00",
+        unitLabel,
+        unitsPerBox,
+      },
+    });
+  };
+
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
     raw = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -70,6 +130,12 @@ describeDb("tenant units against real Postgres", () => {
   afterAll(async () => {
     for (const t of [A, B].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId: t } } });
+      await raw.invoice.deleteMany({ where: { tenantId: t } });
+      await raw.orderItem.deleteMany({ where: { order: { tenantId: t } } });
+      await raw.order.deleteMany({ where: { tenantId: t } });
+      await raw.customer.deleteMany({ where: { tenantId: t } });
+      await raw.user.deleteMany({ where: { tenantId: t } });
       await raw.productUnit.deleteMany({ where: { tenantId: t } });
       await raw.product.deleteMany({ where: { tenantId: t } });
       await raw.tenantUnit.deleteMany({ where: { tenantId: t } });
@@ -83,6 +149,12 @@ describeDb("tenant units against real Postgres", () => {
   beforeEach(async () => {
     for (const t of [A, B]) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
+      await raw.invoiceItem.deleteMany({ where: { invoice: { tenantId: t } } });
+      await raw.invoice.deleteMany({ where: { tenantId: t } });
+      await raw.orderItem.deleteMany({ where: { order: { tenantId: t } } });
+      await raw.order.deleteMany({ where: { tenantId: t } });
+      await raw.customer.deleteMany({ where: { tenantId: t } });
+      await raw.user.deleteMany({ where: { tenantId: t } });
       await raw.productUnit.deleteMany({ where: { tenantId: t } });
       await raw.product.deleteMany({ where: { tenantId: t } });
       await raw.tenantUnit.deleteMany({ where: { tenantId: t } });
@@ -215,5 +287,75 @@ describeDb("tenant units against real Postgres", () => {
     ).rejects.toBeInstanceOf(NotFoundException);
     expect((await raw.tenantUnit.findUnique({ where: { id: mine.id } }))?.archivedAt).toBeNull();
     expect(await asA(() => service.list(true))).toEqual([]);
+  });
+  describe("rename vs sold lines (LINES_AT_OTHER_SIZE), through the parent order / invoice", () => {
+    const caseAt12 = async () => {
+      const caseUnit = await asA(() => service.create({ name: "Case" }, user));
+      const p = await product(A, "Mug");
+      await level(A, p.id, "Case", 12, caseUnit.id);
+      return { caseUnit, p };
+    };
+    const refusal = (caseUnitId: string, name: string) =>
+      asA(() => service.update(caseUnitId, { name }, user)).catch((e) => e);
+
+    it.each(["order", "invoice"] as const)(
+      "a %s line already saying Crate at size 6 refuses Case(12) -> Crate (409, nothing changed)",
+      async (kind) => {
+        const { caseUnit, p } = await caseAt12();
+        await line(kind, A, p.id, "Crate", 6);
+        const err = await refusal(caseUnit.id, "Crate");
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toEqual(
+          expect.objectContaining({
+            code: "UNIT_RENAME_COLLISION",
+            reason: "LINES_AT_OTHER_SIZE",
+            products: [{ id: p.id, name: "Mug" }],
+          }),
+        );
+        expect((await raw.tenantUnit.findUnique({ where: { id: caseUnit.id } }))?.name).toBe(
+          "Case",
+        );
+        expect((await raw.productUnit.findFirst({ where: { productId: p.id } }))?.label).toBe(
+          "Case",
+        );
+      },
+    );
+
+    it.each(["order", "invoice"] as const)(
+      "a %s line saying Crate at the SAME size 12 agrees with the level: the rename goes through",
+      async (kind) => {
+        const { caseUnit, p } = await caseAt12();
+        await line(kind, A, p.id, "crate", 12);
+        const out = await asA(() => service.update(caseUnit.id, { name: "Crate" }, user));
+        expect(out.unit.name).toBe("Crate");
+        expect((await raw.productUnit.findFirst({ where: { productId: p.id } }))?.label).toBe(
+          "Crate",
+        );
+      },
+    );
+
+    it("a line with no size snapshot counts as a different size", async () => {
+      const { caseUnit, p } = await caseAt12();
+      await line("order", A, p.id, "Crate", null);
+      expect((await refusal(caseUnit.id, "Crate")).getResponse().reason).toBe(
+        "LINES_AT_OTHER_SIZE",
+      );
+    });
+
+    it("the NFD spelling of the new name on a line is found through the NFC key", async () => {
+      const { caseUnit, p } = await caseAt12();
+      await line("invoice", A, p.id, "Cafe\u0301", 6);
+      expect((await refusal(caseUnit.id, "Caf\u00e9")).getResponse().reason).toBe(
+        "LINES_AT_OTHER_SIZE",
+      );
+    });
+
+    it("tenant isolation: a same-named line under ANOTHER tenant's order / invoice never blocks", async () => {
+      const { caseUnit, p } = await caseAt12();
+      await line("order", B, p.id, "Crate", 6);
+      await line("invoice", B, p.id, "Crate", 6);
+      const out = await asA(() => service.update(caseUnit.id, { name: "Crate" }, user));
+      expect(out.unit.name).toBe("Crate");
+    });
   });
 });
