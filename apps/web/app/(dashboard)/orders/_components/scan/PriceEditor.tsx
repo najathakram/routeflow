@@ -240,7 +240,7 @@ export function PriceEditor({
                     <button
                       type="button"
                       onClick={openLooseUnits}
-                      aria-label={`Add extra ${w.base.lowerOther}`}
+                      aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}
                       className="relative before:absolute before:-inset-2 before:content-[''] rounded border border-dashed border-surface-border px-2 py-1 text-xs font-medium text-navy/60 hover:bg-surface-raised"
                     >
                       + {w.base.lowerOther}

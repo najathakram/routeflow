@@ -6,7 +6,9 @@ import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./Line
 import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the add-extra control is named by the default unit words.
-const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
 
 /**
  * Characterization + layout-contract tests for the shared editable row.
@@ -245,13 +247,13 @@ describe("SA-563: the remove-extra-units control needs at least one case", () =>
   it("cases 0 + units n ⇒ the control is absent", () => {
     renderRow(makeProps({ ...boxedItem, boxes: 0, pieces: 3, qty: 3 }));
     expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Remove extra pieces")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(REMOVE_EXTRA)).not.toBeInTheDocument();
   });
 
   it("cases ≥ 1 + units n ⇒ present; tapping it sets units 0, leaves cases alone and keeps the line", () => {
     const props = makeProps({ ...boxedItem, boxes: 2, pieces: 3, qty: 27 });
     renderRow(props);
-    fireEvent.click(screen.getByLabelText("Remove extra pieces"));
+    fireEvent.click(screen.getByLabelText(REMOVE_EXTRA));
     expect(props.onSetPieces).toHaveBeenCalledWith(0);
     expect(props.onSetBoxes).not.toHaveBeenCalled();
     expect(props.onRemove).not.toHaveBeenCalled();
@@ -267,5 +269,5 @@ it("the '+ pieces' and remove-units controls carry an 8px hit-area extension", (
     "before:-inset-2",
   );
   fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
-  expect(screen.getByLabelText("Remove extra pieces")).toHaveClass("relative", "before:-inset-2");
+  expect(screen.getByLabelText(REMOVE_EXTRA)).toHaveClass("relative", "before:-inset-2");
 });

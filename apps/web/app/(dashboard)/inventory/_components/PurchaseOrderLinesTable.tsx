@@ -100,7 +100,7 @@ export function PurchaseOrderLinesTable({
             Qty
           </span>
           <span role="columnheader" className="font-medium">
-            Cost ($)
+            Cost per {UW.pack.lower} / {UW.base.lower}
           </span>
           <span role="columnheader" className="text-right font-medium">
             Subtotal
@@ -194,7 +194,7 @@ export function PurchaseOrderLinesTable({
                 </div>
                 <div role="cell" className="min-w-0">
                   <span aria-hidden="true" className={CELL_LABEL}>
-                    Unit cost ($)
+                    Cost per {isBoxed ? UW.pack.lower : UW.base.lower}
                   </span>
                   <input
                     type="number"

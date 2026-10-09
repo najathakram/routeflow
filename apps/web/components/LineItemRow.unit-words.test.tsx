@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
+import { unitWords } from "@routeflow/pricing";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
 /**
@@ -62,7 +63,9 @@ describe("LineItemRow unit words: defaults", () => {
     expect(screen.getByText("Box price:")).toBeInTheDocument();
     expect(screen.getByTitle("Number of whole boxes")).toBeInTheDocument();
     expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
-    expect(screen.getByLabelText("Remove extra pieces")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(`Remove extra ${unitWords().base.lowerOther}`),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("line-qty-cases-row")).toHaveTextContent("box");
     expect(screen.getByText(/1 box = 12 pcs/)).toBeInTheDocument();
     expect(screen.getByText("13 pcs total")).toBeInTheDocument();
@@ -71,6 +74,22 @@ describe("LineItemRow unit words: defaults", () => {
   it("says 'pc' for exactly one piece", () => {
     renderRow({ boxes: 0, pieces: 1, qty: 1 });
     expect(screen.getByText("1 pc total")).toBeInTheDocument();
+  });
+});
+
+describe("LineItemRow unit words: label-in-name (WCAG 2.5.3)", () => {
+  it("the + button's accessible name contains its visible text", () => {
+    renderRow({ boxes: 1, pieces: 0, qty: 12 });
+    const btn = screen.getByRole("button", { name: /^\+ pieces/ });
+    expect(btn).toHaveTextContent("+ pieces");
+    expect(btn).toHaveAccessibleName("+ pieces: add extra pieces");
+  });
+
+  it("follows a tenant base word", () => {
+    renderRow({ baseLabel: "Bottle", boxes: 1, pieces: 0, qty: 12 });
+    expect(screen.getByRole("button", { name: "+ bottles: add extra bottles" })).toHaveTextContent(
+      "+ bottles",
+    );
   });
 });
 

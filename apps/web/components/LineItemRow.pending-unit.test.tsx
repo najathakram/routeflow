@@ -6,7 +6,8 @@ import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./Line
 import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the add-extra control is named by the default unit words.
-const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
 
 /**
  * #2865 case c (SA-632): while a line's default selling unit is unresolved the qty controls are DISABLED and

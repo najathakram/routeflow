@@ -55,6 +55,13 @@ describe("PriceEditor unit words", () => {
     expect(screen.getByText(/1 box = 6 pcs/)).toHaveTextContent("13 pcs total");
   });
 
+  it("the + button's accessible name contains its visible text (WCAG 2.5.3)", () => {
+    setup(boxed({ boxes: 2, pieces: 0, qty: 12 }));
+    const btn = screen.getByRole("button", { name: /^\+ pieces/ });
+    expect(btn).toHaveTextContent("+ pieces");
+    expect(btn).toHaveAccessibleName("+ pieces: add extra pieces");
+  });
+
   it("a long tenant word shows 11 characters plus a dot in the pill, full word in aria-label", () => {
     setup(boxed({ packLabel: "Shrinkwrapped tray", baseLabel: "Sachet" }));
     const pill = screen.getByRole("button", { name: "Shrinkwrapped tray" });
