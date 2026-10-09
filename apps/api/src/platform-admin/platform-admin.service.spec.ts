@@ -2022,6 +2022,27 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("getTenant — readiness product count (SA-3)", () => {
+    it("SA-3 T9 reads the product count for THIS tenant only, via the existing _count select", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 7 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.where).toEqual({ id: TENANT_ID });
+      expect(args.include._count.select.products).toBe(true);
+      expect(tenant.counts?.products).toBe(7);
+    });
+  });
+
   // N4: neither figure had ANY class filter on head — a qa-*/e2e-*/routeflow-demo tenant's
   // subscription/trial/creation-month could move the conversion rate or growth chart the
   // admin dashboard renders next to MrrService's PRODUCTION-only revenue numbers.
