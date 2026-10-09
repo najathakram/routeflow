@@ -9,6 +9,7 @@ function make() {
     onSessionCompleted: jest.fn().mockResolvedValue(undefined),
     onSessionExpired: jest.fn().mockResolvedValue(undefined),
     onInvoicePaid: jest.fn().mockResolvedValue(undefined),
+    onOrdinaryConversionPaid: jest.fn().mockResolvedValue(false),
     onPaymentFailed: jest.fn().mockResolvedValue(undefined),
   };
   const billing = new BillingService(
@@ -53,12 +54,13 @@ describe("catch-up webhook routing", () => {
     expect(catchup.onSessionCompleted).not.toHaveBeenCalled();
   });
 
-  it("checkout.session.expired -> onSessionExpired; invoice.paid -> onInvoicePaid", async () => {
+  it("checkout.session.expired -> onSessionExpired; invoice.paid -> onInvoicePaid, then the ordinary-checkout conversion", async () => {
     const { billing, catchup } = make();
     await billing.handleWebhookEvent(ev("checkout.session.expired", { id: "cs_1" }));
     await billing.handleWebhookEvent(ev("invoice.paid", { id: "in_1" }));
     expect(catchup.onSessionExpired).toHaveBeenCalledWith({ id: "cs_1" });
     expect(catchup.onInvoicePaid).toHaveBeenCalledWith({ id: "in_1" });
+    expect(catchup.onOrdinaryConversionPaid).toHaveBeenCalledWith({ id: "in_1" });
   });
 
   it("invoice.payment_failed -> the claim hook, then the ordinary handler", async () => {
@@ -125,10 +127,13 @@ describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenan
       {} as any,
       {} as any,
     );
-    return { billing, prisma, notification, email };
+    // the coupon re-derive (b2b) reads Stripe + the DB clock: not under test here, only that it still runs
+    const syncCoupon = jest.fn().mockResolvedValue(undefined);
+    (billing as any).syncCoupon = syncCoupon;
+    return { billing, prisma, notification, email, syncCoupon };
   }
 
-  it("customer.subscription.updated with status trialing writes the period + cancel flag only - no tenant status, no email", async () => {
+  it("customer.subscription.updated with status trialing (catchup=period too) writes the period + cancel flag only - no tenant status, no email", async () => {
     const h = makeUpdated();
     await h.billing.handleWebhookEvent({
       id: "evt_1",
@@ -139,7 +144,7 @@ describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenan
           customer: "cus_1",
           status: "trialing",
           cancel_at_period_end: false,
-          metadata: { catchup: "prepaid" },
+          metadata: { catchup: "period" },
           trial_end: 1793534400,
           items: {
             data: [
@@ -157,6 +162,7 @@ describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenan
     expect(h.email.send).not.toHaveBeenCalled();
     const written = h.prisma.tenantSubscription.update.mock.calls[0][0].data;
     expect(Object.keys(written).sort()).toEqual(["cancelAtPeriodEnd", "periodEnd", "periodStart"]);
+    expect(h.syncCoupon).toHaveBeenCalledTimes(1);
   });
 
   it("customer.subscription.trial_will_end has no handler: Stripe's trial reminder never becomes our email", async () => {
@@ -164,7 +170,14 @@ describe("a Stripe `trialing` catch-up subscription (r R16-3 / r3 N3): the tenan
     await h.billing.handleWebhookEvent({
       id: "evt_2",
       type: "customer.subscription.trial_will_end",
-      data: { object: { id: "sub_1", customer: "cus_1", status: "trialing" } },
+      data: {
+        object: {
+          id: "sub_1",
+          customer: "cus_1",
+          status: "trialing",
+          metadata: { catchup: "period" },
+        },
+      },
     });
     expect(h.notification.notifyTrialEnding).not.toHaveBeenCalled();
     expect(h.email.send).not.toHaveBeenCalled();

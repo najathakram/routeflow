@@ -5,6 +5,9 @@ import { LeaderCron } from "../common/cron-lock";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
+import { BillingEventService } from "./billing-event.service";
+import { applyCouponStateTx } from "./coupon-state";
+import { NO_COUPON } from "./coupon-unbilled";
 import { lockTenantForLedger } from "./addon-ledger";
 import {
   CATCHUP_META,
@@ -15,7 +18,7 @@ import {
   isCatchupSession,
   type InvoiceFacts,
 } from "./catchup-claim";
-import { paidThroughOf, type CatchupInvoice } from "./catchup-plan";
+import { paidThroughOf, supersededOpenInvoiceIds, type CatchupInvoice } from "./catchup-plan";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { stripeInvoiceSubscriptionId, stripeRefId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
@@ -79,6 +82,7 @@ export class CatchupClaimService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    private readonly events: BillingEventService,
   ) {}
 
   // ─── helpers ──────────────────────────────────────────────────────────────
@@ -130,8 +134,9 @@ export class CatchupClaimService {
       if (held) throw held;
       if (row.stripeSubId) {
         throw new ConflictException({
-          code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,
-          message: "This tenant already has a Stripe subscription: no catch-up checkout.",
+          code: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
+          message:
+            "NEEDS RULING: this tenant already has a Stripe subscription: no catch-up checkout.",
         });
       }
       if (!row.externalPayment) {
@@ -241,6 +246,16 @@ export class CatchupClaimService {
     subId: string,
   ): Promise<string | null> {
     const meta = session.metadata ?? {};
+    // trial_one_time (SA-733r5): the invoice Checkout created at completion carries the one-time line -
+    // `session.invoice` (else the subscription's latest). Persisted before it can be paid; the $0 trial lines
+    // ride the same invoice, so there is no separate $0 invoice to ignore.
+    if (meta[CATCHUP_META.shape] === "trial_one_time") {
+      const sub = await this.stripe.getSubscription(subId);
+      const id = stripeRefId(session.invoice) ?? stripeRefId(sub?.latest_invoice);
+      if (!id) return null; // settles on the first paid invoice with money (onInvoicePaid / the sweep)
+      await this.setInvoiceId(tenantId, session.id, id);
+      return id;
+    }
     const stubCents = Number(meta[CATCHUP_META.stubCents] ?? 0);
     if (meta[CATCHUP_META.shape] === "trial" && Number.isInteger(stubCents) && stubCents > 0) {
       const sub = await this.stripe.getSubscription(subId);
@@ -416,52 +431,7 @@ export class CatchupClaimService {
       ) {
         return false;
       }
-      const invoices = (await tx.rfInvoice.findMany({
-        where: { tenantId, status: { in: ["OPEN", "PAID"] } },
-        select: {
-          id: true,
-          status: true,
-          periodStart: true,
-          periodEnd: true,
-          periodKey: true,
-          number: true,
-        },
-      })) as (CatchupInvoice & { periodKey: string | null; number: string })[];
-      const pt = paidThroughOf(invoices);
-      let voided = 0;
-      if (pt.ok) {
-        const tol = pt.paidThrough.getTime() - DAY_MS;
-        for (const inv of invoices) {
-          if (inv.status !== "OPEN" || !inv.periodStart || inv.periodStart.getTime() < tol)
-            continue;
-          const { count } = await tx.rfInvoice.updateMany({
-            where: { id: inv.id, status: "OPEN" },
-            data: {
-              status: "VOID",
-              voidedAt: new Date(),
-              voidReason: "Superseded by the card subscription (October catch-up).",
-              ...(inv.periodKey ? { periodKey: `${inv.periodKey}:void:${inv.id}` } : {}),
-            },
-          });
-          if (count === 1) {
-            voided++;
-            await writeAdminNotice(tx, {
-              tenantId,
-              action: AdminAuditAction.RF_INVOICE_VOIDED,
-              message: `RouteFlow invoice ${inv.number} voided: superseded by the card subscription (October catch-up).`,
-              meta: { invoiceId: inv.id, number: inv.number, reason: "billing_catchup_settled" },
-            });
-          }
-        }
-      } else {
-        await this.notice(
-          tx,
-          tenantId,
-          "billing_catchup_needs_ruling",
-          `The catch-up was paid but this tenant's RouteFlow invoices could not be placed (${pt.reason}); none were voided. NEEDS RULING.`,
-          { reason: pt.reason },
-        );
-      }
+      const voided = await this.voidSupersededTx(tx, tenantId, "billing_catchup_settled");
       await tx.tenantSubscription.updateMany({
         where: { tenantId, stripeSubId: subId, catchupState: row.catchupState },
         data: { ...CLEAR_CLAIM },
@@ -474,6 +444,100 @@ export class CatchupClaimService {
         { voided },
       );
       return true;
+    });
+  }
+
+  /**
+   * The ONE rule for which RfInvoices a card subscription supersedes (settle AND the ordinary-checkout
+   * conversion): every OPEN invoice whose (snapped) period END is after paid-through - the subscription bills from
+   * paid-through on, so each is a second charge. Inside the caller's Tenant-locked transaction; the `status = OPEN`
+   * CAS makes it idempotent. A PAID invoice after a gap voids NOTHING and raises NEEDS RULING. Returns the count.
+   */
+  private async voidSupersededTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reason: string,
+  ): Promise<number> {
+    const invoices = (await tx.rfInvoice.findMany({
+      where: { tenantId, status: { in: ["OPEN", "PAID"] } },
+      select: {
+        id: true,
+        status: true,
+        periodStart: true,
+        periodEnd: true,
+        periodKey: true,
+        number: true,
+      },
+    })) as (CatchupInvoice & { periodKey: string | null; number: string })[];
+    const pt = paidThroughOf(invoices);
+    if (!pt.ok) {
+      await this.notice(
+        tx,
+        tenantId,
+        "billing_catchup_needs_ruling",
+        `The card subscription is paid but this tenant's RouteFlow invoices could not be placed (${pt.reason}); none were voided. NEEDS RULING.`,
+        { reason: pt.reason },
+      );
+      return 0;
+    }
+    const targets = new Set(supersededOpenInvoiceIds(invoices, pt.paidThrough).void);
+    let voided = 0;
+    for (const inv of invoices) {
+      if (!targets.has(inv.id)) continue;
+      const { count } = await tx.rfInvoice.updateMany({
+        where: { id: inv.id, status: "OPEN" },
+        data: {
+          status: "VOID",
+          voidedAt: new Date(),
+          voidReason: "Superseded by the card subscription.",
+          ...(inv.periodKey ? { periodKey: `${inv.periodKey}:void:${inv.id}` } : {}),
+        },
+      });
+      if (count === 1) {
+        voided++;
+        await writeAdminNotice(tx, {
+          tenantId,
+          action: AdminAuditAction.RF_INVOICE_VOIDED,
+          message: `RouteFlow invoice ${inv.number} voided: superseded by the card subscription.`,
+          meta: { invoiceId: inv.id, number: inv.number, reason },
+        });
+      }
+    }
+    return voided;
+  }
+
+  /**
+   * An ORDINARY card checkout by a manual-pay tenant (no catch-up claim): its first Stripe invoice
+   * (`subscription_create`) being PAID supersedes the tenant's OPEN RfInvoices from paid-through on - the same rule
+   * and the same writer as a catch-up settlement, once (the OPEN CAS), under the Tenant lock. Never at checkout
+   * completion (an ACH completion is unpaid). Only a row that is still flagged manual (`externalPayment`) with this
+   * subscription and NO held claim qualifies.
+   */
+  async onOrdinaryConversionPaid(invoice: any): Promise<boolean> {
+    const subId = stripeInvoiceSubscriptionId(invoice);
+    if (!subId || !invoice?.id) return false;
+    if (invoice.billing_reason !== "subscription_create") return false;
+    if (!(Number.isFinite(invoice.amount_paid) && invoice.amount_paid > 0)) return false;
+    const row = (await this.prisma.tenantSubscription.findFirst({
+      where: { stripeSubId: subId, externalPayment: true, catchupState: null },
+      select: CLAIM_SELECT,
+    })) as ClaimRow | null;
+    if (!row || row.stripeSubId !== subId) return false;
+    return this.inTenantTx(row.tenantId, async (tx) => {
+      const cur = await this.readClaim(tx, row.tenantId);
+      if (!cur || cur.stripeSubId !== subId || cur.catchupState || !cur.externalPayment)
+        return false;
+      const n = await this.voidSupersededTx(tx, row.tenantId, "billing_card_conversion");
+      if (n > 0) {
+        await this.notice(
+          tx,
+          row.tenantId,
+          "billing_card_conversion",
+          `The card subscription's first invoice is paid; ${n} RouteFlow invoice(s) voided.`,
+          { voided: n, invoiceId: invoice.id },
+        );
+      }
+      return n > 0;
     });
   }
 
@@ -551,10 +615,18 @@ export class CatchupClaimService {
 
     await this.inTenantTx(tenantId, async (tx) => {
       // the release tx: the tenant goes back to manual invoicing (RF invoicing resumes - RF_INVOICE_CANDIDATE_WHERE)
-      await tx.tenantSubscription.updateMany({
+      const { count } = await tx.tenantSubscription.updateMany({
         where: { tenantId, catchupState: "RELEASING", ...(subId ? { stripeSubId: subId } : {}) },
         data: { stripeSubId: null, externalPayment: true },
       });
+      // b2b review: the coupon columns never outlive their subscription, and coupon-state.ts is their ONLY
+      // writer - so the release resets them THROUGH it (Tenant lock held, MRR booked once if it crosses).
+      if (count === 1) {
+        await applyCouponStateTx(tx, this.events, tenantId, NO_COUPON, {
+          reason: "catchup_released",
+          tenantLockHeld: true,
+        });
+      }
     });
 
     // ── Step 2: void the settling invoice (a draft stub is deleted; a PAID one is never touched) ──

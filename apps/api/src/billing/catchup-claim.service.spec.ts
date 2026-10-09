@@ -1,4 +1,8 @@
+jest.mock("./coupon-state", () => ({
+  applyCouponStateTx: jest.fn(async () => ({ applied: true, stale: false, amountDelta: 0 })),
+}));
 import { CatchupClaimService } from "./catchup-claim.service";
+import { applyCouponStateTx } from "./coupon-state";
 import { fakeCatchupDb } from "../testing/fake-catchup-db";
 import { fakeStripeCatchup, type FakeInvoice } from "../testing/fake-stripe-catchup";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -57,7 +61,7 @@ function make(
     },
     ...stripeSeed,
   });
-  const svc = new CatchupClaimService(db.prisma, stripe as any);
+  const svc = new CatchupClaimService(db.prisma, stripe as any, { emit: jest.fn() } as any);
   return {
     db,
     stripe,
@@ -101,7 +105,7 @@ describe("opening and aborting a claim", () => {
 
   it("refuses a tenant that already has a Stripe subscription (census) or is not on manual invoicing", async () => {
     await expect(make({ stripeSubId: "sub_x" }).svc.openClaim("t1")).rejects.toMatchObject({
-      response: { code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE },
+      response: { code: API_ERROR_CODES.CATCHUP_NEEDS_RULING }, // r5: an existing stripeSubId is a ruling item
     });
     await expect(make({ externalPayment: false }).svc.openClaim("t1")).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE },
@@ -429,7 +433,7 @@ describe("the release order (r4 N2(b))", () => {
       seenAtVoid.push({ ...h.sub() }); // what the row looked like when Stripe was asked to void
       h.stripe.calls.push(`voidInvoice:${id}`);
       h.stripe.invoices.get(id)!.status = "void";
-      return {};
+      return { id, status: "void" };
     });
 
     const out = await h.svc.release("t1", { sessionId: SESSION, reason: "test" });
@@ -764,12 +768,210 @@ describe("the hourly sweep", () => {
         { id: "in_b", status: "paid", subscription: "sub_b", amountDue: 100, amountPaid: 100 },
       ],
     });
-    const svc = new CatchupClaimService(db.prisma, stripe as any);
+    const svc = new CatchupClaimService(db.prisma, stripe as any, { emit: jest.fn() } as any);
     stripe.getInvoiceFacts.mockImplementationOnce(async () => {
       throw new Error("stripe 500");
     });
     const out = await svc.sweep(NOW);
     expect(out.errors).toBe(1);
     expect(db.invoices.find((i) => i.id === "ib")!.status).toBe("VOID");
+  });
+});
+
+describe("SA-733r5 trial_one_time (catchup=period): the claim around a trialing subscription", () => {
+  const SHAPE_META = {
+    tenantId: "t1",
+    catchup: "period",
+    catchup_shape: "trial_one_time",
+    catchup_stub_cents: "31000",
+    catchup_from: "2026-10-01T12:00:00.000Z",
+    catchup_to: "2026-11-01T12:00:00.000Z",
+  };
+  const novOpenR5 = novOpen;
+  const open = (over: Record<string, unknown> = {}) => ({
+    stripeSubId: SUB,
+    catchupState: "SESSION_OPEN",
+    catchupSessionId: SESSION,
+    ...over,
+  });
+
+  it("completion: the settling invoice is `session.invoice` (it carries the one-time line), persisted BEFORE it can be paid; externalPayment=false", async () => {
+    const h = make(open(), [octOpen, novOpenR5], {
+      invoices: [
+        { id: "in_ot", status: "open", subscription: SUB, amountDue: 31000, attemptCount: 0 },
+      ],
+      subs: { [SUB]: { id: SUB, customer: "cus_1", status: "trialing", latest_invoice: "in_ot" } },
+    });
+    await h.svc.onSessionCompleted(sessionOf({ invoice: "in_ot", metadata: SHAPE_META }));
+    expect(h.sub()).toMatchObject({
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupInvoiceId: "in_ot",
+      externalPayment: false,
+    });
+    expect(h.inv("inv_oct").status).toBe("OPEN"); // nothing voided until it is PAID
+    expect(h.stripe.client.invoices.create).not.toHaveBeenCalled(); // no post-completion stub in this shape
+  });
+
+  it("falls back to the subscription's latest invoice when the session names none", async () => {
+    const h = make(open(), [octOpen], {
+      invoices: [{ id: "in_l", status: "open", subscription: SUB, amountDue: 31000 }],
+      subs: { [SUB]: { id: SUB, customer: "cus_1", status: "trialing", latest_invoice: "in_l" } },
+    });
+    await h.svc.onSessionCompleted(sessionOf({ metadata: SHAPE_META }));
+    expect(h.sub().catchupInvoiceId).toBe("in_l");
+  });
+
+  it("settle: the one-time invoice PAID => claim cleared, October AND November voided exactly once; a replay voids nothing more", async () => {
+    const h = make({ ...awaiting(), catchupInvoiceId: "in_ot" }, [
+      octOpen,
+      novOpen,
+      {
+        ...novOpen,
+        id: "inv_dec",
+        periodStart: new Date("2026-12-01T12:00:00Z"),
+        periodEnd: new Date("2027-01-01T12:00:00Z"),
+        periodKey: "kd",
+      },
+    ]);
+    const paid = {
+      id: "in_ot",
+      amount_paid: 31000,
+      parent: { subscription_details: { subscription: SUB } },
+    };
+    await h.svc.onInvoicePaid(paid);
+    expect(h.inv("inv_oct").status).toBe("VOID");
+    expect(h.inv("inv_nov").status).toBe("VOID");
+    expect(h.inv("inv_dec").status).toBe("VOID"); // anything ending after paid-through is superseded
+    expect(h.sub()).toMatchObject({ catchupState: null, catchupInvoiceId: null });
+    const voids = () => h.db.audits.filter((a) => a.action === "RF_INVOICE_VOIDED").length;
+    expect(voids()).toBe(3);
+    await h.svc.onInvoicePaid(paid);
+    expect(voids()).toBe(3);
+  });
+
+  it("release (ACH return / decline): no pastDue stamp, the TRIALING sub is cancelled, externalPayment=true, RfInvoices stay OPEN", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_ot" }), [octOpen, novOpen], {
+      invoices: [
+        {
+          id: "in_ot",
+          status: "open",
+          subscription: SUB,
+          amountDue: 31000,
+          attemptCount: 2,
+          nextPaymentAttempt: null,
+        },
+      ],
+      sessions: { [SESSION]: { id: SESSION, subscription: SUB, status: "complete" } },
+      subs: { [SUB]: { id: SUB, status: "trialing" } },
+    });
+    await h.svc.onPaymentFailed({
+      id: "in_ot",
+      parent: { subscription_details: { subscription: SUB } },
+    });
+    expect(h.stripe.subs[SUB].status).toBe("canceled"); // it can never start charging at A
+    expect(h.stripe.calls).toEqual(
+      expect.arrayContaining([`voidInvoice:in_ot`, `cancelSubscription:${SUB}`]),
+    );
+    expect(h.sub()).toMatchObject({
+      stripeSubId: null,
+      externalPayment: true,
+      catchupState: null,
+    });
+    expect(h.sub().pastDueSince).toBeUndefined(); // nothing stamped a dunning clock
+    expect(h.inv("inv_oct").status).toBe("OPEN");
+    expect(h.inv("inv_nov").status).toBe("OPEN");
+  });
+});
+
+describe("b2b review: the release resets the coupon columns THROUGH coupon-state.ts", () => {
+  it("applyCouponStateTx(NO_COUPON) runs in the release tx, with the Tenant lock held, only when the release tx wrote", async () => {
+    (applyCouponStateTx as jest.Mock).mockClear();
+    const h = make(awaiting(), [octOpen], {
+      invoices: [
+        { id: "in_1", status: "open", subscription: SUB, amountDue: 100, attemptCount: 3 },
+      ],
+      sessions: { [SESSION]: { id: SESSION, subscription: SUB, status: "complete" } },
+    });
+    await h.svc.release("t1", { sessionId: SESSION, reason: "test" });
+    expect(applyCouponStateTx).toHaveBeenCalledTimes(1);
+    const [, , tenantId, state, opts] = (applyCouponStateTx as jest.Mock).mock.calls[0];
+    expect(tenantId).toBe("t1");
+    expect(state).toEqual({ full: false, couponId: null, endsAt: null });
+    expect(opts).toMatchObject({ reason: "catchup_released", tenantLockHeld: true });
+  });
+
+  it("a SESSION_OPEN release (no subscription yet) writes no coupon state", async () => {
+    (applyCouponStateTx as jest.Mock).mockClear();
+    const h = make({ catchupState: "SESSION_OPEN", catchupSessionId: SESSION });
+    await h.svc.release("t1", { sessionId: SESSION, reason: "test" });
+    expect(applyCouponStateTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("b2b review: an ORDINARY card checkout by a manual-pay tenant supersedes its OPEN RfInvoices on the first PAID invoice", () => {
+  const first = (over: Record<string, unknown> = {}) => ({
+    id: "in_first",
+    amount_paid: 31000,
+    billing_reason: "subscription_create",
+    parent: { subscription_details: { subscription: SUB } },
+    ...over,
+  });
+  const manualWithSub = (over: Record<string, unknown> = {}) => ({
+    stripeSubId: SUB,
+    externalPayment: true,
+    ...over,
+  });
+
+  it("voids OPEN invoices ending after paid-through, once, under the Tenant lock; the PAID one is untouched", async () => {
+    const h = make(manualWithSub(), [octPaid, novOpen]);
+    expect(await h.svc.onOrdinaryConversionPaid(first())).toBe(true);
+    expect(h.inv("inv_oct_paid").status).toBe("PAID");
+    expect(h.inv("inv_nov").status).toBe("VOID");
+    expect(h.db.locks).toContain("t1");
+    expect(await h.svc.onOrdinaryConversionPaid(first())).toBe(false); // replay: nothing left to void
+    expect(h.db.audits.filter((a) => a.action === "RF_INVOICE_VOIDED")).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "a renewal invoice (not subscription_create)",
+      first({ billing_reason: "subscription_cycle" }),
+    ],
+    ["a $0 invoice", first({ amount_paid: 0 })],
+    [
+      "another subscription",
+      first({ parent: { subscription_details: { subscription: "sub_other" } } }),
+    ],
+    ["no subscription link", first({ parent: null })],
+  ])("%s: nothing is voided", async (_n, invoice) => {
+    const h = make(manualWithSub(), [octOpen]);
+    expect(await h.svc.onOrdinaryConversionPaid(invoice)).toBe(false);
+    expect(h.inv("inv_oct").status).toBe("OPEN");
+  });
+
+  it("a card-billed tenant (externalPayment false) or a tenant holding a claim is not touched here", async () => {
+    const card = make({ stripeSubId: SUB, externalPayment: false }, [octOpen]);
+    expect(await card.svc.onOrdinaryConversionPaid(first())).toBe(false);
+    const claimed = make(
+      manualWithSub({ catchupState: "AWAITING_FIRST_PAYMENT", catchupSessionId: SESSION }),
+      [octOpen],
+    );
+    expect(await claimed.svc.onOrdinaryConversionPaid(first())).toBe(false);
+    expect(claimed.inv("inv_oct").status).toBe("OPEN");
+  });
+
+  it("a PAID invoice after a gap voids nothing (NEEDS RULING notice)", async () => {
+    const gap = {
+      ...novOpen,
+      id: "inv_dec",
+      status: "PAID",
+      periodStart: new Date("2026-12-01T12:00:00Z"),
+      periodEnd: new Date("2027-01-01T12:00:00Z"),
+      periodKey: "kd",
+    };
+    const h = make(manualWithSub(), [octPaid, gap, novOpen]);
+    await h.svc.onOrdinaryConversionPaid(first());
+    expect(h.inv("inv_nov").status).toBe("OPEN");
+    expect(h.db.audits.some((a) => a.meta?.kind === "billing_catchup_needs_ruling")).toBe(true);
   });
 });

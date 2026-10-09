@@ -2082,6 +2082,19 @@ export class PlatformAdminService {
 
   async extendTrial(id: string, days: number, adminId: string | null = null) {
     await this._findOrThrow(id);
+    // SA-733r5: a tenant whose October catch-up is in flight owns a Stripe `trialing` subscription; moving it to
+    // our TRIAL status would fight it. (A settled catch-up tenant is ACTIVE and refused by the guard below.)
+    const claim = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId: id },
+      select: { catchupState: true },
+    });
+    if (claim?.catchupState) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.CATCHUP_SUBSCRIPTION,
+        message:
+          "This tenant has a card subscription in progress (October catch-up). A trial can't be set.",
+      });
+    }
     // An ACTIVE tenant is a paying tenant: extending a "trial" would silently demote it. The status
     // predicate is part of the write itself (no read-then-write gap): count 0 = it is ACTIVE.
     const { count } = await this.prisma.tenant.updateMany({

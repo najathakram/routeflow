@@ -12,8 +12,9 @@ import { BOUNDARY_HOUR_UTC, nextBoundaryAfter } from "./rf-invoice/calendar-wind
  * Verified against Stripe's Checkout docs ("Set the billing cycle date"): `subscription_data.billing_cycle_anchor`
  * must be a future timestamp within the first billing period, and a customer who pays AFTER the anchor is charged
  * the full period starting at the anchor instead of the prorated stub - which is why the session must expire
- * before the anchor (`expires_at`, below). `create_prorations` is the default and the only value that pairs with
- * a one-time line; `none` cannot be combined with one-time prices in Checkout (see catchup-plan.ts).
+ * before the anchor (`expires_at`, below). This shape carries recurring lines only: Checkout rejects a one-time
+ * price beside `proration_behavior: none`, and the catch-up (catchup-plan.ts, SA-733r5) never pairs a one-time line
+ * with `proration_behavior` at all.
  */
 
 /** The anchor's wall-clock hour (UTC) on the 1st: the SAME boundary every billing window uses. */

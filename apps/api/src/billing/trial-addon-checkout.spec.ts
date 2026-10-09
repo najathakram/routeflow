@@ -4458,3 +4458,48 @@ describe("B1158: a superseded subscription whose payment is still PROCESSING is 
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe("SA-733r5 catch-up completion (trialing sub, ACTIVE manual-pay tenant)", () => {
+  const catchupSession = (h: ReturnType<typeof make>, kind = "period") =>
+    h.session({
+      invoice: "in_ot",
+      metadata: {
+        tenantId: "t1",
+        slug: "acme",
+        planKey: "STARTER",
+        interval: "month",
+        catchup: kind,
+      },
+    });
+
+  it("writes externalPayment=false in the apply transaction, BEFORE the trailing coupon sync; the tenant stays ACTIVE", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    const seen: unknown[] = [];
+    jest.spyOn(h.billing as any, "syncCoupon").mockImplementation(async () => {
+      seen.push(h.sub.externalPayment); // what the coupon sync would read
+    });
+    await h.completed(catchupSession(h));
+    expect(h.sub.externalPayment).toBe(false);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === false)).toBe(true);
+    expect(h.tenant.status).toBe("ACTIVE");
+  });
+
+  it("an ordinary (non catch-up) checkout leaves externalPayment alone", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    jest.spyOn(h.billing as any, "syncCoupon").mockResolvedValue(undefined);
+    await h.completed(h.session());
+    expect(h.sub.externalPayment).toBe(true);
+  });
+
+  it("MRR is booked ONCE: completion of a trialing catch-up on an ACTIVE tenant books no activation/resume delta", async () => {
+    const h = make({ status: "ACTIVE", baseSub: { externalPayment: true } });
+    jest.spyOn(h.billing as any, "syncCoupon").mockResolvedValue(undefined);
+    await h.completed(catchupSession(h));
+    await h.completed(catchupSession(h)); // a redelivery
+    const resumed = h.ledger().filter((e: any) => e.type === BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(resumed).toEqual([]);
+    expect(h.ledgerSum()).toBe(0);
+  });
+});

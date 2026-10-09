@@ -13,6 +13,7 @@ import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { CatchupClaimService } from "./catchup-claim.service";
+import { BillingEventService } from "./billing-event.service";
 import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { fakeStripeCatchup } from "../testing/fake-stripe-catchup";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -71,7 +72,14 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
   const sub = (tenantId: string) =>
     prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
   const svcWith = (stripe = fakeStripeCatchup()) =>
-    ({ stripe, svc: new CatchupClaimService(prisma as any, stripe as any) }) as const;
+    ({
+      stripe,
+      svc: new CatchupClaimService(
+        prisma as any,
+        stripe as any,
+        new BillingEventService(prisma as any),
+      ),
+    }) as const;
 
   it("two concurrent openClaim: exactly one wins (CAS under the Tenant lock), the loser gets the coded 409", async () => {
     const id = await tenant("race");
@@ -106,7 +114,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
       prisma as any,
       {} as any,
       {} as any,
-      new CatchupClaimService(prisma as any, {} as any),
+      new CatchupClaimService(prisma as any, {} as any, new BillingEventService(prisma as any)),
     );
 
     // T2 plays openClaim: it holds the Tenant lock and has NOT written the claim yet.
@@ -152,7 +160,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
       prisma as any,
       {} as any,
       {} as any,
-      new CatchupClaimService(prisma as any, {} as any),
+      new CatchupClaimService(prisma as any, {} as any, new BillingEventService(prisma as any)),
     );
     await expect(
       admin.markPaid(inv.id, { method: "CASH" }, "sa-1", new Date()),
@@ -232,7 +240,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     stripe.voidInvoice.mockImplementationOnce(async (invId: string) => {
       seen.push(await sub(id)); // the DB as Stripe is asked to void
       stripe.invoices.get(invId)!.status = "void";
-      return {};
+      return { id: invId, status: "void" };
     });
 
     expect(await svc.release(id, { sessionId: "cs_rel", reason: "db-test" })).toBe("released");
@@ -255,6 +263,83 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     expect((await prisma.rfInvoice.findUniqueOrThrow({ where: { id: oct.id } })).status).toBe(
       "OPEN",
     );
+  });
+
+  it("b2b review: the release resets the coupon columns through coupon-state.ts (couponFull/couponId/couponEndsAt)", async () => {
+    const id = await tenant("cpn", {
+      stripeSubId: "sub_cpn",
+      externalPayment: false,
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: "cs_cpn",
+      catchupInvoiceId: "in_cpn",
+      couponFull: true,
+      couponId: "co_100",
+      couponEndsAt: new Date("2027-01-01T00:00:00Z"),
+    });
+    const stripe = fakeStripeCatchup({
+      invoices: [
+        {
+          id: "in_cpn",
+          status: "open",
+          subscription: "sub_cpn",
+          amountDue: 100,
+          attemptCount: 4,
+          nextPaymentAttempt: null,
+        },
+      ],
+      sessions: { cs_cpn: { id: "cs_cpn", subscription: "sub_cpn", status: "complete" } },
+    });
+    const { svc } = svcWith(stripe);
+    expect(await svc.release(id, { sessionId: "cs_cpn", reason: "db-test" })).toBe("released");
+    expect(await sub(id)).toMatchObject({
+      stripeSubId: null,
+      externalPayment: true,
+      couponFull: false,
+      couponId: null,
+      couponEndsAt: null,
+    });
+  });
+
+  it("SA-733r5: trial_one_time settle voids every OPEN invoice ending after paid-through (October + November), PAID September kept", async () => {
+    const id = await tenant("r5", {
+      stripeSubId: "sub_r5",
+      externalPayment: false,
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: "cs_r5",
+      catchupInvoiceId: "in_r5",
+    });
+    const sep = await rfInvoice(id, "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z", "PAID");
+    const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+    const nov = await rfInvoice(id, "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
+    const { svc } = svcWith();
+    await svc.onInvoicePaid({
+      id: "in_r5",
+      amount_paid: 31000,
+      parent: { subscription_details: { subscription: "sub_r5" } },
+    });
+    const byId = async (rid: string) =>
+      (await prisma.rfInvoice.findUniqueOrThrow({ where: { id: rid } })).status;
+    expect(await byId(sep.id)).toBe("PAID");
+    expect(await byId(oct.id)).toBe("VOID");
+    expect(await byId(nov.id)).toBe("VOID");
+    expect((await sub(id)).catchupState).toBeNull();
+  });
+
+  it("b2b review: an ordinary card checkout's first PAID invoice supersedes the manual tenant's OPEN invoices once (real SQL)", async () => {
+    const id = await tenant("conv", { stripeSubId: "sub_conv", externalPayment: true });
+    const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+    const { svc } = svcWith();
+    const invoice = {
+      id: "in_conv",
+      amount_paid: 14900,
+      billing_reason: "subscription_create",
+      parent: { subscription_details: { subscription: "sub_conv" } },
+    };
+    expect(await svc.onOrdinaryConversionPaid(invoice)).toBe(true);
+    expect((await prisma.rfInvoice.findUniqueOrThrow({ where: { id: oct.id } })).status).toBe(
+      "VOID",
+    );
+    expect(await svc.onOrdinaryConversionPaid(invoice)).toBe(false);
   });
 
   it("expiry releases only the matching SESSION_OPEN claim; a completed claim is never released by it", async () => {

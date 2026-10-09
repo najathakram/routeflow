@@ -217,7 +217,7 @@ describe("R5-4 pin: across EVERY shape and instant, the built params never pair 
 
 describe("assertCheckoutAcceptable (Stripe's documented Checkout limits)", () => {
   const recurring = { price_data: { recurring: { interval: "month" } } };
-  const oneTime = { price_data: { currency: "usd", unit_amount: 100 } };
+  const oneTime: any = { price_data: { currency: "usd", unit_amount: 100 } };
   it("rejects a trial beside a billing_cycle_anchor", () => {
     expect(() =>
       assertCheckoutAcceptable({

@@ -56,7 +56,7 @@ function make(claimState: string | null, invoice = row()) {
     tenant: { findFirst: jest.fn(async () => ({ id: "t1" })) },
   };
   const issuer = { windowsFor: jest.fn(async () => []), issuePeriod: jest.fn() };
-  const claim = new CatchupClaimService(prisma, {} as any);
+  const claim = new CatchupClaimService(prisma, {} as any, { emit: jest.fn() } as any);
   const svc = new RfInvoicesAdminService(prisma, {} as any, issuer as any, claim);
   return { svc, db, issuer, status: () => db.invoices[0].status };
 }

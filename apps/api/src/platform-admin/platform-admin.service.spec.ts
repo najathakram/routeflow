@@ -535,6 +535,19 @@ describe("PlatformAdminService — audit provenance", () => {
         } as any);
       });
 
+      it("SA-733r5: a tenant with a catch-up claim held is refused 409 CATCHUP_SUBSCRIPTION before any write", async () => {
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          catchupState: "AWAITING_FIRST_PAYMENT",
+        });
+        const err = await service.extendTrial(TENANT_ID, 30, ADMIN_ID).catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: "CATCHUP_SUBSCRIPTION",
+        });
+        expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
+        expect(auditLog).not.toHaveBeenCalled();
+      });
+
       it("an ACTIVE tenant: the predicate write matches nothing, so 409 with the code and no audit row", async () => {
         prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
 

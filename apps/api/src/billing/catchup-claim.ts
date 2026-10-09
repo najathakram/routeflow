@@ -69,6 +69,9 @@ export function claimRefusal(state: string | null | undefined): ConflictExceptio
   });
 }
 
+/** The two values of the `catchup` marker: `period` (trial_one_time) and `prepaid` (trial / anchor_no_line). */
+export const CATCHUP_KINDS = ["period", "prepaid"] as const;
+
 /** What the catch-up checkout stamps on the Stripe session / subscription so the webhook can act on it. */
 export const CATCHUP_META = {
   /** "2026-10" (the month the stub starts in) or "prepaid" (the trial branch). */
@@ -77,8 +80,24 @@ export const CATCHUP_META = {
   stubCents: "catchup_stub_cents",
   stubLabel: "catchup_stub_label",
   finalizeAt: "catchup_finalize_at",
+  /** trial_one_time: the span the one-time line covers [from, to) - ISO instants. */
+  from: "catchup_from",
+  to: "catchup_to",
 } as const;
 
+/**
+ * SA-733r5: the ONE predicate every trial-aware path reads - "is this Stripe object a catch-up?" - for a Checkout
+ * session and for the subscription it created (the marker rides both). A Stripe `trialing` catch-up subscription is
+ * an ACTIVE tenant: it is never mapped to TRIAL, its `trial_will_end` is ignored, the trial sweeps and banners
+ * (all keyed on Tenant.status = TRIAL) never see it, and extendTrial refuses it.
+ */
+export const isCatchupSubscription = (
+  obj: { metadata?: Record<string, string> | null } | null | undefined,
+): boolean =>
+  typeof obj?.metadata?.[CATCHUP_META.catchup] === "string" &&
+  (CATCHUP_KINDS as readonly string[]).includes(obj.metadata![CATCHUP_META.catchup]);
+
+/** A catch-up Checkout session (same marker, same predicate; the sweep passes a synthetic "sweep" marker). */
 export const isCatchupSession = (session: { metadata?: Record<string, string> | null }): boolean =>
   typeof session?.metadata?.[CATCHUP_META.catchup] === "string" &&
   session.metadata![CATCHUP_META.catchup].length > 0;

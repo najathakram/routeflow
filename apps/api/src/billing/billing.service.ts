@@ -56,6 +56,7 @@ import {
 import { lockTenantForLedger } from "./addon-ledger";
 import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
+import { isCatchupSession, isCatchupSubscription } from "./catchup-claim";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
@@ -927,6 +928,16 @@ export class BillingService {
 
       case "invoice.paid":
         await this.catchup?.onInvoicePaid(event.data.object);
+        // a manual-pay tenant's ORDINARY card checkout: its first paid invoice supersedes its OPEN RfInvoices
+        await this.catchup?.onOrdinaryConversionPaid(event.data.object);
+        break;
+
+      case "customer.subscription.trial_will_end":
+        // SA-733r5: a catch-up subscription is a `trialing` Stripe sub on an ACTIVE tenant. We send no trial email
+        // for ANY Stripe trial (the tenant trial emails are ours, keyed on Tenant.status = TRIAL); ignored here.
+        this.logger.debug(
+          `trial_will_end ignored${isCatchupSubscription(event.data.object) ? " (catch-up subscription)" : ""}`,
+        );
         break;
 
       case "invoice.payment_succeeded":
@@ -1995,6 +2006,10 @@ export class BillingService {
         stripeCustomerId: session.customer as string,
         ...(period ?? {}),
         ...(billingInterval ? { billingInterval } : {}),
+        // SA-733 D7 / b2b review: a CATCH-UP checkout turns manual invoicing off HERE, in the apply transaction and
+        // BEFORE the trailing coupon sync (coupon-state forces couponFull=false on an externalPayment row). Nothing
+        // else on this base clears externalPayment on a card checkout.
+        ...(isCatchupSession(session) ? { externalPayment: false } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
