@@ -61,6 +61,38 @@ describe("Settings: time zone", () => {
     );
   });
 
+  it("a server INVALID_TIME_ZONE refusal reads as fixed copy on the field and in the toast, never the server text", async () => {
+    (apiClient.patch as jest.Mock).mockRejectedValueOnce({
+      response: { status: 400, data: { code: "INVALID_TIME_ZONE", message: "RAW SERVER TEXT" } },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(field).toHaveValue("America/Chicago"));
+    await user.clear(field);
+    await user.type(field, "America/Denver");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    expect(
+      await screen.findAllByText("That isn't a valid time zone. Pick one from the list."),
+    ).not.toHaveLength(0);
+    expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
+    expect(screen.queryByText("Failed to save settings")).toBeNull();
+  });
+
+  it("a 403 (a role the server does not allow) reads as a plain permission line, not a generic failure", async () => {
+    (apiClient.patch as jest.Mock).mockRejectedValueOnce({ response: { status: 403, data: {} } });
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(field).toHaveValue("America/Chicago"));
+    await user.clear(field);
+    await user.type(field, "America/Denver");
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    expect(
+      await screen.findByText("Only an account admin can change the time zone."),
+    ).toBeInTheDocument();
+  });
+
   it("shows an operator the zone as read-only text with no control", async () => {
     mockRole = "OPERATOR";
     renderWithProviders(<SettingsPage />);

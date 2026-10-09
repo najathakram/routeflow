@@ -124,6 +124,8 @@ function fieldErrorsOf(
   if (typeof field === "string" && (FIELD_ORDER as string[]).includes(field)) {
     out[field as FieldKey] = safeTextErrorCopy(err) ?? FIELD_COPY[field as FieldKey];
   }
+  // The API's own code for a refused zone (the client check passed, the server's tz database disagrees).
+  if (res?.data?.code === "INVALID_TIME_ZONE") out.timezone = FIELD_COPY.timezone;
   if (res?.status === 400 && res.data?.code === API_ERROR_CODES.ACCOUNT_IDENTIFIER_IN_USE) {
     out.adminEmail = "That email or username is already in use.";
   }

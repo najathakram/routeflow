@@ -121,6 +121,9 @@ const profileSchemaFor = (canEditTimeZone: boolean) =>
   });
 type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
 
+const INVALID_ZONE_COPY = "That isn't a valid time zone. Pick one from the list.";
+const ZONE_FORBIDDEN_COPY = "Only an account admin can change the time zone.";
+
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -147,7 +150,20 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err: unknown, sent) => {
+      const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
+      // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
+      if (res?.data?.code === "INVALID_TIME_ZONE") {
+        setError("timezone", { message: INVALID_ZONE_COPY });
+        toast({ title: INVALID_ZONE_COPY, variant: "error" });
+        return;
+      }
+      if (res?.status === 403 && sent.timezone) {
+        toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
+        return;
+      }
+      toast({ title: "Failed to save settings", variant: "error" });
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -186,6 +202,7 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
+    setError,
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
@@ -237,7 +254,10 @@ function BusinessProfileTab() {
   const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
     const zone =
       canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
-    await saveSettings.mutateAsync(zone ? { ...rest, timezone: zone } : rest);
+    // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
+    await saveSettings
+      .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
+      .catch(() => undefined);
   };
 
   return (
