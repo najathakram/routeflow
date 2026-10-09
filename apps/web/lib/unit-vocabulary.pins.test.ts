@@ -79,8 +79,13 @@ const FILES: Pin[] = [
       "Remove extra " + "units",
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
+      "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
+      'aria-label="Remove extra pieces"',
     ],
-    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
+    present: [
+      "aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}",
+      "aria-label={`Remove extra ${w.base.lowerOther}`}",
+    ],
   },
   {
     file: `${D}orders/_components/scan/PriceEditor.tsx`,
@@ -93,8 +98,13 @@ const FILES: Pin[] = [
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
       '"Case price"',
+      "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
+      'aria-label="Remove extra pieces"',
     ],
-    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
+    present: [
+      "aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}",
+      "aria-label={`Remove extra ${w.base.lowerOther}`}",
+    ],
   },
   {
     file: `${D}invoices/new/page.tsx`,

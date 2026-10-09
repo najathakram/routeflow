@@ -6,7 +6,9 @@ import { CreateOrderModal } from "./CreateOrderModal";
 import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the add-extra control is named by the default unit words.
-const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
 
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
 // addLineItem's scroll-to-added-row effect calls it. No prior test in this file exercised
@@ -1173,7 +1175,7 @@ describe("CreateOrderModal", () => {
       await setup(boxed);
       fireEvent.click(await screen.findByRole("button", { name: ADD_EXTRA }));
       fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "5" } });
-      fireEvent.click(screen.getByRole("button", { name: "Remove extra pieces" }));
+      fireEvent.click(screen.getByRole("button", { name: REMOVE_EXTRA }));
       expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
