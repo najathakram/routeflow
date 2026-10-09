@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test-utils/render";
 import { ProductCreateModal } from "./ProductCreateModal";
+import { uploadProductImages } from "@/lib/api/products";
 
 const mutateAsync = jest.fn();
 
@@ -90,5 +91,27 @@ describe("ProductCreateModal (web-2 #5)", () => {
     // and it still submits the form that lives in the body
     expect(create).toHaveAttribute("form");
     expect(document.getElementById(create.getAttribute("form")!)).not.toBeNull();
+  });
+
+  it("a photo upload that fails AFTER the product was created says so, and the product is still handed back", async () => {
+    (uploadProductImages as jest.Mock).mockRejectedValueOnce(new Error("500"));
+    const onCreated = jest.fn();
+    const onClose = jest.fn();
+    const { container } = renderWithProviders(
+      <ProductCreateModal isOpen onClose={onClose} onCreated={onCreated} />,
+    );
+    await userEvent.type(screen.getByLabelText("Name *"), "Cola");
+    await userEvent.type(screen.getByLabelText(/^Unit \*/), "box");
+    await userEvent.type(screen.getByLabelText("Price per box *"), "12");
+    const file = new File(["x"], "cola.png", { type: "image/png" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(container).toBeTruthy();
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+    expect(
+      await screen.findByText("Product created, but its photos didn't upload"),
+    ).toBeInTheDocument();
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }));
+    expect(onClose).toHaveBeenCalled();
   });
 });
