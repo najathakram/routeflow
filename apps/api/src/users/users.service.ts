@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { assertNotWalkIn } from "../customers/walk-in-protected";
+import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
 import { User, UserRole } from "@prisma/client";
 import * as crypto from "crypto";
@@ -106,17 +107,34 @@ export class UsersService {
   async findById(
     id: string,
   ): Promise<
-    (Omit<User, "password" | "googleId"> & { googleLinked: boolean; hasPassword: boolean }) | null
+    | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
+        googleLinked: boolean;
+        hasPassword: boolean;
+      })
+    | null
   > {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
-    const { password, googleId, ...rest } = user;
+    // The feature-group columns are reported by the admin listing and GET /users/me/permissions only.
+    const {
+      password,
+      googleId,
+      deniedPermissionGroups: _deniedPermissionGroups,
+      permissionsVersion: _permissionsVersion,
+      ...rest
+    } = user;
     return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
   }
 
-  async findAll(query: ListUsersDto) {
+  /**
+   * `callerRole` decides whether each row carries the feature-group columns: an account admin (or the
+   * platform super admin) gets `deniedPermissionGroups` + `permissionsVersion`, every other caller does not.
+   */
+  async findAll(query: ListUsersDto, callerRole?: UserRole) {
     const { search, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
+    const includePermissions =
+      callerRole === UserRole.TENANT_ADMIN || callerRole === UserRole.SUPER_ADMIN;
     const where: any = {
       role: { not: UserRole.CUSTOMER },
     };
@@ -141,6 +159,7 @@ export class UsersService {
           isAdmin: true,
           canActAsDriver: true,
           createdAt: true,
+          ...(includePermissions ? { deniedPermissionGroups: true, permissionsVersion: true } : {}),
         },
         skip,
         take: limit,
@@ -189,7 +208,7 @@ export class UsersService {
   async changeStatus(userId: string, dto: ChangeUserStatusDto, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    this.assertMayChangeAccount(user, callerRole);
+    assertMayChangeAccount(user, callerRole);
     await this.assertNotWalkInAccount(userId);
     return this.prisma.forTenant().user.update({
       where: { id: userId },
@@ -216,7 +235,7 @@ export class UsersService {
     const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
     const usernameEdit =
       normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
-    if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
+    if (emailEdit || usernameEdit) assertMayChangeAccount(user, callerRole);
     if (emailEdit || usernameEdit || (dto.role && dto.role !== user.role)) {
       await this.assertNotWalkInAccount(userId);
     }
@@ -364,16 +383,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Admin account protection: an account with the TENANT_ADMIN role can only be changed by a TENANT_ADMIN
-   * caller (decided by ROLE; `isAdmin` is not on the request user). Fail-closed: the caller's role is required.
-   */
-  private assertMayChangeAccount(target: { role: UserRole }, callerRole: UserRole | undefined) {
-    if (target.role === UserRole.TENANT_ADMIN && callerRole !== UserRole.TENANT_ADMIN) {
-      throw new ForbiddenException("Only an account owner can change an admin account.");
-    }
-  }
-
   /** The walk-in customer's login account stays as it is: refuse before any write (WALK_IN_PROTECTED). */
   private async assertNotWalkInAccount(userId: string) {
     const customer = await this.prisma
@@ -385,7 +394,7 @@ export class UsersService {
   async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    this.assertMayChangeAccount(user, callerRole);
+    assertMayChangeAccount(user, callerRole);
     await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { failedLoginAttempts: 0, lockedUntil: null },
@@ -396,7 +405,7 @@ export class UsersService {
   async resetPassword(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    this.assertMayChangeAccount(user, callerRole);
+    assertMayChangeAccount(user, callerRole);
     await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
@@ -442,7 +451,7 @@ export class UsersService {
   async toggleDriverPermit(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
-    this.assertMayChangeAccount(user, callerRole);
+    assertMayChangeAccount(user, callerRole);
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new BadRequestException("Driver permit can only be assigned to operators.");
     }

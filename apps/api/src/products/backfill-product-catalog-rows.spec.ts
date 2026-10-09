@@ -438,31 +438,69 @@ describe("backfillProductCatalogRows — planned counts over a mixed product set
     expect(counts.barcodeRowsInserted).toBe(0);
   });
 
-  it("a non-test tenant WITH a matching override still proceeds, warns via stderr when protected", async () => {
+  const liveTenant = (over = {}) => ({
+    id: "t1",
+    slug: "acme-live",
+    status: "ACTIVE",
+    deletedAt: null,
+    class: "PRODUCTION",
+    ...over,
+  });
+
+  it("a protected (paying) non-test tenant is REFUSED even with a matching override", async () => {
     const prisma = mockPrisma();
-    prisma.tenant.findUnique.mockResolvedValue({
-      id: "t1",
-      slug: "acme-live",
-      status: "ACTIVE",
-      deletedAt: null,
-      class: "PRODUCTION",
-    });
+    prisma.tenant.findUnique.mockResolvedValue(liveTenant());
     prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "GROWTH" });
-    prisma.product.findMany.mockResolvedValueOnce([]);
-    const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const counts = await backfillProductCatalogRows(prisma, {
+    const err = await backfillProductCatalogRows(prisma, {
+      tenantSlug: "acme-live",
+      apply: false,
+      liveTenantOverride: "acme-live",
+      protectedSlugs: new Set<string>(),
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(BackfillRefused);
+    expect(err.message).toMatch(/tenant t1 is protected/);
+    expect(err.message).not.toMatch(/acme-live/);
+  });
+
+  it("row 195: an env-listed trial tenant (no plan, no Stripe) is REFUSED even with an override", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue(liveTenant({ status: "TRIAL" }));
+    prisma.tenantSubscription.findUnique.mockResolvedValue(null);
+    await expect(
+      backfillProductCatalogRows(prisma, {
+        tenantSlug: "acme-live",
+        apply: true,
+        liveTenantOverride: "acme-live",
+        protectedSlugs: new Set(["acme-live"]),
+      }),
+    ).rejects.toThrow(/is protected/);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a non-test tenant without the loaded protected list is refused (no env default)", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue(liveTenant());
+    await expect(
+      backfillProductCatalogRows(prisma, {
         tenantSlug: "acme-live",
         apply: false,
         liveTenantOverride: "acme-live",
-      });
-      expect(counts.tenants).toBe(1);
-      expect(
-        stderrSpy.mock.calls.some((c) => String(c[0]).includes("protected (paying) tenant")),
-      ).toBe(true);
-    } finally {
-      stderrSpy.mockRestore();
-    }
+      }),
+    ).rejects.toThrow(/protected-tenant list not loaded/);
+  });
+
+  it("an unprotected non-test tenant WITH a matching override still proceeds", async () => {
+    const prisma = mockPrisma();
+    prisma.tenant.findUnique.mockResolvedValue(liveTenant({ status: "TRIAL" }));
+    prisma.tenantSubscription.findUnique.mockResolvedValue(null);
+    prisma.product.findMany.mockResolvedValueOnce([]);
+    const counts = await backfillProductCatalogRows(prisma, {
+      tenantSlug: "acme-live",
+      apply: false,
+      liveTenantOverride: "acme-live",
+      protectedSlugs: new Set(["acme-other"]),
+    });
+    expect(counts.tenants).toBe(1);
   });
 });
 

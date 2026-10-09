@@ -19,16 +19,22 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { productionGuard } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 
 const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 
 // #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
 const target = productionGuard({ requireFlag: "--confirm", dbUrl });
 const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("\n========================================================");
   console.log("  RouteFlow — Nuke Tenant Data");
   console.log(`  Target: local ${target.host}:${target.port}/${target.database}`);

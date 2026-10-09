@@ -98,6 +98,29 @@ describe("ProductsService", () => {
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
     });
 
+    it("the list selects the parent's kind and carries it through to the response", async () => {
+      const tenantId = prisma.getTenantId();
+      prisma.product.findMany.mockResolvedValue([
+        {
+          ...MOCK_PRODUCT,
+          parentProductId: "parent-1",
+          parent: { id: "parent-1", name: "Cola", kind: "STANDARD", portalVisible: true, tenantId },
+        },
+      ]);
+      prisma.product.count.mockResolvedValue(1);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            parent: { select: expect.objectContaining({ kind: true }) },
+          }),
+        }),
+      );
+      expect((result.data[0] as any).parent).toMatchObject({ id: "parent-1", kind: "STANDARD" });
+    });
+
     it("should apply search filter", async () => {
       prisma.product.findMany.mockResolvedValue([]);
       prisma.product.count.mockResolvedValue(0);
@@ -2331,7 +2354,13 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
     expect(result).toEqual({
       deleted: 1,
       softDeleted: 1,
-      skipped: [{ id: "prod-a", reason: expect.stringContaining("Product A") }],
+      skipped: [
+        {
+          id: "prod-a",
+          code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
+          reason: expect.stringContaining("Product A"),
+        },
+      ],
     });
 
     // A: skipped means untouched.
