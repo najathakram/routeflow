@@ -228,3 +228,116 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
     expect(file).not.toMatch(/(UPDATE|DELETE FROM|INSERT INTO)\s+"Order"/i);
   });
 });
+
+/**
+ * SA-760 R-1 — the billing-state writers. One lock order (Order -> the order's invoices id-sorted ->
+ * re-read -> write), the advisory (`withOrderRecomputeLock`, family order-merge) always BEFORE rows.
+ */
+describe("order-lock callers: every order<->invoice billing-state writer takes the one lock order (SA-760 R-1)", () => {
+  const read = (rel: string) => strip(fs.readFileSync(path.join(SRC, rel), "utf8"));
+  /** The text of `name(`'s class member / function body (to the next member head at the same indent). */
+  const bodyOf = (src: string, name: string): string => {
+    const head = new RegExp(`^  (?:private |public )?(?:async )?${name}\\(`, "m").exec(src);
+    expect(head).not.toBeNull();
+    const start = head!.index;
+    const end = src.indexOf("\n  }\n", start);
+    return src.slice(start, end);
+  };
+  const IS = "invoices/invoices.service.ts";
+
+  it("the helper takes the Order row, then the order's invoices id-sorted in one FOR UPDATE statement", () => {
+    const src = read("invoices/order-billing-lock.ts");
+    const body = src.slice(src.indexOf("export async function withOrderBillingLock"));
+    expect(body.indexOf("lockOrderRow(")).toBeGreaterThan(-1);
+    expect(body.indexOf("lockOrderRow(")).toBeLessThan(body.indexOf('FROM "Invoice"'));
+    expect(body).toMatch(/FROM "Invoice"[^`]*ORDER BY id FOR UPDATE/);
+    // never the unlocked client: the own-tx path is a tenantTransaction
+    expect(src).not.toContain("forTenant()");
+    expect(src).toContain("tenantTransaction(");
+  });
+
+  it("each public writer goes through the helper (no unlocked forTenant() fallback)", () => {
+    const src = read(IS);
+    expect(bodyOf(src, "reconcileOrderDraftInvoice")).toContain("inOrderBillingTxAfter(");
+    expect(bodyOf(src, "reconcileOrderDeliveredInvoices")).toContain("inOrderBillingTx(");
+    expect(bodyOf(src, "resyncOrderInvoicesForEdit")).toContain("inOrderBillingTx(");
+    const mirror = bodyOf(src, "rebuildIssuedDepositMirrorOnDelivery");
+    expect(mirror).toContain("withOrderBillingLock(");
+    expect(mirror.indexOf("withOrderBillingLock(")).toBeLessThan(mirror.indexOf("db.invoice."));
+    // the bodies run on the tx they are handed
+    for (const locked of [
+      "reconcileOrderDraftInvoiceLocked",
+      "reconcileOrderDeliveredInvoicesLocked",
+    ])
+      expect(bodyOf(src, locked)).not.toContain("forTenant()");
+    expect(bodyOf(src, "reconcileOrderDraftInvoiceLocked")).toContain("const db = opts.tx;");
+  });
+
+  it("rebuildSiblingDrafts (the shared core) is reached only from locked writers", () => {
+    expect(callSites("rebuildSiblingDrafts")).toEqual(
+      [
+        `${IS}#reconcileOrderDeliveredInvoicesLocked`,
+        `${IS}#reconcileSplitOrderDrafts`,
+        `${IS}#rebuildIssuedDepositMirrorOnDelivery`,
+        `${IS}#resyncOrderInvoicesForEdit`,
+      ].sort(),
+    );
+    expect(callSites("reconcileSplitOrderDrafts")).toEqual([
+      `${IS}#reconcileOrderDraftInvoiceLocked`,
+    ]);
+    expect(callSites("reconcileOrderDraftInvoiceLocked")).toEqual([
+      `${IS}#reconcileOrderDraftInvoice`,
+    ]);
+    expect(callSites("reconcileOrderDeliveredInvoicesLocked")).toEqual([
+      `${IS}#reconcileOrderDeliveredInvoices`,
+    ]);
+  });
+
+  it("the void / unvoid / delete paths lock Order -> Invoice before they write invoicedQty", () => {
+    const src = read(IS);
+    expect(callSites("adjustInvoicedQtyForInvoice")).toEqual(
+      [`${IS}#voidInvoiceInTx`, `${IS}#unvoidInvoice`, `${IS}#deleteInvoice`].sort(),
+    );
+    const unvoid = bodyOf(src, "unvoidInvoice");
+    expect(unvoid.indexOf("lockInvoiceRow(")).toBeGreaterThan(-1);
+    expect(unvoid.indexOf("lockInvoiceRow(")).toBeLessThan(
+      unvoid.indexOf("adjustInvoicedQtyForInvoice("),
+    );
+    const del = bodyOf(src, "deleteInvoice");
+    expect(del.indexOf('FROM "Order"')).toBeLessThan(del.indexOf('FROM "Invoice"'));
+    expect(del.indexOf('FROM "Invoice"')).toBeLessThan(del.indexOf("adjustInvoicedQtyForInvoice("));
+    // voidInvoiceInTx runs on its caller's tx: voidInvoice locks (Order ->) Invoice first; order-cancel-tx holds the Order
+    expect(callSites("voidInvoiceInTx")).toEqual(
+      [`${IS}#voidInvoice`, "orders/order-cancel-tx.ts#cancelOrderInTx"].sort(),
+    );
+    const voidFn = bodyOf(src, "voidInvoice");
+    expect(voidFn.indexOf("lockInvoiceRow(")).toBeLessThan(voidFn.indexOf("voidInvoiceInTx("));
+  });
+
+  it("advisory before rows: no billing writer takes the order-merge advisory after the Order row, and recompute callers run after their own commit", () => {
+    const src = read(IS);
+    // the writers never call the advisory-wrapped recompute (it would take the advisory AFTER the Order row)
+    for (const w of [
+      "reconcileOrderDraftInvoiceLocked",
+      "reconcileOrderDeliveredInvoicesLocked",
+      "rebuildIssuedDepositMirrorOnDelivery",
+      "rebuildSiblingDrafts",
+      "resyncOrderInvoicesForEdit",
+      "unvoidInvoice",
+    ]) {
+      expect(bodyOf(src, w)).not.toContain("recomputeOrderFromInvoices(");
+      expect(bodyOf(src, w)).not.toContain("withOrderRecomputeLock(");
+    }
+    // recomputeOrderFromInvoices is called with NO tx (so it opens the advisory first, then its tx)
+    const calls = callPrefixes("recomputeOrderFromInvoices").filter(
+      (c) => c.site !== `${IS}#recomputeOrderFromInvoices`,
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls)
+      expect(c.args).toMatch(/recomputeOrderFromInvoices\([^,()]*(\([^)]*\))?[^,()]*\)$/);
+    // and the advisory wraps the transaction, not the other way round
+    const fo = read("invoices/finalize-order-recompute.ts");
+    const fn = fo.slice(fo.indexOf("export async function withOrderRecomputeLock"));
+    expect(fn.indexOf("withAdvisoryLock(")).toBeLessThan(fn.indexOf("tenantTransaction("));
+  });
+});

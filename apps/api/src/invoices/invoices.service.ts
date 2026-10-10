@@ -137,6 +137,11 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockCreditsForSend, lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
+  inOrderBillingTx,
+  inOrderBillingTxAfter,
+  withOrderBillingLock,
+} from "./order-billing-lock";
+import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
 } from "../credit-notes/sourced-credit-guard";
@@ -1406,8 +1411,23 @@ export class InvoicesService {
       shortDraftIsPartial?: boolean;
     },
   ) {
+    // SA-760 R-1: always in a tx, Order -> Invoices locked before the sole-draft check is re-read.
+    return inOrderBillingTxAfter(this.prisma, opts.tx, opts.after, orderId, (tx, after) =>
+      this.reconcileOrderDraftInvoiceLocked(orderId, { ...opts, tx, after }),
+    );
+  }
+
+  private async reconcileOrderDraftInvoiceLocked(
+    orderId: string,
+    opts: {
+      basis: "order" | "delivered";
+      tx: any;
+      after?: AfterCommit;
+      shortDraftIsPartial?: boolean;
+    },
+  ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    const db = opts.tx ?? this.prisma.forTenant();
+    const db = opts.tx;
     const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
     if (split) return split;
 
@@ -1630,7 +1650,13 @@ export class InvoicesService {
    * reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
    */
   async reconcileOrderDeliveredInvoices(orderId: string, tx?: any) {
-    const db = tx ?? this.prisma.forTenant();
+    // SA-760 R-1: always in a tx, Order -> Invoices locked before the open drafts are read.
+    return inOrderBillingTx(this.prisma, tx, orderId, (t) =>
+      this.reconcileOrderDeliveredInvoicesLocked(orderId, t),
+    );
+  }
+
+  private async reconcileOrderDeliveredInvoicesLocked(orderId: string, db: any) {
     // All the order's live invoices — so we can tell the open pending/sibling DRAFTs
     // (status DRAFT, deliveryBatchId null) apart from finalized or delivery-batch
     // invoices that already bill some of the lines.
@@ -1719,6 +1745,7 @@ export class InvoicesService {
     orderId: string,
     db: any,
   ): Promise<any[] | null> {
+    await withOrderBillingLock(db, this.prisma.getTenantId(), orderId); // SA-760 R-1: caller's tx
     const nonVoid = await db.invoice.findMany({
       where: { orderId, status: { not: InvoiceStatus.VOID } },
       select: {
@@ -2108,7 +2135,7 @@ export class InvoicesService {
       return updated;
     };
 
-    const updated = tx ? await run(tx) : await this.prisma.tenantTransaction(run);
+    const updated = await inOrderBillingTx(this.prisma, tx, orderId, run); // SA-760 R-1
 
     // This rebuild REWRITES the money on every linked invoice but was the one
     // rebuild path that told nobody, so a mounted invoice screen kept showing the
@@ -4230,6 +4257,13 @@ export class InvoicesService {
     // same lines. Atomic with the status flip. (Ledger reversal is not un-done here
     // — regulated-ledger un-reversal on unvoid is a separate follow-up.)
     return this.prisma.tenantTransaction(async (tx) => {
+      // SA-760 R-1: Order -> Invoice before the invoicedQty write; the VOID check is re-read under them.
+      const locked = await lockInvoiceRow(tx, id, inv.orderId);
+      if (locked?.status !== InvoiceStatus.VOID)
+        throw new ConflictException({
+          code: API_ERROR_CODES.ORDER_BILLING_CHANGED,
+          message: "The invoice changed while it was being restored. Refresh and try again.",
+        });
       const restored = await tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
