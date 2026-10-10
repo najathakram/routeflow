@@ -312,7 +312,7 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
 });
 
 describe("CounterSaleTodayService: query budget (test 12)", () => {
-  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly five summary queries", async () => {
+  it("a 50-row page 1 is a fixed number of calls: zone 1, page 1, count 1, then exactly six summary queries (one is the hand-over candidates)", async () => {
     const rows = Array.from({ length: 60 }, (_, i) =>
       row(
         `2026-10-07T${String(10 + Math.floor(i / 6)).padStart(2, "0")}:${String((i % 6) * 10).padStart(2, "0")}:00.000Z`,
@@ -332,7 +332,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     // nothing else is read: no per-row call on any other model
     expect(prisma.invoice.findMany).not.toHaveBeenCalled();
     expect(prisma.return.groupBy).not.toHaveBeenCalled();
-    expect(prisma.invoicePayment.findMany).not.toHaveBeenCalled();
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(1); // SA-763r R7: hand-over candidates
     expect(prisma.customer.findMany).not.toHaveBeenCalled();
   });
 

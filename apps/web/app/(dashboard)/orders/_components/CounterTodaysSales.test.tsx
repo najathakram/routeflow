@@ -82,6 +82,7 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
 const SUMMARY: TodaysSalesSummary = {
   sales: { count: 2, total: 45 },
   moneyIn: { cash: 30, card: 15, check: 0, other: 1, total: 46 },
+  handOvers: { count: 0, total: 0 },
   storeCreditUsed: 4,
   onAccount: 7,
   refunds: { count: 1, cash: 0, card: 0, check: 0, other: 0, total: 5, tenderKnown: false },
