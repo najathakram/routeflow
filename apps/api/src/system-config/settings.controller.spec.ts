@@ -5,6 +5,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
@@ -31,6 +32,7 @@ describe("SettingsController — PATCH /settings taxRate validation", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -93,6 +95,7 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -147,6 +150,7 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
 
@@ -255,6 +259,7 @@ describe("SettingsController — PATCH /settings refuses invoicePrefix / payment
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
     controller = module.get<SettingsController>(SettingsController);

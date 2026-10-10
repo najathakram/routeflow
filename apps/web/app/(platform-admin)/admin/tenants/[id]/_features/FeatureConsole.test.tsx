@@ -216,9 +216,9 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
     await screen.findByText("compliance");
 
     fireEvent.change(screen.getByLabelText("Tier"), { target: { value: "STARTER" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preview tier change" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview plan change" }));
 
-    expect(await screen.findByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(await screen.findByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
     expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, { planKey: "STARTER" });
     // The diff this fixture produces: Recurring routes flips from purchased/on to off.
     expect(
@@ -244,11 +244,11 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
     await screen.findByText("compliance");
 
     fireEvent.change(screen.getByLabelText("Tier"), { target: { value: "STARTER" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preview tier change" }));
-    await screen.findByText("Preview tier change", { selector: "h3" });
+    fireEvent.click(screen.getByRole("button", { name: "Preview plan change" }));
+    await screen.findByText("Preview plan change", { selector: "h3" });
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Preview tier change", { selector: "h3" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Preview plan change", { selector: "h3" })).not.toBeInTheDocument();
     expect(onChangePlan).not.toHaveBeenCalled();
     expect(mockWriteConfig).not.toHaveBeenCalled();
   });
@@ -268,14 +268,14 @@ describe("FeatureConsole — tier change preview → confirm → apply (test 3)"
     await screen.findByText("compliance");
 
     fireEvent.change(screen.getByLabelText("Tier"), { target: { value: "STARTER" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preview tier change" }));
-    await screen.findByText("Preview tier change", { selector: "h3" });
+    fireEvent.click(screen.getByRole("button", { name: "Preview plan change" }));
+    await screen.findByText("Preview plan change", { selector: "h3" });
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onChangePlan).toHaveBeenCalledTimes(1));
 
     // Still open — a failure must not look like success by silently closing the drawer.
-    expect(screen.getByText("Preview tier change", { selector: "h3" })).toBeInTheDocument();
+    expect(screen.getByText("Preview plan change", { selector: "h3" })).toBeInTheDocument();
     expect(await screen.findByText("Could not apply that change. Try again.")).toBeInTheDocument();
   });
 });
@@ -338,7 +338,7 @@ describe("FeatureConsole — mode change preview → confirm → apply (test 5)"
   });
 });
 
-describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
+describe("FeatureConsole — 'Turn on as add-on' action (B2b)", () => {
   // Pinned exact contents (owner/lead ruling 2026-09-17): a hardcoded registry-key ->
   // legacy-addonKey map is a drift trap — this must fail loudly, and show up as a reviewed
   // diff, the moment anyone adds/removes/renames an entry rather than silently doing nothing
@@ -372,22 +372,22 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
     expect(
       within(
         document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement,
-      ).getByRole("button", { name: "Enable Regulated items (tobacco) as an add-on" }),
+      ).getByRole("button", { name: "Turn on Regulated items (tobacco) as an add-on" }),
     ).toBeInTheDocument();
     expect(
       within(
         document.querySelector('[data-feature-key="recurring_routes"]') as HTMLElement,
-      ).getByRole("button", { name: "Enable Recurring routes as an add-on" }),
+      ).getByRole("button", { name: "Turn on Recurring routes as an add-on" }),
     ).toBeInTheDocument();
 
     // msrp (via "service") and route_optimization (via "RequirePlanFlag") do not.
     const msrpRow = document.querySelector('[data-feature-key="msrp"]') as HTMLElement;
-    expect(within(msrpRow).queryByRole("button", { name: /Enable .* as an add-on/ })).toBeNull();
+    expect(within(msrpRow).queryByRole("button", { name: /Turn on .* as an add-on/ })).toBeNull();
     const routeOptRow = document.querySelector(
       '[data-feature-key="route_optimization"]',
     ) as HTMLElement;
     expect(
-      within(routeOptRow).queryByRole("button", { name: /Enable .* as an add-on/ }),
+      within(routeOptRow).queryByRole("button", { name: /Turn on .* as an add-on/ }),
     ).toBeNull();
 
     // boxes_pieces_mode is gate.via "guard" but is NOT one of the six named addon-backed keys —
@@ -395,10 +395,10 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
     const boxesRow = document.querySelector(
       '[data-feature-key="boxes_pieces_mode"]',
     ) as HTMLElement;
-    expect(within(boxesRow).queryByRole("button", { name: /Enable .* as an add-on/ })).toBeNull();
+    expect(within(boxesRow).queryByRole("button", { name: /Turn on .* as an add-on/ })).toBeNull();
   });
 
-  it("clicking 'Enable as add-on' never calls onCustomise — the override path stays untouched", async () => {
+  it("clicking 'Turn on as add-on' never calls onCustomise — the override path stays untouched", async () => {
     const onCustomise = jest.fn();
     render(
       <FeatureConsole
@@ -412,7 +412,7 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
 
     const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
     fireEvent.click(
-      within(row).getByRole("button", { name: "Enable Regulated items (tobacco) as an add-on" }),
+      within(row).getByRole("button", { name: "Turn on Regulated items (tobacco) as an add-on" }),
     );
 
     expect(await screen.findByText(/this will be a free grant, not billed/)).toBeInTheDocument();
@@ -446,7 +446,7 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
     await screen.findByText("compliance");
 
     const row = document.querySelector('[data-feature-key="flag.msrp"]') as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "Enable MSRP pricing as an add-on" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Turn on MSRP pricing as an add-on" }));
 
     await screen.findByText(/this will be a free grant, not billed/);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -462,14 +462,14 @@ describe("FeatureConsole — 'Enable as add-on' action (B2b)", () => {
 });
 
 // B1132 (demo D14): after a business profile is applied the "Current setup" card says "Ship by carrier",
-// so the "How orders reach customers" row must say the same, from the same stored mode: not the plan
+// so the "Where orders go" row must say the same, from the same stored mode: not the plan
 // default ("Inherited / Off") and not a "the new resolver disagrees" note.
 describe("FeatureConsole — fulfilment_model row after a profile is applied (B1132)", () => {
   const FULFILMENT_ROW = {
     key: "fulfilment_model",
     kind: "boolean",
     area: "routes",
-    label: "How orders reach customers",
+    label: "Where orders go",
     description: "Whether orders go out on delivery runs, ship by carrier, or both.",
     lifecycle: "ga",
     internal: false,
@@ -540,7 +540,7 @@ describe("FeatureConsole — fulfilment_model row after a profile is applied (B1
       allowed: [],
       blocked: [],
     });
-    fireEvent.click(within(row).getByRole("button", { name: /Why is How orders reach customers/ }));
+    fireEvent.click(within(row).getByRole("button", { name: /Why is Where orders go/ }));
     const panel = document.getElementById("why-panel-fulfilment_model") as HTMLElement;
     expect(panel).toHaveTextContent(/Set to "Ship by carrier" for this business/);
     expect(panel).toHaveTextContent(/business profile/);
@@ -570,9 +570,82 @@ describe("FeatureConsole — fulfilment_model row after a profile is applied (B1
       allowed: [],
       blocked: ["delivery"],
     });
-    fireEvent.click(within(row).getByRole("button", { name: /Why is How orders reach customers/ }));
+    fireEvent.click(within(row).getByRole("button", { name: /Why is Where orders go/ }));
     expect(document.getElementById("why-panel-fulfilment_model")).toHaveTextContent(
       /saved value "Own delivery" is not in effect/,
     );
+  });
+});
+
+describe("SA-1: plain names on the console's controls", () => {
+  async function renderConsole(onCustomise = jest.fn(), onChangePlan = jest.fn()) {
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        tenantLabel="Acme Wholesale"
+        onChangePlan={onChangePlan}
+        onCustomise={onCustomise}
+      />,
+    );
+    await screen.findByText("compliance");
+    return { onCustomise, onChangePlan };
+  }
+
+  it("'Customise' is now 'Set override' and fires the same handler with the same key", async () => {
+    const { onCustomise } = await renderConsole();
+    const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    expect(within(row).queryByRole("button", { name: /^Customise/ })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: /^Set override/ }));
+    expect(onCustomise).toHaveBeenCalledTimes(1);
+    expect(onCustomise).toHaveBeenCalledWith("tobacco_dealer");
+    expect(within(row).getByRole("button", { name: /^Set override/ })).toHaveTextContent(
+      "Set override",
+    );
+  });
+
+  it("'Enable as add-on' is now 'Turn on as add-on' and still opens the same confirm", async () => {
+    await renderConsole();
+    const row = document.querySelector('[data-feature-key="tobacco_dealer"]') as HTMLElement;
+    const btn = within(row).getByRole("button", { name: /Turn on .* as an add-on/ });
+    expect(btn).toHaveTextContent("Turn on as add-on");
+    expect(screen.queryByText("Enable as add-on")).toBeNull();
+    fireEvent.click(btn);
+    expect(await screen.findByText(/this will be a free grant, not billed/)).toBeInTheDocument();
+  });
+
+  it("'Preview tier change' is now 'Preview plan change' and opens the same preview", async () => {
+    await renderConsole();
+    expect(screen.queryByRole("button", { name: "Preview tier change" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Preview plan change" })).toBeInTheDocument();
+  });
+
+  it("explains the 'dark' and 'proposed' chips by tooltip and visually-hidden text", async () => {
+    mockFetchRegistry.mockResolvedValue([
+      {
+        ...REGISTRY_FIXTURE[0],
+        key: "chip_row",
+        label: "Chip row",
+        lifecycle: "proposed",
+        gate: { ...REGISTRY_FIXTURE[0]!.gate, state: "dark" },
+      },
+    ]);
+    mockFetchEffective.mockResolvedValue([]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("Chip row");
+    const row = document.querySelector('[data-feature-key="chip_row"]') as HTMLElement;
+    const dark = within(row).getByText("dark");
+    expect(dark).toHaveAttribute("title", expect.stringMatching(/allowed|not enforced|still on/i));
+    expect(dark).not.toHaveAttribute("aria-label");
+    expect(dark.querySelector(".sr-only")?.textContent).toMatch(/not enforced/i);
+    const proposed = within(row).getByText("proposed");
+    expect(proposed.getAttribute("title")).toMatch(/not released|planned|proposed/i);
+    expect(proposed).not.toHaveAttribute("aria-label");
+    expect(proposed.querySelector(".sr-only")?.textContent).toMatch(/not released/i);
   });
 });
