@@ -186,7 +186,7 @@ import {
   catalogRestrictionLines,
 } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
-import { foldCategoryTax, loadManualLineContext } from "./manual-invoice-context";
+import { foldCategoryTax, loadManualLineContext, regularTaxShare } from "./manual-invoice-context";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -1431,6 +1431,7 @@ export class InvoicesService {
       buildItem: (li, qty, tenantId, o) => this.buildInvoiceItemData(li, qty, tenantId, o),
       taxRateOf: (order, exempt) => this.orderDerivedTaxRate(order, exempt),
       foldCategoryTax: (items, exempt) => this.foldCategoryTax(items, exempt),
+      applyMsrp: (db, customerId, items) => this.applyMsrpSnapshots(db, customerId, items),
       tenantId: this.prisma.getTenantId(),
     };
   }
@@ -1588,9 +1589,7 @@ export class InvoicesService {
       select: { isTaxExempt: true },
     });
     const isTaxExempt = !!customer?.isTaxExempt;
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const proportion = subtotal / orderSubtotal;
-    const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces `regularTax` instead of 0.
     this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
@@ -2706,9 +2705,7 @@ export class InvoicesService {
       .forTenant()
       .customer.findFirst({ where: { id: order.customerId }, select: { isTaxExempt: true } });
     const isTaxExempt = !!(customer as any)?.isTaxExempt;
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const proportion = subtotal / orderSubtotal;
-    const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces this partial's regular tax.
     this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);

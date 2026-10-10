@@ -128,10 +128,45 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
 
   it("a qty-only edit (price unchanged) changes nothing", async () => {
     await partialA(72);
-    Object.assign(db.line("oi-A"), { qty: 132, boxes: 11, subtotal: 258.5 }); // 11 boxes at the same 2.35
+    Object.assign(db.line("oi-A"), { qty: 132, boxes: 11, subtotal: 310.2 }); // 11 boxes at the same 2.35
     const out = await service.followPartialPrices("ord-1");
     expect(out.issuedPartialsUnchanged).toEqual([]);
     expect(db.invoiceUpdateCalls).toHaveLength(0);
+  });
+
+  it("a line-discount-only change (unit price untouched, the order line's money lower) is followed by the DRAFT partial", async () => {
+    const created = await partialA(72);
+    Object.assign(db.line("oi-A"), { subtotal: 270 }); // a promo / line discount: 282 -> 270, unitPrice stays 2.35
+    Object.assign(db.orders.get("ord-1")!, { subtotal: 330, total: 330 });
+    await service.followPartialPrices("ord-1");
+    const inv = db.invoicesOf("ord-1")[0];
+    expect(inv.id).toBe(created.id);
+    expect(Number(inv.items[0].subtotal)).toBe(162); // 72/120 of 270
+    expect(Number(inv.total)).toBe(162);
+    expect(Number(inv.items[0].qty)).toBe(72);
+  });
+
+  it("the rebuilt lines get their MSRP snapshot like every other builder (applyMsrpSnapshots)", async () => {
+    await partialA(72);
+    const spy = jest.spyOn(service as any, "applyMsrpSnapshots");
+    repriceA();
+    await service.followPartialPrices("ord-1");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][2]).toHaveLength(1); // the one stale line
+  });
+
+  it("the regular tax share is the creator's: the same order.tax x subtotal share the partial was cut with", async () => {
+    Object.assign(db.orders.get("ord-1")!, { tax: 28.215, total: 370.215 }); // 8.25% of 342
+    const created = await partialA(72); // 169.2 + 169.2/342*28.215 (= 13.96)
+    expect(Number(created.taxAmount)).toBe(13.96);
+    // an unchanged order re-run of the follow is a no-op (same figures), and a reprice uses the same formula
+    repriceA(); // line A 300 -> order subtotal 360; the order's tax restated at the same 8.25%: 29.7
+    Object.assign(db.orders.get("ord-1")!, { tax: 29.7, total: 389.7 });
+    await service.followPartialPrices("ord-1");
+    const inv = db.invoicesOf("ord-1")[0];
+    expect(Number(inv.subtotal)).toBe(180);
+    expect(Number(inv.taxAmount)).toBe(14.85); // 29.7 x 180/360, the same helper the creator uses
+    expect(Number(inv.total)).toBe(194.85);
   });
 
   it("the sole invoice that bills the whole order is the MIRROR, not a partial: left to the re-sync", async () => {

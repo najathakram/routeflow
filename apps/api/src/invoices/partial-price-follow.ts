@@ -2,6 +2,7 @@ import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
+import { regularTaxShare } from "./manual-invoice-context";
 
 /**
  * SA-760 Q-760-1 (OWNER answer 10-10): when an admin / operator order edit changes the PRICE of a line that
@@ -31,6 +32,8 @@ export interface FollowDeps {
   taxRateOf(order: { tax?: unknown; subtotal?: unknown }, isTaxExempt: boolean): number;
   /** foldCategoryTax (manual-invoice-context.ts). */
   foldCategoryTax(items: Array<{ categoryTaxAmount?: number }>, isTaxExempt: boolean): number;
+  /** InvoicesService.applyMsrpSnapshots, bound (stamps each rebuilt line's MSRP like every other builder). */
+  applyMsrp(db: any, customerId: string, items: any[]): Promise<void>;
   tenantId: string | null;
 }
 
@@ -48,6 +51,8 @@ export interface FollowPlan {
 }
 
 const PRICE_EPS = 0.00005;
+/** More than rounding noise (two cents) between the rebuilt and the stored line money. */
+const MONEY_EPS = 0.02;
 const samePrice = (a: unknown, b: unknown) => Math.abs(Number(a ?? 0) - Number(b ?? 0)) < PRICE_EPS;
 
 export async function planPartialPriceFollow(
@@ -115,35 +120,46 @@ export async function planPartialPriceFollow(
   const billedBefore = new Map<string, number>(); // orderItemId -> qty billed by EARLIER live invoices
   const plan: FollowPlan = { drafts: [], issuedPartialsUnchanged: [] };
   for (const inv of invoices) {
-    const stale: Array<{ item: any; li: any }> = [];
+    const priorOf = (orderItemId: string) => billedBefore.get(orderItemId) ?? 0;
+    // Rebuild every order-linked line of this invoice at its OWN qty through the invoice-line builder; a line
+    // is stale when its price fields moved, its BOGO free units moved, or the money the order line now
+    // implies differs from what the invoice stored by more than rounding (a line-discount-only change moves
+    // the order line's subtotal with the unit price untouched). A qty-only edit scales the line's subtotal
+    // with its qty, so it rebuilds to the same figure and is not stale. A line the builder cannot rebuild
+    // (a legacy shape it refuses) is left alone rather than blocking the edit.
+    const fresh = new Map<string, any>();
     for (const it of inv.items) {
       const li = it.orderItemId ? lineById.get(it.orderItemId) : undefined;
       if (!li || isNsfLine(it)) continue;
-      const priceMoved =
+      let f: any;
+      try {
+        f = deps.buildItem(li, Number(it.qty), deps.tenantId, {
+          priorBilledQty: priorOf(it.orderItemId),
+          priorPack: it.unitsPerBox,
+        });
+      } catch {
+        continue;
+      }
+      const stale =
         !samePrice(it.unitPrice, li.unitPrice) ||
         !samePrice(it.originalPrice, li.originalPrice) ||
-        (it.priceType ?? "STANDARD") !== (li.priceType ?? "STANDARD");
-      if (priceMoved) stale.push({ item: it, li });
+        (it.priceType ?? "STANDARD") !== (li.priceType ?? "STANDARD") ||
+        Number(f.promoFreeUnits ?? 0) !== Number(it.promoFreeUnits ?? 0) ||
+        Math.abs(Number(f.subtotal) - Number(it.subtotal)) > MONEY_EPS;
+      if (stale) fresh.set(it.id, f);
     }
-    const priorOf = (orderItemId: string) => billedBefore.get(orderItemId) ?? 0;
-    if (stale.length > 0) {
+    if (fresh.size > 0) {
       if (inv.status !== InvoiceStatus.DRAFT) {
         plan.issuedPartialsUnchanged.push({ invoiceId: inv.id, invoiceNumber: inv.invoiceNumber });
       } else {
-        const fresh = new Map<string, any>();
-        for (const { item, li } of stale)
-          fresh.set(
-            item.id,
-            deps.buildItem(li, Number(item.qty), deps.tenantId, {
-              priorBilledQty: priorOf(item.orderItemId),
-              priorPack: item.unitsPerBox,
-            }),
-          );
+        await deps.applyMsrp(db, order.customerId, [...fresh.values()]);
         const rate = deps.taxRateOf(order, isTaxExempt);
         const itemUpdates = [...fresh].map(([id, f]) => ({
           id,
           data: {
             unitPrice: f.unitPrice,
+            msrp: f.msrp,
+            promoFreeUnits: f.promoFreeUnits,
             originalPrice: f.originalPrice,
             priceType: f.priceType,
             discount: f.discount,
@@ -172,10 +188,7 @@ export async function planPartialPriceFollow(
         const nsfFee = roundMoney(
           after.filter((a: any) => a.nsf).reduce((s: number, a: any) => s + a.subtotal, 0),
         );
-        const orderSubtotal = Number(order.subtotal) || 1;
-        const regularTax = isTaxExempt
-          ? 0
-          : roundMoney(Number(order.tax) * (lineSubtotal / orderSubtotal));
+        const regularTax = regularTaxShare(order, lineSubtotal, isTaxExempt);
         const categoryTax = deps.foldCategoryTax(
           after.filter((a: any) => !a.nsf),
           isTaxExempt,
