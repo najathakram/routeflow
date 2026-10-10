@@ -546,4 +546,27 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       nothingWritten();
     });
   });
+
+  describe("N2 / N4 - create() stores the builder's subtotal and refuses non-finite money", () => {
+    const stubCreate = () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, id: "inv-new", items: [], payments: [], customer: {} }),
+      );
+    };
+
+    it("N2: the stored subtotal is the rounded sum of the stored line subtotals (0.10 + 0.20 -> 0.30)", async () => {
+      stubCreate();
+      await service.create({
+        customerId: "cust-1",
+        items: [
+          { description: "a", qty: 1, unitPrice: 0.1 },
+          { description: "b", qty: 1, unitPrice: 0.2 },
+        ],
+      } as any);
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(Number(data.subtotal)).toBe(0.3);
+      expect(Number(data.total)).toBe(0.3);
+    });
+  });
 });

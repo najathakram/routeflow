@@ -427,15 +427,13 @@ export class InvoicesService {
     );
 
     // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
-    const { itemsData, subtotal: linesSubtotal } = buildManualInvoiceLines(dto.items, {
+    const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
     });
-    let subtotal = linesSubtotal;
-    subtotal = roundMoney(subtotal);
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
@@ -453,7 +451,12 @@ export class InvoicesService {
     const isTaxExempt = !!(customer as any).isTaxExempt;
     // RF-4: exempt → $0 of BOTH taxes (the per-line category snapshots are zeroed so the ledger records 0).
     zeroExemptCategoryTax(itemsData, isTaxExempt);
-    const { tax: taxTotal, total } = sumInvoiceTotals(itemsData, {
+    // One source: the stored subtotal and the total come from the SAME builder result (N2).
+    const {
+      subtotal,
+      tax: taxTotal,
+      total,
+    } = sumInvoiceTotals(itemsData, {
       discount: invDiscount,
       shipping,
       isTaxExempt,
