@@ -8,10 +8,10 @@
 // A workspace whose campaign report is missing/partial/stale (`campaign-check --print-stale`) is
 // added to a scoped run so its tests execute — see scripts/lib/verify-scope.mjs `withStale`.
 // CI's full run is the authority.
-import { spawnSync } from "node:child_process";
-import { totalmem } from "node:os";
+import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
 import { decideScope, loadWorkspaces } from "./lib/verify-scope.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -184,11 +184,17 @@ export const LOW_MEM_THRESHOLD_BYTES = 24 * 1024 ** 3;
 const LOW_MEM_VERIFY_CONCURRENCY = "1";
 const LOW_MEM_JEST_MAX_WORKERS = "2";
 
+/** `max(2, floor(cpus * 0.75 / concurrency))`: jest workers per test task on a roomy shared host. */
+export function jestWorkerBudget({ cpus, concurrency }) {
+  return Math.max(2, Math.floor((cpus * 0.75) / concurrency));
+}
+
 /** Pure — no env/os read inside. `env` is a plain object (e.g. `process.env`); `totalMemBytes`
- *  is the host's total memory in bytes (e.g. `os.totalmem()`). Returns the two resolved values
+ *  is the host's total memory in bytes (e.g. `os.totalmem()`); `cpus` the logical cpu count (e.g.
+ *  `os.cpus().length`; omitted/invalid = no worker budget). Returns the two resolved values
  *  plus `message` (a single explanatory line) — `null` when nothing was defaulted, so CI, a
  *  real high-memory host, or an already-fully-explicit low-memory host prints nothing new. */
-export function chooseVerifyDefaults({ totalMemBytes, env }) {
+export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
   const hasEnvConcurrency = "VERIFY_CONCURRENCY" in env;
   const hasEnvJestWorkers = "JEST_MAX_WORKERS" in env;
   const envConcurrency = env.VERIFY_CONCURRENCY || "";
@@ -215,6 +221,22 @@ export function chooseVerifyDefaults({ totalMemBytes, env }) {
     message = `verify: low-memory host (${gb} GB) → concurrency ${verifyConcurrency}, jest workers ${jestMaxWorkers}`;
   }
 
+  // Worker budget for a >= 24 GB, non-CI host whose JEST_MAX_WORKERS is not in env (a presence check,
+  // like every other rule here): jest's own default is cpus-1 workers PER test task, and turbo runs
+  // VERIFY_CONCURRENCY (2) tasks at once, so a bare push on a 14-cpu box asked for ~26 workers and
+  // starved every other job on the host. Budget ~75% of the cpus across the concurrent tasks.
+  const hasBudgetInputs = Number.isInteger(cpus) && cpus > 0;
+  if (!env.CI && !isLowMem && !hasEnvJestWorkers && hasBudgetInputs) {
+    const parsed = Number.parseInt(verifyConcurrency, 10);
+    const concurrency = Number.isInteger(parsed) && parsed > 0 ? parsed : 2;
+    const workers = jestWorkerBudget({ cpus, concurrency });
+    return {
+      verifyConcurrency,
+      jestMaxWorkers: String(workers),
+      message: `verify: worker budget → jest workers ${workers} per task (cpus ${cpus}, concurrency ${concurrency})`,
+    };
+  }
+
   return { verifyConcurrency, jestMaxWorkers, message };
 }
 
@@ -226,15 +248,21 @@ export function chooseVerifyDefaults({ totalMemBytes, env }) {
  * spawn `npx turbo` and call `process.exit` inside the test process). Same pattern as
  * `scripts/janitor.mjs`.
  */
-export function main() {
-  const defaults = chooseVerifyDefaults({ totalMemBytes: totalmem(), env: process.env });
+export async function main() {
+  const defaults = chooseVerifyDefaults({
+    totalMemBytes: totalmem(),
+    env: process.env,
+    cpus: osCpus().length,
+  });
   if (defaults.message) console.log(defaults.message);
   const JEST_MAX_WORKERS = defaults.jestMaxWorkers;
   const VERIFY_CONCURRENCY = defaults.verifyConcurrency;
   const TURBO_FLAGS = buildTurboFlags(VERIFY_CONCURRENCY);
 
-  function turbo(args) {
-    const r = spawnSync("npx", buildArgv(args, TURBO_FLAGS), {
+  // Awaited async spawns (not spawnSync): the heavy-slot heartbeat is a timer and must keep firing
+  // for the whole turbo run, or a long verify would look dead and lose its slot.
+  async function turbo(args) {
+    const r = await spawnAsync("npx", buildArgv(args, TURBO_FLAGS), {
       cwd: ROOT,
       stdio: "inherit",
       shell: process.platform === "win32",
@@ -245,12 +273,12 @@ export function main() {
   /** Like `turbo`, but for a jest-only task (`test`/`test:repo-truth`) — appends the
    *  `--maxWorkers` passthrough when `JEST_MAX_WORKERS` is set, appends nothing (byte-identical
    *  argv to plain `turbo`) when it is not. NEVER call this with `check-types`/`lint` in `args`. */
-  function turboJest(args) {
-    const r = spawnSync("npx", buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS)), {
-      cwd: ROOT,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
+  async function turboJest(args) {
+    const r = await spawnAsync(
+      "npx",
+      buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS)),
+      { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" },
+    );
     return r.status ?? 1;
   }
 
@@ -291,10 +319,20 @@ export function main() {
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
   const plan = planTurboCalls({ scope, excluded, splitJest: Boolean(JEST_MAX_WORKERS) });
   if (plan.note) console.log(plan.note);
-  const statuses = plan.calls.map((c) => (c.jest ? turboJest(c.args) : turbo(c.args)));
-  process.exit(statuses.find((status) => status !== 0) ?? 0);
+  // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
+  // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
+  const status = await withHeavySlot({ label: "verify" }, async () => {
+    const statuses = [];
+    for (const c of plan.calls) statuses.push(await (c.jest ? turboJest(c.args) : turbo(c.args)));
+    return statuses.find((s) => s !== 0) ?? 0;
+  });
+  process.exit(status);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch((e) => {
+    // HeavySlotTimeout (and any other failure) is a closed failure: non-zero, nothing run.
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(e?.name === "HeavySlotTimeout" ? 75 : 1);
+  });
 }

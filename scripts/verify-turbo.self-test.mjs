@@ -41,6 +41,7 @@ import {
   chooseVerifyDefaults,
   excludedLine,
   jestPassthrough,
+  jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
@@ -489,14 +490,107 @@ check(
   },
 );
 check(
-  "WC13 at/above 24 GB with no env set: both stay unset, byte-identical to today, no message",
-  chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {} }),
-  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+  "WC13 at/above 24 GB with no env set (the PC: 14 cpus, 32 GB): concurrency stays unset and jest " +
+    "gets the worker budget max(2, floor(cpus*0.75/2)) = 5 per task, with one explanatory line " +
+    "(replaces the pre-budget 'nothing is defaulted' expectation — lead ruling 2026-10-10)",
+  chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {}, cpus: 14 }),
+  {
+    verifyConcurrency: "",
+    jestMaxWorkers: "5",
+    message: "verify: worker budget → jest workers 5 per task (cpus 14, concurrency 2)",
+  },
 );
 check(
-  "WC13b exactly the 24 GB threshold is treated as high-memory (< not <=)",
-  chooseVerifyDefaults({ totalMemBytes: LOW_MEM_THRESHOLD_BYTES, env: {} }),
-  { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+  "WC13b exactly the 24 GB threshold is treated as high-memory (< not <=): a 4-cpu host floors at 2 workers",
+  chooseVerifyDefaults({ totalMemBytes: LOW_MEM_THRESHOLD_BYTES, env: {}, cpus: 4 }),
+  {
+    verifyConcurrency: "",
+    jestMaxWorkers: "2",
+    message: "verify: worker budget → jest workers 2 per task (cpus 4, concurrency 2)",
+  },
+);
+check(
+  "WC13b2 an unknown cpu count (omitted / 0 / NaN) budgets nothing — byte-identical to the old high-memory path",
+  [undefined, 0, Number.NaN].map((cpus) =>
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: {}, cpus }),
+  ),
+  Array(3).fill({ verifyConcurrency: "", jestMaxWorkers: "", message: null }),
+);
+check(
+  "WC13b3 jestWorkerBudget: max(2, floor(cpus*0.75/concurrency)) across cpu counts and concurrency",
+  [
+    [14, 2],
+    [4, 2],
+    [16, 2],
+    [14, 1],
+    [32, 3],
+    [1, 2],
+  ].map(([cpus, concurrency]) => jestWorkerBudget({ cpus, concurrency })),
+  [5, 2, 6, 10, 8, 2],
+);
+check(
+  "WC13b4 the budget divides by the RESOLVED VERIFY_CONCURRENCY (3 -> floor(14*0.75/3) = 3); an " +
+    "unparsable value falls back to 2",
+  [
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: { VERIFY_CONCURRENCY: "3" }, cpus: 14 }),
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: { VERIFY_CONCURRENCY: "x" }, cpus: 14 })
+      .jestMaxWorkers,
+  ],
+  [
+    {
+      verifyConcurrency: "3",
+      jestMaxWorkers: "3",
+      message: "verify: worker budget → jest workers 3 per task (cpus 14, concurrency 3)",
+    },
+    "5",
+  ],
+);
+check(
+  "WC13b5 an explicit JEST_MAX_WORKERS always wins on a roomy host (presence check, so a " +
+    "set-but-empty value is an opt-out too): nothing is budgeted, no message",
+  [
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: { JEST_MAX_WORKERS: "9" }, cpus: 14 }),
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: { JEST_MAX_WORKERS: "" }, cpus: 14 }),
+  ],
+  [
+    { verifyConcurrency: "", jestMaxWorkers: "9", message: null },
+    { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+  ],
+);
+check(
+  "WC13b6 CI never gets the budget and a low-memory host keeps its 1/2 rule, whatever the cpu count",
+  [
+    chooseVerifyDefaults({ totalMemBytes: PC_MEM, env: { CI: "true" }, cpus: 14 }),
+    chooseVerifyDefaults({ totalMemBytes: MINI_MEM, env: {}, cpus: 14 }),
+  ],
+  [
+    { verifyConcurrency: "", jestMaxWorkers: "", message: null },
+    {
+      verifyConcurrency: "1",
+      jestMaxWorkers: "2",
+      message: "verify: low-memory host (16 GB) → concurrency 1, jest workers 2",
+    },
+  ],
+);
+check(
+  "WC13b7 end-to-end on the PC: the budget feeds jestPassthrough exactly like an explicit inline cap",
+  (() => {
+    const { verifyConcurrency, jestMaxWorkers } = chooseVerifyDefaults({
+      totalMemBytes: PC_MEM,
+      env: {},
+      cpus: 14,
+    });
+    return buildArgv(["test"], buildTurboFlags(verifyConcurrency), jestPassthrough(jestMaxWorkers));
+  })(),
+  [
+    "turbo",
+    "run",
+    "test",
+    "--concurrency=2",
+    "--continue=dependencies-successful",
+    "--",
+    "--maxWorkers=5",
+  ],
 );
 check(
   "WC13c CI is EXCLUDED from the low-memory default regardless of its own host memory — " +
@@ -874,6 +968,9 @@ if (process.platform !== "win32") {
       const env = {
         ...scrubbedGitEnv(),
         PATH: `${stubDir}:${process.env.PATH}`,
+        // The AFFECTED cases below run without CI and so really take the heavy-job slot: keep it in
+        // a throwaway dir, never the host's real ~/.routeflow/heavy-slot.
+        RF_HEAVY_SLOT_DIR: join(stubDir, "slot"),
         CI: "1",
         ...extraEnv,
       };
@@ -993,7 +1090,12 @@ if (process.platform !== "win32") {
         for (const f of ["verify-turbo.mjs"]) {
           put(`scripts/${f}`, readFileSync(join(ROOT, "scripts", f), "utf8"));
         }
-        for (const f of ["verify-scope.mjs", "check-git-hooks.mjs", "scrubbed-git-env.cjs"]) {
+        for (const f of [
+          "verify-scope.mjs",
+          "check-git-hooks.mjs",
+          "scrubbed-git-env.cjs",
+          "heavy-slot.mjs",
+        ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
         for (const [dir, name] of [
@@ -1035,6 +1137,37 @@ if (process.platform !== "win32") {
   } finally {
     rmSync(stubDir, { recursive: true, force: true });
   }
+}
+
+// HS: every heavy local entry point takes the machine-wide slot INSIDE the script (so root
+// package.json, which busts every turbo cache when edited, never changes). A future heavy entry point
+// that skips it is caught here: each must import withHeavySlot from the shared lib and call it.
+{
+  const scripts = ["verify-turbo.mjs", "local-env.mjs", "local-db-specs.mjs"];
+  const pins = scripts.map((name) => {
+    const src = readFileSync(join(ROOT, "scripts", name), "utf8");
+    const imp = /import\s*\{[^}]*\bwithHeavySlot\b[^}]*\}\s*from\s*"\.\/lib\/heavy-slot\.mjs"/.test(
+      src,
+    );
+    // a call, not just the import: drop every import statement, then look for `withHeavySlot(`
+    const call = /\bwithHeavySlot\(/.test(
+      src.replace(/import\s*\{[^}]*\}\s*from\s*"[^"]*";?/g, ""),
+    );
+    return [name, imp, call];
+  });
+  check(
+    "HS1 verify-turbo.mjs, local-env.mjs and local-db-specs.mjs each import withHeavySlot from " +
+      "./lib/heavy-slot.mjs and call it",
+    pins,
+    scripts.map((name) => [name, true, true]),
+  );
+  check(
+    "HS2 the lib exists where those imports point",
+    readFileSync(join(ROOT, "scripts", "lib", "heavy-slot.mjs"), "utf8").includes(
+      "export async function withHeavySlot",
+    ),
+    true,
+  );
 }
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
