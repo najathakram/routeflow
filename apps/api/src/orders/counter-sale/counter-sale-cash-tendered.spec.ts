@@ -185,7 +185,26 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(stored).toBe(60);
   });
 
-  it("(a) a first attempt whose payment fails, retried under a NEW key and amount, ends on the NEW amount", async () => {
+  it("(a) a failed first attempt retried under the SAME key (replay) overwrites the stored amount", async () => {
+    recordPayment.mockRejectedValueOnce(new Error("lock timeout"));
+    const first = await ring({ method: "CASH", amount: 50 }, "k1");
+    expect(first.paymentRecorded).toBe(false);
+    expect(stored).toBe(50);
+    replay = true;
+    const retry = await ring({ method: "CASH", amount: 60 }, "k1");
+    expect(retry.replayed).toBe(true);
+    // no CASH tender row anchors the 50 yet, so the retry's own cash amount replaces it (unfiltered write)
+    expect(prisma.order.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "ord-1" },
+      data: { counterCashTendered: 60 },
+    });
+    expect(stored).toBe(60);
+    expect(retry.paymentRecorded).toBe(true);
+    expect(retry.cashTendered).toBe(60);
+    expect(retry.change).toBe(18.73);
+  });
+
+  it("(a) a failed first attempt retried under a NEW key and amount also ends on the NEW amount", async () => {
     recordPayment.mockRejectedValueOnce(new Error("lock timeout"));
     const first = await ring({ method: "CASH", amount: 50 }, "k1");
     expect(first.paymentRecorded).toBe(false);
@@ -233,6 +252,21 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     const r = await service.byKey("k1");
     expect(r.cashTendered).toBe(50);
     expect(r.change).toBe(8.73);
+  });
+
+  it("(N4) a CASH sale with a cash tender row but NO stored tendered (legacy) serves no change", async () => {
+    findReplayCandidateByKey.mockResolvedValue({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterSale: true,
+      status: "DELIVERED",
+      counterCashTendered: null,
+    });
+    invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
+    const r = await service.byKey("k1");
+    expect(r.method).toBe("CASH");
+    expect(r.change).toBeUndefined();
+    expect(r.cashTendered).toBeUndefined();
   });
 
   it("(f) a sale with no stored tendered (card / legacy) reads back without the field", async () => {

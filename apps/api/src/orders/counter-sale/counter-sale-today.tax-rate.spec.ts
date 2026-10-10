@@ -65,9 +65,39 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
       { method: "CASH", amount: "41.27", status: "PAID" },
       { method: "CREDIT_NOTE", amount: "5.00", status: "PAID" },
     ];
+    // the credit note is a payment too: 41.27 + 5.00 > 41.27 total, so nothing is owed and change is served
     expect(toTodaysSaleRow(o).change).toBe(8.73);
     expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" })).change).toBeNull();
     expect(toTodaysSaleRow(rec()).change).toBeNull();
+  });
+
+  it("(N3) a partly paid cash sale serves no change", () => {
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [{ method: "CASH", amount: "20.00", status: "PAID" }];
+    const row = toTodaysSaleRow(o);
+    expect(row.balanceDue).toBe(21.27);
+    expect(row.change).toBeNull();
+  });
+
+  it("(N3) a card sale with a stale stored tendered serves no change", () => {
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [{ method: "CREDIT_CARD", amount: "41.27", status: "PAID" }];
+    expect(toTodaysSaleRow(o).change).toBeNull();
+  });
+
+  it("(N3) a fully paid cash sale serves the number", () => {
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [{ method: "CASH", amount: "41.27", status: "PAID" }];
+    expect(toTodaysSaleRow(o).change).toBe(8.73);
+  });
+
+  it("(N2) a later CASH payment past the tendered never serves a negative change", () => {
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [
+      { method: "CASH", amount: "41.27", status: "PAID" },
+      { method: "CASH", amount: "20.00", status: "PAID" },
+    ];
+    expect(toTodaysSaleRow(o).change).toBeNull();
   });
 
   it("the page query reads both in the ONE existing query: the column and each invoice's line rates", () => {
