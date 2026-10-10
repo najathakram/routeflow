@@ -300,6 +300,28 @@ export class StripeService implements OnModuleInit {
     return this.client.invoices.voidInvoice(invoiceId);
   }
 
+  /**
+   * SA-733r6 (B4): the card autopay will charge, for the Billing card ("Your Visa ending 4242 expires Oct 31").
+   * The customer's default payment method (a card only; a bank debit has no expiry), expanded in one call.
+   * Null when the customer has none or it is not a card.
+   */
+  async getDefaultCardSummary(
+    customerId: string,
+  ): Promise<{ brand: string; last4: string; expMonth: number; expYear: number } | null> {
+    const customer = await this.client.customers.retrieve(customerId, {
+      expand: ["invoice_settings.default_payment_method"],
+    });
+    const pm = customer?.invoice_settings?.default_payment_method;
+    const card = pm && typeof pm === "object" ? pm.card : null;
+    if (!card || typeof card.last4 !== "string") return null;
+    return {
+      brand: typeof card.brand === "string" ? card.brand : "card",
+      last4: card.last4,
+      expMonth: Number(card.exp_month),
+      expYear: Number(card.exp_year),
+    };
+  }
+
   // ─── Billing Portal ───────────────────────────────────────────────────────
 
   /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for

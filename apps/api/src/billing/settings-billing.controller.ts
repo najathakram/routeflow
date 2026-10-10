@@ -214,6 +214,24 @@ export class SettingsBillingController {
     });
   }
 
+  /**
+   * SA-733r6 (B4): the Stripe billing portal (update the card) plus, while an invoice is owed, its hosted page (pay it).
+   * TENANT_ADMIN only - an operator is told who to ask and gets no action. The read-only guard allow-lists this exact
+   * route so an admin can always reach Stripe from a paused workspace.
+   */
+  @Post("portal")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Stripe billing portal + the owed invoice's hosted page (admin only)" })
+  async createPortal(@CurrentUser() user: AuthUser) {
+    const tenantId = this.tenantIdOf(user);
+    const [portal, hostedInvoiceUrl] = await Promise.all([
+      this.billing.createBillingPortalSession(tenantId),
+      this.subscription.openInvoiceUrl(tenantId),
+    ]);
+    return { portalUrl: portal.portalUrl, hostedInvoiceUrl };
+  }
+
   @Post("addons/:sku/enable")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)

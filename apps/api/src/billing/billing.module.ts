@@ -16,6 +16,7 @@ import { ConfigSnapshotFlagService } from "./config-snapshot-flag.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { TenantConfigSnapshotAdminService } from "./tenant-config-snapshot-admin.service";
 import { SubscriptionService } from "./subscription.service";
+import { SubscriptionBillingExtras } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
@@ -53,6 +54,8 @@ import { DunningService } from "./dunning.service";
     AddonAccessService,
     ProrationService,
     SubscriptionService,
+    // SA-733r6 (B4): billing contact, open-invoice amount, autopay card (Stripe-backed, cached) for the view.
+    SubscriptionBillingExtras,
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,

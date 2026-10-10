@@ -12,6 +12,10 @@ import {
 import { computeServedFlags } from "./plan-flag-policy";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
+  EMPTY_BILLING_VIEW_EXTRAS,
+  SubscriptionBillingExtras,
+} from "./subscription-billing-extras";
+import {
   BILLING_EXPORT_INVOICE_FIELDS,
   EXPORT_EXCLUDED_EVENT_TYPES,
   deriveExportActor,
@@ -38,6 +42,9 @@ export class SubscriptionService {
     // unchanged rather than adding a 5th arg to every one of its `new SubscriptionService(...)`
     // call sites. Absent (undefined) degrades to "no override", byte-identical to today.
     private readonly featureOverrides?: FeatureOverrideService,
+    // SA-733r6 (B4): billing-contact name, open-invoice amount and the autopay card (Stripe-backed, cached).
+    // Optional for the same reason as above; absent = the four fields read null.
+    private readonly billingExtras?: SubscriptionBillingExtras,
   ) {}
 
   /** The tenant's current plan + add-ons + renewal state (settings-billing header). */
@@ -82,6 +89,11 @@ export class SubscriptionService {
       ? await this.featureOverrides.allActive(tenantId)
       : new Map();
 
+    // SA-733r6 (B4): who to ask, what is owed, which card autopay will charge. A failed read is null, never a throw.
+    const extras = this.billingExtras
+      ? await this.billingExtras.read(tenantId, sub)
+      : EMPTY_BILLING_VIEW_EXTRAS;
+
     return {
       planKey: ent.planKey,
       // R1.7/R2.5: the flags this tenant can actually use right now — the union of its own
@@ -123,7 +135,24 @@ export class SubscriptionService {
       downgradeEffectiveAt: sub?.downgradeEffectiveAt ?? null,
       trialEndsAt: ent.trialEndsAt,
       addons,
+      // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
+      pastDueSince: sub?.pastDueSince ?? null,
+      pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
+      billingContactName: extras.billingContactName,
+      openInvoiceAmount: extras.openInvoiceAmount,
+      paymentMethodSummary: extras.paymentMethodSummary,
+      nextCharge: extras.nextCharge,
     };
+  }
+
+  /** The hosted-invoice page of the invoice the tenant owes (the admin's Pay link); null when nothing is owed. */
+  async openInvoiceUrl(tenantId: string): Promise<string | null> {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: { pastDueInvoiceId: true },
+    });
+    if (!sub?.pastDueInvoiceId || !this.billingExtras) return null;
+    return this.billingExtras.hostedInvoiceUrl(sub.pastDueInvoiceId);
   }
 
   /** The four meters for the settings-billing usage bars. */

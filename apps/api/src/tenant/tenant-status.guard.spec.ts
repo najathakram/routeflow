@@ -4,8 +4,10 @@ import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
 
-function ctx(method: string, path: string): ExecutionContext {
-  const req = { headers: { authorization: `Bearer ${token}` }, method, path };
+const buyerToken = `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role: "CUSTOMER" })).toString("base64url")}.s`;
+
+function ctx(method: string, path: string, bearer: string = token): ExecutionContext {
+  const req = { headers: { authorization: `Bearer ${bearer}` }, method, path };
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
@@ -121,5 +123,35 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
 
   it("exports the allow-list as data (exact entries) so a new entry is a reviewed one-line diff", () => {
     expect(READ_ONLY_ALLOWED_MUTATIONS).toHaveLength(8);
+  });
+});
+
+// SA-733r6 (B4) / SA-733 D11: a buyer's write to a read-only (paused) seller is 403 SELLER_UNAVAILABLE, a coded,
+// seller-neutral refusal - never the staff-facing READ_ONLY text that talks about subscribing.
+describe("TenantStatusGuard - buyer writes to a read-only seller (B4)", () => {
+  it("refuses a buyer's POST with SELLER_UNAVAILABLE and no billing wording", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/buyer/orders", buyerToken))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    const body = err.getResponse() as { code: string; message: string };
+    expect(body.code).toBe("SELLER_UNAVAILABLE");
+    expect(body.message).not.toMatch(/payment|billing|subscribe|plan/i);
+  });
+
+  it("still lets a buyer read and sign in while the seller is read-only", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("GET", "/api/v1/buyer/products", buyerToken)),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/auth/refresh", buyerToken)),
+    ).resolves.toBe(true);
+  });
+
+  it("a staff user's blocked write keeps the READ_ONLY code", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 });

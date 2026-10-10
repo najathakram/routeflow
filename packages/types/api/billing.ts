@@ -65,6 +65,35 @@ export interface SubscriptionView<TDate = string> {
   addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;
   flags?: string[];
   paymentRequired: boolean;
+  /** SA-733r6 (B4) - the dunning clock and the banner's facts. All optional/null: a tenant that never failed a
+   *  payment (and any older server) simply omits them, and the banner then shows the autopay card only. */
+  /** When the first failed payment of the open invoice was stamped; day 0 of the 7-day grace. */
+  pastDueSince?: TDate | null;
+  /** The Stripe invoice the tenant owes; the Pay action is shown whenever this is set. */
+  pastDueInvoiceId?: string | null;
+  /** The oldest active TENANT_ADMIN's name - who operators are told to ask. */
+  billingContactName?: string | null;
+  /** The owed invoice's amount remaining, in dollars (always printed as money). */
+  openInvoiceAmount?: number | null;
+  /** The card autopay will charge (brand / last4 / expiry); null when none or not a card. */
+  paymentMethodSummary?: PaymentMethodSummary | null;
+  /** What the next renewal charges and when (dollars, ISO date). */
+  nextCharge?: { amount: number; date: TDate } | null;
+}
+
+/** The autopay card shown on the Billing card ("Your Visa ending 4242 expires Oct 31"). */
+export interface PaymentMethodSummary {
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+
+/** `POST /billing/portal` (TENANT_ADMIN): the Stripe portal to update the card, and - while an invoice is
+ *  owed - its hosted page to pay it. */
+export interface BillingPortalResult {
+  portalUrl: string;
+  hostedInvoiceUrl: string | null;
 }
 
 /**
