@@ -357,6 +357,17 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(users).toEqual(["dunning-milestones.ts"]);
     });
 
+    it("dunning notice money goes through fromCents (SA-733 D9), never a hand-rolled cents / 100", () => {
+      const src = code(read(path.join(SRC, "billing", "billing-notification.templates.ts")));
+      expect(src).toMatch(/import \{[^}]*\bfromCents\b[^}]*\} from "@routeflow\/pricing"/);
+      const fn = src.slice(
+        src.indexOf("function formatDunningAmount"),
+        src.indexOf("export function dunningTemplate"),
+      );
+      expect(fn).toContain("fromCents(");
+      expect(fn).not.toMatch(/\/\s*100\b/);
+    });
+
     it("the d0-sentAt lookup is gone (a stamp is always the stamp time)", () => {
       const all = dunningFiles()
         .map((f) => code(read(f)))
@@ -432,7 +443,9 @@ describe("SA-733r7 PR-B3 structural pins", () => {
 
     it("reads pastDueSince as UTC (TIMESTAMP(3) has no zone) and builds the episode key through the shared helper", () => {
       expect(script).toMatch(/from "\.\/lib\/pause-report-keys\.mjs"/);
-      expect(script).toMatch(/new Client\(\{[^}]*\btypes\b/);
+      expect(script).toMatch(/new Client\(\{[^}]*\btypes:\s*utcTimestampTypes\(pgTypes\)/);
+      // the remindersSent query must read the still-owed notice too, or those tenants show "none"
+      expect(script).toMatch(/milestone IN \([^)]*'DUNNING_PAUSED_STILL_OWED'[^)]*\)/);
       // the raw `new Date(since).toISOString()` key shifted on a non-UTC machine
       expect(sql).not.toMatch(/\$\{new Date\(since\)\.toISOString\(\)\}/);
       expect(sql).toMatch(/episodeKey\(/);
