@@ -354,6 +354,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(args.include).toBeUndefined();
     expect(Object.keys(args.select).sort()).toEqual(
       [
+        "counterCashTendered",
         "createdAt",
         "customer",
         "customerId",

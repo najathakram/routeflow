@@ -15,6 +15,7 @@ import type {
   TodaysSaleRow,
   TodaysSalesSummary,
 } from "@routeflow/types";
+import { saleTaxRatePercent } from "./counter-sale-tax-rate";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf } from "./counter-sale-readback";
 
@@ -173,6 +174,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       total: true,
       createdAt: true,
       customerId: true,
+      counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
@@ -181,6 +183,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           invoiceNumber: true,
           status: true,
           payments: { select: { method: true, amount: true, status: true } },
+          items: { select: { taxRate: true } },
         },
       },
       returns: {
@@ -213,12 +216,16 @@ export interface TodayOrderRecord {
   total: unknown;
   createdAt: Date;
   customerId: string;
+  /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
+  counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
+    items?: Array<{ taxRate: unknown }>;
   }>;
   returns: Array<{
     id: string;
@@ -329,6 +336,8 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     balanceDue,
     methods,
     paymentState,
+    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    taxRatePercent: saleTaxRatePercent(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };
