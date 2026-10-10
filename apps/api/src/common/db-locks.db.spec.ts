@@ -25,6 +25,8 @@ try {
   mod = {};
 }
 
+// Wait budget the (c) waiter passes to the lock helper; its elapsed budget derives from it.
+const LOCK_TIMEOUT_MS = 500;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // Call-site fallback: the guarded require above protects the module LOAD, but calling a
@@ -140,7 +142,7 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
     let waiterError: any;
     try {
       await withAdvisoryLock(
-        { family: "order-merge", key: "held", mode: "wait", waitMs: 500 },
+        { family: "order-merge", key: "held", mode: "wait", waitMs: LOCK_TIMEOUT_MS },
         async () => {
           throw new Error(
             "T4(c) violated: the waiter's fn ran while the holder still held the lock",
@@ -154,7 +156,8 @@ describeDb("db-locks — real-Postgres contention (T4, R1)", () => {
 
     expect(waiterError).toBeDefined();
     expect(waiterError?.name).toBe("LockTimeoutError");
-    expect(waiterElapsedMs).toBeLessThan(1500);
+    // The property is "times out instead of hanging": the margin absorbs host load (L-165).
+    expect(waiterElapsedMs).toBeLessThan(LOCK_TIMEOUT_MS + 5_000);
 
     // Let the holder finish so it doesn't leak into a later test.
     await holderPromise;
