@@ -149,6 +149,43 @@ describe("choice block visibility", () => {
     expect(confirmBtn(/^return & refund \$12\.40$/i)).toBeInTheDocument();
   });
 
+  it("W21b: the quote note follows the choice (credit note vs refund; no choice block = unchanged)", async () => {
+    await toQuote(quote());
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
+    expect(screen.queryByText(/issued as credit note/i)).toBeNull();
+    expect(screen.getByText(/this will be refunded to the customer/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Store credit" }));
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+    expect(screen.queryByText(/refunded to the customer/i)).toBeNull();
+  });
+
+  it("W21b: with no choice block the credit-note line is today's", async () => {
+    await toQuote(quote({ canRefund: false, paidInFull: false }));
+    expect(screen.getByText(/this will be issued as credit note/i)).toBeInTheDocument();
+  });
+
+  it("W21b: walk-in (Refund preselected) never shows the credit-note line", async () => {
+    await toQuote(quote({ customerIsWalkIn: true }));
+    expect(screen.queryByText(/issued as credit note/i)).toBeNull();
+    expect(screen.getByText(/this will be refunded to the customer/i)).toBeInTheDocument();
+  });
+
+  it("W21b: closing hands focus to onCloseAutoFocus (the opener restores it)", async () => {
+    const onCloseAutoFocus = jest.fn((e: Event) => e.preventDefault());
+    const props = {
+      onClose: jest.fn(),
+      customerId: "cust-1",
+      orderId: "order-1",
+      allowRefund: true,
+      onCloseAutoFocus,
+    };
+    const { rerender } = renderWithProviders(<RecordInlineReturnDialog open {...props} />);
+    await screen.findByText(/what came back/i);
+    rerender(<RecordInlineReturnDialog open={false} {...props} />);
+    await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalled());
+  });
+
   it("Refund by is preselected from paidMethods[0], falling back to Cash", async () => {
     await toQuote(quote({ paidMethods: ["CARD", "CASH"] }));
     fireEvent.click(screen.getByRole("radio", { name: "Refund $12.40" }));
@@ -287,6 +324,91 @@ describe("refund flow", () => {
     fireEvent.click(btn);
     await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
     expect(refundReturn.mock.calls[1]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 10 }]);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 409 carrying the server amount shows it, makes no re-quote, and re-POSTs with that amount", async () => {
+    refundReturn
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+      })
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText("The refund amount changed. Check it and confirm again.");
+    const btn = await screen.findByRole("button", { name: /^return & refund \$10\.00$/i });
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+    fireEvent.click(btn);
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    expect(refundReturn.mock.calls[1]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 10 }]);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("row 182: after a 409 carrying the server amount the quote's Total shows that figure too, not the stale one", async () => {
+    refundReturn.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+    });
+    await refundFlow();
+    expect(screen.getByText("Total").parentElement).toHaveTextContent("$12.40");
+    expect(screen.getByText("Subtotal")).toBeInTheDocument();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByRole("button", { name: /^return & refund \$10\.00$/i });
+    await waitFor(() =>
+      expect(screen.getByText("Total").parentElement).toHaveTextContent("$10.00"),
+    );
+    expect(screen.getByText("Total").parentElement).not.toHaveTextContent("$12.40");
+    // the old breakdown would no longer add up to the new total: it is hidden, never left contradicting it
+    expect(screen.queryByText("Subtotal")).toBeNull();
+    expect(screen.queryByText("Tax")).toBeNull();
+  });
+
+  it("a second 409 with a different amount updates the confirm again, still without a re-quote", async () => {
+    const changed = (amount: number) => ({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount } },
+    });
+    refundReturn
+      .mockRejectedValueOnce(changed(10))
+      .mockRejectedValueOnce(changed(9.5))
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$10\.00$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    expect(refundReturn.mock.calls[1][1].expectedAmount).toBe(10);
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$9\.50$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(3));
+    expect(refundReturn.mock.calls[2][1].expectedAmount).toBe(9.5);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 409 with an amount then a 409 without one re-quotes, and the re-quote beats the stale server amount", async () => {
+    refundReturn
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+      })
+      .mockRejectedValueOnce(apiErr(409, "REFUND_AMOUNT_CHANGED"))
+      .mockResolvedValueOnce({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    fireEvent.click(await screen.findByRole("button", { name: /^return & refund \$10\.00$/i }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    // the second 409 carries no usable amount: fall back to a re-quote
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    act(() => lastCall(quoteMutate)[1].onSuccess(quote({ total: 9.0, paidMethods: ["CARD"] })));
+    const btn = await screen.findByRole("button", { name: /^return & refund \$9\.00$/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(3));
+    expect(refundReturn.mock.calls[2]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 9 }]);
     expect(captureMutate).toHaveBeenCalledTimes(1);
   });
 

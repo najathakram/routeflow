@@ -125,6 +125,7 @@ import {
   lockedOrderStatus,
   lockOrderForCancel,
 } from "./order-cancel-impact";
+import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
@@ -1623,7 +1624,7 @@ export class OrdersService implements OnApplicationBootstrap {
       catalogIds.length > 0
         ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
-    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
+    assertBuyerLines(user, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     assertSellableLines(products); // WS8: a FAMILY is never a line
@@ -1849,6 +1850,13 @@ export class OrdersService implements OnApplicationBootstrap {
           ? decideTierOverride(product, tierForProduct, Number(overridePrice), item.overrideReason)
           : null;
       if (staff?.overridden) {
+        // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
+        if (options.priceEditAllowed === false) {
+          throw new ForbiddenException({
+            code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
+            message: "You can't change prices. Ask your account admin.",
+          });
+        }
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -2561,6 +2569,7 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
               // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
               const lockedStatus = await lockedOrderStatus(tx, id);
               carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
@@ -3181,7 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany(portalGateArgs(productIds));
-          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
+          assertBuyerLines(user, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3596,7 +3605,7 @@ export class OrdersService implements OnApplicationBootstrap {
               addProductIds.length > 0
                 ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
-            assertBuyerLines(user?.role, addProducts);
+            assertBuyerLines(user, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
@@ -5290,9 +5299,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // B214 (REG-B214): this loop hard-deletes invoices WITHOUT going through
-      // InvoicesService.deleteInvoice (ledger-reversal duplication, see below), so it must refuse
-      // on its own — same shared guard, before any write (L-072, L-081).
+      await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
+      // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
+      // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
       await assertNoUnspentSourcedCredits(
         tx,
         order.invoices.map((inv) => inv.id),

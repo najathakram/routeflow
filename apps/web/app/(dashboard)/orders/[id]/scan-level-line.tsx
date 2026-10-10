@@ -1,9 +1,14 @@
 import { unitWords, type SellLevel, type UnitWords } from "@routeflow/pricing";
 import type { PriceType } from "@/lib/api/orders";
+import { displayProductName } from "@/lib/product-display";
 
 export type { SellLevel };
-import { scanLevelForHit, scanLevelsForHit } from "../_components/scan/useScanCodeHandler";
-export { scanLevelForHit };
+import {
+  scanCodeIsShared,
+  scanLevelForHit,
+  scanLevelsForHit,
+} from "../_components/scan/useScanCodeHandler";
+export { scanCodeIsShared, scanLevelForHit };
 
 /** addProduct's (level, explicit bump level) for a scanned hit. */
 export function scanArgsForHit(code: string, p: any): [SellLevel, SellLevel | undefined] {
@@ -70,7 +75,15 @@ export function SplitLineHint({ item }: { item: any }) {
 /** The new order line the add-product flow appends (moved verbatim out of page.tsx). */
 export function buildNewLine(
   p: any,
-  o: { newId: string; startPrice: number; base: number; unitScan: boolean; special: boolean },
+  o: {
+    newId: string;
+    startPrice: number;
+    base: number;
+    unitScan: boolean;
+    special: boolean;
+    /** A picker tap / shared-code scan: the line starts on the product's default selling unit. */
+    startOnDefaultUnit?: boolean;
+  },
 ) {
   const { newId, startPrice, base, unitScan } = o;
   const priceType: PriceType = o.special ? "SPECIAL" : "STANDARD";
@@ -78,10 +91,11 @@ export function buildNewLine(
     id: newId,
     isNew: true,
     originalProductId: p.id,
-    originalProductName: p.name,
+    // "<Parent> - <Variant>" for a variant (its own `name` is just the flavor).
+    originalProductName: displayProductName(p),
     originalQty: 1,
     productId: p.id,
-    productName: p.name,
+    productName: displayProductName(p),
     qty: 1,
     // A UNIT scan on a boxed product is ONE loose piece: the split form (qty = pieces).
     ...(unitScan ? { boxSplit: true } : {}),
@@ -98,5 +112,6 @@ export function buildNewLine(
     // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
     unit: p.unit ?? "",
     priceType,
+    ...(o.startOnDefaultUnit ? { startOnDefaultUnit: true } : {}),
   };
 }

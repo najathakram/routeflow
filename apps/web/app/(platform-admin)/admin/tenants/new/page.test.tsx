@@ -484,3 +484,22 @@ describe("create-tenant business profile", () => {
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminCreateTenantPage — test-tenant slug notice (row 195)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchPlanCatalog.mockResolvedValue({ version: 1, effectiveAt: null, plans: [] });
+  });
+
+  it("shows 'this will be a TEST tenant' only while the slug matches a test pattern", async () => {
+    render(<AdminCreateTenantPage />);
+    const slug = await screen.findByLabelText("Slug");
+    expect(screen.queryByTestId("test-tenant-notice")).toBeNull();
+    fireEvent.change(slug, { target: { value: "acme-foods" } });
+    expect(screen.queryByTestId("test-tenant-notice")).toBeNull();
+    fireEvent.change(slug, { target: { value: "qa-smoke-1" } });
+    expect(screen.getByTestId("test-tenant-notice").textContent).toMatch(/TEST tenant/);
+    fireEvent.change(slug, { target: { value: "e2e-routeflow" } });
+    expect(screen.getByTestId("test-tenant-notice")).toBeTruthy();
+  });
+});

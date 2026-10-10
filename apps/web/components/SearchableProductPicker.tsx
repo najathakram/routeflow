@@ -6,12 +6,19 @@ import { cn, mergeRefs } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
+import { sellableFlat } from "@/lib/product-search-groups";
 
 interface PickerProduct {
   id: string;
   name: string;
   sku?: string;
   isActive?: boolean;
+  /** STANDARD | FAMILY | VARIANT | RECIPE: a FAMILY is a container and is never offered as a line. */
+  kind?: string | null;
+  /** Selling unit label (shown beside the name so two pack sizes are told apart). */
+  unit?: string;
+  /** Nested variants of a FAMILY row (async mode flattens them under the parent's name). */
+  variants?: PickerProduct[];
   /** Optional richer fields — populated by /products rows, used by the floating preview. */
   barcode?: string;
   variantName?: string | null;
@@ -72,6 +79,10 @@ interface SearchableProductPickerProps {
   preview?: boolean;
 }
 
+// A stable empty default: a fresh `[]` per render would change `sourceProducts` every render and
+// (with the flattened async list now a new array too) loop the preview-position effect.
+const NO_PRODUCTS: PickerProduct[] = [];
+
 /**
  * A real searchable combobox that replaces the native `<select>` for product
  * pickers. Native selects don't support type-to-search reliably across browsers
@@ -86,7 +97,7 @@ interface SearchableProductPickerProps {
 export function SearchableProductPicker({
   value,
   onChange,
-  products = [],
+  products = NO_PRODUCTS,
   excludeIds,
   placeholder = "Search products…",
   className,
@@ -126,8 +137,11 @@ export function SearchableProductPicker({
     { enabled: !!asyncMode && open },
   );
 
+  // Async mode picks a sellable product: a FAMILY row is replaced by its variants (named under the
+  // parent) and is never itself offered (B1215 C7). Static mode is caller-curated (it also serves
+  // the "choose a parent" pickers, which need families), so it is left alone.
   const sourceProducts = React.useMemo<PickerProduct[]>(
-    () => (asyncMode ? (asyncData?.data ?? []) : products),
+    () => (asyncMode ? sellableFlat<PickerProduct>(asyncData?.data ?? []) : products),
     [asyncMode, asyncData, products],
   );
 
@@ -322,7 +336,11 @@ export function SearchableProductPicker({
                     <p className="line-clamp-2 break-words" title={displayProductName(p)}>
                       {displayProductName(p)}
                     </p>
-                    {p.sku && <p className="truncate text-[11px] text-navy/70">SKU: {p.sku}</p>}
+                    {(p.sku || p.unit) && (
+                      <p className="truncate text-[11px] text-navy/70">
+                        {[p.sku ? `SKU: ${p.sku}` : null, p.unit].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
                   </div>
                   {p.isActive === false && (
                     <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-navy/70">

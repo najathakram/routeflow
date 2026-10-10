@@ -46,6 +46,8 @@ export interface ModalProps {
    * `scroll` off. Prove any dialog you opt in at a short viewport.
    */
   scroll?: boolean;
+  /** Extra classes for the header X (e.g. a 44 px tap target on a touch screen). */
+  closeClassName?: string;
 }
 
 export const Modal = ({
@@ -61,6 +63,7 @@ export const Modal = ({
   onOpenAutoFocus,
   onCloseAutoFocus,
   scroll = false,
+  closeClassName,
 }: ModalProps) => {
   const contentRef = React.useRef<HTMLDivElement>(null);
   return (
@@ -113,7 +116,10 @@ export const Modal = ({
             </div>
             {/* No onClick — Dialog.Close triggers onOpenChange which calls onClose via Root */}
             <Dialog.Close
-              className="ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className={cn(
+                "ml-auto flex-shrink-0 rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500",
+                closeClassName,
+              )}
               aria-label="Close"
             >
               <X className="h-4 w-4" />

@@ -21,7 +21,6 @@ import {
   Clock,
   Pencil,
   Trash2,
-  Zap,
   TrendingDown,
   CheckCircle2,
   DollarSign,
@@ -131,7 +130,9 @@ import {
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
-import { useProducts } from "@/lib/api/products";
+import { useProduct } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { CustomerPriceProductSearch } from "./customer-price-product-search";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
@@ -156,6 +157,7 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { GenerateOrderNowButton } from "./generate-order-button";
 import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
@@ -967,8 +969,6 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
-  const { data: productsData } = useProducts({ isActive: true, limit: 200 });
-  const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
@@ -980,16 +980,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
   const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
-
-  const filteredProducts = allProducts.filter(
-    (p: any) =>
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
-  );
+  // The product picked from the server-side search (its tier ladder feeds the price preview);
+  // an EDITED row has no pick yet, so its product is fetched by id.
+  const [pickedProduct, setPickedProduct] = React.useState<any>(null);
+  const { data: fetchedProduct } = useProduct(selectedProductId);
 
   // Get selected product for price preview
-  const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
+  const selectedProduct: any =
+    pickedProduct?.id === selectedProductId ? pickedProduct : fetchedProduct;
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
@@ -998,6 +996,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
+    setPickedProduct(null);
     setProductSearch("");
     setSelectedTier(null);
     setMsrpInput("");
@@ -1008,7 +1007,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openEdit = (cp: CustomerPrice) => {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
-    setProductSearch(cp.product?.name ?? "");
+    setPickedProduct(null);
+    setProductSearch(cp.product ? displayProductName(cp.product) : "");
     setSelectedTier(cp.pricingTier ?? null);
     setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
@@ -1376,40 +1376,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by name or SKU…"
-                value={productSearch}
-                onChange={(e) => {
-                  setProductSearch(e.target.value);
-                  setProductDropdownOpen(true);
-                }}
-                onFocus={() => setProductDropdownOpen(true)}
-                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                  <ul className="max-h-40 overflow-y-auto">
-                    {filteredProducts.slice(0, 20).map((p: any) => (
-                      <li key={p.id}>
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => {
-                            setSelectedProductId(p.id);
-                            setProductSearch(p.name);
-                            setProductDropdownOpen(false);
-                          }}
-                        >
-                          <span className="text-sm font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="font-mono text-xs text-navy/70">{p.sku}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+            <CustomerPriceProductSearch
+              value={productSearch}
+              onValueChange={setProductSearch}
+              onPick={(p) => {
+                setSelectedProductId(p.id);
+                setPickedProduct(p);
+                setProductSearch(displayProductName(p));
+              }}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -3528,20 +3503,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        <button
-                          title="Generate order now"
-                          className={cn(
-                            TAP_TARGET,
-                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
-                          )}
-                          onClick={() =>
+                        <GenerateOrderNowButton
+                          pending={generateOrder.isPending}
+                          onGenerate={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
-                        >
-                          <Zap className="h-4 w-4" />
-                        </button>
+                        />
                         <button
                           title="Edit template"
                           className={cn(

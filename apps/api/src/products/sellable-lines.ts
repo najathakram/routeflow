@@ -23,3 +23,55 @@ export function assertSellableLines(
     productIds: families.map((p) => p.id),
   });
 }
+
+/**
+ * B1216 (server half): a FAMILY is a container, never sold, so it never carries a customer price override or a
+ * promotion (the variants do). Same refusal style as `assertSellableLines`: 400 FAMILY_NOT_PRICEABLE naming every
+ * family. `subject` only shapes the sentence ("customer price" / "promotion").
+ */
+export function assertNoFamilyProducts(
+  products: ReadonlyArray<{ id: string; name?: string | null; kind?: string | null }>,
+  subject: "customer price" | "promotion",
+): void {
+  const families = products.filter((p) => p.kind === "FAMILY");
+  if (families.length === 0) return;
+  const names = families.slice(0, 3).map((p) => `"${p.name ?? p.id}"`);
+  const list = `${names.join(", ")}${families.length > 3 ? ", …" : ""}`;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.FAMILY_NOT_PRICEABLE,
+    message:
+      families.length === 1
+        ? `${names[0]} is a product family, not a sellable item, so it cannot have a ${subject}. Use one of its variants instead.`
+        : `${families.length} product families cannot have a ${subject} (${list}). Use their variants instead.`,
+    productIds: families.map((p) => p.id),
+  });
+}
+
+/**
+ * B1216: the by-id form of `assertNoFamilyProducts` for a writer that holds only a product id (the customer
+ * price upsert). The lookup is scoped by the explicit tenant id as well as `forTenant()`. An id that resolves to
+ * nothing is left to the caller's own not-found handling.
+ */
+export async function assertProductIdNotFamily(
+  prisma: {
+    getTenantId(): string | null | undefined;
+    forTenant(): {
+      product: {
+        findFirst(args: {
+          where: { id: string; tenantId: string };
+          select: { id: true; name: true; kind: true };
+        }): PromiseLike<{ id: string; name: string | null; kind: string | null } | null>;
+      };
+    };
+  },
+  productId: string,
+  subject: "customer price" | "promotion",
+): Promise<void> {
+  const tenantId = prisma.getTenantId();
+  if (!tenantId) throw new BadRequestException("No tenant context");
+  const target = await prisma.forTenant().product.findFirst({
+    where: { id: productId, tenantId },
+    select: { id: true, name: true, kind: true },
+  });
+  if (target) assertNoFamilyProducts([target], subject);
+}

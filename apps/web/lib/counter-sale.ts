@@ -107,6 +107,11 @@ export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
 }
 
+/** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
+export function amountDue(total: number, tendered: number): number {
+  return Math.max(0, roundMoney(total - tendered));
+}
+
 export interface PaymentMethodOption {
   method: CounterSalePaymentMethod;
   label: string;
@@ -233,6 +238,10 @@ export function isCounterSaleIncomplete(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_INCOMPLETE;
 }
 
+/** POS-5: 403 PRICE_EDIT_NOT_PERMITTED (an edited price from a caller who may not change prices). Nothing was written. */
+export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
+  "You can't change prices. Use Reset price on the edited lines, or ask your account admin.";
+
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
@@ -244,6 +253,9 @@ export function counterSaleErrorCopy(err: unknown): string {
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
+  // POS-5: a refused price edit says so (and what to do), before the generic permission copy below.
+  if (status === 403 && res?.data?.code === API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED)
+    return COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY;
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
@@ -377,7 +389,7 @@ export function heldAttemptKey(tenant?: string | null, userId?: string | null): 
 }
 const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
 const optNum = (n: unknown): boolean => n === undefined || isNum(n);
-function validLine(l: unknown): boolean {
+export function validLine(l: unknown): boolean {
   if (!l || typeof l !== "object") return false;
   const o = l as Record<string, unknown>;
   return (
@@ -390,7 +402,7 @@ function validLine(l: unknown): boolean {
     optNum(o.unitsPerBox)
   );
 }
-function validCustomer(c: unknown): boolean {
+export function validCustomer(c: unknown): boolean {
   if (c === null || c === undefined) return true;
   if (typeof c !== "object") return false;
   const o = c as Record<string, unknown>;

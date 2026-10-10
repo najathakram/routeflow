@@ -20,6 +20,10 @@ import { counterSaleGate } from "./capability-shape";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
+import { canEditPrices } from "./can-edit-prices";
+import { resolveTierPrices } from "./counter-sale-tier-price";
+import { assertReplaySamePrices } from "./counter-sale-replay-price";
+import { AuditService } from "../../audit/audit.service";
 import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
@@ -80,6 +84,7 @@ export class CounterSaleService {
     private readonly prisma: PrismaService,
     @Inject(FULFILMENT_CAPABILITY_READER)
     private readonly capability: FulfilmentCapabilityReader,
+    private readonly audit: AuditService,
   ) {}
 
   async ring(
@@ -140,6 +145,9 @@ export class CounterSaleService {
       {
         fulfillPath: FulfillPath.PICKUP,
         counterSale: true,
+        // POS-5: create() refuses a real price change from a caller who may not make one (403
+        // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
+        priceEditAllowed: canEditPrices(user),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
@@ -156,6 +164,8 @@ export class CounterSaleService {
                 "This Idempotency-Key already belongs to another order, not a counter sale. Start a new sale.",
             });
           }
+          // POS-5: a price that differs from the stored sale's is a changed cart, like any other.
+          assertReplaySamePrices(existing, dto.items);
           replayed = true;
         },
       },
@@ -163,8 +173,24 @@ export class CounterSaleService {
     const orderId: string = primary.orderId;
     const order = await this.prisma.forTenant().order.findFirst({
       where: { id: orderId },
-      select: { id: true, orderNumber: true },
+      select: {
+        id: true,
+        orderNumber: true,
+        // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
+        lineItems: {
+          where: { overriddenBy: { not: null } },
+          select: {
+            productId: true,
+            unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+            overrideReason: true,
+          },
+          orderBy: { position: "asc" },
+        },
+      },
     });
+    if (!replayed) await this.auditPriceEdits(user, order, customerId);
 
     // 5. The tender, against what is STORED now. The re-read -> "no tender yet" -> record window runs
     // under the shared advisory lock keyed on the order, so two concurrent same-key submits cannot
@@ -194,6 +220,62 @@ export class CounterSaleService {
     }
 
     return buildCounterSaleResponse({ payment: dto.payment, order, invoices, replayed, planError });
+  }
+
+  /**
+   * POS-5: ONE `counter-sale.price-edited` audit row per NEW sale that carries a price change, written from the
+   * STORED lines (never the request). No row when nothing was edited or on a replay (known gap: if the first attempt
+   * died after the sale committed, its retry is a replay and writes none; the line's own `overriddenBy` +
+   * `overrideReason` remain the durable record). The sale is already committed: a failure here is logged, never thrown.
+   */
+  private async auditPriceEdits(
+    user: JwtPayload,
+    order: {
+      id: string;
+      orderNumber?: string | null;
+      lineItems?: Array<{
+        productId?: string | null;
+        unitPrice: unknown;
+        originalPrice?: unknown;
+        priceType?: string | null;
+        overrideReason?: string | null;
+      }> | null;
+    } | null,
+    customerId: string,
+  ): Promise<void> {
+    const edited = order?.lineItems ?? [];
+    if (!order || edited.length === 0) return;
+    try {
+      // The TIER price each edit started from (originalPrice is the LIST price): server-resolved, read-only.
+      const tierPrices = await resolveTierPrices(
+        this.prisma.forTenant(),
+        customerId,
+        edited.flatMap((l) => (l.productId ? [l.productId] : [])),
+      );
+      await this.audit.log({
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: user.sub,
+        impersonatedBy: user.impersonatedBy ?? null,
+        action: "counter-sale.price-edited",
+        entityType: "Order",
+        entityId: order.id,
+        meta: {
+          orderNumber: order.orderNumber,
+          lines: edited.map((l) => ({
+            productId: l.productId ?? null,
+            originalPrice: l.originalPrice == null ? null : Number(l.originalPrice),
+            tierPrice: (l.productId ? tierPrices.get(l.productId) : undefined) ?? null,
+            unitPrice: Number(l.unitPrice),
+            priceType: l.priceType ?? null,
+            reason: l.overrideReason ?? null,
+          })),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `counter sale ${order.id}: price-edit audit not written (${(e as Error)?.message ?? e})`,
+      );
+    }
   }
 
   /**

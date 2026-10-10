@@ -15,6 +15,7 @@ export function getCounterCartHasLines(): boolean {
 export function setCounterCartHasLines(next: boolean): void {
   if (next === hasLines) return;
   hasLines = next;
+  if (!next) leaveRequest = null;
   listeners.forEach((fn) => fn());
 }
 
@@ -34,6 +35,7 @@ export function setCounterCartBusy(next: boolean): void {
   if (next === busy) return;
   busy = next;
   if (!next) leaveNotice = false; // the sale settled: the "wait" notice goes with it
+  if (next) leaveRequest = null; // a sale started recording: any parked leave is moot
   listeners.forEach((fn) => fn());
 }
 
@@ -44,16 +46,57 @@ export function getCounterLeaveNotice(): boolean {
   return leaveNotice;
 }
 
+let leaveRequest: (() => void) | null = null;
+
+/** True while a leave is parked behind the "Discard this sale?" dialog (the register header renders it). */
+export function getCounterLeaveRequest(): boolean {
+  return leaveRequest !== null;
+}
+
+let discardHook: (() => void) | null = null;
+
+/** The counter screen registers what "Discard" must clean up (its stored live cart); null on unmount. */
+export function setCounterDiscardHook(fn: (() => void) | null): void {
+  discardHook = fn;
+}
+
+/** Discard: drop the cart's stored copy, then run the parked leave once. */
+export function confirmCounterLeave(): void {
+  const go = leaveRequest;
+  if (!go) return;
+  leaveRequest = null;
+  listeners.forEach((fn) => fn());
+  discardHook?.(); // a left-behind stored cart would be restored next visit
+  go();
+}
+
+/** Keep selling: drop the parked leave. */
+export function cancelCounterLeave(): void {
+  if (!leaveRequest) return;
+  leaveRequest = null;
+  listeners.forEach((fn) => fn());
+}
+
 /**
  * THE shared leave guard. Every shell way out of the counter (Exit, rail/drawer links, g shortcuts, the palette, the user menu,
- * leaving an impersonation) asks this first. Returns true when the leave must NOT happen (a sale is being recorded: leaving would
- * drop the attempt and invite a second ring-up) and raises the notice the register header shows. Off the counter nothing is busy.
+ * browser Back, leaving an impersonation) asks this first. Returns true when the leave must NOT happen right now:
+ *  - a sale is being recorded (leaving would drop the attempt and invite a second ring-up): raises the notice the header shows;
+ *  - the cart has lines and the caller passed `proceed`: the leave is parked and the "Discard this sale?" dialog opens;
+ *    Discard runs `proceed` (the caller's own navigation), Keep selling drops it.
+ * Returns false when the caller may go on itself. Off the counter nothing is busy and the cart has no lines.
  */
-export function guardCounterLeave(): boolean {
-  if (!busy) return false;
-  if (!leaveNotice) {
-    leaveNotice = true;
-    listeners.forEach((fn) => fn());
+export function guardCounterLeave(proceed?: () => void): boolean {
+  if (busy) {
+    if (!leaveNotice) {
+      leaveNotice = true;
+      listeners.forEach((fn) => fn());
+    }
+    return true;
   }
-  return true;
+  if (hasLines && proceed) {
+    leaveRequest = proceed;
+    listeners.forEach((fn) => fn());
+    return true;
+  }
+  return false;
 }
