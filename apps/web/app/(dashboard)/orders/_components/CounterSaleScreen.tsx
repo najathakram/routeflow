@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { normalizeBoxesPieces, roundMoney, type SellLevel } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -91,6 +91,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { QuickKeysGrid } from "./QuickKeysGrid";
 
 interface PickedCustomer {
   id: string;
@@ -292,6 +293,10 @@ export function CounterSaleScreen() {
   });
   const repriceBlockedRef = React.useRef(false);
   repriceBlockedRef.current = reprice.blocked;
+
+  // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
+  const addProduct = (product: any, level: SellLevel, n: number) =>
+    setLines((prev) => addScannedProduct(prev, product, level, n, reprice.tierFor(product.id)));
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -893,6 +898,16 @@ export function CounterSaleScreen() {
               </ul>
             ) : null}
           </section>
+
+          {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}
+          <QuickKeysGrid
+            locked={lineLocked}
+            onAdd={(key, e) => {
+              if (lineLocked || saleInFlight() || receipt) return;
+              addProduct(key.product, key.sellLevel, 1);
+              refocusAfterPointer(e); // a keyboard activation keeps focus on the key, like the tender buttons
+            }}
+          />
 
           {/* scan / search: always focused; a typed quantity multiplies the next scan */}
           <form

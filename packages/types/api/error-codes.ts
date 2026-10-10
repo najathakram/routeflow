@@ -534,6 +534,10 @@ export const API_ERROR_CODES = {
   RF_INVOICE_NO_PRICE: "RF_INVOICE_NO_PRICE",
   RF_INVOICE_REFERENCE_REQUIRED: "RF_INVOICE_REFERENCE_REQUIRED",
   RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD: "RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD",
+  /** Create Tenant (platform-admin): the admin email or username is already used by a user in that tenant (400). */
+  ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
+  /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
+  TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */

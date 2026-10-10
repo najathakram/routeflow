@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import AdminTenantsPage from "./page";
+import { superAdminClient } from "@/lib/admin-api";
 
 jest.mock("next/link", () => ({
   __esModule: true,
@@ -186,5 +187,40 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     ).toBeInTheDocument();
     expect(screen.queryByText(/internal: tenant has live subscription rows/)).toBeNull();
     expect(screen.getByRole("dialog", { name: "Delete Acme (acme)?" })).toBeInTheDocument();
+  });
+});
+
+describe("SA-1: the tenants list plan filter offers the same plans as every other plan control", () => {
+  it("lists the catalog plans in catalog order (not the legacy STARTER/PROFESSIONAL/ENTERPRISE)", async () => {
+    render(<AdminTenantsPage />);
+    const select = (await screen.findByRole("combobox", {
+      name: "Filter by plan",
+    })) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        "",
+        "STARTER",
+        "GROWTH",
+        "SCALE",
+        "ENTERPRISE",
+      ]),
+    );
+    expect(Array.from(select.options).map((o) => o.value)).not.toContain("PROFESSIONAL");
+  });
+
+  it("picking GROWTH asks the server for plan=GROWTH", async () => {
+    render(<AdminTenantsPage />);
+    const select = (await screen.findByRole("combobox", {
+      name: "Filter by plan",
+    })) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(5));
+    fireEvent.change(select, { target: { value: "GROWTH" } });
+    await waitFor(() =>
+      expect(
+        (superAdminClient.get as jest.Mock).mock.calls.some(([url]) =>
+          String(url).includes("plan=GROWTH"),
+        ),
+      ).toBe(true),
+    );
   });
 });
