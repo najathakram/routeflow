@@ -42,11 +42,15 @@ function view(over: Partial<SubscriptionView> = {}): SubscriptionView {
   };
 }
 
+// The server decides the labels (formatted in the TENANT zone, SA-738) and whether a pause will really happen.
 const owing = (over: Partial<SubscriptionView> = {}) =>
   view({
     pastDueSince: T0.toISOString(),
     pastDueInvoiceId: "in_1",
     openInvoiceAmount: 149,
+    pastDueMonthLabel: "November",
+    graceEndsLabel: "Nov 8",
+    pauseEnforced: true,
     ...over,
   });
 
@@ -85,6 +89,24 @@ describe("subscriptionBannerState - nothing owed", () => {
     const s = subscriptionBannerState(view(), "staff", T0);
     expect(s.kind).toBe("none");
     expect(s.cardLine).toBeNull();
+  });
+
+  it("the next-charge date is the server's tenant-zone label, verbatim", () => {
+    const s = subscriptionBannerState(
+      view({ nextCharge: { amount: 149, date: "2026-12-01T03:00:00.000Z", dateLabel: "Nov 30" } }),
+      "admin",
+      T0,
+    );
+    expect(s.cardLine).toBe("Autopay is on. Next charge: $149.00 on Nov 30.");
+  });
+
+  it("without a label (an older server) the date is formatted in UTC, never the browser zone", () => {
+    const s = subscriptionBannerState(
+      view({ nextCharge: { amount: 149, date: "2026-12-01T03:00:00.000Z" } }),
+      "admin",
+      T0,
+    );
+    expect(s.cardLine).toBe("Autopay is on. Next charge: $149.00 on Dec 1.");
   });
 
   it("autopay with no next charge known still says Autopay is on, no dash", () => {
@@ -322,5 +344,113 @@ describe("readOnlyLine", () => {
     expect(readOnlyLine(undefined)).toBe(
       "Not available while read-only. Your admin can restore it.",
     );
+  });
+});
+
+describe("subscriptionBannerState - labels come from the server (S4)", () => {
+  it("uses the tenant-zone month and deadline verbatim (a Chicago tenant whose charge failed Oct 31 local)", () => {
+    const v = owing({ pastDueMonthLabel: "October", graceEndsLabel: "Nov 7" });
+    expect(subscriptionBannerState(v, "admin", at(1)).copy).toBe(
+      "We couldn't charge your card for October. Update it by Nov 7 and nothing changes.",
+    );
+  });
+
+  it("without labels it falls back to UTC from pastDueSince, never the browser zone", () => {
+    const v = owing({ pastDueMonthLabel: null, graceEndsLabel: null });
+    expect(subscriptionBannerState(v, "admin", at(1)).copy).toBe(
+      "We couldn't charge your card for November. Update it by Nov 8 and nothing changes.",
+    );
+  });
+});
+
+// B2: BILLING_PAUSE_MODE dark / off (the default) never pauses. The grace states must not threaten a read-only date
+// or claim a deadline; they stay neutral, keep the Update payment action, and never escalate to amber / alert.
+describe("subscriptionBannerState - pause NOT enforced (dark / off)", () => {
+  const dark = (over: Partial<SubscriptionView> = {}) => owing({ pauseEnforced: false, ...over });
+
+  it.each([0, 3, 6, 9, 30])(
+    "admin day %i: neutral card-update copy, no read-only threat, no deadline",
+    (day) => {
+      const s = subscriptionBannerState(dark(), "admin", at(day, 3));
+      expect(s.kind).toBe("grace");
+      expect(s.tone).toBe("neutral");
+      expect(s.copy).toBe(
+        "We couldn't charge your card for November. Update it to keep autopay running.",
+      );
+      expect(s.copy).not.toMatch(/read-only|tomorrow|\bby\b|Nov 8/i);
+      expect(s.action).toEqual({ label: "Update payment", intent: "update-payment" });
+      expect(s.dismiss).toEqual({ scope: "day", key: expect.any(String) });
+      expect(s.live).toBe("status");
+    },
+  );
+
+  it.each([0, 6, 30])("operator day %i: the billing-issue line, no threat", (day) => {
+    const s = subscriptionBannerState(dark(), "staff", at(day, 3));
+    expect(s.copy).toBe(
+      "There's a billing issue. Everything still works. Dana can sort it out in Billing.",
+    );
+    expect(s.action).toBeNull();
+    expect(s.tone).toBe("neutral");
+  });
+
+  it("an older server that sends no flag is treated as not enforced", () => {
+    const v = owing();
+    delete (v as any).pauseEnforced;
+    expect(subscriptionBannerState(v, "admin", at(6, 3)).kind).toBe("grace");
+  });
+
+  it("the Billing card still offers Pay for an admin", () => {
+    expect(subscriptionBannerState(dark(), "admin", at(2)).cardPay).toEqual({
+      label: "Pay $149.00",
+      intent: "pay",
+    });
+  });
+});
+
+describe("subscriptionBannerState - pause enforced keeps the escalation", () => {
+  it("day 6 is amber / alert / not dismissible only when the server enforces the pause", () => {
+    expect(subscriptionBannerState(owing({ pauseEnforced: true }), "admin", at(6, 2)).kind).toBe(
+      "final-day",
+    );
+    expect(subscriptionBannerState(owing({ pauseEnforced: false }), "admin", at(6, 2)).kind).toBe(
+      "grace",
+    );
+  });
+});
+
+// S7: a cancelled workspace that still owes an invoice is read-only because it was cancelled; paying does not
+// restore it, so the sentence must not promise that.
+describe("subscriptionBannerState - read-only because of a cancel, with an owed invoice (S7)", () => {
+  const cancelled = (over: Partial<SubscriptionView> = {}) =>
+    owing({ status: "READ_ONLY", readOnlyReason: "subscription_cancelled", ...over });
+
+  it.each(["admin", "staff"] as const)(
+    "%s: neutral line, never 'until the payment goes through'",
+    (role) => {
+      const s = subscriptionBannerState(cancelled(), role, at(9));
+      expect(s.kind).toBe("read-only");
+      expect(s.copy).toBe(
+        "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+      );
+      expect(s.copy).not.toMatch(/payment|goes through/i);
+      expect(s.cardPay).toBeNull();
+    },
+  );
+
+  it("the admin gets the Billing link, no Pay button", () => {
+    const s = subscriptionBannerState(cancelled(), "admin", at(9));
+    expect(s.action).toEqual({ label: "Billing", intent: "open-billing" });
+    expect(subscriptionBannerState(cancelled(), "staff", at(9)).action).toBeNull();
+  });
+});
+
+describe("subscriptionBannerState - an owed marker with no pastDueSince (S-nit)", () => {
+  it("shows the neutral grace state, not 'Autopay is on.'", () => {
+    const v = owing({ pastDueSince: null, pastDueMonthLabel: null, graceEndsLabel: null });
+    const admin = subscriptionBannerState(v, "admin", at(2));
+    expect(admin.kind).toBe("grace");
+    expect(admin.copy).toBe("We couldn't charge your card. Update it to keep autopay running.");
+    expect(admin.cardLine).toBeNull();
+    expect(subscriptionBannerState(v, "staff", at(2)).kind).toBe("grace");
   });
 });
