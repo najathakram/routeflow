@@ -161,7 +161,7 @@ describe("ProductUnitsCard", () => {
       expect(ph).not.toMatch(/derived/i);
       expect(ph.length).toBeLessThanOrEqual(10);
     }
-    expect(screen.getAllByText(/derived from the pack price/i)).toHaveLength(1);
+    expect(screen.getAllByText(/derived from the box price/i)).toHaveLength(1);
   });
 
   it("an invalid draft (blank name or size) cannot be saved", () => {

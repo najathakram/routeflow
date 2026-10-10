@@ -11,6 +11,7 @@ export type RefundErrorKind =
   | "refundedCash"
   | "notRefundable"
   | "paidWithCredit"
+  | "exceedsCash"
   | "failed";
 
 /** Every kind except "failed" (retry) and "changed" (re-quote, fresh confirm) ends the refund: Close only. */
@@ -39,6 +40,9 @@ export const REFUND_COPY = {
   notRefundable: "There's nothing to refund on this return.",
   /** F4: a sale paid (partly) with store credit goes back as store credit. */
   paidWithCredit: "Paid with store credit, so it goes back as store credit",
+  /** SA-749r2 #9: the cash refund is more than the cash taken for the sale (less cash already refunded). Not terminal: switch the tender. */
+  exceedsCash:
+    "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
   /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
   quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
@@ -61,6 +65,8 @@ export function refundErrorKind(err: unknown): RefundErrorKind {
     return "notRefundable";
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT)
     return "paidWithCredit";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID)
+    return "exceedsCash";
   return "failed";
 }
 

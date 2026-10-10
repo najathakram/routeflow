@@ -27,6 +27,8 @@
  *     by hand in the Stripe dashboard). In `off` / `dark` the reconciler and the invoice.paid heal do NOT remove
  *     them; each logs `billing.dunning.would_unpause tenant=<id> sub=<id>` instead. Those log lines are the signal;
  *     review them before flipping to `enforced`, which WILL remove an unknown pause.
+ *   - PAUSED tenants whose clocked invoice was voided / marked uncollectible afterwards: they stay paused until admin
+ *     activation; each logs `billing.dunning.paused_on_closed_invoice tenant=<id> invoice=<id> status=<status>` once a day.
  *   - ACTIVE tenants that tried a plan change while an invoice was owed: in `dark` each logs
  *     `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=<id> entryPoint=<name>`; count those lines.
  *
@@ -39,7 +41,8 @@
  */
 import { createRequire } from "module";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
-const { Client } = createRequire(import.meta.url)("pg");
+import { episodeKey, utcTimestampTypes } from "./lib/pause-report-keys.mjs";
+const { Client, types: pgTypes } = createRequire(import.meta.url)("pg");
 
 const PAUSE_HOURS = 168; // DUNNING_PAUSE_HOURS in src/billing/dunning-config.ts
 const HOUR_MS = 60 * 60 * 1000;
@@ -50,7 +53,9 @@ const json = process.argv.slice(2).includes("--json");
 const databaseUrl = resolveReportDbUrl("report-billing-pause-blast-radius");
 if (!databaseUrl) process.exit(2);
 
-const client = new Client({ connectionString: databaseUrl });
+// pastDueSince is TIMESTAMP(3) WITHOUT a zone: read it as UTC (node-postgres would use the machine's zone and shift
+// the notice key and the hours overdue on anything but a UTC host). See scripts/lib/pause-report-keys.mjs.
+const client = new Client({ connectionString: databaseUrl, types: utcTimestampTypes(pgTypes) });
 const q = async (sql, params) => (await client.query(sql, params)).rows;
 
 async function main() {
@@ -78,13 +83,14 @@ async function main() {
         `SELECT l."tenantId", l.milestone, l.key, l."sentAt"
            FROM "BillingNotificationLog" l
           WHERE l."tenantId" = ANY($1::text[])
-            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED')`,
+            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED','DUNNING_PAUSED_STILL_OWED')`,
         [stampedIds],
       )
     : [];
-  const sentFor = (tenantId, invoiceId) =>
+  // notices are keyed per EPISODE: `<invoiceId>:<pastDueSince ISO>` (SA r-note 3)
+  const sentFor = (tenantId, invoiceId, since) =>
     logRows
-      .filter((l) => l.tenantId === tenantId && l.key === invoiceId)
+      .filter((l) => l.tenantId === tenantId && l.key === episodeKey(invoiceId, since))
       .map((l) => l.milestone.replace("DUNNING_", "").toLowerCase())
       .sort();
 
@@ -104,7 +110,9 @@ async function main() {
         slug: r.slug,
         status: r.status,
         hoursOverdue: hours == null ? "n/a" : Math.floor(hours),
-        remindersSent: sentFor(r.id, r.pastDueInvoiceId).join(",") || "none",
+        remindersSent:
+          (r.pastDueSince ? sentFor(r.id, r.pastDueInvoiceId, r.pastDueSince) : []).join(",") ||
+          "none",
         onFlip: action,
       };
     });
@@ -172,7 +180,9 @@ async function main() {
       " sweep will LIST (an upper bound for what it stamps). A Stripe pause_collection set by hand and not known" +
       " locally is invisible here: in off/dark the reconciler logs `billing.dunning.would_unpause`, and in dark the" +
       " plan changes that enforced would refuse log `billing.dunning.would_refuse` - read those log lines before" +
-      " flipping to enforced.",
+      " flipping to enforced. A PAUSED tenant whose clocked invoice was later voided or marked uncollectible stays" +
+      " paused until admin activation (no automatic resume): each logs `billing.dunning.paused_on_closed_invoice" +
+      " tenant=<id> invoice=<id> status=<status>` once a day - review those before and after the flip.",
   );
   console.log(
     `\n${wouldPause} tenant(s) would get the final notice on the first enforced sweep and be paused no sooner than 24 h later.\n`,

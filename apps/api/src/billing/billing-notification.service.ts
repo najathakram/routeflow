@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import {
   trialEndingTemplate,
@@ -115,15 +116,12 @@ export class BillingNotificationService {
     return tenant?.name ?? tenant?.slug ?? "your account";
   }
 
-  /** Fix round (finding 9): display in the tenant's own timezone when TenantConfig has one,
-   *  else UTC, explicitly labelled — display-only, never affects the underlying Date value or
-   *  any idempotency key. */
+  /** Fix round (finding 9): display in the tenant's own timezone when it has a valid one (the one
+   *  resolver, SA-738), else null so the date is UTC, explicitly labelled — display-only, never
+   *  affects the underlying Date value or any idempotency key. */
   private async tenantTimezone(tenantId: string): Promise<string | null> {
-    const cfg = await this.prisma.tenantConfig.findFirst({
-      where: { tenantId },
-      select: { timezone: true },
-    });
-    return cfg?.timezone ?? null;
+    const { zone, fallback } = await resolveZone(this.prisma, { tenantId });
+    return fallback ? null : zone;
   }
 
   private formatDate(d: Date, timezone: string | null): string {
@@ -336,11 +334,18 @@ export class BillingNotificationService {
   async notifyDunning(
     tenantId: string,
     milestone: string,
-    invoiceId: string,
+    key: string,
     kind: DunningEmailKind,
-    extra: { payUrl: string | null; readOnlyOn?: string; byDate?: string },
+    extra: {
+      payUrl: string | null;
+      readOnlyOn?: string;
+      byDate?: string;
+      invoiceNumber?: string | null;
+      amountCents?: number | null;
+      currency?: string | null;
+    },
   ): Promise<RfInvoiceSendResult> {
-    return this.sendIfClaimed(tenantId, milestone, invoiceId, (admin, businessName) =>
+    return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
       dunningTemplate({
         kind,
         businessName,
@@ -348,13 +353,16 @@ export class BillingNotificationService {
         payUrl: extra.payUrl,
         readOnlyOn: extra.readOnlyOn,
         byDate: extra.byDate,
+        invoiceNumber: extra.invoiceNumber,
+        amountCents: extra.amountCents,
+        currency: extra.currency,
       }),
     );
   }
 
   /** The claim alone (no email): records that a milestone's notice went out inside another milestone's email. */
-  recordDunningMilestone(tenantId: string, milestone: string, invoiceId: string): Promise<boolean> {
-    return this.claim(tenantId, milestone, invoiceId);
+  recordDunningMilestone(tenantId: string, milestone: string, key: string): Promise<boolean> {
+    return this.claim(tenantId, milestone, key);
   }
 
   /** The tenant-local date (and zone label) for a notice's calendar date. */

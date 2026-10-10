@@ -16,14 +16,14 @@ import { InvoicesService } from "../../invoices/invoices.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
-import { counterSaleGate } from "./capability-shape";
+import { assertCounterSalesEnabled } from "./counter-sale-gate";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
-import { canEditPrices } from "./can-edit-prices";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
+import { staffMay } from "../../auth/permissions/staff-capabilities";
 import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
@@ -93,13 +93,7 @@ export class CounterSaleService {
     idempotencyKey?: string,
   ): Promise<CounterSaleResponse> {
     // 1. Gate: the tenant's capability must offer a counter.
-    const cap = await this.capability.get(this.prisma.getTenantId());
-    if (!counterSaleGate(cap)) {
-      throw new ForbiddenException({
-        code: API_ERROR_CODES.COUNTER_SALES_DISABLED,
-        message: "Counter sales are not turned on for this business.",
-      });
-    }
+    await assertCounterSalesEnabled(this.capability, this.prisma.getTenantId());
 
     // 2. Request-only validation: nothing is written until all of it passes.
     if (dto.walkIn && dto.customerId) {
@@ -147,7 +141,7 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        priceEditAllowed: canEditPrices(user),
+        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE"),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)

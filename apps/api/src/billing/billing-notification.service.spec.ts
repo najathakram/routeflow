@@ -54,7 +54,8 @@ function makeService(overrides?: {
         ),
     },
     tenantConfig: {
-      findFirst: jest
+      // SA-738: the zone is read through the one resolver, which uses findUnique.
+      findUnique: jest
         .fn()
         .mockResolvedValue(overrides?.tenantConfig === undefined ? null : overrides.tenantConfig),
     },
@@ -423,6 +424,40 @@ describe("BillingNotificationService - dunning notices (SA-733r7 PR-B3)", () => 
     expect(sendPlatform.mock.calls[2][0].subject).toContain("now read-only");
     // every notice links to the invoice's hosted page
     for (const c of sendPlatform.mock.calls) expect(c[0].text).toContain(extra.payUrl);
+  });
+
+  it("paused_still_owed (SA G8): still read-only, names the invoice number and amount, links to the hosted page, no alarm words", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning(
+      "t1",
+      "DUNNING_PAUSED_STILL_OWED",
+      "in_1:2026-11-09T04:00:00.000Z",
+      "paused_still_owed",
+      {
+        ...extra,
+        invoiceNumber: "INV-0042",
+        amountCents: 4900,
+        currency: "usd",
+      },
+    );
+    const mail = sendPlatform.mock.calls[0][0];
+    expect(mail.text).toMatch(/still read-only/i);
+    expect(mail.text).toContain("INV-0042");
+    expect(mail.text).toContain("$49.00");
+    expect(mail.text).toMatch(/pay/i);
+    expect(mail.text).toContain(extra.payUrl);
+    // neutral wording: the workspace is already read-only, so nothing here threatens or accuses
+    for (const part of [mail.subject, mail.text]) {
+      expect(part).not.toMatch(/overdue|failed|final|suspend|delinquen|urgent|immediately/i);
+    }
+  });
+
+  it("paused_still_owed without an invoice number or amount still reads cleanly", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning("t1", "DUNNING_PAUSED_STILL_OWED", "k", "paused_still_owed", extra);
+    const text = sendPlatform.mock.calls[0][0].text;
+    expect(text).toMatch(/still read-only/i);
+    expect(text).not.toMatch(/undefined|null|NaN/);
   });
 
   it("recordDunningMilestone is the claim alone: no email", async () => {

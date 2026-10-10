@@ -21,6 +21,7 @@ import {
   type DunningRow,
   dunningEligible,
   isOwed,
+  isPausedRow,
   type StatusTransition,
 } from "./dunning-core";
 import {
@@ -28,7 +29,7 @@ import {
   type DiscoveryOutcome,
   discoverUnstamped,
 } from "./dunning-discovery";
-import { clockStartFor, logClockStarted } from "./dunning-clock";
+import { episodeKey, logClockStarted } from "./dunning-clock";
 import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
@@ -75,7 +76,7 @@ export class DunningService {
   /** Keys already logged by this process (a repeating hourly condition logs once). Bounded. */
   private readonly seen = new Set<string>();
   /** Process-local rotation cursors for the periodic sweeps (an empty map after a restart is fine). */
-  private readonly cursors = new Map<string, number>();
+  private readonly cursors = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -134,8 +135,8 @@ export class DunningService {
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts) || facts.paymentProcessing) return "not_owed";
 
-    // one full runway: the stamp time, unless this invoice's d0 already went out (r7 r-note 2)
-    const since = await clockStartFor(this.deps(), row.tenantId, invoiceId, now);
+    // r-note 3: the clock starts at the STAMP time, always (a re-stamp after an exit is a new episode)
+    const since = now;
     const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, since);
     if (!stamped) return "unchanged";
     this.logger.warn(`billing.dunning.stamped tenant=${row.tenantId} invoice=${invoiceId}`);
@@ -147,6 +148,8 @@ export class DunningService {
       stampAt: now,
       since,
       finalizedAt: typeof finalizedSec === "number" ? new Date(finalizedSec * 1000) : null,
+      attempts:
+        typeof invoice?.attempt_count === "number" ? invoice.attempt_count : facts.attemptCount,
       firstFailureAt: now,
     });
 
@@ -157,6 +160,7 @@ export class DunningService {
         { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
         facts,
         now,
+        { paused: isPausedRow(row) },
       );
     } catch (err) {
       this.logger.warn(
@@ -271,6 +275,19 @@ export class DunningService {
     if (!dunningEligible(row)) return "noop";
     const deps = this.deps();
     const invoiceId = row.pastDueInvoiceId;
+    const since = row.pastDueSince;
+    if (!since) {
+      // A clock with no start can be neither mailed nor paused over (and `now` is never a stand-in: that would
+      // restart the week every hour). Rows are only written through the stamp, so this is corruption: say so, once a day.
+      if (
+        this.once(`no_since:${row.tenantId}:${invoiceId}:${Math.floor(now.getTime() / 86_400_000)}`)
+      ) {
+        this.logger.warn(
+          `billing.dunning.clock_without_since tenant=${row.tenantId} invoice=${invoiceId}`,
+        );
+      }
+      return "noop";
+    }
 
     // M8: re-read Stripe before any email or pause. Paid / void / unknown = the clock is stale: resolve it.
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
@@ -283,17 +300,26 @@ export class DunningService {
       }
       // void / uncollectible (the owner's write-off) / gone: it never keeps a clock, but there is NO new resume path
       // here - an ACTIVE tenant's clock is cleared or moved by the daily discovery, a PAUSED tenant exits through
-      // admin activation (or invoice.paid of the clocked invoice).
+      // admin activation (or invoice.paid of the clocked invoice). A paused tenant whose invoice closed is the
+      // operator's cue: one warn per tenant per day.
+      if (
+        isPausedRow(row) &&
+        this.once(`paused_closed:${row.tenantId}:${Math.floor(now.getTime() / 86_400_000)}`)
+      ) {
+        this.logger.warn(
+          `billing.dunning.paused_on_closed_invoice tenant=${row.tenantId} invoice=${invoiceId} status=${facts.status ?? "gone"}`,
+        );
+      }
       return "noop";
     }
     if (facts.paymentProcessing) return "noop"; // N6: a bank debit in flight is not a failure
 
-    const since = row.pastDueSince ?? now;
     const finalSentAt = await runMilestones(
       deps,
       { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
       facts,
       now,
+      { paused: isPausedRow(row) },
     );
 
     if (row.tenant.status !== "ACTIVE" || row.pausedAt) return "noop";
@@ -302,8 +328,8 @@ export class DunningService {
     if (!pauseHourReached(now, zone)) return "noop";
 
     if (mode === "dark") {
-      // once per tenant and invoice, not every hourly sweep
-      if (this.once(`would_pause:${row.tenantId}:${invoiceId}`)) {
+      // once per tenant and EPISODE (a re-stamped clock on the same invoice is a new one), not every hourly sweep
+      if (this.once(`would_pause:${row.tenantId}:${episodeKey(invoiceId, since)}`)) {
         this.logger.log(
           `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
         );
@@ -318,7 +344,7 @@ export class DunningService {
       return "noop";
     }
 
-    const paused = await pauseTenantTx(deps, row, invoiceId, now);
+    const paused = await pauseTenantTx(deps, row, invoiceId, since, now);
     if (!paused) return "noop"; // CAS loser: another sweep paused it, or invoice.paid resumed it first
     this.tenantStatusGuard.invalidate(row.tenantId);
     this.logger.warn(`billing.dunning.paused tenant=${row.tenantId} invoice=${invoiceId}`);
@@ -332,7 +358,7 @@ export class DunningService {
       await this.notifications.notifyDunning(
         row.tenantId,
         DUNNING_MILESTONES.PAUSED,
-        invoiceId,
+        episodeKey(invoiceId, since),
         "paused",
         { payUrl: facts.hostedInvoiceUrl ?? null },
       );
@@ -354,7 +380,14 @@ export class DunningService {
 
   discover(now: Date, opts: DiscoveryOptions = {}): Promise<DiscoveryOutcome> {
     if (!this.stripe.isConfigured)
-      return Promise.resolve({ tenants: 0, stamped: 0, failed: 0, cleared: 0, moved: 0 });
+      return Promise.resolve({
+        tenants: 0,
+        clocks: 0,
+        stamped: 0,
+        failed: 0,
+        cleared: 0,
+        moved: 0,
+      });
     return discoverUnstamped(this.deps(), now, opts);
   }
 

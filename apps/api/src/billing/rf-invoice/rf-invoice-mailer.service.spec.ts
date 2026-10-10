@@ -135,7 +135,7 @@ function make(
       ),
     },
     tenant: { findUnique: jest.fn(async () => ({ name: "Acme Retail", slug: "acme" })) },
-    tenantConfig: { findFirst: jest.fn(async () => null) },
+    tenantConfig: { findUnique: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: any) => fn(prisma)),
   };
   const sendPlatform = jest.fn(async (_mail?: any) => ({

@@ -247,8 +247,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         expect(c[0].where.status.in).toEqual(["SENT", "VIEWED"]);
     });
 
-    it.each([undefined, "dark"])(
-      "dark (mode %s — the default): the SAME where as a COUNT, one log line by tenant id, nothing written",
+    it.each(["dark"])(
+      "dark (mode %s — emergency dark-back): the SAME where as a COUNT, one log line by tenant id, nothing written",
       async (v) => {
         if (v === undefined) delete process.env.OVERDUE_SWEEP_MODE;
         else process.env.OVERDUE_SWEEP_MODE = v;
@@ -302,8 +302,9 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
     });
 
-    it("an unset value is the silent dark default", () => {
-      expect(overdueSweepMode({})).toEqual({ mode: "dark", unknown: null });
+    it("an unset value is the silent enforced default (owner 2026-10-10); dark-back is explicit", () => {
+      expect(overdueSweepMode({})).toEqual({ mode: "enforced", unknown: null });
+      expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: "dark" }).mode).toBe("dark");
     });
 
     it("one tenant failing never stops the others", async () => {
@@ -335,7 +336,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
   it("B3: the zone comes from an EXPLICIT tenant id when there is no ambient tenant", async () => {
     jest.spyOn(prisma, "getTenantId").mockReturnValue(undefined as any);
     prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: CHICAGO });
-    await expect(tenantTimeZone(prisma as any, "t-explicit")).resolves.toBe(CHICAGO);
+    await expect(tenantTimeZone(prisma as any, { tenantId: "t-explicit" })).resolves.toBe(CHICAGO);
     expect(prisma.tenantConfig.findUnique.mock.calls[0][0].where).toEqual({
       tenantId: "t-explicit",
     });
@@ -347,16 +348,21 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       "utf8",
     );
     expect(cn).toMatch(
-      /async settleOrderCreditsInTx\([\s\S]*?tenantTimeZone\(this\.prisma, tenantId\)/,
+      /async settleOrderCreditsInTx\([\s\S]*?tenantTimeZone\(this\.prisma, \{ tenantId \}\)/,
     );
   });
 
   it("every persisted-status writer passes the tenant zone (the required parameter, counted)", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const calls = (src: string) => src.match(/recomputeInvoiceStatus\(/g)?.length ?? 0;
-    // 11 writers + the injected price-adjustment dep in invoices.service; in credit notes the 3
-    // settlement writers + #2536's voidPreview (a read-only preview of the status after a void).
-    expect(calls(read("invoices/invoices.service.ts"))).toBe(12);
+    // 10 writers + the injected price-adjustment dep in invoices.service (voidPayment's writer moved verbatim
+    // to payment-void-tx.ts, SA-762r, counted next); in credit notes the 3 settlement writers + #2536's
+    // voidPreview (a read-only preview of the status after a void).
+    expect(calls(read("invoices/invoices.service.ts"))).toBe(11);
+    expect(calls(read("invoices/payment-void-tx.ts"))).toBe(1);
+    expect(read("invoices/payment-void-tx.ts")).toMatch(
+      /recomputeInvoiceStatus\(\s*totalPaid,[\s\S]*?\btz,/,
+    );
     expect(calls(read("credit-notes/credit-notes.service.ts"))).toBe(4);
     for (const rel of ["invoices/invoices.service.ts", "credit-notes/credit-notes.service.ts"])
       expect(read(rel)).not.toMatch(/recomputeStatus\(/);

@@ -8,6 +8,8 @@ export interface CreateReview {
   businessName: string;
   slug: string;
   adminEmail: string;
+  /** The IANA zone the tenant will be created with. */
+  timezone: string;
   planName: string;
   billingLine: string;
   setupTitle: string;
@@ -63,6 +65,7 @@ export function ReviewCreateSheet({
           <p>
             <span className="font-mono">{review.slug}</span>, admin {review.adminEmail}
           </p>
+          <p className="text-xs text-slate-300">Time zone {review.timezone}</p>
         </Group>
         <Group id="sheet-plan" title="Plan and billing">
           <p>{review.planName}</p>

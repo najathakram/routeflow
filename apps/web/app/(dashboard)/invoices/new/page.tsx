@@ -72,6 +72,8 @@ import {
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  pillLabel,
+  unitWords,
   type SellLevel,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
@@ -675,6 +677,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewInvoicePage() {
+  const w = unitWords();
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
@@ -1778,7 +1781,10 @@ export default function NewInvoicePage() {
                                       <span className="italic">no SKU</span>
                                     )}
                                     {Number(p.unitsPerBox ?? 0) > 1 ? (
-                                      <span> · {p.unitsPerBox} per box</span>
+                                      <span>
+                                        {" "}
+                                        · {p.unitsPerBox} {w.base.short.other} per {w.pack.lower}
+                                      </span>
                                     ) : null}
                                   </p>
                                 </div>
@@ -1904,7 +1910,7 @@ export default function NewInvoicePage() {
                           });
                         }}
                       />
-                      {/* Case | Unit sell-by toggle — UI-only; the payload always
+                      {/* {Pack} | {Base} sell-by toggle — UI-only; the payload always
                           carries {qty, boxes, pieces} regardless of the mode. */}
                       {item.unitsPerBox && item.unitsPerBox > 1 && (
                         <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -1912,25 +1918,25 @@ export default function NewInvoicePage() {
                             type="button"
                             onClick={() => setLineSellBy(item.key, "case")}
                             className={cn(
-                              "px-1.5 py-0.5 transition-colors",
+                              "max-w-[104px] truncate whitespace-nowrap px-1.5 py-0.5 transition-colors",
                               (item.sellBy ?? "case") === "case"
                                 ? "bg-brand-500 text-white"
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Case
+                            {pillLabel(w.pack.one)}
                           </button>
                           <button
                             type="button"
                             onClick={() => setLineSellBy(item.key, "unit")}
                             className={cn(
-                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                              "max-w-[104px] truncate whitespace-nowrap border-l border-surface-border px-1.5 py-0.5 transition-colors",
                               item.sellBy === "unit"
                                 ? "bg-brand-500 text-white"
                                 : "bg-white text-navy/70 hover:bg-surface-raised",
                             )}
                           >
-                            Unit
+                            {pillLabel(w.base.one)}
                           </button>
                         </div>
                       )}
@@ -1949,9 +1955,11 @@ export default function NewInvoicePage() {
                             }
                             onFocus={(e) => e.target.select()}
                             className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Total units"
+                            title={`Total ${w.base.lowerOther}`}
                           />
-                          <span className="text-[9px] text-navy/30 text-right">units</span>
+                          <span className="text-[9px] text-navy/30 text-right">
+                            {w.base.short.other}
+                          </span>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-0.5">
@@ -1970,9 +1978,9 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Cases"
+                              title={w.pack.other}
                             />
-                            <span className="text-[10px] text-navy/70">c+</span>
+                            <span className="text-[10px] text-navy/70">{w.pack.lower} +</span>
                             <input
                               type="number"
                               min={0}
@@ -1988,11 +1996,11 @@ export default function NewInvoicePage() {
                               }}
                               onFocus={(e) => e.target.select()}
                               className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                              title="Extra loose units"
+                              title={`Extra ${w.base.lowerOther}`}
                             />
                           </div>
                           <span className="text-[9px] text-navy/30 text-right">
-                            {item.qty} units
+                            {item.qty} {w.baseShortFor(item.qty)}
                           </span>
                         </div>
                       )
@@ -2039,7 +2047,8 @@ export default function NewInvoicePage() {
                       )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
-                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
+                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/
+                          {w.base.short.one}
                         </p>
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}

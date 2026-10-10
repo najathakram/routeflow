@@ -1587,7 +1587,10 @@ export class CreditNotesService {
     const seen = new Set<string>();
     for (const s of selections) {
       if (seen.has(s.creditNoteId))
-        throw new BadRequestException(`Duplicate credit note selection: ${s.creditNoteId}`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Duplicate credit note selection: ${s.creditNoteId}`,
+        );
       seen.add(s.creditNoteId);
     }
 
@@ -1597,15 +1600,26 @@ export class CreditNotesService {
     const now = new Date();
     for (const id of ids) {
       const cn: any = byId.get(id);
-      if (!cn) throw new NotFoundException(`Credit note ${id} not found`);
+      if (!cn)
+        throw new NotFoundException({
+          code: API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          message: `Credit note ${id} not found`,
+        });
       if (cn.customerId !== customerId)
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
           `Credit note ${cn.creditNoteNumber ?? id} does not belong to this customer`,
         );
       if (cn.status === "VOID")
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has been voided`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has been voided`,
+        );
       if (cn.expiresAt && new Date(cn.expiresAt) <= now)
-        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has expired`);
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_UNAVAILABLE,
+          `Credit note ${cn.creditNoteNumber ?? id} has expired`,
+        );
     }
   }
 
@@ -1846,7 +1860,7 @@ export class CreditNotesService {
     // the payment would be written tenant-orphaned.
     tenantId: string | null = this.prisma.getTenantId(),
   ): Promise<{ applied: number; unapplied: number }> {
-    const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
+    const tz = await tenantTimeZone(this.prisma, { tenantId }); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
     // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
     // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles

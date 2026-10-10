@@ -44,7 +44,6 @@ function make(
     /** getInvoiceFacts per invoice id (phase 2 re-reads the CLOCKED invoice) */
     factsById?: Record<string, any>;
     casCount?: number;
-    d0?: Record<string, Date>;
   } = {},
 ) {
   const tx: any = {
@@ -72,12 +71,6 @@ function make(
         return r;
       }),
     },
-    billingNotificationLog: {
-      findFirst: jest.fn(async (a: any) => {
-        const at = opts.d0?.[a?.where?.key];
-        return at ? { sentAt: at } : null;
-      }),
-    },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
   const stripe: any = {
@@ -95,6 +88,78 @@ function make(
   const svc = new DunningService(prisma, stripe, notifications, { invalidate: jest.fn() } as any);
   svc.bindTransition((async () => true) as any);
   return { svc, prisma, tx, stripe, notifications };
+}
+
+/** A DunningService wired to ONE clocked row, as the stamp left it, with this episode's notice log. */
+function sweepWorld(
+  stamped: { pastDueSince: Date; pastDueInvoiceId: string },
+  finalSentAt: Date | null,
+  history: any[] = [],
+) {
+  const key = `${stamped.pastDueInvoiceId}:${stamped.pastDueSince.toISOString()}`;
+  const logs = [
+    ...history,
+    ...(finalSentAt
+      ? [
+          { milestone: "DUNNING_D0", sentAt: stamped.pastDueSince, key },
+          { milestone: "DUNNING_D3", sentAt: stamped.pastDueSince, key },
+          { milestone: "DUNNING_D6", sentAt: finalSentAt, key },
+          { milestone: "DUNNING_FINAL", sentAt: finalSentAt, key },
+        ]
+      : []),
+  ];
+  const tx: any = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    tenant: { findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }) },
+    tenantSubscription: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
+    },
+  };
+  const prisma: any = {
+    getTenantId: () => null,
+    tenantSubscription: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          tenantId: "t1",
+          stripeSubId: "sub_t1",
+          externalPayment: false,
+          catchupState: null,
+          pastDueSince: stamped.pastDueSince,
+          pastDueInvoiceId: stamped.pastDueInvoiceId,
+          pausedAt: null,
+          tenant: {
+            status: "ACTIVE",
+            readOnlyReason: null,
+            deletedAt: null,
+            class: "PRODUCTION",
+          },
+        },
+      ]),
+      findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
+    },
+    tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: "UTC" }) },
+    billingNotificationLog: {
+      findMany: jest.fn(async (a: any) => logs.filter((l) => l.key === a.where.key)),
+    },
+    $transaction: jest.fn(async (fn: any) => fn(tx)),
+  };
+  const stripe: any = {
+    isConfigured: true,
+    getInvoiceFacts: jest.fn().mockResolvedValue(OPEN_FACTS),
+    updateSubscription: jest.fn().mockResolvedValue({}),
+  };
+  const notifications: any = {
+    notifyDunning: jest.fn().mockResolvedValue({ status: "sent", recipients: 1 }),
+    recordDunningMilestone: jest.fn(),
+    localDateLabel: jest.fn().mockResolvedValue("x"),
+  };
+  const transition = jest.fn(async () => true);
+  const svc = new DunningService(prisma, stripe, notifications, {
+    invalidate: jest.fn(),
+  } as any);
+  svc.bindTransition(transition as any);
+  return { svc, transition, notifications };
 }
 
 describe("DunningService.discover (daily open-invoice discovery)", () => {
@@ -118,24 +183,72 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     });
   });
 
-  it("a 40-day-old never-attempted invoice gets a FULL runway: d0 now, nothing due to pause before +168 h", async () => {
-    const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_old", 40 * 24)] } });
-    await d.svc.discover(NOW);
-    const stamped = d.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
-    expect(stamped).toEqual({ pastDueSince: NOW, pastDueInvoiceId: "in_old" });
-    // the pause is due at pastDueSince + 168 h: a full week from NOW, not 40 days ago
-    expect(stamped.pastDueSince.getTime() + 168 * H).toBe(NOW.getTime() + 168 * H);
+  describe("a 40-day-old never-attempted invoice gets a FULL runway (a REAL hourly sweep decides)", () => {
+    it("discovery stamps the STAMP time; the sweep does NOT pause at +167 h and DOES at +168 h", async () => {
+      process.env.BILLING_PAUSE_MODE = "enforced";
+      const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_old", 40 * 24)] } });
+      await d.svc.discover(NOW);
+      const stamped = d.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+      expect(stamped).toEqual({ pastDueSince: NOW, pastDueInvoiceId: "in_old" });
+
+      // this episode's final notice went out at +144 h; NOW is 04:00 UTC so the pause hour is reached at both checks
+      const finalAt = new Date(NOW.getTime() + 144 * H);
+      const early = sweepWorld(stamped, finalAt);
+      expect((await early.svc.sweep(new Date(NOW.getTime() + 167 * H))).paused).toBe(0);
+      expect(early.transition).not.toHaveBeenCalled();
+      const due = sweepWorld(stamped, finalAt);
+      expect((await due.svc.sweep(new Date(NOW.getTime() + 168 * H))).paused).toBe(1);
+    });
   });
 
-  it("an invoice whose d0 already went out keeps that original time (moving back and forth never restarts it)", async () => {
-    const original = new Date("2026-10-30T00:00:00Z");
-    const d = make({
+  it("(i) exit + re-stamp of the SAME invoice: a new stamp time, a new notice key, d0 goes out again and nothing from episode 1 is reused", async () => {
+    process.env.BILLING_PAUSE_MODE = "enforced";
+    // episode 1: discovery stamps in_a, the sweeps send d0/d3/d6/final, then the tenant is activated (clock cleared)
+    const first = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30)] } });
+    await first.svc.discover(NOW);
+    const s1 = first.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+    const key1 = `in_a:${s1.pastDueSince.toISOString()}`;
+    const history = [
+      "DUNNING_D0",
+      "DUNNING_D3",
+      "DUNNING_D6",
+      "DUNNING_FINAL",
+      "DUNNING_PAUSED",
+    ].map((m) => ({ milestone: m, sentAt: NOW, key: key1 }));
+
+    // episode 2: the invoice is still open; a later discovery stamps it again
+    const later = new Date(NOW.getTime() + 9 * 24 * H);
+    const second = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30 + 9 * 24)] } });
+    await second.svc.discover(later);
+    const s2 = second.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+    expect(s2).toEqual({ pastDueSince: later, pastDueInvoiceId: "in_a" });
+    const key2 = `in_a:${later.toISOString()}`;
+    expect(key2).not.toBe(key1);
+
+    // the hourly sweep one hour into episode 2 mails d0 under the NEW key, whatever episode 1 left in the log
+    const w = sweepWorld(s2, null, history);
+    await w.svc.sweep(new Date(later.getTime() + H));
+    expect(w.notifications.notifyDunning).toHaveBeenCalledTimes(1);
+    expect(w.notifications.notifyDunning).toHaveBeenCalledWith(
+      "t1",
+      "DUNNING_D0",
+      key2,
+      "d0",
+      expect.anything(),
+    );
+  });
+
+  it("a YOUNG invoice (2 h) that Stripe already attempted IS owed: discovery stamps it; one it never attempted is left alone", async () => {
+    const tried = make({
       rows: [subRow("t1")],
-      invoices: { sub_t1: [inv("in_a", 30)] },
-      d0: { in_a: original },
+      invoices: { sub_t1: [inv("in_a", 2, { attempt_count: 1 })] },
     });
-    await d.svc.discover(NOW);
-    expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].data.pastDueSince).toEqual(original);
+    expect((await tried.svc.discover(NOW)).stamped).toBe(1);
+    const untried = make({
+      rows: [subRow("t1")],
+      invoices: { sub_t1: [inv("in_a", 2, { attempt_count: 0 })] },
+    });
+    expect((await untried.svc.discover(NOW)).stamped).toBe(0);
   });
 
   it("logs the finalization time with the stamp (structured, for the report)", async () => {
@@ -148,6 +261,9 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     expect(line).toContain("invoice=in_a");
     expect(line).toContain(`stampAt=${NOW.toISOString()}`);
     expect(line).toContain(`finalizedAt=${new Date(NOW.getTime() - 30 * H).toISOString()}`);
+    // never attempted by Stripe: there is no failure to date, and the log says so instead of a bare "none"
+    expect(line).toContain("attempts=0");
+    expect(line).toContain("firstFailureAt=never_attempted");
   });
 
   it("23 h old is NOT stamped (Stripe may still be about to collect it)", async () => {
@@ -245,6 +361,7 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     const off = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30)] } });
     expect(await off.svc.discover(NOW)).toEqual({
       tenants: 0,
+      clocks: 0,
       stamped: 0,
       failed: 0,
       cleared: 0,
@@ -335,6 +452,57 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
       });
     });
 
+    it("phase 2 does not double count tenants: `tenants` is phase 1, `clocks` is phase 2", async () => {
+      const d = make({
+        rows: [subRow("t1"), clocked("t2")],
+        invoices: { sub_t1: [] },
+        factsById: { in_clock_t2: OPEN_FACTS },
+      });
+      expect(await d.svc.discover(NOW)).toMatchObject({ tenants: 1, clocks: 1 });
+    });
+
+    it("a lost CAS (invoice.paid / a new stamp / a pause landed between the read and the update): nothing cleared or moved, nothing logged", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: VOID },
+        casCount: 0,
+      });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const out = await d.svc.discover(NOW);
+      expect(out).toMatchObject({ cleared: 0, moved: 0, failed: 0 });
+      expect(
+        warn.mock.calls.some((c: any[]) => /clock_cleared|clock_started/.test(String(c[0]))),
+      ).toBe(false);
+      // and the update itself was guarded on the exact clock and on the tenant not being paused
+      expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].where).toEqual({
+        tenantId: "t1",
+        pastDueInvoiceId: "in_clock_t1",
+        pausedAt: null,
+      });
+    });
+
+    it("a YOUNG sibling that Stripe already attempted IS a move target (the one owed rule: age OR attempted)", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: VOID },
+        invoices: { sub_t1: [inv("in_young", 2, { attempt_count: 2 })] },
+      });
+      expect(await d.svc.discover(NOW)).toMatchObject({ moved: 1, cleared: 0 });
+      expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].data).toEqual({
+        pastDueInvoiceId: "in_young",
+        pastDueSince: NOW,
+      });
+    });
+
+    it("a moved-to sibling must pass the SAME minimum-age filter as phase 1: a young sibling is not a target, so the clock is cleared", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: VOID },
+        invoices: { sub_t1: [inv("in_young", 5)] }, // finalized 5 h ago: Stripe may still be about to collect it
+      });
+      expect(await d.svc.discover(NOW)).toMatchObject({ cleared: 1, moved: 0 });
+    });
+
     it("leaves a clock alone while its invoice is still open, and leaves a PAID one to invoice.paid", async () => {
       const open = make({ rows: [clocked("t1")], factsById: { in_clock_t1: OPEN_FACTS } });
       const o1 = await open.svc.discover(NOW);
@@ -374,6 +542,7 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
       const d = make({ rows: [clocked("t1")], factsById: { in_clock_t1: VOID } });
       expect(await d.svc.discover(NOW)).toEqual({
         tenants: 0,
+        clocks: 0,
         stamped: 0,
         failed: 0,
         cleared: 0,

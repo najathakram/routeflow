@@ -1,3 +1,4 @@
+import { fromCents } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
@@ -422,7 +423,19 @@ export function rfInvoiceEmail(
 // SA-733r7 PR-B3: the dunning emails (d0 / d3 / d6, the final read-only notice, and the paused notice). The copy is
 // truthful for each BILLING_PAUSE_MODE: `d6` names no date (it is what `dark` sends); `final` and `paused` exist only
 // in `enforced`. Wording is fixed - no ids, no amounts - and the pay link is the invoice's Stripe-hosted page.
-export type DunningEmailKind = "d0" | "d3" | "d6" | "final" | "paused";
+export type DunningEmailKind = "d0" | "d3" | "d6" | "final" | "paused" | "paused_still_owed";
+
+/** "$49.00": cents in the invoice's own currency (USD when Stripe sent none). */
+function formatDunningAmount(cents: number, currency?: string | null): string {
+  const code = (currency || "usd").toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(
+      fromCents(cents),
+    );
+  } catch {
+    return `${fromCents(cents).toFixed(2)} ${code}`;
+  }
+}
 
 export function dunningTemplate(params: {
   kind: DunningEmailKind;
@@ -434,6 +447,10 @@ export function dunningTemplate(params: {
   readOnlyOn?: string;
   /** `d6` (dark) only: the tenant-local date to update the card by. */
   byDate?: string;
+  /** `paused_still_owed` only: the open invoice's number, amount still owed (cents) and currency. */
+  invoiceNumber?: string | null;
+  amountCents?: number | null;
+  currency?: string | null;
 }): BillingEmailTemplate {
   const link = params.payUrl || billingSettingsUrl();
   const biz = params.businessName;
@@ -463,6 +480,18 @@ export function dunningTemplate(params: {
         params.readOnlyOn ? ` on ${params.readOnlyOn}` : " tomorrow"
       }. Your data stays safe, and paying restores full access right away.`,
     },
+    // SA G8: the workspace is ALREADY read-only, so this is plain information - no deadline, no alarm words.
+    paused_still_owed: {
+      subject: `Your workspace is still read-only — ${biz}`,
+      tagline: "Workspace read-only",
+      body: `${biz} is still read-only. ${
+        params.invoiceNumber ? `Invoice ${params.invoiceNumber}` : "Your subscription invoice"
+      }${
+        typeof params.amountCents === "number" && params.amountCents > 0
+          ? ` for ${formatDunningAmount(params.amountCents, params.currency)}`
+          : ""
+      } is open. Pay it to restore full access right away; your data stays safe.`,
+    },
     paused: {
       subject: `Your workspace is now read-only — ${biz}`,
       tagline: "Workspace read-only",
@@ -470,7 +499,10 @@ export function dunningTemplate(params: {
     },
   };
   const c = copy[params.kind];
-  const label = params.kind === "paused" ? "Pay the open invoice" : "Pay now";
+  const label =
+    params.kind === "paused" || params.kind === "paused_still_owed"
+      ? "Pay the open invoice"
+      : "Pay now";
   const html = baseLayout({
     tagline: c.tagline,
     bodyHtml: `

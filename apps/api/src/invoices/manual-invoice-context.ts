@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
@@ -63,18 +63,27 @@ export async function loadManualLineContext(
 }
 
 /**
+ * RF-4: an exempt customer owes $0 of the category (regulated) tax exactly like the regular sales tax:
+ * zero each line's snapshot IN PLACE, so the stored InvoiceItem + the regulated-sales ledger record the $0
+ * that was billed. A no-op for a non-exempt customer.
+ */
+export function zeroExemptCategoryTax(
+  itemsData: Array<{ categoryTaxAmount?: number }>,
+  isTaxExempt: boolean,
+): void {
+  if (isTaxExempt) for (const it of itemsData) it.categoryTaxAmount = 0;
+}
+
+/**
  * RF-4: category (regulated) tax folds into an invoice's tax EXACTLY like the regular sales tax w.r.t. tax
- * exemption — an exempt customer owes $0 of BOTH. Returns the Σ per-line category tax; when exempt it
- * returns 0 AND zeroes each line's snapshot in place, so the stored InvoiceItem + the regulated-sales ledger
- * record the $0 that was billed.
+ * exemption — an exempt customer owes $0 of BOTH. Returns the Σ per-line category tax (the builder's
+ * `categoryTax`: the ONE levy sum, B1043); when exempt it returns 0 AND zeroes each line's snapshot in
+ * place (`zeroExemptCategoryTax`). Signature and callers unchanged (SA-742r2 F2).
  */
 export function foldCategoryTax(
   itemsData: Array<{ categoryTaxAmount?: number }>,
   isTaxExempt: boolean,
 ): number {
-  if (isTaxExempt) {
-    for (const it of itemsData) it.categoryTaxAmount = 0;
-    return 0;
-  }
-  return roundMoney(itemsData.reduce((s, it) => s + Number(it.categoryTaxAmount ?? 0), 0));
+  zeroExemptCategoryTax(itemsData, isTaxExempt);
+  return sumInvoiceTotalsStrict(itemsData, { isTaxExempt }).categoryTax;
 }

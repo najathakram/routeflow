@@ -152,6 +152,8 @@ export interface AdminOrder {
     /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
     mobile?: string;
     email?: string;
+    /** SA-740: the shared counter walk-in customer (a return from its order must name that sale). */
+    isWalkIn?: boolean | null;
   };
   lineItems: Array<{
     id: string;

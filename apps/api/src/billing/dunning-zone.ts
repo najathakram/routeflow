@@ -1,21 +1,18 @@
-import { tenantTimeZone } from "../common/tenant-time-zone";
-import { DUNNING_FALLBACK_ZONE } from "./dunning-config";
+import { FALLBACK_ZONE, resolveZone } from "../common/tenant-time-zone";
 
 /**
- * The tenant's IANA zone for the 03:00 pause rule - the ONE place the dunning sweep resolves it.
- *
- * SA-733r6 asks for the tenant-zone resolver (`resolveZone` / `FALLBACK_ZONE`, branch
- * `feat/tenant-zone-resolver-api`, SA-738). This branch is built on the B2 stack, which predates it, so this adapter
- * calls the resolver that IS here (`tenantTimeZone`, explicit tenant id) and falls back to UTC. When the resolver
- * branch lands, replace the body with `(await resolveZone(prisma, { tenantId })).zone` - no caller changes.
+ * The tenant's IANA zone for the 03:00 pause rule - the ONE place the dunning sweep resolves it, through the
+ * single tenant-zone reader (SA-738 `resolveZone`, context-object form with the explicit tenant id: the sweep is a
+ * cron with no ambient tenant). A missing or invalid zone resolves to the reader's own UTC fallback, and a failed
+ * lookup never stops a sweep.
  */
 export async function dunningZone(
-  prisma: Parameters<typeof tenantTimeZone>[0],
+  prisma: Parameters<typeof resolveZone>[0],
   tenantId: string,
 ): Promise<string> {
   try {
-    return (await tenantTimeZone(prisma, tenantId)) ?? DUNNING_FALLBACK_ZONE;
+    return (await resolveZone(prisma, { tenantId })).zone;
   } catch {
-    return DUNNING_FALLBACK_ZONE; // a zone lookup must never stop a sweep
+    return FALLBACK_ZONE; // a zone lookup must never stop a sweep
   }
 }

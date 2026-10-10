@@ -21,6 +21,7 @@ export function CounterReceiptBody({
   enteredTender,
   profile,
   fallbackMethod,
+  customerName,
   headingRef,
 }: {
   receipt: CounterSaleResponse;
@@ -29,6 +30,8 @@ export function CounterReceiptBody({
   /** the screen's own `GET /settings` answer (address + phone); no fetch happens here */
   profile?: ReceiptBusinessProfile | null;
   fallbackMethod?: CounterSalePaymentMethod;
+  /** SA-762r: the named customer of the sale; omit for a walk-in (no customer line prints) */
+  customerName?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
@@ -41,6 +44,7 @@ export function CounterReceiptBody({
     enteredTender,
     fallbackMethod,
     cashier,
+    customerName,
     now,
     profile: {
       ...profile,

@@ -217,6 +217,8 @@ function SignupInner() {
           adminEmail: data.adminEmail,
           adminUsername: data.adminUsername,
           adminPassword: data.adminPassword,
+          // SA-738: the business starts in the signer's own zone (omitted when unusable; the server then writes UTC).
+          timezone: browserTimeZone(),
         }),
       });
 
@@ -445,6 +447,23 @@ function SignupInner() {
 }
 
 // ─── Page (Suspense required for client-side navigation hooks) ────────────────
+
+/**
+ * SA-738: the browser's IANA zone, or undefined when it would not pass the server's writable-zone
+ * check (offset names, fixed-offset Etc/* and EST/MST/HST aliases, anything not Area/Location), so a
+ * signup never fails over the zone. UTC itself is fine.
+ */
+function browserTimeZone(): string | undefined {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!tz) return undefined;
+    if (tz === "UTC") return tz;
+    if (/^Etc\//i.test(tz) || !/^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+$/.test(tz)) return undefined;
+    return tz;
+  } catch {
+    return undefined;
+  }
+}
 
 export default function SignupPage() {
   return (

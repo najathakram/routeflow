@@ -53,6 +53,28 @@ describe("intake section answers (#2159 S2)", () => {
     });
   });
 
+  it("SA-738: the time zone must be a real IANA zone, not just zone-shaped", async () => {
+    await expect(
+      validateSectionAnswers(
+        "ACCOUNT",
+        { ...ACCOUNT, timeZone: "Mars/Phobos" },
+        { partial: false },
+      ),
+    ).rejects.toMatchObject({ response: { code: "INTAKE_ANSWERS_INVALID" } });
+    for (const bad of ["+01:00", "EST", "Etc/GMT+5"]) {
+      await expect(
+        validateSectionAnswers("ACCOUNT", { ...ACCOUNT, timeZone: bad }, { partial: false }),
+      ).rejects.toMatchObject({ response: { code: "INTAKE_ANSWERS_INVALID" } });
+    }
+    await expect(
+      validateSectionAnswers(
+        "ACCOUNT",
+        { ...ACCOUNT, timeZone: "America/Denver" },
+        { partial: false },
+      ),
+    ).resolves.toMatchObject({ timeZone: "America/Denver" });
+  });
+
   it("requires every required field on submit", async () => {
     const { phone: _p, ...noPhone } = ACCOUNT;
     await expect(

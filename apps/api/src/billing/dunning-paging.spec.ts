@@ -103,7 +103,7 @@ describe("forEachRotated", () => {
     });
 
     it("WITH the process-local cursor each run starts where the last stopped, so every row is reached", async () => {
-      const cursors = new Map<string, number>();
+      const cursors = new Map<string, string>();
       const union = new Set<string>();
       const runs: string[][] = [];
       for (let h = 0; h < 4; h++) {
@@ -123,18 +123,44 @@ describe("forEachRotated", () => {
     });
 
     it("the cursor advances by the rows actually PROCESSED (zero processed = no advance)", async () => {
-      const cursors = new Map<string, number>();
+      const cursors = new Map<string, string>();
       await run(
         fakePrisma(IDS),
         T0,
         { maxRows: 100, timeBudgetMs: 0, cursors, cursorKey: "k" },
         { t: 5 },
       );
-      expect(cursors.get("k") ?? 0).toBe(0);
+      expect(cursors.has("k")).toBe(false); // nothing processed: no cursor written
+    });
+
+    it("the cursor is the LAST tenantId (a keyset), so a population that SHRINKS between runs skips and repeats nothing", async () => {
+      const cursors = new Map<string, string>();
+      const first = await run(fakePrisma(IDS), T0, { ...slow, cursors, cursorKey: "k" }, { t: 0 });
+      expect(first.seen).toEqual(["t01", "t02", "t03"]);
+      expect(cursors.get("k")).toBe("t03");
+      // t01 and t02 (both BEFORE the cursor) disappear: a row INDEX would now point at t06 and skip t04, t05
+      const second = await run(
+        fakePrisma(IDS.slice(2)),
+        new Date(T0.getTime() + HOUR),
+        { ...slow, cursors, cursorKey: "k" },
+        { t: 0 },
+      );
+      expect(second.seen).toEqual(["t04", "t05", "t06"]);
+    });
+
+    it("a cursor whose tenant itself disappeared still continues after that key", async () => {
+      const cursors = new Map<string, string>([["k", "t03"]]);
+      const { seen } = await run(
+        fakePrisma(["t01", "t02", "t04", "t05"]), // t03 is gone
+        T0,
+        { ...slow, cursors, cursorKey: "k" },
+        { t: 0 },
+      );
+      expect(seen).toEqual(["t04", "t05", "t01"]);
     });
 
     it("two sweeps keep separate cursors", async () => {
-      const cursors = new Map<string, number>();
+      const cursors = new Map<string, string>();
       await run(fakePrisma(IDS), T0, { ...slow, cursors, cursorKey: "a" }, { t: 0 });
       const { seen } = await run(
         fakePrisma(IDS),

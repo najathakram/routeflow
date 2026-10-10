@@ -89,6 +89,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // and the Feature Console set()/clear() of the two fulfilment keys, keyed on the tenant id.
       // "tenant-price" (2026-10-09, SA-733 D8) is the per-tenant lock every writer of a tenant's Stripe
       // price takes across its Stripe calls: the price override, plan changes, the downgrade cron.
+      // "counter-park" (2026-10-10, SA-748) names the parked-cart cap's transaction-scoped
+      // `pg_advisory_xact_lock(hashtext('counter-park'), hashtext(tenantId))`; it opens no lock pool.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -100,6 +102,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "counter-tender",
         "fulfilment-settings",
         "tenant-price",
+        "counter-park",
       ]);
     });
   });
