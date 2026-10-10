@@ -50,6 +50,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { InvoiceStatus } from "@prisma/client";
 import { AfterCommit } from "../common/after-commit";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 describe("InvoicesService — #2175 realtime emits leave the transaction only after it commits", () => {
   let service: InvoicesService;
@@ -123,6 +124,7 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

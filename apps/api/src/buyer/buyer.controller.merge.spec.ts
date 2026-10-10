@@ -54,6 +54,7 @@ jest.mock("../common/db-locks", () => {
   };
 });
 
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { BuyerController } from "./buyer.controller";
@@ -113,6 +114,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -188,6 +190,25 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       replaceAll: true,
       items: [{ productId: "prod-boxed", qty: 36, boxes: 3, pieces: 0 }],
     });
+  });
+
+  it("M2: the post-create sweep folds only the NEW order's path (focusOrderId), so it returns that order", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
+      expect.anything(),
+    );
+  });
+
+  it("the buyer's active-order search passes mergeAs for the buyer audience (portal path rules)", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer" } }),
+    );
   });
 
   it("REG-B47 (T14 companion): a BARE-qty incoming add folds against the stored line in SELLING UNITS — 2 + 2 = a plain qty 4, never 2 boxes + 2 loose pieces", async () => {

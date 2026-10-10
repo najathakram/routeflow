@@ -1,6 +1,7 @@
 import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
+import { isFamilyProduct } from "./sellable-products";
 
 /**
  * Pure gate for the operator order builder's two save paths, mirroring web's
@@ -54,12 +55,18 @@ export interface ResumeLineDecision<P> {
  *    line scanned into a draft and parked used to come back as "no longer in
  *    your catalog" and vanish. An archived product is still orderable
  *    server-side; the row flags itself instead of deleting the operator's work.
- *  - 404 → DROP: the product is genuinely gone.
+ *  - 404 → DROP: the product is genuinely gone. A FAMILY container also drops (never orderable).
  *  - anything else (timeout, 5xx, offline) → FAILED: abort hydration and keep
  *    the spinner, so autosave can never PATCH a truncated cart over the draft.
  */
 export function decideResumeLine<P>(fetched: ResumeLineFetch<P>): ResumeLineDecision<P> {
-  if (fetched.ok) return { product: fetched.product, failed: false };
+  // A FAMILY container is never orderable (400 FAMILY_NOT_SELLABLE): a restored draft drops it instead of queuing it.
+  if (fetched.ok) {
+    if (isFamilyProduct(fetched.product as { kind?: "FAMILY" } | null)) {
+      return { product: null, failed: false };
+    }
+    return { product: fetched.product, failed: false };
+  }
   return { product: null, failed: fetched.status !== 404 };
 }
 
@@ -96,6 +103,8 @@ export interface ResumeUnitLineInput {
   priceType?: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   unitPrice?: number;
   priceSource?: "history" | "operator";
+  /** #2696(c): the override's reason, re-applied with it (a special line bills it only so). */
+  overrideReason?: string;
 }
 
 /** One `UnitOption`-shaped price, the only fields this decision reads. */
@@ -184,6 +193,8 @@ export interface ResumeLinePricingResult {
   /** A genuine operator override — from either branch below, always tagged "operator" (a
    *  history-sourced price is never carried across a resume, so it never reaches here). */
   unitPrice?: number;
+  /** #2696(c): the parked override's reason, restored alongside `unitPrice`. */
+  overrideReason?: string;
   /** W/N (Opus REQUIRED, B747): CartRow's margin-hint pieces-per-unit basis — see
    *  ResumeUnitPriceDecision.unitFactor. Undefined for a plain pack line (marginFactorFor then
    *  reads the product's own unitsPerBox instead, same as a freshly-picked pack line). */
@@ -219,11 +230,17 @@ export function resolveResumeLinePricing(
       unitBasePrice: decision.unitBasePrice,
       unitFactor: decision.unitFactor,
     };
-    if (decision.operatorUnitPrice != null) result.unitPrice = decision.operatorUnitPrice;
+    if (decision.operatorUnitPrice != null) {
+      result.unitPrice = decision.operatorUnitPrice;
+      if (li.overrideReason?.trim()) result.overrideReason = li.overrideReason;
+    }
     return result;
   }
   if (li.priceType === "MANUAL" && li.priceSource !== "history" && li.unitPrice != null) {
-    return { unitPrice: li.unitPrice };
+    return {
+      unitPrice: li.unitPrice,
+      ...(li.overrideReason?.trim() ? { overrideReason: li.overrideReason } : {}),
+    };
   }
   return {};
 }

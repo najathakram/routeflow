@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { UnitPickerRow } from "../../components/UnitPickerRow";
 import { unitPriceBase, type UnitOption } from "../../lib/unit-options";
+import { priceUnitSuffix } from "../../lib/invoice-line-display";
 import {
   classifyMargin,
   computeLineSubtotal,
@@ -16,7 +17,12 @@ import {
 import { marginFloorPrice } from "../../lib/margin-floor-price";
 import { freeUnitsLabel } from "../../lib/buyer-cart-logic";
 import { setLineUnits } from "../../lib/sale-line";
-import { draftFreeUnits, ladderProductFor, type DraftItem } from "../../lib/edit-items-draft";
+import {
+  draftFreeUnits,
+  ladderProductFor,
+  startsOnDefaultUnit,
+  type DraftItem,
+} from "../../lib/edit-items-draft";
 import { StepperRow } from "../../components/EditItemsStepperRow";
 import { SellByToggle } from "../../components/SellByToggle";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../lib/loose-units";
@@ -162,13 +168,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -192,13 +192,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -260,6 +254,8 @@ export function DraftItemCard({
         }}
         product={ladderProductFor(item)}
         tier={tier}
+        // A line added this session starts on the product's default selling unit (once, never over a held unit).
+        startOnDefaultUnit={startsOnDefaultUnit(item)}
         onChange={onSetUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

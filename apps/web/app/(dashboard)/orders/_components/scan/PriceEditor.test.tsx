@@ -108,10 +108,61 @@ describe("PriceEditor", () => {
       expect(screen.queryByText(/Last:/)).not.toBeInTheDocument();
     });
 
-    it("a SPECIAL (customer-permanent) price is shown, never overridden, exactly as in the row", () => {
-      setup(line({ priceType: "SPECIAL", unitPrice: 7.5 }));
-      expect(screen.queryByLabelText("Price")).not.toBeInTheDocument();
+    // #2696(c): a SPECIAL line is editable; its special price is the default (placeholder).
+    it("a SPECIAL line's price is editable, the special price as the placeholder", () => {
+      const props = setup(line({ priceType: "SPECIAL", unitPrice: 7.5, specialPrice: 7.5 }));
+      const input = screen.getByLabelText("Price");
+      expect(input).toHaveAttribute("placeholder", "7.50");
       expect(screen.getByText(/Special price \$7\.50/)).toBeInTheDocument();
+      fireEvent.change(input, { target: { value: "6" } });
+      expect(props.onSetDiscountedPrice).toHaveBeenLastCalledWith(6);
+    });
+
+    it("a required reason: labelled, invalid while blank, and written through its handler", () => {
+      const onSetOverrideReason = jest.fn();
+      setup(
+        line({ priceType: "DISCOUNTED", unitPrice: 6, discountedPrice: 6, specialPrice: 7.5 }),
+        {
+          reasonRequired: true,
+          onSetOverrideReason,
+        },
+      );
+      const reason = screen.getByLabelText("Reason (required)");
+      expect(reason).toHaveAttribute("aria-invalid", "true");
+      fireEvent.change(reason, { target: { value: "dented" } });
+      expect(onSetOverrideReason).toHaveBeenLastCalledWith("dented");
+    });
+
+    it("an optional reason on a non-special override; none at all without an override", () => {
+      setup(line({ priceType: "DISCOUNTED", unitPrice: 8, discountedPrice: 8 }), {
+        onSetOverrideReason: jest.fn(),
+      });
+      expect(screen.getByLabelText("Reason (optional)")).toBeInTheDocument();
+    });
+
+    it("no reason field while the price is not overridden", () => {
+      setup(line({ priceType: "SPECIAL", unitPrice: 7.5, specialPrice: 7.5 }), {
+        onSetOverrideReason: jest.fn(),
+      });
+      expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
+    });
+  });
+
+  // SA-558d: one wording in the row and the sheet — "1 case" / "n cases", then "+ n units" with the
+  // "+" its own element (it rendered glued as "cases+": two bare text nodes are ONE flex item).
+  describe("case wording", () => {
+    it("singular at one case, and the '+' is its own element", () => {
+      setup(boxed({ boxes: 1, pieces: 2, qty: 8 }));
+      expect(screen.getByText("case")).toBeInTheDocument();
+      const plus = screen.getByText("+");
+      expect(plus.tagName).toBe("SPAN");
+      expect(plus.textContent).toBe("+");
+    });
+
+    it("plural otherwise", () => {
+      setup(boxed({ boxes: 2, pieces: 1, qty: 13 }));
+      expect(screen.getByText("cases")).toBeInTheDocument();
+      expect(screen.getByText("unit")).toBeInTheDocument();
     });
   });
 

@@ -92,7 +92,7 @@ describe("check-types ratchet rules (B806)", () => {
       c.classifyWorkerExit({ status: 0, signal: null, stderr: "" }),
     ]));`) as Array<{ kind: string; message: string } | null>;
     expect(out[0]?.kind).toBe("oom");
-    expect(out[0]?.message).toContain("--max-old-space-size=4096");
+    expect(out[0]?.message).toContain("--max-old-space-size=6144");
     expect(out[0]?.message).toContain("raise HEAP_MB");
     expect(out[1]).toBeNull();
   });
@@ -103,7 +103,7 @@ describe("check-types ratchet rules (B806)", () => {
     const cli = readFileSync(path.join(API_DIR, "scripts/check-types-ratchet.mjs"), "utf8");
     expect(cli).toMatch(/--max-old-space-size=\$\{HEAP_MB\}/);
     expect(cli).toMatch(/NODE_OPTIONS/);
-    expect(core(`console.log(JSON.stringify(c.HEAP_MB));`)).toBe(4096);
+    expect(core(`console.log(JSON.stringify(c.HEAP_MB));`)).toBe(6144);
   });
 
   it("tsconfig.spec.json covers everything the old check-types did, plus the specs", () => {

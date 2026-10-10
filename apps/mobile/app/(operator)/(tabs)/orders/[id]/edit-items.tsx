@@ -16,13 +16,21 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
 import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
+import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  effectiveQty,
+  getTierPrice,
+  isSpecialTier,
+  type SellLevel,
+} from "@routeflow/pricing";
 import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
@@ -44,6 +52,7 @@ import {
   orderOriginals,
   repairBlockedLines,
   resolvePickTarget,
+  resolveDraftKeyForPick,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
@@ -144,11 +153,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
-  /** SPECIAL (tier!==1) lines are the customer's permanent price — never overridable
+  /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
-  const isSpecialFor = (productId: string) => effectiveTierFor(productId) !== 1;
+  const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
@@ -626,7 +635,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
   /**
    * Add a picked/scanned product to the draft (shared by tap-pick and
-   * add-and-stay). `kind === "piece"` rolls one loose unitSku piece into a
+   * add-and-stay). `level === "UNIT"` (from the scanned code, SA-580) rolls one loose piece into a
    * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
    * "the last thing added" (the picker's price-edit affordance).
    */
@@ -642,11 +651,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unit?: string;
       unitsPerBox?: number | null;
     },
-    kind: "case" | "piece" = "case",
+    level: SellLevel = "BOX",
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
+    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
     // Fresh-add starting price — only a genuine discount (below tier) or
@@ -656,20 +665,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
         ? hist.lastPrice
         : catalogPrice;
+    // A FAMILY container is never a line (search pick or scan): no line added.
+    if (isFamilyProduct(p as { kind?: "FAMILY" })) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return resolveDraftKeyForPick(draftRef.current, p.id, null);
+    }
     // Key resolution + the pure `apply(d)` updater: resolvePickTarget (lib/edit-items-draft.ts).
     const { key, existingLabel, apply } = resolvePickTarget(draftRef.current, {
       productId: p.id,
       name: p.name,
       unit: p.unit,
       unitsPerBox,
-      kind,
+      level,
       startPrice,
       catalogPrice,
       packLadder: buildPackLadder({ ...p, unitsPerBox }),
     });
     // B805: the pick commits through updateDraft like every other writer.
     const commit = () => updateDraft(apply);
-    if (kind === "piece" && existingLabel) {
+    if (level === "UNIT" && existingLabel) {
       confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
         confirmText: `Add 1 ${existingLabel}`,
       });
@@ -1040,6 +1054,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
           canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
           isSpecialTierFor={isSpecialFor}
+          priceFor={isDriver ? undefined : tierPriceFor}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
@@ -1047,9 +1062,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onPickAndStay={
             substituteFor
               ? undefined
-              : (p, kind) => {
+              : (p, level) => {
                   // B775: track the draft KEY (addPickedToDraft's return), not p.id.
-                  const key = addPickedToDraft(p, kind);
+                  const key = addPickedToDraft(p, level);
                   setLastScannedId(key);
                   setScanOrder((o) => bumpScanOrder(o, key));
                   setTrayFlash((f) => nextFlash(f, key));
@@ -1103,7 +1118,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // an add made with the camera shut (a wedge scanner, a typed code).
           // Only the row flash, which belongs to the camera session, is cleared.
           onScanSessionEnd={() => setTrayFlash(null)}
-          onPick={(p, kind) => {
+          onPick={(p, level) => {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
@@ -1127,7 +1142,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setSubstituteFor(null);
             } else {
               // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
-              const key = addPickedToDraft(p, kind);
+              const key = addPickedToDraft(p, level);
               setScanOrder((o) => bumpScanOrder(o, key));
               setTrayFlash((f) => nextFlash(f, key));
             }
@@ -1203,6 +1218,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             </View>
           ) : null}
           <ScrollView showsVerticalScrollIndicator={false}>
+            {!isDriver && order ? <OrderAppliedCredits order={order as any} /> /* #2404 */ : null}
             {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
                 don't manage credits. Gated on the customer alone (not credit
                 COUNT) so the operator can create one right here when none

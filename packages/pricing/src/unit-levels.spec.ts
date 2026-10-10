@@ -2,6 +2,7 @@ import { normalizeBoxesPieces } from "./pricing";
 import { getTierPrice } from "./tier-pricing";
 import {
   InvalidTierError,
+  defaultSellingLabel,
   UnknownUnitError,
   fromBaseQty,
   resolveLadderLevel,
@@ -301,5 +302,71 @@ describe("ladder hardening (Opus review of step 1)", () => {
   it("2-dp string pack prices are byte-identical and a fractional-cent pack price rounds once", () => {
     expect(resolveUnitPrice({ ...product, pricePerUnit: "42.00" }, [], undefined, 1)).toBe(42);
     expect(resolveUnitPrice({ ...product, pricePerUnit: 10.005 }, [], undefined, 1)).toBe(10.01);
+  });
+});
+
+describe("defaultSellingLabel (#2784: the ONE default-selling-unit resolver)", () => {
+  const boxedProduct: LadderProduct = { unit: "Box", unitsPerBox: 24, pricePerUnit: 42 };
+  const row = (
+    over: Partial<LadderUnit> & { label: string; factorToBase: number },
+  ): LadderUnit => ({
+    price: null,
+    priceTier2: null,
+    priceTier3: null,
+    priceTier4: null,
+    priceTier5: null,
+    ...over,
+  });
+
+  it("returns the label of the level flagged isDefaultSelling", () => {
+    const units = [
+      row({ label: "Case", factorToBase: 288, isDefaultSelling: true }),
+      row({ label: "Carton", factorToBase: 48 }),
+    ];
+    expect(defaultSellingLabel(boxedProduct, units)).toBe("Case");
+  });
+
+  it("null when nothing is flagged, or there are no levels (the pack is the default)", () => {
+    expect(
+      defaultSellingLabel(boxedProduct, [row({ label: "Case", factorToBase: 288 })]),
+    ).toBeNull();
+    expect(defaultSellingLabel(boxedProduct, [])).toBeNull();
+  });
+
+  it("null when the flagged row is shadowed by the pack's own label (the pack wins a colliding label)", () => {
+    const units = [row({ label: "box", factorToBase: 6, isDefaultSelling: true })];
+    expect(defaultSellingLabel(boxedProduct, units)).toBeNull();
+  });
+
+  it("a corrupt flagged row (non-positive / fractional factor) is invisible, never the default", () => {
+    expect(
+      defaultSellingLabel(boxedProduct, [
+        row({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
+      ]),
+    ).toBeNull();
+    expect(
+      defaultSellingLabel(boxedProduct, [
+        row({ label: "Bad", factorToBase: 1.5, isDefaultSelling: true }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("a flagged Piece row is the default (kind piece, factor 1)", () => {
+    const units = [row({ label: "Piece", factorToBase: 1, isDefaultSelling: true })];
+    expect(defaultSellingLabel(boxedProduct, units)).toBe("Piece");
+  });
+
+  it("a flagged row labelled Piece whose factor is not 1 is never the default (the ladder sells Piece as ONE piece)", () => {
+    const units = [row({ label: "Piece", factorToBase: 6, isDefaultSelling: true })];
+    expect(defaultSellingLabel(boxedProduct, units)).toBeNull();
+  });
+
+  it("the first valid flagged row wins when more than one is flagged", () => {
+    const units = [
+      row({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
+      row({ label: "Case", factorToBase: 288, isDefaultSelling: true }),
+      row({ label: "Carton", factorToBase: 48, isDefaultSelling: true }),
+    ];
+    expect(defaultSellingLabel(boxedProduct, units)).toBe("Case");
   });
 });

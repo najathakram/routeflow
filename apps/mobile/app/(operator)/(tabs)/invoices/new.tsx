@@ -33,13 +33,17 @@ import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
 import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import {
+  decideTrayPrice,
+  reasonRequiredMessage,
+  saleLinePriceFields,
+} from "../../../../lib/staff-price-override";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
-  incrementLine,
-  incrementLinePiece,
+  addScannedLevelToLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -50,12 +54,14 @@ import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../lib/loose-un
 import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
 import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
+import { resolveScanSellLevel } from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "@routeflow/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -150,6 +156,8 @@ type LineState = {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  /** #2696(c) SA-558e: why a New-sale line's price moves off the customer's special price. */
+  overrideReason?: string;
   discount?: number;
   taxable?: boolean;
   note?: string;
@@ -432,6 +440,8 @@ function InvoiceComposer({
     return m;
   }, [customerPrices]);
   const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
+  const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -481,21 +491,16 @@ function InvoiceComposer({
     [products, scannedById],
   );
 
-  const addOne = (id: string, snapshot?: Product, kind: "case" | "piece" = "case") => {
+  const addOne = (id: string, snapshot?: Product, level: SellLevel = "BOX") => {
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
     setItems((m) => {
       const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice. A PIECE-code
-      // scan (unitSku) adds one loose piece, rolling into a box at upb.
-      return {
-        ...m,
-        [id]:
-          kind === "piece"
-            ? incrementLinePiece(prev, isBoxed, upb)
-            : incrementLine(prev, isBoxed, upb),
-      };
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice. The level the scanned code
+      // carries decides (SA-580 R1/R2): UNIT adds one loose piece, rolling into a box at upb; BOX
+      // adds a box. upb <= 1: today's plain +1 (R4).
+      return { ...m, [id]: addScannedLevelToLine(prev, level, isBoxed, upb) };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones — see
     // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
@@ -574,10 +579,13 @@ function InvoiceComposer({
       if (!prev) return m;
       if (value == null || value < 0) {
         const { unitPrice: _drop, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
       return { ...m, [id]: { ...prev, unitPrice: value } };
     });
+  const setLineReason = (id: string, overrideReason: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], overrideReason } } : m));
 
   // Flat $ off one line (comes off BEFORE tax). Empty/invalid clears it.
   const setLineDiscount = (id: string, value: number | null) =>
@@ -643,17 +651,14 @@ function InvoiceComposer({
    * confirmation, so no banner and no search reset (which would swap the list
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
-    addOne(product.id, product, unitKind);
+  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
+    addOne(product.id, product, level);
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
     clearSearch();
     const label =
-      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+      level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
@@ -736,9 +741,9 @@ function InvoiceComposer({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    const outcome = acceptScannedProduct(match, kind);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    const outcome = acceptScannedProduct(match, level);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -1229,10 +1234,22 @@ function InvoiceComposer({
         const qty = effectiveQty(line, p.unitsPerBox);
         if (qty <= 0) continue;
         const upb = Number(p.unitsPerBox ?? 0);
+        // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
+        const price = saleLinePriceFields({
+          effective: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          base: tierPriceFor(p),
+          listPrice: toNumber(p.pricePerUnit),
+          isSpecial: isSpecialFor(p),
+          reason: line.overrideReason,
+        });
+        if ("refused" in price) {
+          alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
+          return;
+        }
         saleItems.push({
           productId,
           qty,
-          unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          ...price,
           ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
           ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
           ...(line.note?.trim() ? { notes: line.note.trim() } : {}),
@@ -1592,6 +1609,8 @@ function InvoiceComposer({
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
+        isSpecialFor={isSpecialFor}
+        onChangeReason={setLineReason}
         saving={saving}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
@@ -1744,6 +1763,8 @@ function ReviewSheet({
   totalItems,
   taxRateFraction,
   tierPriceFor,
+  isSpecialFor,
+  onChangeReason,
   saving,
   onClose,
   onIncrement,
@@ -1775,6 +1796,9 @@ function ReviewSheet({
   taxRateFraction: number;
   /** The customer's effective (tier / customer-price) catalog price per product. */
   tierPriceFor: (p: Product) => number;
+  /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
+  isSpecialFor: (p: Product) => boolean;
+  onChangeReason: (id: string, reason: string) => void;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1842,6 +1866,8 @@ function ReviewSheet({
                     line={line}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
+                    isSpecial={details.saleEligible && isSpecialFor(product)}
+                    onChangeReason={(t) => onChangeReason(id, t)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
@@ -1950,6 +1976,8 @@ function ReviewRow({
   line,
   taxRateFraction,
   catalogPrice: catalogPriceProp,
+  isSpecial = false,
+  onChangeReason,
   onIncrement,
   onDecrement,
   onChangeQty,
@@ -1967,6 +1995,9 @@ function ReviewRow({
   taxRateFraction: number;
   /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
   catalogPrice?: number;
+  /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
+  isSpecial?: boolean;
+  onChangeReason?: (reason: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
@@ -1987,6 +2018,15 @@ function ReviewRow({
   const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
   const effUnit = effectiveUnitPrice(line, product, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  // #2696(c): off the special price by more than half a cent (pricing's own band).
+  const movedOffSpecial =
+    decideTrayPrice({
+      typed: line.unitPrice ?? null,
+      base: catalogPrice,
+      listPrice: toNumber(product.pricePerUnit),
+      isSpecial,
+      reason: "x",
+    }).kind === "set";
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the
   // sheet footer, never on the row).
@@ -2038,6 +2078,17 @@ function ReviewRow({
           ) : null}
         </View>
       </View>
+      {isSpecial && onChangeReason && movedOffSpecial ? (
+        <TextInput
+          style={styles.cartPriceInput}
+          value={line.overrideReason ?? ""}
+          onChangeText={onChangeReason}
+          maxLength={200}
+          placeholder="Reason (required)"
+          placeholderTextColor={ios.label3}
+          accessibilityLabel="Reason (required)"
+        />
+      ) : null}
 
       {isBoxed ? (
         <>

@@ -116,6 +116,10 @@ const TABLE: Record<string, Row> = {
   [vb("update")]: X("VendorBillItem"),
   [vb("receive")]: X("VendorBillItem"),
   [vb("revertToDraft")]: X("VendorBillItem"),
+  [vb("delete")]: X("AP bill line delete only: no qty/unit/price write, no sellable product added"),
+  [vb("bulkDelete")]: X(
+    "AP bill line delete only: no qty/unit/price write, no sellable product added",
+  ),
 };
 
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */

@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RouteRealtime } from "../routes/route-realtime";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 import { buildCostMatrices, type LatLng } from "./cost-matrix";
 
@@ -790,24 +791,28 @@ export class RouteOptimizationService {
     // Also clears the parent route's stored plannedPolyline — see the same
     // note in optimizeTemplate.
     const offset = stops.length + 1;
-    await this.prisma.$transaction([
-      ...stops.map((s) =>
-        this.prisma.forTenant().routeRunStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
+    // #2631 (SA-550d): a lock conflict with a run transition retries (belt; the batch is rebuilt per
+    // attempt — batch PrismaPromises are single-use). No side effect inside; absolute writes.
+    await retryOnTxConflict("routeOptimization.optimizeRoute", () =>
+      this.prisma.$transaction([
+        ...stops.map((s) =>
+          this.prisma.forTenant().routeRunStop.update({
+            where: { id: s.id },
+            data: { stopNumber: s.stopNumber + offset },
+          }),
+        ),
+        ...stopOrder.map(({ stopId, stopNumber }) =>
+          this.prisma.forTenant().routeRunStop.update({
+            where: { id: stopId },
+            data: { stopNumber },
+          }),
+        ),
+        this.prisma.forTenant().route.update({
+          where: { id: run.routeId },
+          data: { plannedPolyline: null },
         }),
-      ),
-      ...stopOrder.map(({ stopId, stopNumber }) =>
-        this.prisma.forTenant().routeRunStop.update({
-          where: { id: stopId },
-          data: { stopNumber },
-        }),
-      ),
-      this.prisma.forTenant().route.update({
-        where: { id: run.routeId },
-        data: { plannedPolyline: null },
-      }),
-    ]);
+      ]),
+    );
 
     await this.prisma.forTenant().routeRun.update({
       where: { id: routeRunId },
@@ -1166,54 +1171,60 @@ export class RouteOptimizationService {
     // Same two-phase offset trick as optimizeTemplate to avoid unique-constraint
     // collisions on [routeId, stopNumber] while stop numbers are being rewritten.
     const offset = dto.stopIds.length + 1;
-    const ops: Prisma.PrismaPromise<unknown>[] = [
-      ...dto.stopIds.map((stopId, idx) =>
-        this.prisma.forTenant().routeStop.update({
-          where: { id: stopId },
-          data: { stopNumber: idx + 1 + offset },
-        }),
-      ),
-      ...dto.stopIds.map((stopId, idx) =>
-        this.prisma.forTenant().routeStop.update({
-          where: { id: stopId },
-          data: { stopNumber: idx + 1 },
-        }),
-      ),
-      this.prisma.forTenant().route.update({
-        where: { id: routeId },
-        data: {
-          optimizeBy: dto.optimizeBy,
-          avoidTolls: dto.avoidTolls,
-          plannedPolyline: dto.encodedPolyline ?? null,
-        },
-      }),
-    ];
-
-    if (runStopIdsInOrder && runStopIdsInOrder.length > 0) {
-      const runOffset = runStopIdsInOrder.length + 1;
-      ops.push(
-        ...runStopIdsInOrder.map((stopId, idx) =>
-          this.prisma.forTenant().routeRunStop.update({
+    // #2631 (SA-550d): the batch is BUILT per attempt (batch PrismaPromises are single-use) and a lock
+    // conflict with a run transition retries. No side effect inside; absolute writes.
+    const buildOps = (): Prisma.PrismaPromise<unknown>[] => {
+      const ops: Prisma.PrismaPromise<unknown>[] = [
+        ...dto.stopIds.map((stopId, idx) =>
+          this.prisma.forTenant().routeStop.update({
             where: { id: stopId },
-            data: { stopNumber: idx + 1 + runOffset },
+            data: { stopNumber: idx + 1 + offset },
           }),
         ),
-        ...runStopIdsInOrder.map((stopId, idx) =>
-          this.prisma.forTenant().routeRunStop.update({
+        ...dto.stopIds.map((stopId, idx) =>
+          this.prisma.forTenant().routeStop.update({
             where: { id: stopId },
             data: { stopNumber: idx + 1 },
           }),
         ),
-        // Same bookkeeping as optimizeRoute: this order came from the solver,
-        // not from a hand-drag.
-        this.prisma.forTenant().routeRun.update({
-          where: { id: dto.runId! },
-          data: { manuallyReordered: false },
+        this.prisma.forTenant().route.update({
+          where: { id: routeId },
+          data: {
+            optimizeBy: dto.optimizeBy,
+            avoidTolls: dto.avoidTolls,
+            plannedPolyline: dto.encodedPolyline ?? null,
+          },
         }),
-      );
-    }
+      ];
 
-    await this.prisma.$transaction(ops);
+      if (runStopIdsInOrder && runStopIdsInOrder.length > 0) {
+        const runOffset = runStopIdsInOrder.length + 1;
+        ops.push(
+          ...runStopIdsInOrder.map((stopId, idx) =>
+            this.prisma.forTenant().routeRunStop.update({
+              where: { id: stopId },
+              data: { stopNumber: idx + 1 + runOffset },
+            }),
+          ),
+          ...runStopIdsInOrder.map((stopId, idx) =>
+            this.prisma.forTenant().routeRunStop.update({
+              where: { id: stopId },
+              data: { stopNumber: idx + 1 },
+            }),
+          ),
+          // Same bookkeeping as optimizeRoute: this order came from the solver,
+          // not from a hand-drag.
+          this.prisma.forTenant().routeRun.update({
+            where: { id: dto.runId! },
+            data: { manuallyReordered: false },
+          }),
+        );
+      }
+      return ops;
+    };
+    await retryOnTxConflict("routeOptimization.applyRouteVariant", () =>
+      this.prisma.$transaction(buildOps()),
+    );
     // #2095: a run's stops were re-numbered with the template — tell its customers.
     if (runStopIdsInOrder && runStopIdsInOrder.length > 0)
       await this.announceRunProgress(dto.runId!);

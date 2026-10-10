@@ -15,14 +15,19 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
-import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import {
+  rememberedPricePrefill,
+  toNumber,
+  type LineState,
+  type Product,
+} from "../lib/cart-line-state";
 import {
   computeOrderTotal,
   lineUnitFor,
   priceEditorPrefill,
-  priceEditorSaveOverride,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
+import { decideTrayPrice } from "../lib/staff-price-override";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
 import { mergeProductIndex } from "../lib/paged-rows";
@@ -36,15 +41,40 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../lib/sellable-products";
+import {
+  applyUnitOption,
+  isStaffRole,
+  mergeResolvedDefaults,
+  refusesLineEdit,
+} from "../lib/default-unit-line";
+import {
+  anyLineLoading,
+  applyAddToItems,
+  editItemLine,
+  refusedScanOutcome,
+  reserveAdd,
+  settleBeforeConfirm,
+  UNITS_BLOCKED_MESSAGE,
+} from "../lib/pending-unit-adapter";
+import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
-import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import { resolveScanSellLevel } from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
+import {
+  makeScanHandler,
+  runWedgeSubmit,
+  scanAcceptOpts,
+  type ScanLadderDeps,
+} from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
+import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { effectiveQty, getTierPrice, roundMoney } from "@routeflow/pricing";
+import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -66,7 +96,6 @@ import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  incrementLinePiece,
   isUnitLine,
   setLineBoxes,
   setLinePieces,
@@ -79,7 +108,6 @@ import { BlockedLinesModal } from "./BlockedLinesModal";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
-import { ScanOutcome } from "../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -115,9 +143,15 @@ import { CartModal } from "./new-order/CartModal";
 import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
 import { CustomerPickerView } from "./new-order/CustomerPickerView";
 import { LinePriceModal } from "./new-order/LinePriceModal";
+import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
 import type { UnlistedLine } from "./new-order/types";
+import {
+  savedOrderDestination,
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+} from "../lib/order-credits-pending";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -385,7 +419,7 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   // Backdating an order is a books-affecting edit — staff only, never drivers.
-  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole);
   const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.
@@ -426,6 +460,8 @@ function ProductPickView({
   // parked productId against the LIVE catalog, so a stale/removed product or
   // price can never render, let alone autosave back to the server.
   const [items, setItems] = useState<Record<string, LineState>>({});
+  const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
+  itemsRef.current = items;
   // Ad-hoc (non-catalog) lines need no live-product check — DraftUnlistedLine
   // is field-for-field the same shape as this screen's UnlistedLine, so the
   // seed drops in directly.
@@ -480,7 +516,7 @@ function ProductPickView({
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
+  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -685,6 +721,7 @@ function ProductPickView({
           if (pricing.unitPrice !== undefined) {
             line.unitPrice = pricing.unitPrice;
             line.priceSource = "operator";
+            if (pricing.overrideReason) line.overrideReason = pricing.overrideReason;
           }
         }
         nextItems[li.productId] = line;
@@ -751,48 +788,35 @@ function ProductPickView({
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
    * `id`. If the product isn't yet known to the screen, the caller passes
    * the resolved Product so we can stash it for the totals/cart UI.
-   * `kind === "piece"` (a PIECE-barcode scan — the product's unitSku) adds
-   * one LOOSE piece instead of a box, rolling over at unitsPerBox.
+   * `level` is the level the scanned CODE carries (SA-580 R1/R2, from the shared resolver):
+   * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
+   * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, productSnapshot?: Product, kind: "case" | "piece" = "case") => {
-    const p = productSnapshot ?? productById.get(id);
+  const addOne = (
+    id: string,
+    snap?: Product,
+    level: SellLevel = "BOX",
+    dflt?: boolean,
+    viaRow?: boolean,
+    code?: string,
+  ): boolean => {
+    const p = snap ?? productById.get(id);
+    // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
+    if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return false;
+    }
     const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
-    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
-    // pre-fills — never over a SPECIAL tier price, which is already the customer's
-    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
-    const histEntry = priceHistory?.[id];
-    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
-    const tierPrice = p ? tierPriceFor(p) : 0;
-    const isSpecial = effectiveTierFor(id) !== 1;
-    const prefill =
-      !isSpecial &&
-      histEntry != null &&
-      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
-        ? histEntry.lastPrice
-        : undefined;
-    setItems((m) => {
-      const isNew = !m[id];
-      const prev: LineState = m[id] ?? { qty: 0 };
-      // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
-      // unitPrice override + note (previously wiped on every increment).
-      // A unit-sold line (re-scanned or "+1"-ed) always steps its COUNT via
-      // stepLineQty, regardless of scan kind — "piece" only means something for a
-      // PACK's own barcode split (SA-085f BLOCKER: box math on a unit line).
-      const line =
-        kind === "piece" && !isUnitLine(prev)
-          ? incrementLinePiece(prev, isBoxed, upb)
-          : stepLineQty(prev, 1, isBoxed, upb)!;
-      if (isNew && prefill != null) {
-        line.unitPrice = prefill;
-        // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
-        // parked line under a DIFFERENT customer must re-price to that customer instead of
-        // silently keeping this one's remembered price.
-        line.priceSource = "history";
-      }
-      return { ...m, [id]: line };
-    });
+    const prefill = rememberedPricePrefill(
+      priceHistory?.[id],
+      p ? toNumber(p.pricePerUnit) : 0,
+      p ? tierPriceFor(p) : 0,
+      isSpecialTier(effectiveTierFor(id)),
+    );
+    // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
+    const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
+    if (!reserveAdd(itemsRef, input)) return false; // moves the ref forward: a same-render second add sees this one (B992)
+    setItems((m) => applyAddToItems(m, input));
     // Retain a snapshot for EVERY added line, not just scanned ones.
     //
     // This used to be gated on `productSnapshot`, which is only passed by the
@@ -807,72 +831,35 @@ function ProductPickView({
     if (p) {
       setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
+    return true;
   };
 
-  const removeOne = (id: string) => {
-    const p = productById.get(id);
-    const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const line = stepLineQty(prev, -1, isBoxed, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
-  };
+  const upbNum = (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0);
+  const removeOne = (id: string) =>
+    setItems((m) =>
+      m[id]
+        ? editItemLine(m, id, "increment", (prev) =>
+            stepLineQty(prev, -1, upbNum(id) > 1, upbNum(id)),
+          )
+        : m,
+    );
 
   const setBoxes = (id: string, boxes: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineBoxes(prev, boxes, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineBoxes(prev, boxes, upbNum(id))));
 
   const setPieces = (id: string, pieces: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLinePieces(prev, pieces, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLinePieces(prev, pieces, upbNum(id))));
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose). Price is unchanged
    *  either way because computeLineSubtotal's proration is linear. */
   const setUnits = (id: string, units: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineUnits(prev, units, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "unit", (prev) => setLineUnits(prev, units, upbNum(id))));
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+    setItems((m) =>
+      m[id] && !refusesLineEdit(m[id], "unit") ? { ...m, [id]: { ...m[id], sellBy } } : m,
+    );
 
   /**
    * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
@@ -883,38 +870,16 @@ function ProductPickView({
    * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
    * pack behaviour byte for byte.
    */
+  const upbOf = (id: string) => productById.get(id)?.unitsPerBox;
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const isPack = option.value === "";
-      return {
-        ...m,
-        [id]: {
-          ...prev,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          unitFactor: isPack ? undefined : option.factorToBase,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          unitPrice: undefined,
-        },
-      };
-    });
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
+    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+  const anyUnitLoading = anyLineLoading(items, unitStatusFor); // Confirm is disabled only while a line is LOADING (#2865)
 
   const setQty = (id: string, qty: number) =>
-    setItems((m) => {
-      const prev = m[id] ?? { qty: 0 };
-      // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
-      const line = setLineQty(prev, qty);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineQty(prev, qty))); // clears boxes/pieces (plain qty path)
 
   const removeLine = (id: string) =>
     setItems((m) => {
@@ -930,17 +895,23 @@ function ProductPickView({
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it
   // so the line falls back to the catalog price.
-  const setLinePrice = (id: string, value: number | null) =>
+  const setLinePrice = (id: string, value: number | null, overrideReason?: string) =>
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
+      if (refusesLineEdit(prev, "price")) return m; // #2865 (SA-632 H1): a typed price would settle a pending line as cases
       if (value == null || value < 0) {
         const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
       // B755: the ONE place an operator types a price on a catalog line — tagged "operator"
       // so a resume never mistakes it for a history pre-fill (addOne) and re-prices it away.
-      return { ...m, [id]: { ...prev, unitPrice: value, priceSource: "operator" } };
+      // #2696(c): the reason rides with it (required on a special line — decideTrayPrice).
+      const next: LineState = { ...prev, unitPrice: value, priceSource: "operator" };
+      if (overrideReason) next.overrideReason = overrideReason;
+      else delete next.overrideReason;
+      return { ...m, [id]: next };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -1000,12 +971,13 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, unitKind: "case" | "piece"): ScanOutcome => {
-    addOne(product.id, product, unitKind);
+  const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
+      return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
     clearSearch();
     const label =
-      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+      level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
@@ -1016,14 +988,11 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
+  const acceptScannedProduct: ScanLadderDeps<Product>["accept"] = (product, level, ao) => {
     const label = items[product.id]?.unitLabel;
-    if (unitKind !== "piece" || !label) return finishAccept(product, unitKind);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, ao);
     const onYes = () => {
-      const o = finishAccept(product, unitKind);
+      const o = finishAccept(product, level, ao);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1117,13 +1086,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
     // Consume the nonce FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle of the same attempt. A
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    const outcome = acceptScannedProduct(match, kind);
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    const outcome = acceptScannedProduct(match, level, scanAcceptOpts(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -1255,7 +1224,7 @@ function ProductPickView({
    * always holds the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: addOne,
+    add: (id: string) => addOne(id, undefined, "BOX", true, true),
     remove: removeOne,
     setQty,
     setBoxes,
@@ -1264,14 +1233,6 @@ function ProductPickView({
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
     unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
-    // SPECIAL (tier ≠ 1) lines are the customer's permanent price and are
-    // never overridable — the same rule submit already enforces by stripping a
-    // lingering override before it posts. The tray must not offer an edit that
-    // would be silently discarded.
-    isSpecialLine: (id: string) => {
-      const p = productById.get(id);
-      return p ? isSpecialFor(p) : false;
-    },
     showInline,
     updateUnlistedQty,
     removeUnlisted,
@@ -1340,18 +1301,13 @@ function ProductPickView({
     if (a.isUnlisted(id)) a.removeUnlisted(id);
     else a.removeLine(id);
   }, []);
-  // Reprice without leaving the camera. Until now the only price editor on
-  // this surface lived in CartModal, reachable only by leaving scan mode —
-  // while the order EDIT screen has had a one-tap edit under its scanner for
-  // two releases.
-  const onTrayEditPrice = useCallback((id: string) => {
-    const a = actionsRef.current;
-    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-      a.showInline("Contract price — not editable on this order");
-      return;
-    }
-    setPriceEditId(id);
-  }, []);
+  // Reprice without leaving the camera (B901 sequencing lives in the hook).
+  // #2696(c): a SPECIAL (tier) line too — moving off it takes a reason in LinePriceModal.
+  const { onTrayEditPrice, handleScanSheetDismiss, closePriceEdit } = useScanPriceEdit({
+    scanOpen,
+    setScanOpen,
+    setPriceEditId,
+  });
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
@@ -1359,18 +1315,27 @@ function ProductPickView({
     name: string;
     unitPrice: number;
     unlisted: boolean;
+    /** #2696(c): the one-rule inputs (catalog lines only) — see decideTrayPrice. */
+    rule?: { base: number; listPrice: number; isSpecial: boolean; reason?: string };
   } | null => {
     if (!priceEditId) return null;
     const u = unlisted.find((x) => x.id === priceEditId);
     if (u) return { id: u.id, name: u.name, unitPrice: u.unitPrice, unlisted: true };
     const p = productById.get(priceEditId);
     if (!p) return null;
+    const line = items[priceEditId];
     return {
       id: priceEditId,
       name: displayName(p, products),
       // SA-085i(b): the override if set, else what's billed today — never the pack's price.
-      unitPrice: priceEditorPrefill(items[priceEditId], p, effectiveTierFor(p.id)),
+      unitPrice: priceEditorPrefill(line, p, effectiveTierFor(p.id)),
       unlisted: false,
+      rule: {
+        base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        listPrice: toNumber(p.pricePerUnit),
+        isSpecial: isSpecialFor(p),
+        reason: line?.overrideReason,
+      },
     };
   })();
 
@@ -1479,7 +1444,11 @@ function ProductPickView({
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
-      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== priceBase;
+      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
+      const hasOverride =
+        (!special || !!line.overrideReason?.trim()) &&
+        line.unitPrice != null &&
+        line.unitPrice !== priceBase;
       lines.push({
         productId,
         productName: displayName(p),
@@ -1487,8 +1456,9 @@ function ProductPickView({
         listPrice,
         ...(special ? { specialPrice: tierPrice } : {}),
         ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        unitPrice: special ? priceBase : hasOverride ? line.unitPrice! : priceBase,
-        priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
+        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
+        unitPrice: hasOverride ? line.unitPrice! : priceBase,
+        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
         qty,
         ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
@@ -1776,7 +1746,15 @@ function ProductPickView({
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
-    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+    const settled = await settleBeforeConfirm(items, resolveDefaultUnits);
+    if (settled.kind === "blocked") {
+      showToast(UNITS_BLOCKED_MESSAGE);
+      return endSubmit();
+    }
+    const lines = settled.lines;
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    if (settled.kind === "stop") return endSubmit(); // #2865 case d: the retry press only settles; a second press submits
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
@@ -1787,11 +1765,17 @@ function ProductPickView({
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
         const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
-        // SPECIAL lines drop any lingering override (e.g. from an old draft) —
-        // web can't produce one there, and the server owns the tier price.
+        // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
+        // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
+        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
         const override =
-          p != null && !isSpecialFor(p) && line.unitPrice != null && line.unitPrice !== catalog
-            ? { unitPrice: line.unitPrice }
+          specialOk && line.unitPrice != null && line.unitPrice !== catalog
+            ? {
+                unitPrice: line.unitPrice,
+                ...(line.overrideReason?.trim()
+                  ? { overrideReason: line.overrideReason.trim() }
+                  : {}),
+              }
             : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
         const unitLabel = line.unitLabel?.trim() || undefined;
@@ -1876,6 +1860,16 @@ function ProductPickView({
           // The parked draft has become a real order (or a formal DRAFT
           // order, or was merged) — either way it's no longer needed.
           await finalizeBoundDraft();
+          // B1205: a lost-response replay of a create whose credits were never applied (read-only
+          // hint): same copy as web, then open the saved order.
+          const hint = creditsPendingFromOrder(order);
+          if (hint) {
+            showToast(hint.message);
+            // Drivers have no operator order route: back to the stop.
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${hint.orderId}` as any);
+            return;
+          }
           onSaved(order.orderNumber);
         },
         onError: async (err: Error) => {
@@ -1900,6 +1894,19 @@ function ProductPickView({
             await finalizeBoundDraft();
             showToast("Offline — order queued and will sync when you reconnect");
             onBack();
+            return;
+          }
+          // B1205: 503 ORDER_SAVED_CREDITS_PENDING - the order WAS saved, only its credits are
+          // pending. Not a failed save: wind the cart down like success (never retry/resubmit) and
+          // open the saved order, where the credits are applied.
+          const pending = creditsPendingFromError(err);
+          if (pending) {
+            resetOrderSubmitKey(customerId);
+            clearStopCartSnapshot();
+            await finalizeBoundDraft();
+            showToast(pending.message);
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${pending.orderId}` as any);
             return;
           }
           // Release the latch on EVERY failure branch below — each of them
@@ -1966,7 +1973,9 @@ function ProductPickView({
                     // the bound draft before navigating away.
                     resetOrderSubmitKey(customerId);
                     void finalizeBoundDraft();
-                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                    // Drivers have no operator order route: back to the stop.
+                    if (savedOrderDestination(userRole) === "stop") onBack();
+                    else router.replace(`/(operator)/orders/${heldOrderId}` as any);
                   },
                 },
               ],
@@ -2315,11 +2324,11 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              (!canSave || createOrder.isPending || anyUnitLoading) && styles.confirmBtnDisabled,
             ]}
-            disabled={!canSave}
+            disabled={!canSave || anyUnitLoading}
             onPress={() => onSave()}
-            accessibilityState={{ disabled: !canSave }}
+            accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
               {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
@@ -2372,6 +2381,7 @@ function ProductPickView({
         onDecrement={onTrayDecrement}
         onRemove={onTrayRemove}
         onEditPrice={onTrayEditPrice}
+        onDismiss={handleScanSheetDismiss}
         onReview={() => {
           setScanOpen(false);
           setCartOpen(true);
@@ -2390,7 +2400,7 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          acceptScannedProduct(p as unknown as Product);
+          acceptScannedProduct(p as unknown as Product, "BOX", { startOnDefault: true });
         }}
       />
 
@@ -2442,20 +2452,22 @@ function ProductPickView({
         open={priceEditTarget != null}
         name={priceEditTarget?.name ?? ""}
         unitPrice={priceEditTarget?.unitPrice ?? null}
-        onClose={() => setPriceEditId(null)}
-        onSave={(value) => {
+        rule={priceEditTarget?.rule}
+        onClose={closePriceEdit}
+        onSave={(value, reason) => {
           const target = priceEditTarget;
-          setPriceEditId(null);
+          closePriceEdit();
           if (!target) return;
           // Money discipline: round every monetary write. The line TOTAL is never written
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
-          if (target.unlisted) return updateUnlistedPrice(target.id, price);
-          // SA-085i(b): write an override ONLY when it diverges from the base (same comparison
-          // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
-          const p = productById.get(target.id);
-          const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
-          setLinePrice(target.id, base != null ? priceEditorSaveOverride(price, base) : price);
+          if (target.unlisted || !target.rule) return updateUnlistedPrice(target.id, price);
+          // #2696(c): the server's rule A (decideTrayPrice → pricing's decideStaffOverride) —
+          // within ½¢ of the base clears (SA-085i(b): saving the pre-fill never stores an
+          // override); a special line's change carries its reason (the modal refuses without).
+          const d = decideTrayPrice({ typed: price, ...target.rule, reason });
+          if (d.kind === "set") setLinePrice(target.id, d.price, d.overrideReason);
+          else if (d.kind === "clear") setLinePrice(target.id, null);
         }}
       />
 

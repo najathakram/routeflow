@@ -6,6 +6,7 @@ import { User, Building2, ArrowLeft, Mail, KeyRound } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { clearActiveSeller } from "@/lib/buyer-auth";
+import { displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,7 +102,9 @@ export default function BuyerAccountPage() {
                 <Mail className="h-4 w-4" />
                 Email
               </dt>
-              <dd className="text-sm font-medium text-navy">{buyer?.email ?? "N/A"}</dd>
+              <dd className="text-sm font-medium text-navy">
+                {displayEmail(buyer?.email) ?? NO_EMAIL_COPY}
+              </dd>
             </div>
           </dl>
         </div>
@@ -127,10 +130,10 @@ export default function BuyerAccountPage() {
                   {activeSeller.customer?.businessName ?? "N/A"}
                 </dd>
               </div>
-              {activeSeller.customer?.email && (
+              {displayEmail(activeSeller.customer?.email) && (
                 <div className="flex items-center justify-between py-3">
                   <dt className="text-sm text-navy/70">Business Email</dt>
-                  <dd className="text-sm font-medium text-navy">{activeSeller.customer.email}</dd>
+                  <dd className="text-sm font-medium text-navy">{activeSeller.customer?.email}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between py-3">

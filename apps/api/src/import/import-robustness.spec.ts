@@ -43,6 +43,14 @@
  * Buffers end to end and assert on the values written to a mocked
  * PrismaService — never on `parse-import-number.ts` directly (it doesn't
  * exist yet on this tree).
+ *
+ * B858/B859 harness note (bug-test-plan.md): `ProductsService`/`AuditService` providers are added
+ * below so this module keeps compiling once FIX2 adds them to `ImportService`'s constructor. The
+ * REG-B98 `importProducts` assertion is re-pointed from `prisma.product.create` onto
+ * `productsService.create` because that write moves behind `ProductsService` (cause-ruling.md
+ * §2.B) — this is expected to go red until FIX2 lands, same as the B858/B859 red set.
+ * `importInventory`'s own `prisma.product.create` assertions are untouched: that importer is out
+ * of scope for this fix.
  */
 import { Test } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
@@ -55,6 +63,8 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — import robustness (F17)", () => {
@@ -62,6 +72,7 @@ describe("ImportService — import robustness (F17)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let numbering: { reserveNext: jest.Mock };
   let externalRefs: { findLocalId: jest.Mock; record: jest.Mock };
+  let productsService: { create: jest.Mock; update: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -90,6 +101,19 @@ describe("ImportService — import robustness (F17)", () => {
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        // B858/B859 harness note: not yet consumed by ImportService's constructor (RC1) — added
+        // here so this module keeps compiling once FIX2 wires them in.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: SellingRestrictionsService,
           useValue: {
@@ -99,6 +123,7 @@ describe("ImportService — import robustness (F17)", () => {
       ],
     }).compile();
     service = mod.get(ImportService);
+    productsService = mod.get(ProductsService);
   });
 
   describe("REG-B98 — comma-thousands and currency-symbol money parsing", () => {
@@ -182,9 +207,11 @@ describe("ImportService — import robustness (F17)", () => {
 
       const result = await service.importProducts(Buffer.from(csv), "user-1");
 
-      expect(prisma.product.create).toHaveBeenCalledTimes(1);
-      const data = (prisma.product.create.mock.calls[0][0] as any).data;
-      expect(data.pricePerUnit).toBe(4567.89);
+      // B858/B859 harness note: this write moves behind ProductsService (cause-ruling.md §2.B);
+      // red until FIX2 lands (see file-header note).
+      expect(productsService.create).toHaveBeenCalledTimes(1);
+      const dto = productsService.create.mock.calls[0]?.[0];
+      expect(dto?.pricePerUnit).toBe(4567.89);
       expect(result.imported).toBe(1);
     });
 

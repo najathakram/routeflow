@@ -437,6 +437,33 @@ describe("merge-items — overrideReason threading (B465 fix round 2, Opus BLOCK
     expect(merged).toEqual([expect.objectContaining({ productId: "prod-new", unitPrice: 12 })]);
     expect(merged[0]).not.toHaveProperty("overrideReason");
   });
+
+  // #2696(c) SA-558d: the create auto-merge's NEW line takes create's rule A, which needs the
+  // reason on a special line — the fold dropped the incoming one, so a documented staff override
+  // 400'd when it merged into a pending order (found by the F2 real-PG parity pin).
+  it("#2696-MERGE-4: a brand-new merged line carries the INCOMING reason with its incoming price", () => {
+    const { items: merged } = foldMergeItems(
+      [],
+      [{ productId: "prod-new", qty: 2, unitPrice: 6, overrideReason: "bent box" }],
+    );
+    expect(merged).toEqual([
+      expect.objectContaining({ productId: "prod-new", unitPrice: 6, overrideReason: "bent box" }),
+    ]);
+  });
+
+  it("#2696-MERGE-5: an incoming price that FILLS a priceless MANUAL bucket brings its reason; an existing price keeps its own", () => {
+    const filled = foldMergeItems(
+      [{ productId: "prod-1", qty: 3, priceType: "MANUAL" }],
+      [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "bent box" }],
+    ).items;
+    expect(filled[0]).toMatchObject({ unitPrice: 6, overrideReason: "bent box" });
+
+    const kept = foldMergeItems(
+      [{ productId: "prod-1", qty: 3, unitPrice: 12, priceType: "MANUAL", overrideReason: "old" }],
+      [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "new" }],
+    ).items;
+    expect(kept[0]).toMatchObject({ unitPrice: 12, overrideReason: "old" });
+  });
 });
 
 describe("merge-items — B776 (SA-101(1)(d)): a genuine pack disagreement REFUSES, never re-denominates", () => {

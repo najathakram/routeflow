@@ -19,6 +19,8 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
@@ -56,6 +58,20 @@ describe("ImportService — security (F8-003 / F9-008)", () => {
             record: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // B858/B859 harness note: not yet consumed by ImportService's constructor (RC1) — added
+        // here so this module keeps compiling once FIX2 wires them in (module boot dependency
+        // only; this spec's own assertions are unaffected).
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: SellingRestrictionsService,
           useValue: {

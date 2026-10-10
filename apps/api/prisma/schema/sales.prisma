@@ -57,6 +57,8 @@ enum ChangeRequestStatus {
 enum FulfillPath {
   ROUTE
   SHIP
+  // PICKUP = counter sale / in-store pickup (SA-650); no writer until the counter-sale API lands.
+  PICKUP
 }
 
 enum RouteKind {
@@ -119,6 +121,15 @@ enum ReturnStatus {
 enum ReturnKind {
   STANDARD
   INLINE
+}
+
+// #2717 M3 (SA-572): how a document line was composed. NULL = a plain single line (SINGLE is never
+// materialised, plan Q5). FIXED = the RECIPE product sold as sealed packs with frozen component
+// snapshots; FLEX is reserved for M3b.
+enum CompositionMode {
+  SINGLE
+  FIXED
+  FLEX
 }
 
 enum PriceType {
@@ -185,6 +196,9 @@ model Customer {
   // consulted for security mail (verification/password/invite), which is
   // never opt-out.
   orderStatusEmails     Boolean     @default(true)
+  // SA-655: the tenant's ONE system walk-in customer for counter sales (created lazily by the API). Null =
+  // an ordinary customer, for every row that predates the column.
+  isWalkIn              Boolean?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   // RF-197: soft-delete timestamp; set instead of physically deleting when
@@ -616,9 +630,14 @@ model Order {
   shippingCarrier        String?
   shippingTrackingNumber String?
   shippedAt              DateTime?
+  // Set (atomically, once) when the customer was told this order's tracking: either inside the
+  // ORDER_SHIPPED email, or by the one-time SHIPMENT_TRACKING_ADDED follow-up. Never cleared, so
+  // a later edit/clear/re-add of the tracking number can't send a second "tracking added" email.
+  trackingNotifiedAt     DateTime?
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
   skipAutoMerge          Boolean     @default(false)
+  counterSale            Boolean     @default(false) // SA-672e: set only by the counter-sale POST; GET by-key matches on it
   // Phase 4: denormalized flag — true when any line's product is in a tracked
   // (regulated) category. Drives the split preview + signature-POD requirement.
   hasRegulated           Boolean     @default(false)
@@ -829,12 +848,23 @@ model OrderItem {
   // (quantity, unit, factor). The factor always comes from the server's ladder
   // at write time, never re-derived from a live product later.
   unitLabel                String?
+  // #2717 M3 (SA-572 I11): composition provenance on the line. recipeId/recipeVersion are plain
+  // strings/ints with NO foreign key: documents never JOIN Recipe (SA-589 confirms). NULL = a plain line.
+  compositionMode          CompositionMode?
+  recipeId                 String?
+  recipeVersion            Int?
   // Scan/insertion order within the order (0-based). Set from the client's item
   // array index at create and preserved/appended on edit, so line display matches
   // the order items were scanned/added (the invoice already reads in insertion
   // order). Nullable: legacy rows (pre-migration) and merge/change-request appends
   // leave it null and sort LAST (Postgres NULLS LAST for ASC).
   position                 Int?
+  // SA-714 R1 (out-of-stock PR3): PIECES of this line that were sold past available stock
+  // (`currentStock`'s unit, B703) — the "Backorder" tag. Informational ONLY: written solely by the
+  // locked stock section (decrementStockForSale / settleStockForEdit) via the pure
+  // backorderPieces* helpers, never read by money, invoice, stock or status code. 0 = not
+  // backordered OR unknown (history is not backfilled; a recreate-mode edit resets it).
+  backorderedPieces        Decimal                 @default(0) @db.Decimal(10, 3)
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
   tenantId                 String?
@@ -854,6 +884,7 @@ model OrderItem {
   transactionItems   TransactionItem[]
   invoiceItems       InvoiceItem[]
   changeRequests     ChangeRequest[]
+  components         OrderItemComponent[]
 
   @@index([orderId])
   @@index([productId])
@@ -861,6 +892,34 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
+}
+
+// #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty
+// equals the line's pieces, enforced in the writing tx (never a CHECK). Nested creates are not
+// tenant-injected, so tenantId is set explicitly. componentProductId is Restrict.
+model OrderItemComponent {
+  id                 String            @id @default(uuid())
+  tenantId           String
+  orderItemId        String
+  componentProductId String
+  qty                Int
+  name               String
+  unitSku            String?
+  unitBarcode        String?
+  barcodeSymbology   BarcodeSymbology?
+  displayUnitPrice4  Decimal?          @db.Decimal(12, 4)
+  position           Int               @default(0)
+  createdAt          DateTime          @default(now())
+
+  orderItem             OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  componentProduct      Product                @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+
+  @@unique([orderItemId, componentProductId])
+  @@index([componentProductId])
+  @@index([tenantId])
 }
 
 model DeliveryMutation {
@@ -1079,7 +1138,7 @@ model Return {
   capturedRole      String?
   routeRunStopId    String?
   // RETURN_HOLD_REASON_VALUES (packages/types/api/enums.ts): CAPTURE_PENDING | CAPTURE_FAILED
-  // | OVER_RETURN | DRIVER_CAP | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
+  // | OVER_RETURN | DRIVER_CAP | ALREADY_RETURNED | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
   // reason as refundMethod above); validated at the DTO/service edge.
   holdReason        String?
   captureAttempts   Int        @default(0)
@@ -1156,6 +1215,9 @@ model ReturnItem {
   @@index([productId])
   @@index([tenantId])
   @@index([sourceOrderId, productId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────

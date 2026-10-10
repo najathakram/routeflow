@@ -19,11 +19,16 @@ import {
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
+import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
-import { alertInfo } from "../../../../../lib/confirm";
+import { alertInfo, confirm } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -33,7 +38,13 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal, isNsfLine, packFromOwnSplit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  isNsfLine,
+  packFromOwnSplit,
+  type SellLevel,
+} from "@routeflow/pricing";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -117,6 +128,8 @@ export default function EditInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
@@ -212,19 +225,23 @@ export default function EditInvoiceScreen() {
     patch(l.key, { pieces: p, qty: (l.boxes ?? 0) * upb + p });
   };
 
-  const addCatalogLine = (p: AdminProduct) => {
+  // `level` is what a SCAN carried (SA-580 R1/R2): UNIT on a boxed product is one loose piece
+  // (0 boxes + 1 piece — both shown by the line's case/loose steppers), BOX one case. A tapped pick
+  // passes none: a case, as before. upb <= 1 has no distinction (R4).
+  const addCatalogLine = (p: AdminProduct, level: SellLevel = "BOX") => {
     setPickerOpen(false);
     const upb = Number(p.unitsPerBox ?? 0);
     const boxed = upb > 1;
+    const loose = boxed && level === "UNIT";
     setLines((ls) => [
       ...ls,
       {
         key: newKey(),
         productId: p.id,
         description: p.name,
-        qty: boxed ? upb : 1,
-        boxes: boxed ? 1 : null,
-        pieces: boxed ? 0 : null,
+        qty: loose ? 1 : boxed ? upb : 1,
+        boxes: boxed ? (loose ? 0 : 1) : null,
+        pieces: boxed ? (loose ? 1 : 0) : null,
         unitsPerBox: boxed ? upb : null,
         unitPrice: Number(p.pricePerUnit) || 0,
         discount: null,
@@ -255,9 +272,22 @@ export default function EditInvoiceScreen() {
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
-      if (!result.notFound) {
-        addCatalogLine(result.product);
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      const decision = decideScanResult(result, "add");
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
+        runScanDecision(
+          decision,
+          (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
+          confirm,
+          { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
+        )
+      ) {
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -454,6 +484,7 @@ export default function EditInvoiceScreen() {
   }
   if (
     isPendingOrderMirror({
+      pendingMirror: invoice.pendingMirror,
       orderId: invoice.orderId,
       deliveryBatchId: invoice.deliveryBatchId,
       orderStatus: invoice.order?.status,
@@ -604,7 +635,8 @@ export default function EditInvoiceScreen() {
           onSelect={addCatalogLine}
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }

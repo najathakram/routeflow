@@ -88,7 +88,7 @@ function makeService(
   const mailboxSend = {
     trySend: () => Promise.resolve({ delivered: false, transport: "mailbox", error: "none" }),
   } as never;
-  return new EmailService(config, prisma, encryption, mailboxSend);
+  return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
 }
 
 /** One SMTP command/response exchange over a raw socket (no TLS) — reads until a final line. */

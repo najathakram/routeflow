@@ -144,6 +144,10 @@ describeDb(
         pricing as any,
         { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any, // billingNotification
         planTransitionStub,
+        {
+          checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+          adoptCheckoutAddons: async () => undefined,
+        } as any, // mutations (SA-690)
       );
 
       platformAdmin = new PlatformAdminService(
@@ -424,6 +428,39 @@ describeDb(
       const count = await prisma.billingEvent.count({ where: { tenantId: id } });
       await activate(id, "GROWTH"); // same-plan renewal
       expect(await prisma.billingEvent.count({ where: { tenantId: id } })).toBe(count);
+      expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
+    });
+
+    // #2583 / SA-513: upgrade() books on the shared paying predicate. A TEST-class tenant is outside
+    // the paying set on both sides, so its upgrade books Δ0 (the ledger sum is unchanged) while the
+    // snapshot still moves; flipping it to PRODUCTION then rebases from that stored snapshot.
+    it("#2583: a TEST-class upgrade moves the snapshot but books nothing; class → PRODUCTION rebases from it", async () => {
+      const id = await makeTenant("testcls", TenantStatus.ACTIVE, {
+        planKey: "STARTER",
+        basePriceSnapshot: price.STARTER,
+      });
+      await prisma.tenant.update({ where: { id }, data: { class: TenantClass.TEST } });
+      expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 });
+
+      await mutation.upgrade(id, "GROWTH", "admin-2583");
+
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
+      expect(sub.planKey).toBe("GROWTH");
+      expect(Number(sub.basePriceSnapshot)).toBe(price.GROWTH); // the snapshot still moves
+      const booked = await prisma.billingEvent.findMany({
+        where: { tenantId: id, amountDelta: { not: 0 } },
+        select: { type: true },
+      });
+      expect(booked).toEqual([]); // nothing booked for a non-paying row
+      // SA-513a: the upgrade still leaves exactly ONE plan.changed history row, at Δ0.
+      const planChanged = await prisma.billingEvent.findMany({
+        where: { tenantId: id, type: "plan.changed" },
+        select: { amountDelta: true },
+      });
+      expect(planChanged.map((e) => Number(e.amountDelta ?? 0))).toEqual([0]);
+      expect(await figures(id)).toEqual({ snapshot: 0, ledger: 0 }); // MRR unchanged
+
+      await platformAdmin.updateTenantClass(id, { class: "PRODUCTION" } as any, "admin-2583");
       expect(await figures(id)).toEqual({ snapshot: price.GROWTH, ledger: price.GROWTH });
     });
   },

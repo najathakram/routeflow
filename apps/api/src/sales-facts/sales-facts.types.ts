@@ -80,3 +80,13 @@ export interface InstantWindow {
   gte: Date;
   lt: Date;
 }
+
+/** One product's accrual sales inside a window (the catalog CSV's stats columns). */
+export interface ProductPeriodStats {
+  /** Σ pieces of the lines that state them; a line that cannot say counts revenue only. */
+  pieces: number;
+  /** Σ line subtotal (accrual gross of credits), unrounded. */
+  gross: number;
+  /** Newest issue date in the window, or null when nothing sold. */
+  lastSold: Date | null;
+}

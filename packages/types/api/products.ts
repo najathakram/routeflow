@@ -1,5 +1,38 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
+import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
+
+/** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
+ *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
+export interface ProductBarcodeView {
+  code: string;
+  level: PackagingLevel;
+  symbology: BarcodeSymbology;
+  origin: BarcodeOrigin | "LEGACY";
+  copiedFromLevel: PackagingLevel | null;
+  primaryFor: PackagingLevel | null;
+}
+
+/** #2717 M4a-1: which code a scan hit and the packaging levels that code has on the resolved product
+ *  (additive on the scan-lookup response; a shared code reports both levels). */
+export interface ScanMatchView {
+  code: string;
+  levels: PackagingLevel[];
+}
+
+/** #2717 M1: a product image as the product read model returns it (`origin: "LEGACY"` = synthesized from imageKeys). */
+export interface ProductImageView {
+  storageKey: string;
+  url: string | null;
+  focalX: number | null;
+  focalY: number | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  altText: string | null;
+  origin: "ROW" | "LEGACY";
+}
+
 export interface InventoryValuation {
   totalValue: number;
   productCount: number;
@@ -207,4 +240,146 @@ export interface ProductCategoryDto {
   id: string;
   name: string;
   archivedAt: string | null;
+}
+
+/** #2717 M2: one component line of a recipe version. */
+export interface RecipeComponentDto {
+  id: string;
+  componentProductId: string;
+  qty: number;
+  position: number;
+}
+
+/** #2717 M2: one recipe version as the recipes API returns it. Dates are ISO strings on the wire. */
+export interface RecipeDto {
+  id: string;
+  productId: string;
+  familyProductId: string;
+  version: number;
+  unitsPerPack: number;
+  status: RecipeStatus;
+  activeFor: string | null;
+  effectiveFrom: string | null;
+  retiredAt: string | null;
+  components: RecipeComponentDto[];
+}
+
+/** Staff product read shapes (GET /products/:id and list rows) carry the buyer-portal flag. */
+export interface ProductPortalVisibilityFields {
+  portalVisible: boolean;
+}
+
+/** PATCH /products/portal-visibility body (1..200 unique ids). */
+export interface BulkSetPortalVisibilityPayload {
+  ids: string[];
+  portalVisible: boolean;
+}
+
+export interface BulkSetPortalVisibilityResult {
+  portalVisible: boolean;
+  updated: number;
+  unchanged: number;
+}
+
+// ─── Reuse API 409 bodies (SA-603a/603i; flat keys, one shape for codes and names) ───────────────────
+/** One ACTIVE product blocking a reactivation, for one code or the name. */
+export interface ProductReactivationHolder {
+  /** BARCODE_TAKEN for a barcode (SA-572b keeps its code); CODE_TAKEN for sku / unitSku; NAME_TAKEN for the name. */
+  code:
+    | typeof API_ERROR_CODES.CODE_TAKEN
+    | typeof API_ERROR_CODES.BARCODE_TAKEN
+    | typeof API_ERROR_CODES.NAME_TAKEN;
+  field: "sku" | "barcode" | "unitSku" | "name";
+  value: string;
+  productId: string;
+  productName: string;
+  /** Present when this holder can NOT be deactivated in the one call (a FAMILY, or it has ACTIVE variants). */
+  blocked?: "HAS_ACTIVE_VARIANTS";
+}
+
+/**
+ * 409 when reactivating (or creating / renaming) hits an ACTIVE holder. The top-level keys repeat `holders[0]` (the fixed
+ * copy maps from them); `holders` is the COMPLETE set the server derived, which is exactly what `deactivateHolderIds`
+ * must equal on the one-call resolution. A barcode conflict also carries SA-572b's `barcode` key.
+ */
+export interface ProductCodeTakenError extends ProductReactivationHolder {
+  message: string;
+  barcode?: string;
+  holders?: ProductReactivationHolder[];
+}
+/**
+ * The name-taken 409. `productId` / `productName` name the holder, but the DB-unique backstop (a P2002 on an active-name
+ * index) cannot know who holds it, so on that path they are absent.
+ */
+export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "productName"> & {
+  code: typeof API_ERROR_CODES.NAME_TAKEN;
+  field: "name";
+  productId?: string;
+  productName?: string;
+};
+
+/** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
+export interface ProductHoldersChangedError {
+  code: typeof API_ERROR_CODES.HOLDERS_CHANGED;
+  message: string;
+  holders: [];
+}
+
+// ─── Families (WS8, SA-606): a FAMILY is a non-stocked, non-sellable container; its variants are the sellable rows ──
+export interface FamilyVariantInput {
+  name: string;
+  sku?: string;
+  barcode?: string;
+  unitSku?: string;
+  unitsPerBox?: number;
+  pricePerUnit: string;
+  /** SA-606a: lands in standardCost only (never averageCost / a StockLot); omitted = inherits the family cost. */
+  standardCost?: string;
+}
+
+export interface CreateFamilyRequest {
+  family: {
+    name: string;
+    category?: string;
+    description?: string;
+    /** REQUIRED (SA-606i): no implicit $0.00; send "0.00" for a deliberately free family. */
+    pricePerUnit: string;
+    standardCost?: string;
+  };
+  /** 1..200 rows. */
+  variants: FamilyVariantInput[];
+  /** Copy the family price onto the variants (M2 price authority only matters under mixed_packs). */
+  copyFamilyPrice?: boolean;
+}
+
+/** One conflicting row of a families write. `row` is the variant index, or "family" for the container. */
+export interface FamilyRowConflict {
+  row: number | "family";
+  field: "name" | "sku" | "barcode" | "unitSku";
+  value: string;
+  reason:
+    typeof API_ERROR_CODES.CODE_TAKEN | typeof API_ERROR_CODES.NAME_TAKEN | "DUPLICATE_IN_REQUEST";
+  /** The ACTIVE holder in the same tenant (absent for DUPLICATE_IN_REQUEST). */
+  conflictProductId?: string;
+}
+
+/** 409 FAMILY_ROWS_CONFLICT: EVERY conflict, all-or-nothing (nothing was written). */
+export interface FamilyRowsConflictError {
+  code: typeof API_ERROR_CODES.FAMILY_ROWS_CONFLICT;
+  message: string;
+  rows: FamilyRowConflict[];
+}
+
+/** 400 FAMILY_NOT_SELLABLE: a FAMILY container named on a sellable line. */
+export interface FamilyNotSellableError {
+  code: typeof API_ERROR_CODES.FAMILY_NOT_SELLABLE;
+  message: string;
+  productIds: string[];
+}
+
+/** PATCH /products/:id/variants body: ALL-OR-NOTHING, at most 200 rows in total. */
+export interface UpdateFamilyVariantsRequest {
+  add?: FamilyVariantInput[];
+  update?: Array<Partial<FamilyVariantInput> & { id: string }>;
+  deactivate?: string[];
 }

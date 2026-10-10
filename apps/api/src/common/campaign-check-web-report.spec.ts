@@ -3,6 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// The ONE shared GIT_* scrub (scripts/lib/scrubbed-git-env.cjs; check-git-hooks.mjs re-exports it).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: (env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+};
+
 // Pins that scripts/campaign-check.mjs treats apps/web's jest report
 // (.campaign/runs/web.json, wired via apps/web/jest.config.js's
 // jest-campaign-reporter.cjs { artifact: "web" }) as a T1 proof source on par with
@@ -16,22 +22,7 @@ const SCRIPT = path.join(REPO_ROOT, "scripts/campaign-check.mjs");
 const WEB_JEST_CONFIG = path.join(REPO_ROOT, "apps/web/jest.config.js");
 
 function scrubGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_QUARANTINE_PATH",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-  ]) {
-    delete env[key];
-  }
-  return { ...env, ...extra };
+  return { ...scrubbedGitEnv(), ...extra };
 }
 
 function git(args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}): void {

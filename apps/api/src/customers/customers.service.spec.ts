@@ -15,7 +15,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -83,6 +83,7 @@ const customerPayload = {
   sub: "user-1",
   username: "customer",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -92,7 +93,7 @@ describe("CustomersService", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let meter: { read: jest.Mock };
   let catalog: { getPublishedVersion: jest.Mock };
-  let entitlements: { hasFlag: jest.Mock };
+  let authority: { can: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock };
   let email: { send: jest.Mock };
@@ -131,7 +132,7 @@ describe("CustomersService", () => {
     // flip the flag ON and let assertMsrpAllowed return quietly; the stub catalog
     // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
     // mask the behaviour the test is actually about.
-    entitlements = { hasFlag: jest.fn().mockResolvedValue(false) };
+    authority = { can: jest.fn().mockResolvedValue(false) };
     email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -157,7 +158,7 @@ describe("CustomersService", () => {
         },
         { provide: MeterService, useValue: meter },
         { provide: PlanCatalogService, useValue: catalog },
-        { provide: EntitlementsService, useValue: entitlements },
+        { provide: EntitlementAuthority, useValue: authority },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: EmailService, useValue: email },
       ],
@@ -2569,7 +2570,7 @@ describe("CustomersService", () => {
       // the stub — and the test would fail on a TypeError, unable to tell "the
       // driver wrote" from "the code crashed". Post-fix the hoisted role gate
       // short-circuits above this call and msrpSpy is never reached.
-      entitlements.hasFlag.mockResolvedValue(true);
+      authority.can.mockResolvedValue(true);
       const msrpSpy = jest.spyOn(service as any, "assertMsrpAllowed");
       prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
 
@@ -3135,4 +3136,7 @@ describe("CustomersService", () => {
       expect(email.send).not.toHaveBeenCalled();
     });
   });
+
+  // sendPortalInvite's sentinel-email coverage lives in
+  // customers.portal-invite.spec.ts (extracted — this file is at its size-ratchet baseline).
 });

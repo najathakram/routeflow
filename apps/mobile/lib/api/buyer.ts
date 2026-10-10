@@ -5,8 +5,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
+import { buyerApiClient, getBuyerSubmitScope, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
+import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -16,7 +17,14 @@ import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderListItem,
   BuyerPayment,
+  BuyerProduct,
+  ChangeRequest,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -51,153 +59,22 @@ export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description?: string;
-  category?: string;
-  unit?: string;
-  /** Legacy field — may be absent. Prefer buyerPrice then basePrice. */
-  price?: number;
-  buyerPrice?: number;
-  basePrice?: number;
-  imageUrl?: string;
-  isFavorite?: boolean;
-  /** Box packaging: when > 1 the buyerPrice/basePrice is the BOX price. */
-  unitsPerBox?: number | null;
-  // Catalogue v2 merch/stock fields (P5-02 DTO; optional so older cached shapes
-  // still type-check). Mirrors buyer-catalog.service.ts BuyerProduct.
-  sku?: string | null;
-  barcode?: string | null;
-  thumbnailUrl?: string | null;
-  imageUrls?: string[];
-  isFeatured?: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): the catalog row + favorites shapes are ONE declaration in @routeflow/types.
+export type {
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+  ChangeRequest,
+} from "@routeflow/types";
 
-// ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
-// Type/Status/Resolution are identical to `./change-requests`'s (which now
-// sources Type/Status from `@routeflow/types`) — imported, not redeclared
-// (wave E / imp-10b R2 intra-app dedup). `ChangeRequest` itself is NOT
-// deduped: this buyer-facing shape carries resolver-name/reason fields
-// `./change-requests`'s driver-flow shape lacks — a real divergence the sweep
-// undercounted, kept local on both sides.
-
-export interface ChangeRequest {
-  id: string;
-  orderId: string;
-  orderItemId: string | null;
-  productId: string | null;
-  type: ChangeRequestType;
-  status: ChangeRequestStatus;
-  payload: {
-    productId?: string;
-    qty?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    productName?: string;
-    orderItemId?: string;
-    newQty?: number;
-    text?: string;
-  };
-  note: string | null;
-  requestedByName: string | null;
-  requestedByRole: string | null;
-  resolvedByName: string | null;
-  resolvedByRole: string | null;
-  resolution: ChangeRequestResolution | null;
-  resolutionReason: string | null;
-  nextOrderId: string | null;
-  resolvedAt: string | null;
-  createdAt: string;
-}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber?: string;
-  status: string;
-  createdAt: string;
-  requestedDeliveryDate?: string;
-  notes?: string;
-  urgent?: boolean;
-  subtotal?: number;
-  tax?: number;
-  total?: number;
-  lineItems: Array<{
-    id: string;
-    productId: string;
-    qty: number;
-    unitPrice: number;
-    subtotal?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    status?: string;
-    deliveredQty?: number;
-    categoryTaxAmount?: number; // RF-4: regulated category tax folded into order.total
-    /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
-     *  `subtotal` so it doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-    /** units_v1: sold by a non-pack unit (Case, Pallet, Piece…) — null/absent = the pack. */
-    unitLabel?: string | null;
-    product?: { id: string; name: string; unit?: string };
-  }>;
-  /** P5-09: post-dispatch change requests, newest first. */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
-
-export interface BuyerInvoiceItem {
-  id: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  subtotal: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is
-   *  then the COUNT of that unit (never a physical box). Null = the pack (B758). */
-  unitLabel?: string | null;
-  /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
-   *  `subtotal` so it doesn't read as a pricing error. */
-  promoFreeUnits?: number | null;
-  /** Per-line note, buyer-visible. */
-  notes?: string | null;
-  product?: { id: string; name: string; unit?: string };
-}
-
-/** Check lifecycle states (P5-12). Only ever set when method = CHECK. */
-export type BuyerCheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-
-/** Raw InvoicePayment row from GET /buyer/invoices/:id (no DTO mapping). Field
- *  is `method`; `paymentMethod` kept only for older cached shapes. Decimal
- *  fields may arrive as strings — render via Number(), never do arithmetic. */
-export interface BuyerInvoicePayment {
-  id: string;
-  amount: number;
-  createdAt: string;
-  method?: string;
-  /** @deprecated the API returns `method` — kept for older cached shapes. */
-  paymentMethod?: string;
-  reference?: string;
-  notes?: string;
-  status?: "DRAFT" | "PAID" | "VOID" | string;
-  checkStatus?: BuyerCheckStatus | null;
-  nsfFeeAmount?: number | string | null;
-  paidAt?: string;
-}
+// ─── Orders + change requests: shared (#2703) ─────────────────────────────────
+// BuyerOrder / BuyerOrderListItem and the buyer-facing ChangeRequest row are ONE declaration in
+// @routeflow/types (SA-562). `./change-requests`' ChangeRequest is the narrower DRIVER-flow shape
+// and stays separate.
 
 export interface BuyerInvoice {
   id: string;
@@ -427,7 +304,7 @@ export function useBuyerCategories() {
 }
 
 export function useBuyerFavorites() {
-  return useQuery<BuyerProduct[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer-favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
     staleTime: 60_000,
@@ -567,7 +444,8 @@ export function useAddAllLow() {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
-  return useQuery<{ data: BuyerOrder[]; meta: any }>({
+  // #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), not the detail.
+  return useQuery<{ data: BuyerOrderListItem[]; meta: any }>({
     queryKey: ["buyer-orders", params],
     queryFn: () =>
       buyerApiClient.get("/buyer/orders", { params: { limit: 30, ...params } }).then((r) => r.data),
@@ -614,8 +492,15 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
     }
   >({
-    mutationFn: (dto) => buyerApiClient.post("/buyer/orders", dto).then((r) => r.data),
+    // B1094: the same cart carries the same key, so a double tap / timeout retry applies once.
+    mutationFn: async (dto) =>
+      buyerApiClient
+        .post("/buyer/orders", dto, {
+          headers: { "Idempotency-Key": buyerSubmitKeyFor(dto, await getBuyerSubmitScope()) },
+        })
+        .then((r) => r.data),
     onSuccess: () => {
+      clearBuyerSubmitKey();
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
       qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
     },

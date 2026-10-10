@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -31,6 +32,7 @@ import {
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
+import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
   useCustomers,
   useCustomerPrices,
@@ -38,18 +40,39 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import {
+  saleLineMovedOffSpecial,
+  saleLineNeedsReason,
+  saleLinePricing,
+  type SaleLinePricing,
+} from "@/lib/sale-line-pricing";
+import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+  sellableFlat,
+  sellableOnly,
+} from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
-  computeLineSubtotal,
+  isSpecialTier,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
+  type SellLevel,
 } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
@@ -193,6 +216,10 @@ function ProductSearchInput({
     unitPrice: string,
     avgCost?: number,
     unitsPerBox?: number,
+    /** #2696(c): the picked product itself — its tier ladder prices the line (SA-558e). */
+    product?: Record<string, unknown>,
+    /** #2717 M4a-1: the level a SCAN resolved (undefined for a picker tap). */
+    scanLevel?: SellLevel,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -215,8 +242,10 @@ function ProductSearchInput({
     limit: 20,
     includeVariants: true,
   });
-  // Only top-level products (parents + standalones) shown at root; variants appear as children
-  const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
+  // Top-level products (parents + standalones) with variants as children. A variant that matched on
+  // its own gets its parent re-attached and opened (B1215 C6); a FAMILY is never a line (C7).
+  const groups = React.useMemo(() => groupSearchRows<any>(data?.data ?? []), [data]);
+  const products = groups.rows;
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -228,15 +257,19 @@ function ProductSearchInput({
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
-  function selectProduct(p: any) {
+  function selectProduct(p: any, scanLevel?: SellLevel) {
+    if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
+    const label = displayProductName(p);
     onChange(
-      p.name,
+      label,
       p.id,
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
       p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
+      p,
+      scanLevel,
     );
-    setQuery(p.name);
+    setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -265,7 +298,7 @@ function ProductSearchInput({
               .get(`/products/barcode/${encodeURIComponent(code)}`)
               .then((r) => r.data);
             if (product) {
-              selectProduct(product);
+              selectProduct(product, scanLevelForHit(code, product));
               return;
             }
           } catch {
@@ -285,7 +318,7 @@ function ProductSearchInput({
             )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
-              const isExpanded = expandedParentId === p.id;
+              const isExpanded = isGroupExpanded(expandedParentId, groups.expandedIds, p.id);
               return (
                 <React.Fragment key={p.id}>
                   <li>
@@ -293,7 +326,7 @@ function ProductSearchInput({
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
                         if (hasVariants) {
-                          setExpandedParentId(isExpanded ? null : p.id);
+                          setExpandedParentId(isExpanded ? "" : p.id);
                         } else {
                           selectProduct(p);
                         }
@@ -314,7 +347,7 @@ function ProductSearchInput({
                         )}
                         {hasVariants && (
                           <span className="text-[10px] text-navy/70 shrink-0">
-                            {p.variants.length} variants
+                            {countNoun(p.variants.length, "variant")}
                           </span>
                         )}
                       </div>
@@ -331,14 +364,17 @@ function ProductSearchInput({
                       <li key={v.id} className="bg-surface-raised/50">
                         <button
                           className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => selectProduct(v)}
+                          onClick={() => selectProduct(attachParent(v, p))}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-sm font-medium text-navy truncate">
-                              {v.variantName ?? v.name}
+                              {pickerProductName(v, p)}
                             </span>
                             {v.sku && (
                               <span className="text-xs text-navy/70 shrink-0">{v.sku}</span>
+                            )}
+                            {v.unit && (
+                              <span className="text-xs text-navy/70 shrink-0">{v.unit}</span>
                             )}
                           </div>
                           <span className="text-xs text-navy/70 shrink-0 ml-2">
@@ -391,6 +427,10 @@ interface LineItemState {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** #2696(c) SA-558e: the one-rule inputs (tier price, list, special?) — see sale-line-pricing. */
+  pricing?: SaleLinePricing;
+  /** Why a New-sale line's price moves off the customer's special price (sent then). */
+  overrideReason?: string;
 }
 
 function createEmptyItem(): LineItemState {
@@ -419,18 +459,24 @@ function boxedUnitsPerBox(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
-function lineTotal(item: LineItemState): number {
-  // Use the shared boxed-proration helper (same as the backend + order builder).
+function toTotalsLine(item: LineItemState): InvoiceTotalsLine {
+  // Boxed lines go through the shared pricing helper (same as the backend + order builder).
   // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
   // total pieces while unitPrice is the box price (money-discipline rule).
-  const subtotal = computeLineSubtotal({
+  return {
     unitPrice: Number(item.unitPrice),
     qty: Number(item.qty),
     boxes: item.boxes ?? null,
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
-  });
-  return Math.max(0, subtotal - Number(item.discount));
+    discount: Number(item.discount),
+    taxable: item.taxable,
+  };
+}
+
+/** One line's post-discount, boxed-aware, rounded total. */
+function lineTotal(item: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(item));
 }
 
 // ─── Basis chooser ────────────────────────────────────────────────────────────
@@ -513,14 +559,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   const [splitOrder, setSplitOrder] = React.useState<{
     id: string;
     orderNumber: string | null;
-    items: {
-      id: string;
-      productName: string;
-      qty: number;
-      invoicedQty: number;
-      unitPrice: number;
-      unit?: string;
-    }[];
+    items: SplitInvoiceLine[];
   } | null>(null);
 
   const billWhole = (orderId: string) => {
@@ -593,14 +632,9 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
                         setSplitOrder({
                           id: o.id,
                           orderNumber: o.orderNumber,
-                          items: (o.lineItems ?? []).map((li) => ({
-                            id: li.id,
-                            productName: li.product?.name ?? "Item",
-                            qty: Number(li.qty),
-                            invoicedQty: Number(li.invoicedQty ?? 0),
-                            unitPrice: Number(li.unitPrice),
-                            unit: li.product?.unit,
-                          })),
+                          items: (o.lineItems ?? []).map((li) =>
+                            toSplitInvoiceLine(li, li.product?.name ?? "Item"),
+                          ),
                         })
                       }
                     >
@@ -793,6 +827,13 @@ export default function NewInvoicePage() {
     }
     return map;
   }, [customerPricesData, customer]);
+  // #2696(c): the tier the server prices each product at (CustomerPrice row, else the default).
+  const tierFor = (productId: string): number => {
+    const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
+      (c) => c.productId === productId,
+    );
+    return cp?.pricingTier ?? customer?.pricingTier ?? 1;
+  };
 
   // ── Auto-update due date when terms change ────────────────────────────────
 
@@ -833,9 +874,13 @@ export default function NewInvoicePage() {
 
   // ── Calculations ────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const tax = items.filter((it) => it.taxable).reduce((s, it) => s + lineTotal(it) * taxRate, 0);
-  const total = subtotal + tax + adjustment;
+  // The builder's "Adjustment" is signed: negative is an invoice discount, positive a surcharge
+  // (the same mapping the submit handlers send). All footer money is rounded once, in pricing.
+  const { subtotal, tax, total } = computeInvoiceTotals(items.map(toTotalsLine), {
+    discount: adjustment < 0 ? Math.abs(adjustment) : 0,
+    shipping: adjustment > 0 ? adjustment : 0,
+    taxRate,
+  });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
   // ── Item helpers ────────────────────────────────────────────────────────────
@@ -876,19 +921,22 @@ export default function NewInvoicePage() {
    * If the product is already on the invoice, just bump its qty by one box
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
-  function addProductFromCatalog(product: any) {
+  function addProductFromCatalog(product: any, scanLevel?: SellLevel) {
     const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
     const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+    const tierLadderPrice = isSpecialTier(customerTier)
+      ? getTierPrice(product, customerTier)
+      : undefined;
     const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
     const effectivePrice =
       specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
         ? specialPrice
         : listPrice;
 
+    const seed = seedLineQty(upb, scanLevel);
     const lineItem: LineItemState = {
       key: Math.random().toString(36).slice(2),
       productId: product.id,
@@ -897,17 +945,18 @@ export default function NewInvoicePage() {
       // standalone — "Strawberry" by itself doesn't tell the customer
       // which product family it came from.
       description: displayProductName(product),
-      qty: upb ? upb : 1,
+      qty: seed.qty ?? 1,
       unitPrice: effectivePrice,
       discount: 0,
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
+      pricing: saleLinePricing(product, tierFor(product.id)),
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
-      boxes: upb ? 1 : undefined,
-      pieces: upb ? 0 : undefined,
+      boxes: seed.boxes,
+      pieces: seed.pieces,
     };
 
     const existing = items.find((it) => it.productId === product.id);
@@ -915,18 +964,7 @@ export default function NewInvoicePage() {
       // If product is already on the invoice, increment its qty instead of duplicating.
       const existingIdx = prev.findIndex((it) => it.productId === product.id);
       if (existingIdx >= 0) {
-        return prev.map((it, idx) => {
-          if (idx !== existingIdx) return it;
-          if (it.unitsPerBox) {
-            const nextBoxes = (it.boxes ?? 0) + 1;
-            return {
-              ...it,
-              boxes: nextBoxes,
-              qty: nextBoxes * it.unitsPerBox + (it.pieces ?? 0),
-            };
-          }
-          return { ...it, qty: Number(it.qty) + 1 };
-        });
+        return prev.map((it, idx) => (idx !== existingIdx ? it : bumpInvoiceLine(it, scanLevel)));
       }
       // Replace the seeded blank row if it's the only one and is empty.
       const onlyBlank =
@@ -961,9 +999,8 @@ export default function NewInvoicePage() {
   });
   const scanSuggestions = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    return ((scanProductsData?.data as any[]) ?? [])
-      .filter((p: any) => !p.parentProductId)
-      .slice(0, 8);
+    // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []).slice(0, 8);
   }, [scanProductsData, debouncedScanQuery]);
 
   /**
@@ -982,7 +1019,7 @@ export default function NewInvoicePage() {
         .get(`/products/barcode/${encodeURIComponent(code)}`)
         .then((r) => r.data);
       if (product?.id) {
-        addProductFromCatalog(product);
+        addProductFromCatalog(product, scanLevelForHit(code, product));
         return;
       }
     } catch {
@@ -995,11 +1032,11 @@ export default function NewInvoicePage() {
           params: { search: code, limit: 10, isActive: true, includeVariants: true },
         })
         .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
+      const matches: any[] = sellableOnly<any>(res?.data ?? []);
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
-        addProductFromCatalog(toAdd);
+        addProductFromCatalog(toAdd, scanLevelForHit(code, toAdd));
         return;
       }
     } catch {
@@ -1027,6 +1064,12 @@ export default function NewInvoicePage() {
       }
       if (Number(it.qty) <= 0) {
         errs.items = "All quantities must be greater than 0.";
+        break;
+      }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
         break;
       }
     }
@@ -1253,17 +1296,25 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean) {
+    const saleLines = items.filter((it) => it.productId && Number(it.qty) > 0);
+    // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
+    const needsReason = saleLines.find(saleLineNeedsReason);
+    if (needsReason) {
+      toast({ title: reasonRequiredMessage(needsReason.description), variant: "error" });
+      return;
+    }
     // A sale must be made of real products (an order needs products).
-    const saleItems = items
-      .filter((it) => it.productId && Number(it.qty) > 0)
-      .map((it) => ({
-        productId: it.productId as string,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
-        // item state for upb<=1, but a read site should never trust a single write-side guard.
-        ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
-      }));
+    const saleItems = saleLines.map((it) => ({
+      productId: it.productId as string,
+      qty: Number(it.qty),
+      unitPrice: Number(it.unitPrice),
+      ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
+        ? { overrideReason: it.overrideReason.trim() }
+        : {}),
+      // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+      // item state for upb<=1, but a read site should never trust a single write-side guard.
+      ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+    }));
 
     const errs: Record<string, string> = {};
     if (!customer) errs.customer = "Please select a customer.";
@@ -1821,8 +1872,17 @@ export default function NewInvoicePage() {
                           setCreateProductTargetIdx(idx);
                           setCreateProductOpen(true);
                         }}
-                        onChange={(desc, pid, price, avgCost, unitsPerBox) => {
-                          const specialPrice = pid ? priceMap[pid] : undefined;
+                        onChange={(desc, pid, price, avgCost, unitsPerBox, product, scanLevel) => {
+                          // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
+                          // server's own baseline) — list for a tier customer would be refused.
+                          const pricing =
+                            pid && product ? saleLinePricing(product, tierFor(pid)) : undefined;
+                          const specialPrice =
+                            pricing && pricing.tierPrice !== pricing.listPrice
+                              ? pricing.tierPrice
+                              : pid
+                                ? priceMap[pid]
+                                : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
                           const upb = boxedUnitsPerBox(unitsPerBox);
@@ -1830,14 +1890,16 @@ export default function NewInvoicePage() {
                             description: desc,
                             productId: pid || undefined,
                             unitPrice: effectivePrice,
+                            pricing,
+                            overrideReason: undefined,
                             regularPrice:
                               specialPrice !== undefined ? parseFloat(price) : undefined,
                             isSpecialPrice: specialPrice !== undefined,
                             avgCost,
                             unitsPerBox: upb,
-                            boxes: upb ? 1 : undefined,
-                            pieces: upb ? 0 : undefined,
-                            qty: upb ? upb : item.qty || 1,
+                            ...(upb
+                              ? seedLineQty(upb, scanLevel)
+                              : { boxes: undefined, pieces: undefined, qty: item.qty || 1 }),
                           });
                         }}
                       />
@@ -1954,8 +2016,26 @@ export default function NewInvoicePage() {
                         min={0}
                         value={item.unitPrice}
                         onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        aria-label="Unit price"
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
+                      {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
+                          server requires on a sale (pricing's decideStaffOverride). */}
+                      {isSale && saleLineMovedOffSpecial(item) && (
+                        <input
+                          type="text"
+                          maxLength={200}
+                          value={item.overrideReason ?? ""}
+                          onChange={(e) => updateItem(item.key, { overrideReason: e.target.value })}
+                          aria-label="Reason (required)"
+                          aria-invalid={saleLineNeedsReason(item)}
+                          placeholder="Reason (required)"
+                          className={cn(
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
+                          )}
+                        />
+                      )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
                           ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
@@ -1982,6 +2062,7 @@ export default function NewInvoicePage() {
 
                     {/* Discount */}
                     <MoneyInput
+                      aria-label="Line discount"
                       min={0}
                       placeholder="0.00"
                       value={item.discount || null}

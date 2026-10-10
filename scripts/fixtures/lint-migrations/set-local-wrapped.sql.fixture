@@ -1,0 +1,5 @@
+-- B896 / SA-582 GREEN fixture: the same SET LOCAL, inside an explicit BEGIN; ... COMMIT; wrap.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE "User" ADD COLUMN "lastLoginAt" TIMESTAMP(3);
+COMMIT;

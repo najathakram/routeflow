@@ -6,6 +6,7 @@ import * as bcrypt from "bcrypt";
 import { BuyerAuthService } from "./buyer-auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("bcrypt", () => ({
@@ -56,6 +57,10 @@ describe("BuyerAuthService — account lockout", () => {
         },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: AppleOAuthService,
+          useValue: { revokeForBuyer: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = module.get(BuyerAuthService);
@@ -160,6 +165,10 @@ describe("BuyerAuthService — F5-003 refresh realm discriminator", () => {
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: AppleOAuthService,
+          useValue: { revokeForBuyer: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = module.get(BuyerAuthService);

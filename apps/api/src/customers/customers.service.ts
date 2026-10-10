@@ -1,3 +1,4 @@
+import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./walk-in-protected";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
@@ -15,6 +16,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
@@ -58,6 +60,17 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
+import { omitStaffOnlyCustomerFields } from "./self-service-fields";
+import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
+import { toCustomerOrder } from "../common/staff-only-fields";
+import { customerUpdateData } from "./customer-update-data";
+import { assertSafeCustomerNames } from "./customer-name-guard";
+import {
+  assertSafeAddress,
+  assertSafeLicense,
+  assertSafePersonName,
+} from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -67,14 +80,18 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { buildCustomersCsv } from "./customers-csv";
+import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
+import { assertProductIdNotFamily } from "../products/sellable-lines";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -88,7 +105,7 @@ export class CustomersService {
     private readonly storage: StorageService,
     private readonly meter: MeterService,
     private readonly catalog: PlanCatalogService,
-    private readonly entitlements: EntitlementsService,
+    private readonly authority: EntitlementAuthority,
     private readonly commissionEngine: CommissionEngineService,
     // Every path that DESTROYS an invoice must reverse its regulated-sales
     // ledger rows first — the ledger is append-only with no FK to Invoice, so
@@ -105,7 +122,8 @@ export class CustomersService {
   private async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.catalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,
@@ -194,7 +212,7 @@ export class CustomersService {
     if (query.unassigned === "1") {
       where.routeStops = { none: { route: SCHEDULED_ROUTE_KIND_WHERE } };
     }
-    return where;
+    return excludeWalkIn(where);
   }
 
   async findAll(query: ListCustomersDto) {
@@ -305,15 +323,20 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return customer;
+    return omitStaffOnlyCustomerFields(customer);
   }
 
-  async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
-    const customer = await this.prisma
-      .forTenant()
-      .customer.findFirst({ where: { userId: user.sub } });
+  async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
+    const where = { userId: user.sub };
+    const customer = await this.prisma.forTenant().customer.findFirst({ where });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return this.update(customer.id, dto);
+    const args = { customerId: customer.id, actor: user, source: "customers/me" as const };
+    return this.updateOwnProfile({ ...args, body: dto });
+  }
+
+  /** Self-service write for both routes: allowlisted fields only, audited (self-service-audit.ts). */
+  updateOwnProfile(args: SelfServiceWriteArgs) {
+    return writeSelfServiceProfile(this.prisma, (f) => this.update(args.customerId, f), args);
   }
 
   async getMyStatement(user: JwtPayload) {
@@ -520,10 +543,15 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
+    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
+    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
     return customer;
   }
 
   async create(dto: CreateCustomerDto) {
+    assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
+    assertSafePersonName(dto); // B984: salutation / first / last name, same rule
+    for (const addr of dto.addresses ?? []) assertSafeAddress(addr); // B964: every address row, before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
     await this.assertCustomerCapNotExceeded();
@@ -700,7 +728,7 @@ export class CustomersService {
 
     // Grace window expired and still over cap — block only this NEW create.
     const upgrade = await this.customerPackUpgrade();
-    throw new ForbiddenException(buildPlanGateBody("meter.customers", upgrade));
+    throw new ForbiddenException(buildPlanGateBody(PLAN_GATE_FLAG_KEYS.METER_CUSTOMERS, upgrade));
   }
 
   /**
@@ -778,53 +806,25 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
-    // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
-    // rather than silently editing a customer nobody can see in the list.
+    // REG-B170: refuse writes to a removed customer (its page still rendered edit controls).
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
+    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
+    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
+    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
     return this.prisma.forTenant().customer.update({
       where: { id },
-      data: {
-        ...(dto.businessName && { businessName: dto.businessName }),
-        ...(dto.contactName && { contactName: dto.contactName }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
-        ...(dto.deliveryWindowStart !== undefined && {
-          deliveryWindowStart: dto.deliveryWindowStart || null,
-        }),
-        ...(dto.deliveryWindowEnd !== undefined && {
-          deliveryWindowEnd: dto.deliveryWindowEnd || null,
-        }),
-        ...(dto.email !== undefined && { email: dto.email }),
-        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
-        ...(dto.customerType !== undefined && { customerType: dto.customerType }),
-        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
-        ...(dto.salutation !== undefined && { salutation: dto.salutation }),
-        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
-        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
-        ...(dto.taxId !== undefined && { taxId: dto.taxId }),
-        ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
-        ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
-        ...(dto.currency !== undefined && { currency: dto.currency }),
-        ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
-        // "" clears to null ("use the tenant default"); a real label is stored verbatim.
-        ...(dto.defaultPaymentTerms !== undefined && {
-          defaultPaymentTerms: dto.defaultPaymentTerms || null,
-        }),
-        // null clears the deposit default; a number sets/replaces it.
-        ...(dto.defaultDepositPercent !== undefined && {
-          defaultDepositPercent: dto.defaultDepositPercent,
-        }),
-        ...(dto.orderStatusEmails !== undefined && {
-          orderStatusEmails: dto.orderStatusEmails,
-        }),
-      },
+      data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
   }
+
+  /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
+  readonly setCustomerConsent = (...args: compliance.ConsentArgs) =>
+    compliance.writeConsentWithEvidence(this.prisma, ...args);
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
@@ -834,6 +834,7 @@ export class CustomersService {
     if (customer.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    if (dto.status !== "ACTIVE") assertNotWalkIn(customer);
     return this.prisma.forTenant().user.update({
       where: { id: customer.userId },
       data: { status: dto.status },
@@ -894,11 +895,14 @@ export class CustomersService {
       }),
       this.prisma.forTenant().order.count({ where: { customerId: id } }),
     ]);
-    return { data, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
+    // Customer-facing fields only for the customer themself (common/staff-only-fields.ts).
+    const rows = user.role === UserRole.CUSTOMER ? data.map((o) => toCustomerOrder(o)) : data;
+    return { data: rows, meta: { total, page: 1, limit: 50, totalPages: Math.ceil(total / 50) } };
   }
 
   async addAddress(id: string, dto: CreateAddressDto) {
     await this.findCustomerOrThrow(id);
+    assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
     return this.prisma.tenantTransaction(async (tx) => {
@@ -928,6 +932,11 @@ export class CustomersService {
 
   async updateAddress(id: string, addrId: string, dto: UpdateAddressDto) {
     await this.findCustomerOrThrow(id);
+    // B964: a formula-led CHANGE is refused before the transaction; the stored row is read once (change-only: a legacy value echoed back passes)
+    const storedAddress = await this.prisma.forTenant().customerAddress.findFirst({
+      where: { id: addrId, customerId: id },
+    });
+    assertSafeAddress(dto, storedAddress);
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
@@ -1398,6 +1407,7 @@ export class CustomersService {
       return null;
     }
 
+    await assertProductIdNotFamily(this.prisma, dto.productId, "customer price"); // B1216
     return this.prisma.forTenant().customerPrice.upsert({
       where: {
         customerId_productId: { customerId, productId: dto.productId },
@@ -1471,7 +1481,7 @@ export class CustomersService {
       // never returns `{ acquired: false }`. Narrowed so `lock.value` type-checks.
       if (!lock.acquired) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }
@@ -1479,14 +1489,14 @@ export class CustomersService {
     } catch (e) {
       if (e instanceof LockTimeoutError) {
         throw new ConflictException({
-          code: "WALLET_LOCK_BUSY",
+          code: API_ERROR_CODES.WALLET_LOCK_BUSY,
           message:
             "Another payment against this customer's wallet is in progress. Try again in a moment.",
         });
       }
       if (e instanceof LockUnavailableError) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }
@@ -1612,6 +1622,7 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
+    assertSafePersonName(dto); // B984: refuse a formula-led name before any write
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
         await tx.contactPerson.updateMany({
@@ -1652,6 +1663,7 @@ export class CustomersService {
       where: { id: contactId, customerId },
     });
     if (!existing) throw new NotFoundException("Contact person not found");
+    assertSafePersonName(dto, existing); // B984: only a CHANGED name is checked
 
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
@@ -1858,33 +1870,20 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const header =
-      "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
-    const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
-      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
-
-      return [
-        escCsv(c.businessName),
-        escCsv(c.contactName),
-        escCsv(c.email),
-        escCsv(c.phone),
-        escCsv(c.customerType),
-        escCsv(c.user?.status),
-        roundMoney(receivables).toFixed(2),
-        credits.toFixed(2),
-      ].join(",");
-    });
-
-    return [header, ...rows].join("\n");
+    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
+    // receivableBalance itself); the CSV builder only formats.
+    return buildCustomersCsv(
+      customers.map((c) => ({
+        businessName: c.businessName,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+        customerType: c.customerType,
+        status: c.user?.status,
+        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+      })),
+    );
   }
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
@@ -1933,6 +1932,8 @@ export class CustomersService {
 
     const primary = await this.findCustomerOrThrow(primaryId);
     const secondary = await this.findCustomerOrThrow(secondaryId);
+    assertNotWalkIn(primary);
+    assertNotWalkIn(secondary);
     // F2: a removed customer on either side must be restored before it can be merged —
     // merging financial records onto (or off of) a tombstoned row leaves them attached to
     // an identity that is mid-removal.
@@ -2268,6 +2269,7 @@ export class CustomersService {
       include: { user: { select: { status: true, username: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    assertNotWalkIn(customer);
     // F1: a second delete on an already-tombstoned customer must be a no-op. Without this,
     // the soft-delete branch below re-appends "~removed~<id8>" onto a username that already
     // carries the suffix (restoreCustomer only ever strips ONE), permanently mangling the
@@ -2534,9 +2536,11 @@ export class CustomersService {
       );
     }
 
-    const customers = await this.prisma
-      .forTenant()
-      .customer.findMany({ select: { id: true, userId: true } });
+    const customers = (
+      await this.prisma
+        .forTenant()
+        .customer.findMany({ select: { id: true, userId: true, isWalkIn: true } })
+    ).filter((c) => !c.isWalkIn); // the system walk-in survives a wipe
     if (customers.length === 0) return { deleted: 0 };
 
     const customerIds = customers.map((c) => c.id);
@@ -2890,13 +2894,16 @@ export class CustomersService {
       include: { user: { select: { email: true } } },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    assertNotWalkIn(customer);
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",
@@ -3040,15 +3047,18 @@ export class CustomersService {
   }
 
   async approveBuyerRequest(customerId: string, tenantId: string) {
-    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    const link = await this.prisma.customerLink.findFirst({
+      where: { customerId, tenantId },
+      include: { customer: true },
+    });
     if (!link) throw new NotFoundException("No pending buyer request found");
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
+    assertNotWalkIn(link.customer);
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      // Approving consumes the customer's single link slot — any invite token the pending
-      // row inherited from an INVITED invite is spent and must not outlive the approval.
+      // Approving consumes the link slot: an inherited INVITED invite token is spent with it.
       data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
     });
     return { message: "Buyer connection approved" };
@@ -3060,11 +3070,8 @@ export class CustomersService {
     if (link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This request is no longer pending");
     }
-    // A row that still carries a LIVE invite token was an INVITED link a buyer requested
-    // against (the request preserves inviteToken/inviteExpiresAt so the true invitee's
-    // emailed link keeps working). Deleting it would destroy an invite the seller already
-    // sent — revert it to INVITED and drop the requester instead. An expired token is
-    // worthless, so those rows fall through to the delete and free the slot.
+    // A row with a LIVE invite token was an INVITED link a buyer requested against (the request keeps the token
+    // so the invitee's emailed link works): revert it to INVITED and drop the requester. An expired token falls through to the delete.
     const inviteStillLive =
       !!link.inviteToken && (!link.inviteExpiresAt || link.inviteExpiresAt > new Date());
     if (inviteStillLive) {
@@ -3074,11 +3081,8 @@ export class CustomersService {
       });
       return { declined: true };
     }
-    // customerId is @unique on CustomerLink — one link row per customer, ever. A declined
-    // stranger must not permanently occupy that one slot (it would block a future legitimate
-    // invite), so decline DELETES the row rather than marking it DISCONNECTED. DISCONNECTED
-    // stays reserved for severing a previously ACTIVE link. A re-request simply creates a
-    // fresh pending row the seller can decline again.
+    // customerId is @unique on CustomerLink: a declined stranger must not occupy that one slot, so decline DELETES
+    // the row (DISCONNECTED stays reserved for severing an ACTIVE link); a re-request creates a fresh pending row.
     await this.prisma.customerLink.delete({ where: { id: link.id } });
     return { declined: true };
   }

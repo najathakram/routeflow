@@ -2,6 +2,11 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { firstSignableImageKey } from "../products/product-image-keys";
+import {
+  isBuyerVisibleProduct,
+  noBuyerRestrictions,
+  PORTAL_PARENT_SELECT,
+} from "./buyer-product-visibility";
 
 /** Where a product sits against its inferred reorder cadence. */
 export type ReplenishmentState = "low" | "due-soon" | "ok";
@@ -39,6 +44,9 @@ interface EstProduct {
   unitsPerBox: number | null;
   imageKeys: string[];
   isActive: boolean;
+  kind: string;
+  portalVisible: boolean;
+  parent: { portalVisible: boolean; isActive: boolean; tenantId: string | null } | null;
 }
 
 /**
@@ -52,6 +60,11 @@ interface EstProduct {
 @Injectable()
 export class ReplenishmentService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** The tenant-scoped "no blocked ids" visibility context (B1211): no tenant on the request throws, never unscoped. */
+  private buyerVisibility() {
+    return noBuyerRestrictions(this.prisma.getTenantId());
+  }
 
   /** Look-back window for cadence inference (days). */
   private static readonly WINDOW_DAYS = 180;
@@ -80,6 +93,9 @@ export class ReplenishmentService {
                 unitsPerBox: true,
                 imageKeys: true,
                 isActive: true,
+                kind: true,
+                portalVisible: true,
+                parent: { select: PORTAL_PARENT_SELECT },
               },
             },
           },
@@ -95,6 +111,7 @@ export class ReplenishmentService {
       qtys: number[];
     }
     const byProduct = new Map<string, Agg>();
+    const visibility = this.buyerVisibility();
     for (const o of orders) {
       const t = o.createdAt.getTime();
       // A product can appear on several lines of one order — sum its qty for that order
@@ -102,7 +119,7 @@ export class ReplenishmentService {
       const perOrder = new Map<string, { product: EstProduct; qty: number }>();
       for (const li of o.lineItems) {
         const product = li.product as EstProduct | null;
-        if (!li.productId || !product || !product.isActive) continue;
+        if (!li.productId || !product || !isBuyerVisibleProduct(visibility, product)) continue;
         const prev = perOrder.get(li.productId);
         perOrder.set(li.productId, { product, qty: (prev?.qty ?? 0) + Number(li.qty) });
       }

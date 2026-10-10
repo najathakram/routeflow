@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
-import type { AnyPaymentMethod } from "../payment-methods";
+import type { PaymentMethod } from "@routeflow/types";
 import type {
   CreateInvoiceItem,
   CreatePartialInvoiceDto,
+  LineComponentView,
   SendInvoiceEmailResult,
 } from "@routeflow/types";
 
@@ -32,9 +33,12 @@ export interface InvoiceItem {
    * = nothing to show.
    */
   msrp?: number | null;
+  /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
 }
 
-export type PaymentMethod = AnyPaymentMethod;
+// #2722: the shared enum directly (no alias chain through ../payment-methods).
+export type { PaymentMethod } from "@routeflow/types";
 
 export interface InvoicePayment {
   id: string;

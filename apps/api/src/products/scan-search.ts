@@ -1,4 +1,4 @@
-import { normalizeScanCode } from "../common/barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
 
 /**
  * Candidate-aware product search for the SCAN fallback rung (`GET

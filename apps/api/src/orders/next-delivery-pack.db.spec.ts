@@ -32,6 +32,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
@@ -57,6 +58,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { computeLineSubtotal } from "@routeflow/pricing";
 
@@ -95,6 +97,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         ChangeRequestsService,
         { provide: TenantContextService, useValue: tenantCtx },
@@ -168,6 +171,13 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
             syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
             removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         {

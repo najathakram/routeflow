@@ -1,3 +1,4 @@
+import { invoiceItem, invoicePayment } from "@/test-utils/buyer-invoice-fixtures";
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import type { BuyerInvoiceDetail } from "@/lib/api/buyer";
@@ -30,7 +31,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
     terms: null,
     orderId: null,
     items: [
-      {
+      invoiceItem({
         id: "item-1",
         description: "Widget",
         productId: "p1",
@@ -39,7 +40,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
         discount: 0,
         subtotal: 870,
         priceType: "STANDARD",
-      },
+      }),
     ],
     payments: [],
     customer: { id: "cust-1", businessName: "Acme Foods" },
@@ -87,7 +88,9 @@ describe("buyer invoice detail — Balance Due (B421, REG-B421)", () => {
   it("REG-B421: a CREDIT_NOTE application reduces the balance, but is never counted as VOID-excluded cash", () => {
     mockUseBuyerInvoice.mockReturnValue({
       data: makeInvoice({
-        payments: [{ id: "pay-1", amount: 638, method: "CREDIT_NOTE", status: "PAID" }],
+        payments: [
+          invoicePayment({ id: "pay-1", amount: 638, method: "CREDIT_NOTE", status: "PAID" }),
+        ],
       }),
       isLoading: false,
       isError: false,
@@ -101,7 +104,7 @@ describe("buyer invoice detail — Balance Due (B421, REG-B421)", () => {
   it('REG-B421: a DRAFT (unconfirmed) payment must NOT reduce the balance -- the old `status !== "VOID"` filter let it through', () => {
     mockUseBuyerInvoice.mockReturnValue({
       data: makeInvoice({
-        payments: [{ id: "pay-1", amount: 500, method: "CASH", status: "DRAFT" }],
+        payments: [invoicePayment({ id: "pay-1", amount: 500, method: "CASH", status: "DRAFT" })],
       }),
       isLoading: false,
       isError: false,
@@ -115,7 +118,7 @@ describe("buyer invoice detail — Balance Due (B421, REG-B421)", () => {
   it("a confirmed CASH payment still reduces the balance normally", () => {
     mockUseBuyerInvoice.mockReturnValue({
       data: makeInvoice({
-        payments: [{ id: "pay-1", amount: 870, method: "CASH", status: "PAID" }],
+        payments: [invoicePayment({ id: "pay-1", amount: 870, method: "CASH", status: "PAID" })],
       }),
       isLoading: false,
       isError: false,
@@ -130,7 +133,7 @@ describe("buyer invoice detail — Balance Due (B421, REG-B421)", () => {
     mockUseBuyerInvoice.mockReturnValue({
       data: makeInvoice({
         balanceDue: 50,
-        payments: [{ id: "pay-1", amount: 999999, method: "CASH", status: "PAID" }],
+        payments: [invoicePayment({ id: "pay-1", amount: 999999, method: "CASH", status: "PAID" })],
       }),
       isLoading: false,
       isError: false,

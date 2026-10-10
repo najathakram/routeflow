@@ -27,6 +27,7 @@ let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
+const mockActiveOrderHook = jest.fn((..._args: unknown[]) => ({ data: undefined }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
   // Like the real hook: nothing until a customer is selected.
@@ -45,7 +46,7 @@ jest.mock("@/lib/api/orders", () => ({
     error: mockCreateOrderError,
     reset: jest.fn(),
   }),
-  useActiveOrderForCustomer: () => ({ data: undefined }),
+  useActiveOrderForCustomer: (...args: unknown[]) => mockActiveOrderHook(...args),
   useCustomerPriceHistory: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
@@ -261,7 +262,7 @@ describe("CreateOrderModal", () => {
         expect(mockToast).toHaveBeenCalledWith({
           variant: "error",
           title: "Couldn't look up the code",
-          description: "Network Error",
+          description: "Check the connection and rescan.",
         }),
       );
       expect(capturedInlineCreate?.isOpen).toBe(false);
@@ -317,8 +318,11 @@ describe("CreateOrderModal", () => {
       await screen.findByRole("dialog", { name: "Scan items" });
       return utils;
     };
+    // Steady-read is DEFAULT ON (owner ruling 2026-09-24): one deliberate scan = the same code held for three frames.
     const scanCode = async (code: string) => {
       await act(async () => {
+        cameraDetect!(code);
+        cameraDetect!(code);
         cameraDetect!(code);
       });
     };
@@ -994,23 +998,32 @@ describe("CreateOrderModal", () => {
         mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
+        // an UNCODED refusal keeps today's server sentence (B986-7 Opus: never a vaguer fallback)
         expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
 
       // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
       // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
       // place its message can show. This pins that a credit refusal on create is never silent.
-      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+      it("a credit-limit refusal on create shows the FIXED sentence built from the structured numbers in the banner (B986)", async () => {
         mockCustomers = [acme];
         mockCreateOrderError = {
           response: {
             status: 409,
-            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+            data: {
+              code: "CREDIT_LIMIT_EXCEEDED",
+              limit: 100,
+              exposure: 110,
+              message: "Over their credit limit of 100.00.",
+            },
           },
         };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
-        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
+        expect(
+          screen.getByText(/over their \$100\.00 credit limit. Collect a payment/),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("Over their credit limit of 100.00.")).not.toBeInTheDocument();
       });
     });
   });
@@ -1176,6 +1189,8 @@ describe("CreateOrderModal", () => {
     it("(b) a plain line's qty is tap-to-type; below 1 clamps to 1", async () => {
       await setup(plain);
       const qty = (await screen.findByLabelText("Quantity")) as HTMLInputElement;
+      // #2865 case c: a freshly added line is PENDING (qty locked) until its default unit resolves.
+      await waitFor(() => expect(qty).toBeEnabled());
       fireEvent.change(qty, { target: { value: "7" } });
       expect(qty.value).toBe("7");
       fireEvent.change(qty, { target: { value: "0" } });
@@ -1212,12 +1227,86 @@ describe("CreateOrderModal", () => {
       expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
     });
 
-    it("(b) a SPECIAL-priced line's price is NOT tappable until #2696(c) (B721)", async () => {
-      await setup(plain, 2); // a tier-2 customer: the line is SPECIAL-priced
+    // #2696(c) (SA-558/558a): a SPECIAL line's price is tappable too; moving it off the special price
+    // needs a reason, decided by @routeflow/pricing's decideStaffOverride — the server's own rule.
+    const special = {
+      notFound: false,
+      archived: false,
+      product: {
+        id: "prod-2",
+        name: "Soda",
+        pricePerUnit: "2.50",
+        priceTier2: "2.00",
+        unit: "each",
+      },
+    };
+    const openSheet = async () => {
       expect(await screen.findByText("Special price")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
-      fireEvent.click(screen.getByText("Special price"));
-      expect(screen.queryByRole("dialog", { name: /^edit /i })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("Change price"));
+      return screen.findByRole("dialog", { name: /^edit /i });
+    };
+    const typePrice = (sheet: HTMLElement, v: string) => {
+      const input = within(sheet).getByLabelText("Price");
+      fireEvent.change(input, { target: { value: v } });
+      fireEvent.blur(input);
+    };
+
+    it("(c) a SPECIAL-priced line's price opens the sheet, the special price as its placeholder", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      expect(within(sheet).getByLabelText("Price")).toHaveAttribute("placeholder", "2.00");
+      expect(within(sheet).getByText(/special price \$2\.00/i)).toBeInTheDocument();
     });
+
+    it("(c) moving off the special price with no reason blocks saving, naming the product", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+      expect(createOrderMutate).not.toHaveBeenCalled();
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringMatching(/reason is required to change Soda/),
+        }),
+      );
+    });
+
+    it("(c) with a reason the override is sent: unitPrice + overrideReason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "1.50");
+      fireEvent.change(screen.getByLabelText("Reason (required)"), {
+        target: { value: "dented cans" },
+      });
+      expect(saveDraft()).toEqual([
+        { productId: "prod-2", qty: 1, unitPrice: 1.5, overrideReason: "dented cans" },
+      ]);
+    });
+
+    it("(c) typing the LIST price on a special line is a real change too — it needs a reason", async () => {
+      await setup(special, 2);
+      typePrice(await openSheet(), "2.50");
+      expect(screen.getByLabelText("Reason (required)")).toBeInTheDocument();
+    });
+
+    it("(c) typing the special price back restores it: no reason, nothing overridden", async () => {
+      await setup(special, 2);
+      const sheet = await openSheet();
+      typePrice(sheet, "1.50");
+      typePrice(sheet, "2.00");
+      expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
+      expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
+    });
+  });
+
+  it("M4: the active-order preview asks for the SAME path create will use (the customer's SHIP default)", async () => {
+    mockCustomers = [
+      { id: "c-ship", businessName: "Shipco Ltd", pricingTier: 1, fulfillPath: "SHIP" },
+    ];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: "Shi" },
+    });
+    fireEvent.click(await screen.findByText("Shipco Ltd"));
+    await waitFor(() => expect(mockActiveOrderHook).toHaveBeenLastCalledWith("c-ship", "SHIP"));
   });
 });

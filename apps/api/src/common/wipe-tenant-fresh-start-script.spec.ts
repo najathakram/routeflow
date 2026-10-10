@@ -137,7 +137,7 @@ describe("fresh-start target planner (#2500)", () => {
       banner: "DB:     R(postgresql://proxy-host/db)  (source: Railway proxy)",
       poolConfig: { connectionString: "postgresql://proxy-host/db" },
       backupCommand:
-        "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-acme",
+        "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live",
     });
   });
 
@@ -164,7 +164,7 @@ describe("fresh-start target planner (#2500)", () => {
     expect(r.liveNoExclude.reason).toMatch(/needs --exclude-tenant/);
     expect(r.liveNoBackup.reason).toMatch(/needs --backup-taken/);
     expect(r.liveNoBackup.reason).toContain(
-      "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-acme",
+      "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live",
     );
     expect(r.liveBackup.ok).toBe(true);
   });
@@ -264,5 +264,17 @@ describe("wipe-tenant-fresh-start.js (#2500), real script, no database", () => {
     expect(code.match(/new Pool\(/g)).toHaveLength(1);
     expect(code).toContain("new Pool(target.poolConfig)");
     expect(code).toContain("console.log(`\\n${target.banner}`)");
+  });
+
+  it("source pin (SA-594): recipeComponent < recipe < product in NUKE_MODELS (RESTRICT FKs into Product)", () => {
+    const code = readFileSync(SCRIPT, "utf8");
+    const body = /const NUKE_MODELS = \[([\s\S]*?)\n\];/.exec(code)?.[1] ?? "";
+    const names = [...body.replace(/\/\/.*$/gm, "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    const at = (n: string) => {
+      expect(names.filter((x) => x === n)).toHaveLength(1);
+      return names.indexOf(n);
+    };
+    expect(at("recipeComponent")).toBeLessThan(at("recipe"));
+    expect(at("recipe")).toBeLessThan(at("product"));
   });
 });

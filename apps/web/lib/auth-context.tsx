@@ -11,6 +11,7 @@ import {
   clearOpPresenceCookie,
 } from "./auth";
 import { subscribeImpersonation } from "./impersonation";
+import { clearAllLiveCarts } from "./counter-live-cart-keys";
 import { MARKETING_PAGE_PATHS } from "./marketing-routes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -68,6 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     return onCrossTabTokenChange(() => {
+      clearAllLiveCarts(); // signed out in another tab: this browser keeps no unfinished counter sale
       // Don't punt the user to /login if they're on a public marketing route —
       // they may not even know they were ever signed in. Marketing pages are
       // public and should keep rendering regardless of token state.
@@ -97,6 +99,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
+}
+
+/** The auth context, or null outside an AuthProvider — for a UI gate that must fail CLOSED (show
+ *  nothing role-gated) rather than throw where no provider is mounted. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return React.useContext(AuthContext);
 }
 
 export function useAuth(): AuthContextValue {

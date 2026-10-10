@@ -3,6 +3,7 @@ import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
+import { clearAllLiveCarts } from "./counter-live-cart-keys";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -68,11 +69,16 @@ export function getSessionTenantSlug(): string | null {
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<AuthResponse> {
-  const { data } = await apiClient.post<AuthResponse>("/auth/login", {
-    username,
-    password,
-  });
+/**
+ * Adopt a freshly-issued operator token pair as THIS browser's session — the ONE post-login step
+ * shared by password login, email verification and the in-app handoff (#2653, SA-542a), so none of
+ * them can forget the presence cookie, the impersonation reset or the tenant cookie.
+ */
+export function adoptTokenPair(data: {
+  accessToken: string;
+  refreshToken: string;
+  user?: { tenantSlug?: string | null } | null;
+}): void {
   localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
   localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
   setOpPresenceCookie();
@@ -83,9 +89,17 @@ export async function login(username: string, password: string): Promise<AuthRes
   // Correct the tenant cookie to match the authenticated user's actual tenant.
   // This ensures that even if the browser had a stale cookie from a previous
   // session or impersonation, all subsequent API calls use the correct tenant.
-  if (data.user.tenantSlug) {
+  if (data.user?.tenantSlug) {
     setTenantCookie(data.user.tenantSlug);
   }
+}
+
+export async function login(username: string, password: string): Promise<AuthResponse> {
+  const { data } = await apiClient.post<AuthResponse>("/auth/login", {
+    username,
+    password,
+  });
+  adoptTokenPair(data);
   return data;
 }
 
@@ -100,6 +114,7 @@ export async function logout(): Promise<void> {
   clearOpPresenceCookie();
   clearTenantCookie();
   clearImpersonation();
+  clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
   window.location.href = "/login";
 }
 

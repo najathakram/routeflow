@@ -13,7 +13,7 @@ does that). Push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="…" if the local verify
 chain is the blocker; never --no-verify. Ask the lead for any bug registry id —
 B525 is taken, B526 is next free; never mint your own. Check free disk before any
 full verify or build run (a full run filled the disk twice on 2026-09-17).
-Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-*, e2e-*,
+Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-_, e2e-_,
 ux-audit-*. Never a live tenant.
 
 - **Task**: B519 — `driver_payments`'s registry `requires: {anyOf: [recurring_routes, order_delivery]}` is declared but unenforced by either live "enable" path. Build the console-side block/warn+confirm; read `requires` from the registry, never hardcode.
@@ -27,7 +27,7 @@ ux-audit-*. Never a live tenant.
 - **The two LIVE enable paths** (both confirmed to actually flip `driver_payments` on, by reading `apps/api/src/routes/driver-payments.guard.ts:34-62` — it checks an active `FeatureOverride` GRANT first, then `AddonService.hasAddon`, either one passes):
   1. **Feature Console → "Enable as add-on"** (`_features/FeatureConsole.tsx:378-391` → `_features/EnableAddonModal.tsx`) → `POST .../addons/enable` via `enableTenantAddon()`. This is the "purchased add-on" action the ticket means. Already a genuine two-step confirm (choice → confirm) with an explicit-only Stripe/free choice (no silent default) — that's the console's existing risky-action precedent to match, not the plain single-modal pattern I initially found on the (dead) old toggle.
   2. **`FeatureOverridesSection`'s "+ New Override" GRANT form** (`page.tsx` ~line 1247+, opened via `FeatureConsole`'s "Customise" button too) → `POST .../feature-overrides` (unbilled COMP override). This is the second path that also satisfies the guard.
-  Both need the requires-check; they're separate components with separate submit handlers.
+     Both need the requires-check; they're separate components with separate submit handlers.
 
 ## The real blocker (bigger than I first told the lead — correct this)
 
@@ -59,7 +59,7 @@ superseded by the Feature Console as of tonight's eight toggle removals. Small, 
 Lane B follow-up, separate from B519.
 
 **Before deleting: verify it's genuinely unreferenced, don't assume from the empty array.** The
-array being `[]` proves nothing renders from *that data*, not that the surrounding component/JSX
+array being `[]` proves nothing renders from _that data_, not that the surrounding component/JSX
 is dead — check for other references to `AddonsTab`, `AVAILABLE_ADDONS`, `showEnableModal`, and
 the modal JSX itself (grep the whole file, not just the array declaration) before removing
 anything. This is the same class of check that made #866 dangerous — cheap to apply, expensive to

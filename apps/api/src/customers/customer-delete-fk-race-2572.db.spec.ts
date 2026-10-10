@@ -83,7 +83,7 @@ describeDb("customer delete vs a concurrent invoice insert: 409, not a raw P2003
       stub,
       stub,
       stub,
-      { hasFlag: async () => false } as never,
+      { can: async () => false } as never, // EntitlementAuthority (#2241)
       stub,
       { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) } as never,
       stub,

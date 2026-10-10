@@ -9,6 +9,8 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import {
   assertImageKeysReorder,
   isOwnProductImageKey,
@@ -82,6 +84,9 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
         { provide: AddonService, useValue: { assertWithinLimit: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
+        // #2185: ProductsService reads admin overrides for the forecasting-gate denial body.
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -144,5 +149,71 @@ describe("ProductsService — cross-tenant image keys (#2533)", () => {
     prisma.product.findUnique.mockResolvedValue(row([own(1)]));
     await service.deleteImage(P, own(1));
     expect(storage.delete).toHaveBeenCalledWith(own(1));
+  });
+
+  // #2728 M1 follow-up (SA-572f, amendment 1 — FINAL): findOne's `images` is a PER-KEY merge over
+  // mirrorableImageKeys(product) — a key with a ProductImage row renders ROW, a key with none (a
+  // duplicate's second occurrence, or one skipped by the sync's per-key belt) renders LEGACY, in
+  // the same list, same order.
+  it("findOne merges rows and legacy fallback PER KEY over mirrorableImageKeys (dedup, own-only)", async () => {
+    prisma.product.findUnique.mockResolvedValue({
+      ...row([own(1), own(1), own(2), FOREIGN]),
+      barcode: null,
+      unitsPerBox: null,
+      barcodes: [],
+      images: [
+        {
+          storageKey: own(1),
+          sortOrder: 0,
+          isPrimary: true,
+          focalX: null,
+          focalY: null,
+          altText: null,
+        },
+      ],
+    });
+    const p: any = await service.findOne(P);
+    expect(p.images).toHaveLength(2); // FOREIGN is never in the mirror set; own(1) deduped to one
+    expect(p.images[0]).toMatchObject({ storageKey: own(1), origin: "ROW", isPrimary: true });
+    expect(p.images[1]).toMatchObject({
+      storageKey: own(2),
+      origin: "LEGACY",
+      sortOrder: 1,
+      isPrimary: false,
+    });
+  });
+
+  it("#2717 M1 (SA-572f): an edit SUCCEEDS while another product's row holds this product's image key; that key is skipped", async () => {
+    // Legacy data: k1 is (unexpectedly) already mirrored by ANOTHER product; k2 is free. A price-only
+    // PATCH must not 500 on the (tenantId, storageKey) unique: k1 is skipped, k2 mirrors.
+    prisma.product.findUnique.mockResolvedValue(row([own(1), own(2)]));
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.update.mockResolvedValue({
+      ...row([own(1), own(2)]),
+      barcode: null,
+      unitsPerBox: null,
+    });
+    prisma.productImage.findMany.mockImplementation(async ({ where }: { where: any }) =>
+      "storageKey" in where ? [{ storageKey: own(1) }] : [],
+    );
+    await expect(service.update(P, { pricePerUnit: "9.99" } as any)).resolves.toBeDefined();
+    const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
+    expect(created).toEqual([own(2)]);
+  });
+
+  it("#2717 M1: image rows sync from the value the UPDATE wrote, not the earlier read (a concurrent upload is kept)", async () => {
+    // The PATCH carries no imageKeys; between update()'s read ([own(1)]) and its write, a concurrent
+    // upload pushed own(2). The UPDATE returns the post-write row, so the rows must follow it.
+    prisma.product.findUnique.mockResolvedValue(row([own(1)]));
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.update.mockResolvedValue({
+      ...row([own(1), own(2)]),
+      barcode: null,
+      unitsPerBox: null,
+    });
+    prisma.productImage.findMany.mockResolvedValue([]);
+    await service.update(P, { name: "Widget 2" } as any);
+    const created = prisma.productImage.create.mock.calls.map((c: any[]) => c[0].data.storageKey);
+    expect(created).toEqual([own(1), own(2)]);
   });
 });

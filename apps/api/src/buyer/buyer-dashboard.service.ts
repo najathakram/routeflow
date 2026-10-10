@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
 
 @Injectable()
@@ -12,6 +13,11 @@ export class BuyerDashboardService {
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
   ) {}
+
+  /** The tenant-scoped "no blocked ids" visibility context (B1211): no tenant on the request throws, never unscoped. */
+  private buyerVisibility() {
+    return noBuyerRestrictions(this.prisma.getTenantId());
+  }
 
   /**
    * Aggregated dashboard data for a buyer at a specific seller.
@@ -65,6 +71,9 @@ export class BuyerDashboardService {
           total: true,
           createdAt: true,
           requestedDeliveryDate: true,
+          // Business profiles 1B: the buyer badge is the order detail's label, which reads these.
+          fulfillPath: true,
+          shippedAt: true,
           lineItems: {
             select: { id: true },
           },
@@ -116,14 +125,17 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, createdAt: { gte: thirtyDaysAgo }, ...gateWhere },
+        where: buyerVisibleProductWhere(this.buyerVisibility(), {
+          createdAt: { gte: thirtyDaysAgo },
+          ...gateWhere,
+        }),
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, isFeatured: true, ...gateWhere },
+        where: buyerVisibleProductWhere(this.buyerVisibility(), { isFeatured: true, ...gateWhere }),
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -175,7 +187,10 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: freqProductIds }, isActive: true, ...gateWhere },
+            where: buyerVisibleProductWhere(this.buyerVisibility(), {
+              id: { in: freqProductIds },
+              ...gateWhere,
+            }),
           })
         : [];
     const freqProductMap = new Map(freqProducts.map((p) => [p.id, p]));
@@ -298,12 +313,11 @@ export class BuyerDashboardService {
     const suggestedProducts =
       orderedCategories.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: {
-              isActive: true,
+            where: buyerVisibleProductWhere(this.buyerVisibility(), {
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
               ...gateWhere,
-            },
+            }),
             orderBy: { createdAt: "desc" },
             take: 8,
           })
@@ -344,6 +358,8 @@ export class BuyerDashboardService {
         total: Number(o.total),
         createdAt: o.createdAt,
         requestedDeliveryDate: o.requestedDeliveryDate,
+        fulfillPath: o.fulfillPath,
+        shippedAt: o.shippedAt,
         itemCount: o.lineItems.length,
       })),
       stats: {

@@ -50,12 +50,14 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { OrderLineCard } from "../../../../components/OrderLineCard";
+import { OrderAppliedCredits } from "../../../../components/OrderAppliedCredits";
 import { orderLineCardModel } from "../../../../lib/order-line-display";
 import { useOrderUiV2 } from "../../../../lib/api/addons";
 import {
@@ -65,6 +67,7 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
@@ -744,6 +747,11 @@ export default function OrderDetailScreen() {
                             <Text style={styles.customTagText}>Custom</Text>
                           </View>
                         ) : null}
+                        {lineBackorderPieces(li, order.status) > 0 ? (
+                          <View style={styles.customTag} testID="line-backorder-tag">
+                            <Text style={styles.customTagText}>Backorder</Text>
+                          </View>
+                        ) : null}
                       </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
@@ -833,50 +841,7 @@ export default function OrderDetailScreen() {
             </View>
           </View>
 
-          {/* Applied credits — order-scoped credit-note intents (server:
-              OrderCreditNote). "Applied so far" sums this credit's CREDIT_NOTE
-              payments across the order's invoices; the reason renders via the
-              relation so a later edit shows up here automatically. */}
-          {(order.orderCreditNotes?.length ?? 0) > 0 ? (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Applied credits</Text>
-              {order.orderCreditNotes!.map((oc, i) => {
-                const appliedSoFar = (order.invoices ?? [])
-                  .flatMap((inv) => inv.payments ?? [])
-                  .filter((p) => p.creditNoteId === oc.creditNoteId)
-                  .reduce((s, p) => s + Number(p.amount ?? 0), 0);
-                return (
-                  <View
-                    key={oc.id}
-                    style={[
-                      styles.invoiceRow,
-                      i > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: ios.separator,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.invoiceNumber} numberOfLines={1}>
-                        {oc.creditNote?.creditNoteNumber ?? "Credit"}
-                      </Text>
-                      {oc.creditNote?.reason ? (
-                        <Text style={styles.itemSub} numberOfLines={2}>
-                          {oc.creditNote.reason}
-                        </Text>
-                      ) : null}
-                      <Text style={styles.itemSub}>
-                        {oc.amount != null
-                          ? `Requested ${formatCurrency(oc.amount)}`
-                          : "Up to remaining balance"}
-                      </Text>
-                    </View>
-                    <Text style={styles.itemTotal}>{formatCurrency(appliedSoFar)}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
+          <OrderAppliedCredits order={order} />
 
           {/* R3: Invoice — mirror web's Invoice card. A CONFIRMED (or later) order
               can already have a draft invoice; surface it so mobile can open it, or
@@ -930,7 +895,10 @@ export default function OrderDetailScreen() {
           {/* Carrier shipment — only for carrier-shipped orders, or rows that
               already carry tracking data recorded before this gate existed. */}
           {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(order, order.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Status transitions */}

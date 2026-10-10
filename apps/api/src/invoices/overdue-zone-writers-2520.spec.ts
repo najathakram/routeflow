@@ -43,6 +43,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { InvoiceStatus } from "@prisma/client";
@@ -54,6 +55,7 @@ import {
 } from "./overdue-sweep.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import * as fs from "fs";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import * as path from "path";
 
 describe("#2520 — persisted OVERDUE in the tenant zone", () => {
@@ -104,6 +106,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,
@@ -129,6 +132,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

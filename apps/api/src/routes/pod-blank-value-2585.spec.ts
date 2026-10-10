@@ -147,6 +147,9 @@ describe("POD values: a blank value is refused, never written (#2585, SA-519)", 
     const nothingWritten = () => {
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
       expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      // #2631 (the lead's #2621 LOW): the completion CLAIMS the stop with updateMany
+      // (claimStopCompletion) — asserting on `update` alone could never catch a write.
+      expect(prisma.routeRunStop.updateMany).not.toHaveBeenCalled();
       expect(storage.upload).not.toHaveBeenCalled();
     };
 
@@ -177,10 +180,74 @@ describe("POD values: a blank value is refused, never written (#2585, SA-519)", 
     });
 
     it("omitted POD fields ⇒ no refusal; the completion goes ahead (the stored signature is not touched)", async () => {
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 } as any);
       await service.completeStop("run-1", "stop-1", {} as any, operator).catch(() => undefined);
       expect(prisma.tenantTransaction).toHaveBeenCalled();
-      for (const c of prisma.routeRunStop.update.mock.calls)
+      // #2631 (the lead's #2621 LOW): the old loop read routeRunStop.update, which the completion
+      // never calls (the claim is updateMany), so it passed vacuously. Pin the REAL claim was
+      // reached for this stop, and that neither write names the signature.
+      const claims = prisma.routeRunStop.updateMany.mock.calls.filter(
+        (c: any[]) => c[0]?.where?.id === "stop-1",
+      );
+      expect(claims.length).toBeGreaterThan(0);
+      for (const c of [
+        ...prisma.routeRunStop.updateMany.mock.calls,
+        ...prisma.routeRunStop.update.mock.calls,
+      ])
         expect(c[0].data).not.toHaveProperty("signatureUrl");
+    });
+  });
+
+  // #2631 (the lead's #2621 LOW): completeWithPayment runs the SAME ingestPodCapture (its POD path had
+  // no spec). Same refusals, same "nothing written".
+  describe("completeWithPayment", () => {
+    beforeEach(() => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        id: "run-1",
+        status: "IN_PROGRESS",
+        driverId: "drv-1",
+      } as any);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        status: "PENDING",
+        signatureUrl: "tenants/t1/pod/stop-1/signature-sig00001.jpg",
+        podPhotoUrls: [],
+        orders: [],
+      } as any);
+    });
+
+    const nothingWritten = () => {
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.updateMany).not.toHaveBeenCalled();
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
+    };
+
+    it.each([[""], ["   "]])(
+      "signatureUrl %j ⇒ 400 naming signatureUrl; nothing written, no payment",
+      async (blank) => {
+        const caught: any = await service
+          .completeWithPayment("run-1", "stop-1", { signatureUrl: blank } as any, operator)
+          .catch((e) => e);
+        expect(caught).toBeInstanceOf(BadRequestException);
+        expect(caught.message).toMatch(/^signatureUrl: .*must not be blank/);
+        nothingWritten();
+      },
+    );
+
+    it("a blank podPhotoUrls entry ⇒ 400 naming the entry; nothing uploaded, written or paid", async () => {
+      const caught: any = await service
+        .completeWithPayment(
+          "run-1",
+          "stop-1",
+          { podPhotoUrls: ["data:image/jpeg;base64,/9j/fake", " \t "] } as any,
+          operator,
+        )
+        .catch((e) => e);
+      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(caught.message).toMatch(/^podPhotoUrls\[1\]: .*must not be blank/);
+      nothingWritten();
     });
   });
 });

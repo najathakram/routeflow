@@ -205,7 +205,16 @@ describe("resolveStoredPOLineAmounts (stored line, exact total)", () => {
 describe("PurchaseOrdersTab", () => {
   it("shows the empty state", () => {
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
-    expect(screen.getByText("No purchase orders found.")).toBeInTheDocument();
+    expect(screen.getByText("No purchase orders yet")).toBeInTheDocument();
+  });
+
+  it("each PO number links to its detail page", () => {
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "DRAFT" })] };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    expect(screen.getByRole("link", { name: "PO-A" })).toHaveAttribute(
+      "href",
+      "/purchase-orders/a",
+    );
   });
 
   it("offers Send on DRAFT, Receive on SENT/PARTIAL, and neither on CLOSED", () => {
@@ -431,6 +440,33 @@ describe("ReceivePOModal", () => {
           { id: "i2", receivedQty: 10 },
         ],
       },
+      expect.any(Object),
+    );
+  });
+
+  it("#2734: a line stored at pack 12 on a product repacked to 6 seeds and sends at 12", () => {
+    receiveMutate.mockClear();
+    const order = po({
+      id: "c",
+      status: "SENT",
+      items: [
+        {
+          id: "i1",
+          productId: "p3",
+          qtyOrdered: "24",
+          qtyReceived: "0",
+          unitCost: "2",
+          packSize: 12,
+        },
+      ],
+    });
+    const repacked = [{ id: "p3", name: "Repacked", unitsPerBox: 6 }];
+    render(<ReceivePOModal po={order} products={repacked} onClose={jest.fn()} />);
+    // 24 pcs at the stored pack 12 = 2 boxes + 0 (at the live pack 6 it would seed 4 boxes)
+    expect((screen.getByTitle("Boxes") as HTMLInputElement).value).toBe("2");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+    expect(receiveMutate).toHaveBeenCalledWith(
+      { id: "c", items: [{ id: "i1", receivedQty: 24 }] },
       expect.any(Object),
     );
   });

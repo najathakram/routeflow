@@ -35,10 +35,12 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { BadRequestException } from "@nestjs/common";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService — #2656 the NSF line is never taxed", () => {
@@ -91,6 +93,7 @@ describe("InvoicesService — #2656 the NSF line is never taxed", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,
@@ -116,6 +119,7 @@ describe("InvoicesService — #2656 the NSF line is never taxed", () => {
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

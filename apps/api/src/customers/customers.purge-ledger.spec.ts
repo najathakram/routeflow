@@ -38,7 +38,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
@@ -92,8 +92,8 @@ describe("CustomersService — purge paths reverse the regulated ledger", () => 
         },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         {
-          provide: EntitlementsService,
-          useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          provide: EntitlementAuthority,
+          useValue: { can: jest.fn().mockResolvedValue(false) },
         },
         {
           provide: CommissionEngineService,

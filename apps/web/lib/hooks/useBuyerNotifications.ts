@@ -59,34 +59,55 @@ function saveToStorage(key: string | null, notifications: BuyerNotification[]) {
  *   seller's own list.
  */
 export function useBuyerNotifications(sellerTenantId?: string | null) {
-  const [notifications, setNotifications] = React.useState<BuyerNotification[]>([]);
   // #2167: the socket's token expired and could not be refreshed, so live updates have stopped.
   const [sessionExpired, setSessionExpired] = React.useState(false);
   const qc = useQueryClient();
   const tenantId =
     sellerTenantId === undefined ? (getStoredActiveSeller()?.tenant?.id ?? null) : sellerTenantId;
-  // This buyer's slot at this seller (null: persist nothing), re-derived when the seller changes.
-  const storageKeyRef = React.useRef<string | null>(null);
+  // This buyer's slot at this seller (null: persist nothing).
+  const buyerId = getStoredBuyerId();
+  const storageKey = buyerId && tenantId ? buyerNotificationsKey(buyerId, tenantId) : null;
 
-  React.useEffect(() => {
-    const buyerId = getStoredBuyerId();
-    storageKeyRef.current = buyerId && tenantId ? buyerNotificationsKey(buyerId, tenantId) : null;
-    setNotifications(loadFromStorage(storageKeyRef.current));
-  }, [tenantId]);
+  // #2173: the list and the slot it belongs to live in ONE state, so they can never disagree.
+  // The first client render matches the server's empty list (no hydration mismatch); from then on
+  // a key change reloads DURING render, so no frame ever paints the previous seller's notices (N1).
+  const [hydrated, setHydrated] = React.useState(false);
+  React.useEffect(() => setHydrated(true), []);
+  const [bell, setBell] = React.useState<{
+    key: string | null | undefined;
+    list: BuyerNotification[];
+  }>(
+    { key: undefined, list: [] }, // undefined: nothing loaded yet
+  );
+  let current = bell;
+  if (hydrated && bell.key !== storageKey) {
+    current = { key: storageKey, list: loadFromStorage(storageKey) };
+    setBell(current);
+  }
+  const notifications = current.list;
 
   const push = React.useCallback((n: Omit<BuyerNotification, "id" | "timestamp" | "read">) => {
-    setNotifications((prev) => {
-      const next = [
-        {
-          ...n,
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          timestamp: Date.now(),
-          read: false,
-        },
-        ...prev,
-      ].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(storageKeyRef.current, next);
-      return next;
+    const entry: BuyerNotification = {
+      ...n,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+      read: false,
+    };
+    // #2173 N2: the socket filter reads the STORED active seller, which can change a moment before
+    // this bell re-renders with the new seller. Persist the event under that same seller's slot;
+    // it joins the list on screen only when that list IS that slot.
+    const eventBuyer = getStoredBuyerId();
+    const eventTenant = getStoredActiveSeller()?.tenant?.id ?? null;
+    const eventKey =
+      eventBuyer && eventTenant ? buyerNotificationsKey(eventBuyer, eventTenant) : undefined;
+    setBell((prev) => {
+      if (eventKey !== undefined && eventKey !== prev.key) {
+        saveToStorage(eventKey, [entry, ...loadFromStorage(eventKey)].slice(0, MAX_NOTIFICATIONS));
+        return prev;
+      }
+      const list = [entry, ...prev.list].slice(0, MAX_NOTIFICATIONS);
+      saveToStorage(prev.key ?? null, list);
+      return { key: prev.key, list };
     });
   }, []);
 
@@ -191,17 +212,20 @@ export function useBuyerNotifications(sellerTenantId?: string | null) {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
+  // Both act on the list on screen, so both write to that list's own slot.
   const markAllRead = React.useCallback(() => {
-    setNotifications((prev) => {
-      const next = prev.map((n) => ({ ...n, read: true }));
-      saveToStorage(storageKeyRef.current, next);
-      return next;
+    setBell((prev) => {
+      const list = prev.list.map((n) => ({ ...n, read: true }));
+      saveToStorage(prev.key ?? null, list);
+      return { key: prev.key, list };
     });
   }, []);
 
   const clearAll = React.useCallback(() => {
-    setNotifications([]);
-    saveToStorage(storageKeyRef.current, []);
+    setBell((prev) => {
+      saveToStorage(prev.key ?? null, []);
+      return { key: prev.key, list: [] };
+    });
   }, []);
 
   return { notifications, unreadCount, markAllRead, clearAll, push, sessionExpired };

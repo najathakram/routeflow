@@ -107,6 +107,10 @@ export default function LoginScreen() {
         // user dismissed — no banner
       } else if (code === "unauthorized" || code === "google_email_is_staff") {
         setApiError("This Google account is not authorised for this company.");
+      } else if (code === "google_account_mismatch") {
+        setApiError(
+          "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
+        );
       } else if (code === "google_unavailable") {
         setApiError("Google sign-in is not available for this company.");
       } else {

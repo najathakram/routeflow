@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  canDeleteCustomer,
+  WALK_IN_PROTECTED_COPY,
+} from "../../../lib/customer-walk-in-protection";
+import {
   ActivityIndicator,
   Linking,
   Modal,
@@ -26,6 +30,7 @@ import { SALES_AGENTS_ADDON, useHasAddon } from "../../../lib/api/tobacco";
 import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
+import { displayEmail } from "../../../lib/internal-email";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -117,6 +122,10 @@ export default function CustomerDetailScreen() {
   const tier = customer.pricingTier ?? 1;
   const creditLimit = customer.creditLimit != null ? Number(customer.creditLimit) : null;
 
+  // Import sentinels aren't real inboxes — treat them as "no email on file"
+  // (no Email quick-action, no Account row), mirroring web.
+  const email = displayEmail(customer.email);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -167,10 +176,10 @@ export default function CustomerDetailScreen() {
                   <Text style={styles.actionText}>Text</Text>
                 </Pressable>
               ) : null}
-              {customer.email ? (
+              {email ? (
                 <Pressable
                   style={styles.actionBtn}
-                  onPress={() => Linking.openURL(`mailto:${customer.email}`)}
+                  onPress={() => Linking.openURL(`mailto:${email}`)}
                 >
                   <Ionicons name="mail-outline" size={16} color={ios.brand} />
                   <Text style={styles.actionText}>Email</Text>
@@ -311,8 +320,8 @@ export default function CustomerDetailScreen() {
           {/* Account details */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
-            {customer.email ? (
-              <Row label="Email" value={<Text style={styles.rowValue}>{customer.email}</Text>} />
+            {email ? (
+              <Row label="Email" value={<Text style={styles.rowValue}>{email}</Text>} />
             ) : null}
             {customer.phone ? (
               <Row label="Phone" value={<Text style={styles.rowValue}>{customer.phone}</Text>} />
@@ -454,10 +463,18 @@ export default function CustomerDetailScreen() {
             </Pressable>
           </View>
 
-          <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
-            <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-            <Text style={styles.deleteBtnText}>Delete customer</Text>
-          </Pressable>
+          {canDeleteCustomer(customer) ? (
+            <Pressable
+              style={styles.deleteBtn}
+              onPress={handleDelete}
+              disabled={deleteMut.isPending}
+            >
+              <Ionicons name="trash-outline" size={18} color={ios.system.red} />
+              <Text style={styles.deleteBtnText}>Delete customer</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.actionListText}>{WALK_IN_PROTECTED_COPY}</Text>
+          )}
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>

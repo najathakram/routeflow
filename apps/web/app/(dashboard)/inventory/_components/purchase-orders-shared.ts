@@ -1,10 +1,12 @@
 import {
   buildPOLine,
   derivedCaseCost,
+  linePack,
   normalizeBoxesPieces,
   roundMoney,
   type POLineAmounts,
 } from "@routeflow/pricing";
+import type { PurchaseOrderBillLink, PurchaseOrderReceipt } from "@routeflow/types";
 
 // Shared purchase-order types + pure line helpers, extracted verbatim from
 // inventory/page.tsx (LANE-U step 3 prefactor — behaviour identical).
@@ -56,6 +58,9 @@ export interface PurchaseOrder {
   expectedDate: string;
   notes?: string;
   createdAt: string;
+  /** Detail read only (`GET /inventory/purchase-orders/:id`): the receipts history and the linked bill. */
+  receipts?: PurchaseOrderReceipt[];
+  vendorBill?: PurchaseOrderBillLink | null;
 }
 
 export interface POLineItem {
@@ -135,16 +140,11 @@ export function resolvePOLineAmounts(line: POLineItem, unitsPerBox: number): POL
  * it (or an unusable one) is rebuilt through the one `@routeflow/pricing` builder from the case cost
  * `derivedCaseCost` reads back, which shows an OLD drifted row honestly rather than masking it.
  */
-/**
- * B699 / B722: the pack a PO line is denominated in. The line's OWN stored packSize wins; the live
- * catalog pack is only the fallback, for a new line or one that never stored a pack. A bill-raised
- * line stores the bill's pack even when the catalog product is not boxed, and re-splitting it at the
- * live pack silently rewrote its exact total (11,000.00 -> 11,000.40) on a notes-only save.
- */
-export function linePack(line: { packSize?: number | null }, livePack: number): number {
-  const stored = Number(line.packSize ?? 0);
-  return stored > 1 ? stored : livePack;
-}
+// B699/B722: `linePack` moved to `@routeflow/pricing` (mobile's PO detail screen
+// needed the identical stored-wins rule and had none — #2066 review round);
+// re-exported under this file's original name so every existing
+// `from "./purchase-orders-shared"` import of it keeps working unchanged.
+export { linePack };
 
 export function resolveStoredPOLineAmounts(
   item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost" | "packSize">,

@@ -87,6 +87,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { roundMoney } from "@routeflow/pricing";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // ─── Money + status mirrors ──────────────────────────────────────────────────
 // `roundMoney` now comes from `@routeflow/pricing` (built by root `postinstall`, so it
@@ -325,14 +330,18 @@ const CLASS_HANDLERS = {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 
-/** A fresh gitignored JSONL path per run — the audit trail a rollback is rebuilt from. */
-function newLogPath() {
+/** Where a real run journals: the repo's gitignored local-assets/ (the rollback trail's home). */
+export function defaultLogDir() {
+  return path.join(repoRoot, "local-assets");
+}
+
+/**
+ * A fresh JSONL path per run — the audit trail a rollback is rebuilt from. B831: `logDir` is
+ * injectable so the spec journals into a temp dir instead of leaving a file in the repo per run.
+ */
+function newLogPath(logDir = defaultLogDir()) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return path.join(
-    repoRoot,
-    "local-assets",
-    `repair-f03-${stamp}-${randomUUID().slice(0, 8)}.jsonl`,
-  );
+  return path.join(logDir, `repair-f03-${stamp}-${randomUUID().slice(0, 8)}.jsonl`);
 }
 
 function appendLog(logPath, entry) {
@@ -348,9 +357,10 @@ function appendLog(logPath, entry) {
  * @param {unknown} store
  * @param {unknown[]} proposals
  * @param {{ execute?: boolean, backupAttested?: boolean }} flags
+ * @param {{ logDir?: string }} [opts] where to journal (default: defaultLogDir(), the repo's local-assets/)
  * @returns {Promise<{ applied: Array<{ id: string }>, skipped: Array<{ id: string }>, logPath: string }>}
  */
-export async function applyRepairs(store, proposals, flags) {
+export async function applyRepairs(store, proposals, flags, { logDir } = {}) {
   if (!flags?.execute) {
     throw new Error(
       "Refusing to write: this script is read-only unless --execute is passed " +
@@ -364,7 +374,7 @@ export async function applyRepairs(store, proposals, flags) {
     );
   }
 
-  const logPath = newLogPath();
+  const logPath = newLogPath(logDir ?? defaultLogDir());
   const applied = [];
   const skipped = [];
 
@@ -463,7 +473,7 @@ const REPORT_ONLY = (ticket, remedy) => () => {
  * compare-and-set against the state the dry run read (`WHERE id = $1 AND <col> = <before>`), so
  * a row that moved between the two passes updates 0 rows and is reported as skipped.
  */
-export function createPgStore(client) {
+export function createPgStore(client, protectedIds = []) {
   const q = async (sql, params = []) => (await client.query(sql, params)).rows;
   // before-state per id, captured by the reread pass and consumed by the compare-and-set.
   const seen = new Map();
@@ -474,7 +484,9 @@ export function createPgStore(client) {
       const res = await client.query(sql, params);
       if (res.rowCount !== 1) {
         await client.query("ROLLBACK");
-        throw new Error("row drifted inside the transaction — rolled back, nothing written");
+        throw new Error(
+          "row drifted inside the transaction, or belongs to a protected tenant — rolled back, nothing written",
+        );
       }
       await client.query("COMMIT");
     } catch (err) {
@@ -557,8 +569,9 @@ export function createPgStore(client) {
             SET status = $2::text::"InvoiceStatus",
                 "paidAt" = CASE WHEN $2::text = 'PAID' THEN COALESCE("paidAt", now()) ELSE NULL END,
                 "updatedAt" = now()
-          WHERE id = $1 AND status = $3::text::"InvoiceStatus"`,
-        [id, status, seen.get(`invoice:${id}`)],
+          WHERE id = $1 AND status = $3::text::"InvoiceStatus"
+            AND "tenantId" <> ALL($4::text[])`,
+        [id, status, seen.get(`invoice:${id}`), protectedIds],
       );
     },
 
@@ -720,8 +733,9 @@ export function createPgStore(client) {
       await casUpdate(
         `UPDATE "OrderItem"
             SET "invoicedQty" = $2, "updatedAt" = now()
-          WHERE id = $1 AND "invoicedQty" = $3`,
-        [id, qty, seen.get(`orderItem:${id}`)],
+          WHERE id = $1 AND "invoicedQty" = $3
+            AND "tenantId" <> ALL($4::text[])`,
+        [id, qty, seen.get(`orderItem:${id}`), protectedIds],
       );
     },
   };
@@ -760,6 +774,14 @@ async function main() {
     process.exit(2);
   }
 
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -773,7 +795,12 @@ async function main() {
     );
     console.log(`    ${new Date().toISOString()}`);
 
-    const store = createPgStore(client);
+    // Row 195: a protected tenant (paying, Stripe-linked, or PROTECTED_TENANT_SLUGS) is never
+    // repaired here. Every write below is pinned to `tenantId <> ALL(protectedIds)` (a row with no
+    // tenant cannot be shown to be unprotected, so it is skipped too and reported as such).
+    const protectedIds = await protectedTenantIds(client, protectedSlugs);
+    console.log(`    protected-tenant guard: ${protectedIds.length} protected tenant(s) excluded`);
+    const store = createPgStore(client, protectedIds);
     const { proposals, unrepairable } = await identifyRepairs(store);
     printReport(proposals, unrepairable);
 

@@ -1,0 +1,52 @@
+[
+  {
+    "folder": "20260921180000_ledger_correction_and_parked_reversals",
+    "sha256": "0135b8eaf4fc7dd4e81a0c8a10a94a8801d71e942c5d676b7585862f59f9ccda",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260923034344_b297_excise_snapshot_and_locked_filing",
+    "sha256": "7018e920b3f56088bc45ffb4f58adfd21cedc329d34fcea9fa3e7a61fe9c6024",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260924000000_parked_reversal_resolved_reason",
+    "sha256": "ae450b41da19e2aa2142d4c6b46038e942716299d691c392a9d5badbf3c172fe",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260924060000_b562_stock_movement_effective_at",
+    "sha256": "f9054f0a625d04c2b7fe366777a5ecf64c18153808cf7cc49558a59c02726d59",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260925060000_f05_standing_order_line_suspension",
+    "sha256": "e0efa2711601c6870a5790042f9c47841f761e410619ca85f8bf74e7953893eb",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260925160000_sales_facts_read_indexes",
+    "sha256": "e9282e7b7f3d4617d58b44779cbb1629ef83a9c3345f52e80082650a8eb256d1",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260927043000_sa436_credit_auto_apply_off",
+    "sha256": "4ac0563e133f1ac8052d59eec5944781045d6c30c215a6b34eb89264be36e396",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260927060000_onboarding_s1_cases",
+    "sha256": "11f00a048899e026528dbc53ae39c815441358642d86222a1752c86267872a08",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20260928230000_2717_m1_catalog_barcodes_images",
+    "sha256": "c40a80d41b6d4c2a544e82a387b466b2b2695fce83a621f7824027f815da6509",
+    "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20261008120000_invoice_payment_tenant_paid_at_index",
+    "sha256": "96126691516570c739b69541a61c64a508ec3409dc6e54ec5bce4b7c47d83c2f",
+    "reason": "applied on prod at the 2026-10-08 sitting; rewriting changes the recorded checksum; SA-582a / B896"
+  }
+]

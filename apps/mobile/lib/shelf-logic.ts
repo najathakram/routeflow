@@ -71,15 +71,20 @@ export function daysLeftLabel(e: Pick<ShelfEstimate, "estDaysLeft">): string {
   return `~${e.estDaysLeft}d left`;
 }
 
-export function orderEditable(o: Pick<BuyerOrder, "status" | "editWindow">): boolean {
+// The gates also see rows without the detail-only fields (list / active order), so those are optional.
+type GateOrder = Pick<BuyerOrder, "status"> & { editWindow?: BuyerOrder["editWindow"] };
+
+export function orderEditable(o: GateOrder): boolean {
   return (o.status === "PENDING" || o.status === "CONFIRMED") && (o.editWindow?.editable ?? true);
 }
 
-export function orderCancellable(o: Pick<BuyerOrder, "status" | "editWindow">): boolean {
+export function orderCancellable(o: GateOrder): boolean {
   return (o.status === "PENDING" || o.status === "DRAFT") && (o.editWindow?.editable ?? true);
 }
 
-export function canRequestChange(o: Pick<BuyerOrder, "status" | "routeRun">): boolean {
+export function canRequestChange(
+  o: Pick<BuyerOrder, "status"> & { routeRun?: { status: string } | null },
+): boolean {
   return (
     o.routeRun?.status === "IN_PROGRESS" &&
     ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(o.status)

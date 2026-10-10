@@ -24,6 +24,11 @@
 // Run (dry-run):  railway run --service postgres node apps/api/scripts/backfill-payment-movement-tenantid.mjs
 // Run (write):    railway run --service postgres node apps/api/scripts/backfill-payment-movement-tenantid.mjs --execute
 import pg from "pg";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const EXECUTE = process.argv.includes("--execute");
 
@@ -44,14 +49,16 @@ if (missing.length) {
   process.exit(1);
 }
 
-const client = new pg.Client({
-  connectionString:
-    `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
-    `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`,
-});
+const dbUrl =
+  `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
+  `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`;
 
-const rows = async (sql) => (await client.query(sql)).rows;
-const count = async (sql) => (await client.query(sql)).rows[0].n;
+// Row 195: the protected list is loaded ONCE, against the URL this script actually dials.
+const slugs = loadProtectedSlugs(e, dbUrl);
+const client = new pg.Client({ connectionString: dbUrl });
+
+const rows = async (sql, params) => (await client.query(sql, params)).rows;
+const count = async (sql, params) => (await client.query(sql, params)).rows[0].n;
 const day = (d) => new Date(d).toISOString().slice(0, 10);
 
 // Ask the question via the PARENT, the way demo-verify.js's tenant-scoping check
@@ -70,18 +77,26 @@ try {
   console.log(`Target: ${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`);
   console.log(EXECUTE ? "MODE: EXECUTE (will write)\n" : "MODE: dry-run (no writes)\n");
 
+  // Protected tenants are excluded by the DERIVED tenant (the parent's), since the child is NULL.
+  const prot = await protectedTenantIds(client, slugs);
+  console.log(`protected-tenant guard: ${prot.length} protected tenant(s) excluded\n`);
+
   const before = {
     nullPayments: await count(
       `SELECT COUNT(*)::int AS n FROM "InvoicePayment" WHERE "tenantId" IS NULL`,
     ),
     derivablePayments: await count(
-      `SELECT COUNT(*)::int AS n ${NULL_PAYMENTS} AND i."tenantId" IS NOT NULL`,
+      `SELECT COUNT(*)::int AS n ${NULL_PAYMENTS} AND i."tenantId" IS NOT NULL
+         AND i."tenantId" <> ALL($1::text[])`,
+      [prot],
     ),
     nullMovements: await count(
       `SELECT COUNT(*)::int AS n FROM "StockMovement" WHERE "tenantId" IS NULL`,
     ),
     derivableMovements: await count(
-      `SELECT COUNT(*)::int AS n ${NULL_MOVEMENTS} AND pr."tenantId" IS NOT NULL`,
+      `SELECT COUNT(*)::int AS n ${NULL_MOVEMENTS} AND pr."tenantId" IS NOT NULL
+         AND pr."tenantId" <> ALL($1::text[])`,
+      [prot],
     ),
     paymentMismatches: await count(PAYMENT_MISMATCHES),
     movementMismatches: await count(MOVEMENT_MISMATCHES),
@@ -150,7 +165,7 @@ try {
         `${before.derivableMovements} StockMovement row(s). ` +
         `${before.nullPayments - before.derivablePayments} payment(s) and ` +
         `${before.nullMovements - before.derivableMovements} movement(s) would stay NULL ` +
-        `(parent has no tenant). Re-run with --execute to apply.`,
+        `(parent has no tenant, or its tenant is protected). Re-run with --execute to apply.`,
     );
     process.exit(0);
   }
@@ -159,12 +174,16 @@ try {
   const paid = await client.query(
     `UPDATE "InvoicePayment" p SET "tenantId" = i."tenantId"
      FROM "Invoice" i
-     WHERE i.id = p."invoiceId" AND p."tenantId" IS NULL AND i."tenantId" IS NOT NULL`,
+     WHERE i.id = p."invoiceId" AND p."tenantId" IS NULL AND i."tenantId" IS NOT NULL
+       AND i."tenantId" <> ALL($1::text[])`,
+    [prot],
   );
   const moved = await client.query(
     `UPDATE "StockMovement" s SET "tenantId" = pr."tenantId"
      FROM "Product" pr
-     WHERE pr.id = s."productId" AND s."tenantId" IS NULL AND pr."tenantId" IS NOT NULL`,
+     WHERE pr.id = s."productId" AND s."tenantId" IS NULL AND pr."tenantId" IS NOT NULL
+       AND pr."tenantId" <> ALL($1::text[])`,
+    [prot],
   );
   const after = {
     nullPayments: await count(

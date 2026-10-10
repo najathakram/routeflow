@@ -7,11 +7,23 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
 import { OrdersService } from "../orders/orders.service";
+import {
+  BuyerBackorderViewResolver,
+  NO_BACKORDER_VIEW,
+  type BuyerBackorderView,
+} from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
+
+// The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
+// The mock prisma's tenant ("test-tenant") scopes the parent filters (B1211).
+const VIS = buyerVisibleProductWhere(noBuyerRestrictions("test-tenant"));
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
+  let backorderResolve: jest.Mock;
+  const viewIs = (v: BuyerBackorderView) => backorderResolve.mockResolvedValue(v);
   let prisma: ReturnType<typeof createMockPrisma>;
   let products: { findAll: jest.Mock; findOne: jest.Mock };
   let ordersService: { getCustomerPriceHistory: jest.Mock };
@@ -32,6 +44,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     storage = { presignedUrl: jest.fn(), presignedUrls: jest.fn().mockResolvedValue([]) };
     replenishment = { estimates: jest.fn().mockResolvedValue([]) };
     promotions = { activeForCatalog: jest.fn().mockResolvedValue([]) };
+    backorderResolve = jest.fn().mockResolvedValue(NO_BACKORDER_VIEW);
     const mod = await Test.createTestingModule({
       providers: [
         BuyerCatalogService,
@@ -42,6 +55,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: ReplenishmentService, useValue: replenishment },
         { provide: PromotionsService, useValue: promotions },
+        { provide: BuyerBackorderViewResolver, useValue: { resolve: backorderResolve } },
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);
@@ -58,6 +72,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     const res = (await service.getCatalog({}, "c1")) as any;
     expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
       excludeTrackedCategoryIds: ["cat-alc"],
+      andWhere: [VIS],
     });
     expect(res.hiddenCategories).toEqual([{ id: "cat-alc", name: "Alcohol", status: "NONE" }]);
   });
@@ -66,7 +81,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([{ trackedCategoryId: "cat-alc", status: "VERIFIED", expiresAt: future }]);
     const res = (await service.getCatalog({}, "c1")) as any;
-    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     expect(res.hiddenCategories).toEqual([]);
   });
 
@@ -90,7 +105,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     gated([]); // no regulated program
     const res = (await service.getCatalog({}, "c1")) as any;
     expect(prisma.customerAuthorization.findMany).not.toHaveBeenCalled();
-    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     expect(res.hiddenCategories).toEqual([]);
   });
 
@@ -109,6 +124,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       category: "Snacks",
@@ -124,6 +143,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       variants: [
         {
           id: "v1",
+          isActive: true,
+          kind: "STANDARD",
+          portalVisible: true,
           variantName: "Large",
           sku: "V1",
           unit: "ea",
@@ -146,6 +168,50 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     expect(res.variants[0]).toMatchObject({ category: "Snacks", unitsPerBox: 6 });
   });
 
+  describe("OOS PR2: the detail uses the SAME view as the listing (tile <-> detail parity)", () => {
+    const oosProduct = () => ({
+      id: "p1",
+      tenantId: "test-tenant",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
+      name: "Widget",
+      unit: "ea",
+      category: "Snacks",
+      pricePerUnit: 10,
+      unitsPerBox: null,
+      currentStock: 0,
+      lowStockThreshold: 5,
+      isActive: true,
+      trackedCategoryId: null,
+      imageKeys: [],
+      imageUrls: [],
+      variants: [],
+    });
+
+    it.each([
+      [{ canBackorder: true, visibility: "hide" as const }, true, "IN_STOCK", true],
+      [{ canBackorder: true, visibility: "show" as const }, false, "OUT_OF_STOCK", true],
+      [{ canBackorder: false, visibility: "hide" as const }, false, "OUT_OF_STOCK", false],
+    ])(
+      "view %j: inStock=%s status=%s canBackorder=%s, resolved once",
+      async (view, inStock, status, can) => {
+        gated([]);
+        prisma.customerPrice.findMany.mockResolvedValue([]);
+        products.findOne.mockResolvedValue(oosProduct());
+        viewIs(view);
+        const res = (await service.getProductDetail("p1", "c1")) as any;
+        expect([res.inStock, res.stockStatus, res.stockLeft, res.canBackorder]).toEqual([
+          inStock,
+          status,
+          null,
+          can,
+        ]);
+        expect(backorderResolve).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
+
   // A variant with its own CustomerPrice row must price off ITS tier, not the
   // parent's — otherwise the parent's Variants list and the variant's own
   // tile/detail page quote two different prices for the same product.
@@ -155,6 +221,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       pricePerUnit: 20,
@@ -162,7 +232,17 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       isActive: true,
       trackedCategoryId: null,
       variants: [
-        { id: "v1", variantName: "Large", sku: "V1", unit: "ea", pricePerUnit: 10, priceTier3: 8 },
+        {
+          id: "v1",
+          isActive: true,
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Large",
+          sku: "V1",
+          unit: "ea",
+          pricePerUnit: 10,
+          priceTier3: 8,
+        },
       ],
     });
 
@@ -180,14 +260,34 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       pricePerUnit: 20,
       isActive: true,
       trackedCategoryId: null,
       variants: [
-        { id: "v1", variantName: "Large", unit: "ea", pricePerUnit: 10, isActive: true },
-        { id: "v2", variantName: "Discontinued", unit: "ea", pricePerUnit: 10, isActive: false },
+        {
+          id: "v1",
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Large",
+          unit: "ea",
+          pricePerUnit: 10,
+          isActive: true,
+        },
+        {
+          id: "v2",
+          kind: "STANDARD",
+          portalVisible: true,
+          variantName: "Discontinued",
+          unit: "ea",
+          pricePerUnit: 10,
+          isActive: false,
+        },
       ],
     });
 
@@ -202,15 +302,56 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     );
   });
 
+  const VISIBLE = {
+    id: "p1",
+    name: "Widget",
+    isActive: true,
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
+  };
+
+  it("getFavorites: a favourite the tenant HID is kept as a 'No longer available online' stub, with no price (SA-606 M3)", async () => {
+    gated([]);
+    auths([]);
+    prisma.buyerFavorite.findMany.mockResolvedValue([
+      {
+        id: "f9",
+        productId: "p9",
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p9", name: "Hidden Fave", portalVisible: false },
+      },
+      {
+        id: "f8",
+        productId: "p8",
+        createdAt: new Date(),
+        product: {
+          ...VISIBLE,
+          id: "p8",
+          name: "Under Hidden Parent",
+          parent: { portalVisible: false },
+        },
+      },
+    ]);
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    const res = (await service.getFavorites("ba1", "c1")) as any[];
+    expect(res).toHaveLength(2);
+    for (const r of res) {
+      expect(r).toMatchObject({ unavailable: true, unavailableText: "No longer available online" });
+      expect(r).not.toHaveProperty("buyerPrice");
+    }
+  });
+
   it("getFavorites filters out products in a locked category", async () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([]);
     prisma.buyerFavorite.findMany.mockResolvedValue([
-      { id: "f1", productId: "p1", product: { isActive: true, trackedCategoryId: "cat-alc" } },
+      { id: "f1", productId: "p1", product: { ...VISIBLE, trackedCategoryId: "cat-alc" } },
       {
         id: "f2",
         productId: "p2",
-        product: { isActive: true, trackedCategoryId: null, imageKeys: [] },
+        createdAt: new Date(),
+        product: { ...VISIBLE, id: "p2", trackedCategoryId: null, imageKeys: [] },
       },
     ]);
     prisma.customerPrice.findMany.mockResolvedValue([]);
@@ -310,6 +451,60 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       expect(p3.stockLeft).toBeNull();
     });
 
+    describe("OOS PR2: canBackorder + the seller's backorder visibility (R2/R3)", () => {
+      const stockOf = (r: any) => r.data.map((p: any) => [p.inStock, p.stockStatus, p.stockLeft]);
+
+      it("R2: the view is resolved ONCE for the whole listing (never per product), for THIS customer", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "show" });
+        await service.getCatalog({}, "c1");
+        expect(backorderResolve).toHaveBeenCalledTimes(1);
+        expect(backorderResolve).toHaveBeenCalledWith({
+          tenantId: "test-tenant",
+          customerId: "c1",
+        });
+      });
+
+      it("show + can backorder: stock stays truthful and every row says canBackorder", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "show" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "LOW", 3],
+          [false, "OUT_OF_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+        expect(res.data.map((p: any) => p.canBackorder)).toEqual([true, true, true]);
+      });
+
+      it("hide + can backorder: EVERY row looks in stock and no count leaks (list)", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: true, visibility: "hide" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "IN_STOCK", null],
+          [true, "IN_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+      });
+
+      it("a buyer who CANNOT backorder is never masked, whatever the visibility, and canBackorder is false", async () => {
+        gated([]);
+        threeProducts();
+        viewIs({ canBackorder: false, visibility: "hide" });
+        const res = (await service.getCatalog({}, "c1")) as any;
+        expect(stockOf(res)).toEqual([
+          [true, "LOW", 3],
+          [false, "OUT_OF_STOCK", null],
+          [true, "IN_STOCK", null],
+        ]);
+        expect(res.data.map((p: any) => p.canBackorder)).toEqual([false, false, false]);
+      });
+    });
+
     it("ids filters via andWhere and fetches ALL of them (never a truncated page)", async () => {
       gated([]);
       await service.getCatalog({ ids: ["p9", "p42"], limit: 20 }, "c1");
@@ -317,7 +512,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         // limit 0 = fetch-all: a page boundary would drop cart lines, and the
         // cart prices anything missing at 0.
         expect.objectContaining({ page: 1, limit: 0 }),
-        { andWhere: [{ id: { in: ["p9", "p42"] } }] },
+        { andWhere: [{ id: { in: ["p9", "p42"] } }, VIS] },
       );
     });
 
@@ -327,7 +522,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       await service.getCatalog({ ids: ["p9"] }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
         excludeTrackedCategoryIds: ["cat-alc"],
-        andWhere: [{ id: { in: ["p9"] } }],
+        andWhere: [{ id: { in: ["p9"] } }, VIS],
       });
     });
 
@@ -335,7 +530,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       gated([]);
       await service.getCatalog({ collection: "new" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ isNew: true }],
+        andWhere: [{ isNew: true }, VIS],
       });
     });
 
@@ -349,7 +544,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       ]);
       await service.getCatalog({ collection: "deals" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ OR: [{ isDeal: true }, { category: "Beverages" }, { id: { in: ["p1"] } }] }],
+        andWhere: [
+          { OR: [{ isDeal: true }, { category: "Beverages" }, { id: { in: ["p1"] } }] },
+          VIS,
+        ],
       });
     });
 
@@ -359,7 +557,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { scope: "ALL", category: null, productIds: [] },
       ]);
       await service.getCatalog({ collection: "deals" }, "c1");
-      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [{}] });
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [{}, VIS] });
     });
 
     it("collection=usuals filters to ids with replenishment orderCount >= 2", async () => {
@@ -371,7 +569,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       ]);
       await service.getCatalog({ collection: "usuals" }, "c1");
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ id: { in: ["p1", "p3"] } }],
+        andWhere: [{ id: { in: ["p1", "p3"] } }, VIS],
       });
     });
 
@@ -384,7 +582,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         select: { productId: true },
       });
       expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
-        andWhere: [{ id: { in: ["p9", "p2"] } }],
+        andWhere: [{ id: { in: ["p9", "p2"] } }, VIS],
       });
     });
 
@@ -392,7 +590,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       gated([]);
       await service.getCatalog({ collection: "favorites" }, "c1");
       expect(prisma.buyerFavorite.findMany).not.toHaveBeenCalled();
-      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), undefined);
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), { andWhere: [VIS] });
     });
 
     it("sort=best orders by replenishment orderCount desc, then estDaysLeft asc, no-history last; fetches all + paginates manually", async () => {
@@ -413,8 +611,8 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       const res = (await service.getCatalog({ sort: "best" }, "c1")) as any;
 
       expect(products.findAll).toHaveBeenCalledWith(
-        { search: undefined, category: undefined, isActive: true, page: 1, limit: 0 },
-        undefined,
+        { search: undefined, category: undefined, page: 1, limit: 0 },
+        { andWhere: [VIS] },
       );
       expect(res.data.map((p: any) => p.id)).toEqual(["p2", "p1", "p3"]);
       expect(res.meta).toEqual({ total: 3, page: 1, limit: 20, totalPages: 1 });
@@ -442,7 +640,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         productCount.mockImplementation(async ({ where }: any) => {
           if (where.isNew === true) return 4; // newCount
           if (where.id?.in) return where.id.in.includes("p1") ? 2 : 1; // usuals : favorites
-          if (where.AND) return 3; // deals
+          // deals = { AND: [baseWhere, dealsWhere] }: its first clause is the 4-clause baseWhere (the sellable
+          // clause inside a plain baseWhere has an AND of its own, but only 2 clauses)
+          if (where.AND?.[0]?.AND?.length >= 4) return 3;
           return 9; // total (baseWhere only)
         });
 
@@ -460,12 +660,16 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         ];
         for (const call of productCount.mock.calls as any[]) {
           const where = call[0].where;
-          const gate = where.OR ?? where.AND?.[0]?.OR;
+          // baseWhere = AND[sellable{AND[isActive, kind]}, portalVisible, parentOR, gate] (4 clauses); the deals
+          // count nests it one level down as { AND: [baseWhere, dealsWhere] }. The sellable clause has an AND of
+          // its own (2 clauses), so telling the two apart by "has an inner AND" is no longer enough.
+          const base = where.AND?.[0]?.AND?.length >= 4 ? where.AND[0] : where;
+          const gate = base.AND?.[3]?.OR;
           expect(gate).toEqual(NULL_SAFE_GATE);
           expect(where.trackedCategoryId).toBeUndefined();
         }
         const groupByWhere = (productGroupBy.mock.calls[0] as any[])[0].where;
-        expect(groupByWhere.OR).toEqual(NULL_SAFE_GATE);
+        expect(groupByWhere.AND[3].OR).toEqual(NULL_SAFE_GATE);
         expect(groupByWhere.trackedCategoryId).toBeUndefined();
 
         expect(res.lockedCategories).toEqual([{ id: "cat-x", name: "Tobacco", status: "NONE" }]);

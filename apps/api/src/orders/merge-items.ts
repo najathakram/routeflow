@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface MergeLineSnapshot {
   // SA-124f: the row's own id — carried through to the fold's output as `sourceLineId`, so a
@@ -41,6 +42,8 @@ export interface MergeIncomingItem {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  /** #2696(c): the reason for a staff-typed price — travels with that price (SA-558d). */
+  overrideReason?: string;
   notes?: string;
 }
 
@@ -195,7 +198,11 @@ export function foldMergeItems(
     // operator's override with the client's freshly-resolved catalog price.
     // Incoming values only FILL what the existing line doesn't carry (and are
     // the only source for a brand-new merged line, handled above).
-    if (acc.unitPrice == null && item.unitPrice != null) acc.unitPrice = item.unitPrice;
+    if (acc.unitPrice == null && item.unitPrice != null) {
+      acc.unitPrice = item.unitPrice;
+      // #2696(c): the reason travels with the price it justifies (the filled-in one).
+      if (item.overrideReason) acc.overrideReason = item.overrideReason;
+    }
     if (!acc.notes && item.notes) acc.notes = item.notes;
   };
 
@@ -226,6 +233,10 @@ export function foldMergeItems(
         hadExisting: false,
         existingBoxAware: false,
         unitPrice: item.unitPrice,
+        // #2696(c) SA-558d: a new line is a staff create — its reason rides with its price.
+        ...(item.unitPrice != null && item.overrideReason
+          ? { overrideReason: item.overrideReason }
+          : {}),
         notes: item.notes ?? null,
       });
       continue;
@@ -247,7 +258,7 @@ export function foldMergeItems(
         // re-denominates the other lines in the same payload; the caller (a single
         // interactive request) simply retries.
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at a ${acc.unitsPerBox}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: [acc.unitsPerBox],
@@ -282,7 +293,7 @@ export function foldMergeItems(
       );
       if (knownPacks.length >= 1) {
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at packs [${knownPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: knownPacks,

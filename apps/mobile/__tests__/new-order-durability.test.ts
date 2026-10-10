@@ -51,7 +51,7 @@ describe("NewOrderScreen scan accept guard (REG-NEWORDER-GUARD)", () => {
     // Order matters: the REG-B201 nonce is consumed FIRST so a parked attempt
     // cannot re-park on a later settle of the same attempt.
     expect(screen).toMatch(
-      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*kind\)\)\s*return;/,
+      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*level\)\)\s*return;/,
     );
     // The nonce itself must survive — a guard is not a reason to "simplify" it
     // away, and neither may a time window come back in its place.
@@ -186,29 +186,33 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     // No line total is ever written here — the tray and footer re-derive it.
     expect(mount).not.toMatch(/lineTotal|\*\s*qty|qty\s*\*/);
     // SA-085i(b): an untouched pre-fill (price === the resolved base) must never be stored as
-    // a redundant override — priceEditorSaveOverride makes the SAME comparison submit/park do,
-    // as a lib function with its own value tests (cart-order-total.test.ts), not re-derived here.
-    expect(mount).toMatch(/unitPriceBase\(items\[target\.id\] \?\? \{\}, tierPriceFor\(p\)\)/);
-    expect(mount).toMatch(/priceEditorSaveOverride\(price, base\)/);
+    // a redundant override. #2696(c): the save goes through decideTrayPrice (pricing's
+    // decideStaffOverride, value-tested in special-override-2696.test.ts), which CLEARS within
+    // half a cent of the base; the base is the unitPriceBase the target resolves (TRAYPRICE-E).
+    expect(mount).toMatch(/decideTrayPrice\(\{ typed: price, \.\.\.target\.rule, reason \}\)/);
+    expect(mount).toMatch(/d\.kind === "clear"\) setLinePrice\(target\.id, null\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-E: the pre-fill and the tray's price both call the lib's price functions (SA-085i(b)), not tierPriceFor directly", () => {
     const target = (screen.match(/const priceEditTarget = \(\(\)[\s\S]*?\}\)\(\);/) ?? [""])[0];
-    expect(target).toMatch(
-      /priceEditorPrefill\(items\[priceEditId\], p, effectiveTierFor\(p\.id\)\)/,
-    );
+    expect(target).toMatch(/priceEditorPrefill\(line, p, effectiveTierFor\(p\.id\)\)/);
+    expect(target).toMatch(/const line = items\[priceEditId\];/);
+    expect(target).toMatch(/base: unitPriceBase\(line \?\? \{\}, tierPriceFor\(p\)\)/);
     const tray = (screen.match(/trayRowsFrom\(\{[\s\S]*?\}\),/) ?? [""])[0];
     expect(tray).toMatch(/lineUnitFor\(items\[p\.id\], full, effectiveTierFor\(p\.id\)\)/);
   });
 
-  it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
-    const handler = (screen.match(/const onTrayEditPrice = useCallback[\s\S]*?\}, \[\]\);/) ?? [
+  it("REG-NEWORDER-TRAYPRICE-C (#2696(c)): a SPECIAL-tier line opens the editor — the reason is asked there", () => {
+    // B901: the handler lives in lib/use-scan-price-edit.ts (size ratchet); it no longer refuses.
+    const hook = readFileSync(join(__dirname, "..", "lib", "use-scan-price-edit.ts"), "utf8");
+    const handler = (hook.match(/const onTrayEditPrice = useCallback\([\s\S]*?\n {2}\);/) ?? [
       "",
     ])[0];
     expect(handler).toBeTruthy();
-    expect(handler).toMatch(/isSpecialLine\(id\)/);
-    expect(handler).toMatch(/return;/);
-    expect(screen).toMatch(/isSpecialLine:\s*\(id: string\) => \{[\s\S]{0,160}?isSpecialFor\(p\)/);
+    expect(handler).not.toMatch(/isSpecialLine/);
+    expect(hook).not.toMatch(/isSpecialLine/);
+    expect(screen).not.toMatch(/isSpecialLine/);
+    expect(screen).toMatch(/isSpecial: isSpecialFor\(p\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-D: the camera pauses while the price sheet is over it", () => {
@@ -246,17 +250,21 @@ describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (S
  */
 describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
   it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
     expect(fn).toBeTruthy();
-    expect(fn).toMatch(/unitKind !== "piece" \|\| !label\) return finishAccept/);
+    // The gate is now the shared predicate (piece kind + the line's unitLabel + a real case size).
+    expect(fn).toMatch(/!needsUnitLabelConfirm\(level, product, label\)\) return finishAccept/);
+    expect(screen).toMatch(
+      /import \{ needsUnitLabelConfirm \} from "\.\.\/lib\/scan-unit-confirm";/,
+    );
     expect(fn).toMatch(/confirm\(/);
     // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
     expect(fn).not.toMatch(/^\s*addOne\(/m);
   });
 
   it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
-    expect(fn).toMatch(/return finishAccept\(product, unitKind\);/);
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, level, ao\);/);
   });
 });
 

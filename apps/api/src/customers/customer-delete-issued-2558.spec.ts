@@ -21,6 +21,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
 import { InvoiceStatus } from "@prisma/client";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import {
   CUSTOMER_DELETE_BLOCKING,
   CUSTOMER_DELETE_NON_BLOCKING,
@@ -84,6 +85,7 @@ describe("CustomersService — delete pre-flight blocks every issued or paid inv
         },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: {

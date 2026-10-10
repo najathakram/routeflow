@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -52,6 +53,8 @@ import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
 import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableFlat, sellableOnly } from "@/lib/product-search-groups";
 import {
   useExpenses,
   useExpenseCategories,
@@ -241,6 +244,11 @@ interface ProductOption {
   unit: string;
   averageCost?: string;
   barcode?: string;
+  kind?: string | null;
+  variantName?: string | null;
+  parentProductId?: string | null;
+  parent?: { name: string } | null;
+  variants?: ProductOption[];
 }
 
 function ProductCombobox({
@@ -257,8 +265,14 @@ function ProductCombobox({
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
-  const { data } = useProducts({ search: search || undefined, limit: 20, isActive: true });
-  const products: ProductOption[] = (data as any)?.data ?? [];
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: search || undefined,
+    limit: 20,
+    isActive: true,
+    includeVariants: true,
+  });
+  const products: ProductOption[] = sellableFlat<ProductOption>((data as any)?.data ?? []);
 
   React.useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -273,11 +287,11 @@ function ProductCombobox({
   const handleSelect = (p: ProductOption) => {
     onChange({
       productId: p.id,
-      description: p.name,
+      description: displayProductName(p),
       unit: p.unit,
       unitCost: p.averageCost ? String(parseFloat(p.averageCost).toFixed(4)) : "",
     });
-    setSearch(p.name);
+    setSearch(displayProductName(p));
     setOpen(false);
   };
 
@@ -340,7 +354,7 @@ function ProductCombobox({
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
                   >
                     <span>
-                      <span className="font-medium text-navy">{p.name}</span>
+                      <span className="font-medium text-navy">{displayProductName(p)}</span>
                       {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </span>
                     <span className="shrink-0 text-xs text-navy/70">{p.unit}</span>
@@ -500,7 +514,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           const res = await apiClient.get("/products", {
             params: { search: code.trim(), limit: 5, isActive: true },
           });
-          const results: ProductOption[] = res.data?.data ?? [];
+          const results: ProductOption[] = sellableOnly<ProductOption>(res.data?.data ?? []);
           product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
         } catch {
           /* ignore */
@@ -558,7 +572,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setErrors({});
       setDuplicate(null);
       setPoRefusal(null);
-      if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
+      if (prefs?.[PREF.billLastSupplierId]) setSupplierId(prefs[PREF.billLastSupplierId]);
     }
   }, [isOpen]);
 
@@ -659,8 +673,8 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       },
       {
         onSuccess: () => {
-          savePrefs.mutate({ "bill.lastSupplierId": supplierId });
-          toast({ title: "Vendor bill created", variant: "success" });
+          savePrefs.mutate({ [PREF.billLastSupplierId]: supplierId });
+          toast({ title: "Supplier bill created", variant: "success" });
           onClose();
         },
         onError: (err: unknown) => {
@@ -685,7 +699,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           // server refusal in plain language instead of its raw message.
           if (data?.code === "MONEY_INVARIANT") {
             toast({
-              title: "Failed to create vendor bill",
+              title: "Failed to create supplier bill",
               description:
                 "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit.",
               variant: "error",
@@ -694,7 +708,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           }
           const raw = data?.message;
           toast({
-            title: "Failed to create vendor bill",
+            title: "Failed to create supplier bill",
             description: (Array.isArray(raw) ? raw.join(" ") : raw) || "Please try again.",
             variant: "error",
           });
@@ -1186,8 +1200,8 @@ function InventoryPurchasesTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Inventory purchases are recorded as vendor bills. When a bill is <strong>received</strong>,
-        stock is updated and product average costs are recalculated automatically.
+        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>
+        , stock is updated and product average costs are recalculated automatically.
       </div>
 
       {/* Actions row */}
@@ -1196,7 +1210,7 @@ function InventoryPurchasesTab() {
           <Sparkles className="mr-1 h-4 w-4" /> Scan Invoice
         </Button>
         <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-          New Purchase
+          New purchase
         </Button>
       </div>
 
@@ -1644,7 +1658,7 @@ function PurchaseOrdersTab() {
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
         Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock; the
-        resulting supplier bill appears under <strong>Vendor Bills</strong>.
+        resulting supplier bill appears under <strong>Supplier Bills</strong>.
       </div>
 
       {/* Chip-style status filters */}
@@ -2120,7 +2134,7 @@ function OtherExpensesTab() {
                         {e.vendorBillId && (
                           <Link
                             href={`/finance/vendor-bills/${e.vendorBillId}`}
-                            title="View in Vendor Bills"
+                            title="View in Supplier Bills"
                             className="rounded p-1 text-teal-600 hover:bg-teal-50 transition-colors"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -2339,7 +2353,7 @@ function ExpenseDetailModal({
             href={`/finance/vendor-bills/${expense.vendorBillId}`}
             className="inline-flex items-center gap-2 text-sm text-brand-600 hover:underline"
           >
-            <ExternalLink className="h-4 w-4" /> View linked vendor bill
+            <ExternalLink className="h-4 w-4" /> View linked supplier bill
           </Link>
         )}
       </div>
@@ -2354,7 +2368,7 @@ type ExpensesTab = "inventory" | "pos" | "other";
 function ExpensesContent() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Bills & Purchasing");
+    setTitle("Supplier Bills");
   }, [setTitle]);
 
   const searchParams = useSearchParams();
@@ -2399,13 +2413,13 @@ function ExpensesContent() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Bills & Purchasing"
-        subtitle="One hub for vendor bills, purchase orders and inventory spend — supplier payments happen here."
+        title="Supplier Bills"
+        subtitle="One hub for supplier bills, purchase orders and inventory spend — supplier payments happen here."
       />
 
       {/* Tab switcher */}
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
-        <TabButton tab="inventory" label="Vendor Bills" count={billsCount} />
+        <TabButton tab="inventory" label="Supplier Bills" count={billsCount} />
         <TabButton tab="pos" label="Purchase Orders" count={posCount} />
         <TabButton tab="other" label="Other Expenses" />
       </div>

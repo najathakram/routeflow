@@ -55,6 +55,8 @@ export interface ScanOrderSheetProps {
   /** Leave scanning for the full builder (prices, notes, customer, submit). */
   onReview: () => void;
   onDone: () => void;
+  /** iOS: fires once the sheet has fully dismissed (not on Android/web). */
+  onDismiss?: () => void;
 }
 
 /**
@@ -82,6 +84,7 @@ export function ScanOrderSheet({
   hideMoney,
   onReview,
   onDone,
+  onDismiss,
 }: ScanOrderSheetProps) {
   const insets = useSafeAreaInsets();
   const { granted, request } = useScanCameraPermission(visible);
@@ -142,7 +145,7 @@ export function ScanOrderSheet({
   const itemsLabel = `${totalItems} item${totalItems === 1 ? "" : "s"}`;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onDone}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onDone} onDismiss={onDismiss}>
       <View style={styles.root}>
         <View style={styles.capture}>
           {visible && granted ? (

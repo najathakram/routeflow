@@ -10,6 +10,7 @@ import { Test } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { ProductsService } from "../products/products.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -58,6 +59,18 @@ describe("#2468 invoice re-import never resurrects a VOID / WRITTEN_OFF invoice 
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        // #2185 (B858/B859): ImportService routes product writes through ProductsService; this
+        // suite never reaches a product write, so the stub only satisfies DI.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         // #2093: importInvoices flags banned lines (never blocks); ALLOW keeps this suite's rows unflagged.
         {
           provide: SellingRestrictionsService,

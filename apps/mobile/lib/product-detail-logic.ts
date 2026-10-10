@@ -61,7 +61,7 @@ export function variantPrice(
   const input: Pick<BuyerProduct, "id" | "buyerPrice" | "category" | "unitsPerBox"> = {
     id: v.id,
     buyerPrice: v.buyerPrice,
-    category: v.category ?? undefined,
+    category: v.category,
     unitsPerBox: v.unitsPerBox,
   };
   return deriveTilePrice(input, promoRules, cartItem);

@@ -27,6 +27,7 @@ jest.mock("../../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -63,6 +64,8 @@ export const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant (the mock prisma's).
+  tenantId: "test-tenant",
 };
 /** The buyer pseudo-user (`makePseudoUser`): role CUSTOMER, stamped `type: "BUYER"`. */
 export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };
@@ -71,6 +74,7 @@ export async function buildOrdersService() {
   const prisma = createMockPrisma();
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       {
         provide: TenantContextService,

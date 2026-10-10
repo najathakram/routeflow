@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -49,11 +50,29 @@ import {
 } from "@/lib/api/customers";
 import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
+import { useFleetAccess } from "@/lib/api/addons";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { fmt, isInternalEmail } from "@/lib/formatting";
+import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
+import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
+
+// Below `sm` the lower-value columns hide (a RELOCATION: phone + tags move to a secondary line in
+// the Name cell, email + credits live on the customer detail page). Consumed by Table via
+// `columnDef.meta.className` on both th and td.
+const HIDE_BELOW_SM = { className: "hidden sm:table-cell" };
+// Tighter cell padding on a phone so Name + Business + Receivables fit 390px.
+// The empty state sits in a td that spans every column, which can be wider than a phone; pin it to
+// the scrollport's left edge at a viewport-bound width so its text and buttons stay on screen.
+const EMPTY_FIT = "sticky left-0 w-[calc(100vw-5rem)] max-w-full";
+const TIGHT_BELOW_SM = { className: "px-2 sm:px-4 whitespace-normal sm:whitespace-nowrap" };
+// Same, plus a smaller type size below sm for the two columns that must share a 390px row.
+const TIGHT_SMALL_BELOW_SM = {
+  className: "px-2 sm:px-4 whitespace-normal sm:whitespace-nowrap text-xs sm:text-sm",
+};
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -73,62 +92,27 @@ interface Customer {
   addresses: any[];
   /** REG-B170: set when the customer has been removed (soft-deleted). */
   deletedAt?: string | null;
+  /** SA-655: the tenant's system walk-in customer (counter sales): never deactivated, deleted or merged. */
+  isWalkIn?: boolean | null;
 }
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
-function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const { toast } = useToast();
-  const [file, setFile] = React.useState<File | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<{
-    created: number;
-    updated: number;
-    skipped: number;
-    errors: string[];
-  } | null>(null);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && f.name.endsWith(".csv")) {
-      setFile(f);
-      setResult(null);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await apiClient.post("/import/contacts", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300_000,
-      });
-      setResult(res.data);
-      toast({
-        title: "Customers imported",
-        description: `${res.data.created} created, ${res.data.updated} updated, ${res.data.skipped} skipped`,
-        variant: "success",
-      });
-      onDone();
-    } catch (err: any) {
-      toast({
-        title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+function ImportCustomersModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  /** M7: fired once after a successful (non-dry-run) import — refetches the list, does NOT
+   *  close the modal, so the result table (row plan, skip reasons, warnings) stays visible
+   *  until the user closes it themselves. */
+  onImported: () => void;
+}) {
+  const [imported, setImported] = React.useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Import Customers</h2>
@@ -150,60 +134,18 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             </span>
           </div>
 
-          {/* Drop zone */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
-            onClick={() => inputRef.current?.click()}
-            className={cn(
-              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors",
-              file
-                ? "border-brand-300 bg-brand-50"
-                : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-            )}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  setFile(f);
-                  setResult(null);
-                }
-              }}
-            />
-            <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
-            {file ? (
-              <div className="text-center">
-                <p className="text-sm font-medium text-brand-600">{file.name}</p>
-                <p className="text-xs text-navy/70">
-                  {(file.size / 1024).toFixed(1)} KB · Click to change
-                </p>
-              </div>
-            ) : (
-              <div className="text-center">
-                <p className="text-sm text-navy/70">
-                  Drop CSV file here or <span className="text-brand-500">browse</span>
-                </p>
-                <p className="text-xs text-navy/70 mt-0.5">Zoho Contacts CSV format</p>
-              </div>
-            )}
-          </div>
-
-          {/* Result */}
-          {result && (
-            <div className="rounded-lg border border-success/30 bg-success-bg/50 px-3 py-2.5 text-sm">
-              <p className="font-medium text-success">Import complete</p>
-              <p className="text-xs text-navy/70 mt-0.5">
-                {result.created} created · {result.updated} updated · {result.skipped} skipped
-                {result.errors.length > 0 &&
-                  ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
-              </p>
-            </div>
-          )}
+          {/* B858/B859 (FIX5): same preview-then-import panel as settings/import — one renderer
+           *  for one result shape, so the modal shows the same plan/diff before writing. */}
+          <ImportCsvPanel
+            endpoint="/import/contacts"
+            title="Customers"
+            columns={CUSTOMER_IMPORT_COLUMNS}
+            testIdPrefix="import-customers-modal"
+            onImported={() => {
+              setImported(true);
+              onImported();
+            }}
+          />
         </div>
 
         {/* Footer */}
@@ -212,21 +154,7 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             onClick={onClose}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
           >
-            {result ? "Close" : "Cancel"}
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={!file || loading}
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Importing…
-              </span>
-            ) : (
-              "Import Customers"
-            )}
+            {imported ? "Close" : "Cancel"}
           </button>
         </div>
       </div>
@@ -259,7 +187,12 @@ export default function CustomersPage() {
   const regulatedFilter = urlFilters.regulated;
   // REG-B156: URL-synced like status/regulated, and sent to the server (see
   // customersQueryParams) instead of filtering client-side over one page.
-  const unassignedFilter = urlFilters.unassigned;
+  // Fleet-off: there are no routes to be unassigned from, so the filter (and ?unassigned=1) is inert.
+  const { fleet } = useFleetAccess();
+  const unassignedFilter = fleet && urlFilters.unassigned;
+  React.useEffect(() => {
+    if (!fleet && urlFilters.unassigned) setUrlFilter("unassigned", false);
+  }, [fleet, urlFilters.unassigned, setUrlFilter]);
   // REG-B170: an explicit trash view — never mixed with live customers.
   const removedFilter = urlFilters.removed;
   const [typeFilter, setTypeFilter] = React.useState("");
@@ -485,7 +418,8 @@ export default function CustomersPage() {
 
   // ── Column definitions ───────────────────────────────────────────────────
   const allVisible = visibleCustomers;
-  const allVisibleIds = allVisible.map((c) => c.id);
+  // The walk-in customer can never be bulk-deleted or merged (the server refuses it): it is not selectable.
+  const allVisibleIds = allVisible.filter((c) => !c.isWalkIn).map((c) => c.id);
   const allChecked = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
   const someChecked = allVisibleIds.some((id) => selected.has(id));
 
@@ -513,6 +447,8 @@ export default function CustomersPage() {
                 <input
                   type="checkbox"
                   checked={selected.has(row.original.id)}
+                  disabled={row.original.isWalkIn === true}
+                  title={row.original.isWalkIn ? WALK_IN_PROTECTED_COPY : undefined}
                   onChange={() => toggleSelect(row.original.id)}
                   onClick={(e) => e.stopPropagation()}
                   className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
@@ -525,13 +461,62 @@ export default function CustomersPage() {
         : []),
       {
         accessorKey: "contactName",
+        meta: TIGHT_BELOW_SM,
         header: () => <SortHeader col="contactName">Name</SortHeader>,
-        cell: ({ row }) => (
-          <span className="font-medium text-navy">{row.original.contactName}</span>
-        ),
+        cell: ({ row }) => {
+          const c = row.original;
+          const tagList = c.tagAssignments ?? [];
+          const hasSecondary = Boolean(c.phone) || tagList.length > 0;
+          return (
+            <div className="min-w-0 max-w-[4.5rem] [overflow-wrap:anywhere] sm:max-w-none">
+              <Link
+                href={`/customers/${c.id}`}
+                onClick={(e) => {
+                  // Select mode: the row click toggles selection, so don't navigate.
+                  if (selectMode) e.preventDefault();
+                  else e.stopPropagation();
+                }}
+                className="font-medium text-navy hover:underline focus-visible:underline"
+              >
+                {c.contactName}
+              </Link>
+              {hasSecondary && (
+                // Phone + tags are hidden columns below sm; keep them reachable on a phone.
+                <div
+                  data-testid="name-secondary-line"
+                  className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-navy/70 sm:hidden"
+                >
+                  {c.phone && (
+                    <a
+                      data-testid="name-secondary-phone"
+                      href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-mono text-[11px] tabular-nums underline"
+                    >
+                      {c.phone}
+                    </a>
+                  )}
+                  {tagList.slice(0, 2).map((ta) => (
+                    <span
+                      key={ta.tag.id}
+                      data-testid="name-secondary-tag"
+                      title={ta.tag.name}
+                      className="inline-block max-w-[7rem] truncate rounded-full px-2 py-0.5 align-bottom text-[10px] font-medium text-white"
+                      style={{ backgroundColor: ta.tag.color }}
+                    >
+                      {ta.tag.name}
+                    </span>
+                  ))}
+                  {tagList.length > 2 && <span>+{tagList.length - 2}</span>}
+                </div>
+              )}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "businessName",
+        meta: TIGHT_SMALL_BELOW_SM,
         header: () => <SortHeader col="businessName">Business Name</SortHeader>,
         cell: ({ row }) => {
           const name = row.original.businessName ?? "";
@@ -544,10 +529,12 @@ export default function CustomersPage() {
               .join("") || "—";
           return (
             <div className="flex items-center gap-2.5">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-600">
+              <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 sm:flex text-[10px] font-semibold text-brand-600">
                 {initials}
               </span>
-              <span className="text-navy/80">{name}</span>
+              <span className="max-w-[4rem] text-navy/80 [overflow-wrap:anywhere] sm:max-w-none">
+                {name}
+              </span>
               {(row.original.regulatedCount ?? 0) > 0 && (
                 <span
                   title="Sells regulated items"
@@ -564,12 +551,12 @@ export default function CustomersPage() {
         accessorKey: "email",
         header: "Email",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => (
-          <span className="text-navy/70 text-xs">
-            {row.original.email ??
-              (row.original.user?.email && !isInternalEmail(row.original.user.email)
-                ? row.original.user.email
-                : "—")}
+          <span data-testid="email-cell" className="text-navy/70 text-xs">
+            {displayEmail(row.original.email) ??
+              displayEmail(row.original.user?.email) ??
+              NO_EMAIL_COPY}
           </span>
         ),
       },
@@ -577,25 +564,28 @@ export default function CustomersPage() {
         accessorKey: "phone",
         header: "Phone",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => (
-          <span className="font-mono text-xs tabular-nums text-navy/70">
+          <span data-testid="phone-cell" className="font-mono text-xs tabular-nums text-navy/70">
             {row.original.phone ?? "—"}
           </span>
         ),
       },
       {
         id: "receivables",
+        meta: TIGHT_SMALL_BELOW_SM,
         header: () => <SortHeader col="receivables">Receivables</SortHeader>,
         cell: ({ row }) => {
           const val = row.original.receivables ?? 0;
           return (
             <span
+              data-testid="receivables-cell"
               className={cn(
                 "block text-right font-medium tabular-nums",
                 val > 0 ? "text-danger" : "text-navy/70",
               )}
             >
-              {val > 0 ? fmt(val) : "—"}
+              {fmt(val)}
             </span>
           );
         },
@@ -604,16 +594,18 @@ export default function CustomersPage() {
         id: "credits",
         header: "Credits",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => {
           const val = row.original.unusedCredits ?? 0;
           return (
             <span
+              data-testid="credits-cell"
               className={cn(
                 "block text-right font-medium tabular-nums",
                 val > 0 ? "text-success" : "text-navy/70",
               )}
             >
-              {val > 0 ? fmt(val) : "—"}
+              {fmt(val)}
             </span>
           );
         },
@@ -622,11 +614,17 @@ export default function CustomersPage() {
         id: "tags",
         header: "Tags",
         enableSorting: false,
+        meta: HIDE_BELOW_SM,
         cell: ({ row }) => {
           const tagList = row.original.tagAssignments ?? [];
-          if (!tagList.length) return <span className="text-navy/30 text-xs">—</span>;
+          if (!tagList.length)
+            return (
+              <span data-testid="tags-cell" className="text-navy/30 text-xs">
+                —
+              </span>
+            );
           return (
-            <div className="flex flex-wrap gap-1">
+            <div data-testid="tags-cell" className="flex flex-wrap gap-1">
               {tagList.slice(0, 2).map((ta) => (
                 <span
                   key={ta.tag.id}
@@ -695,23 +693,25 @@ export default function CustomersPage() {
               >
                 <Pencil className="h-4 w-4" />
               </button>
-              <button
-                title={status === "ACTIVE" ? "Deactivate" : "Activate"}
-                aria-label={status === "ACTIVE" ? "Deactivate customer" : "Activate customer"}
-                onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
-                className={cn(
-                  "rounded p-1.5 transition-colors",
-                  status === "ACTIVE"
-                    ? "text-success hover:bg-success-bg"
-                    : "text-navy/30 hover:bg-surface-raised hover:text-navy",
-                )}
-              >
-                {status === "ACTIVE" ? (
-                  <ToggleRight className="h-4 w-4" />
-                ) : (
-                  <ToggleLeft className="h-4 w-4" />
-                )}
-              </button>
+              {row.original.isWalkIn ? null : (
+                <button
+                  title={status === "ACTIVE" ? "Deactivate" : "Activate"}
+                  aria-label={status === "ACTIVE" ? "Deactivate customer" : "Activate customer"}
+                  onClick={() => toggleStatus(row.original.id, status, row.original.businessName)}
+                  className={cn(
+                    "rounded p-1.5 transition-colors",
+                    status === "ACTIVE"
+                      ? "text-success hover:bg-success-bg"
+                      : "text-navy/30 hover:bg-surface-raised hover:text-navy",
+                  )}
+                >
+                  {status === "ACTIVE" ? (
+                    <ToggleRight className="h-4 w-4" />
+                  ) : (
+                    <ToggleLeft className="h-4 w-4" />
+                  )}
+                </button>
+              )}
               <button
                 title="View customer"
                 aria-label="View customer"
@@ -870,7 +870,9 @@ export default function CustomersPage() {
                       <p className="text-xs text-navy/70 truncate">
                         Buyer account:{" "}
                         <span className="font-medium text-navy/80">
-                          {item.buyerAccount?.email ?? item.customer.email ?? "—"}
+                          {displayEmail(item.buyerAccount?.email) ??
+                            displayEmail(item.customer.email) ??
+                            NO_EMAIL_COPY}
                         </span>
                         {item.buyerAccount?.name && (
                           <span className="ml-1 text-navy/70">({item.buyerAccount.name})</span>
@@ -882,6 +884,7 @@ export default function CustomersPage() {
                     <button
                       onClick={() => router.push(`/customers/${item.customer.id}`)}
                       title="View customer"
+                      aria-label="View customer"
                       className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <ExternalLink className="h-4 w-4" />
@@ -969,26 +972,28 @@ export default function CustomersPage() {
             </div>
           )}
 
-          {/* Unassigned only toggle chip */}
-          <button
-            onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
-            className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              unassignedFilter
-                ? "border-brand-500 bg-brand-50 text-brand-600"
-                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
-            )}
-          >
-            <span
+          {/* Unassigned only toggle chip (fleet accounts only) */}
+          {fleet && (
+            <button
+              onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
               className={cn(
-                "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
-                unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                unassignedFilter
+                  ? "border-brand-500 bg-brand-50 text-brand-600"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
             >
-              {unassignedFilter && "✓"}
-            </span>
-            Unassigned only
-          </button>
+              <span
+                className={cn(
+                  "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
+                  unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                )}
+              >
+                {unassignedFilter && "✓"}
+              </span>
+              Unassigned only
+            </button>
+          )}
 
           {/* REG-B170: removed (soft-deleted) customers trash view */}
           <button
@@ -1039,6 +1044,7 @@ export default function CustomersPage() {
             emptyState={
               removedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No removed customers"
                   description="Nothing is in the trash right now."
@@ -1054,6 +1060,7 @@ export default function CustomersPage() {
                 />
               ) : unassignedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No unassigned customers"
                   description="Every customer is already assigned to a route."
@@ -1069,29 +1076,38 @@ export default function CustomersPage() {
                 />
               ) : search || statusFilter || typeFilter || tagFilter || regulatedFilter ? (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No matching customers"
                   description="No customers match your current search and filters."
                   action={
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setSearch("");
-                        setTypeFilter("");
-                        setTagFilter("");
-                        // One clearAll, not two setFilter calls: each setFilter rebuilds the
-                        // query string from the same render's searchParams, so the second
-                        // replace would restore the param the first one removed.
-                        clearUrlFilters();
-                      }}
-                    >
-                      Clear filters
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {search && (
+                        <Button variant="secondary" size="sm" onClick={() => setSearch("")}>
+                          Clear search
+                        </Button>
+                      )}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSearch("");
+                          setTypeFilter("");
+                          setTagFilter("");
+                          // One clearAll, not two setFilter calls: each setFilter rebuilds the
+                          // query string from the same render's searchParams, so the second
+                          // replace would restore the param the first one removed.
+                          clearUrlFilters();
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
                   }
                 />
               ) : (
                 <EmptyState
+                  className={EMPTY_FIT}
                   variant="customers"
                   title="No customers yet"
                   description="Add your first customer to start taking orders and sending invoices."
@@ -1230,8 +1246,9 @@ export default function CustomersPage() {
         }
       >
         <p className="text-sm text-navy/70">
-          Deactivating <strong>{deactivatingCustomer?.name}</strong> will hide them from route
-          assignment and they will no longer be able to log in.
+          Deactivating <strong>{deactivatingCustomer?.name}</strong> will{" "}
+          {fleet ? "hide them from route assignment and they will" : "mean they"} no longer be able
+          to log in.
         </p>
       </Modal>
 
@@ -1239,10 +1256,7 @@ export default function CustomersPage() {
       {isImportOpen && (
         <ImportCustomersModal
           onClose={() => setIsImportOpen(false)}
-          onDone={() => {
-            setIsImportOpen(false);
-            refetch?.();
-          }}
+          onImported={() => refetch?.()}
         />
       )}
 

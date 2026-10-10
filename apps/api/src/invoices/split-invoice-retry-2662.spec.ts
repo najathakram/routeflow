@@ -37,6 +37,7 @@ describe("#2662 createSplitInvoices — transaction timeout / missing invoice", 
       { syncInvoiceCommissionSafe: jest.fn(), syncOrderInvoices: jest.fn() } as any,
       { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") } as any,
       { assertLinesSellable: jest.fn().mockResolvedValue(undefined) } as any,
+      { can: jest.fn().mockResolvedValue(false) } as any, // EntitlementAuthority (#2241)
     );
     jest
       .spyOn(service as any, "resolveDefaultTerms")

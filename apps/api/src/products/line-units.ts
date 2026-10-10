@@ -1,12 +1,14 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
+  defaultSellingLabel,
   UnknownUnitError,
   resolveLadderLevel,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -64,10 +66,23 @@ const packLine = (product: LineUnitsProduct): ResolvedLineUnits => ({
 export function resolveLineUnits(
   product: LineUnitsProduct,
   units: readonly LadderUnit[],
-  requested?: { unitLabel?: string | null } | null,
+  requested?: { unitLabel?: string | null; boxes?: number | null; pieces?: number | null } | null,
   existing?: LineUnitsExisting | null,
+  /**
+   * #2784 / SA-601: a BUYER's plain qty on a NEW line (no unit requested, no existing line) resolves to the level flagged
+   * `isDefaultSelling`, else the pack. Off by default — the staff and driver arms stay exactly as SA-593g pinned.
+   * An explicit unit (incl. an explicit null/"" = the pack) always wins.
+   */
+  opts?: { honourDefaultSelling?: boolean },
 ): ResolvedLineUnits {
-  const explicit = requested?.unitLabel; // undefined = unchanged
+  let explicit = requested?.unitLabel; // undefined = unchanged
+  // SA-610: only a NEW line (no `existing`) takes the default — a held pack line (existing, unitLabel null) stays a pack.
+  // SA-610 B2 / SA-601(2): an explicit boxes/pieces split always wins — only a QTY-ONLY line takes the default.
+  const qtyOnly = requested?.boxes == null && requested?.pieces == null;
+  if (opts?.honourDefaultSelling && explicit === undefined && existing == null && qtyOnly) {
+    const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
+    if (dflt) explicit = dflt;
+  }
   const asked = (explicit ?? "").trim();
   const held = (existing?.unitLabel ?? "").trim();
   const ladderProduct: LadderProduct = { pricePerUnit: 0, ...product };
@@ -101,7 +116,7 @@ export function resolveLineUnits(
     if (e instanceof UnknownUnitError) {
       // #2277: the same code as a held unit the product no longer offers (unit-line-build.ts).
       throw new BadRequestException({
-        code: "UNIT_NOT_OFFERED",
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
         message: `"${e.unitLabel}" is not a unit of this product.`,
       });
     }

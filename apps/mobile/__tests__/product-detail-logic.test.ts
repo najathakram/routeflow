@@ -82,7 +82,7 @@ describe("variantPrice — cent parity with the variant's own tile", () => {
       {
         id: v.id,
         buyerPrice: v.buyerPrice,
-        category: v.category ?? undefined,
+        category: v.category,
         unitsPerBox: v.unitsPerBox,
       },
       rules,

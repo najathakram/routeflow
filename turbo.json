@@ -77,6 +77,29 @@
       ],
       "outputs": ["coverage/**"]
     },
+    // @routeflow/scanning's specs reach outside the package: no-second-scan-normaliser.spec.ts walks
+    // apps/ and packages/ + scripts/, and package-shape.spec.ts reads the root manifest, turbo.json and
+    // each app's Dockerfile. $TURBO_DEFAULT$ covers only packages/scanning, so hash those here.
+    "@routeflow/scanning#test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/*/src/**",
+        "$TURBO_ROOT$/apps/*/lib/**",
+        "$TURBO_ROOT$/apps/*/app/**",
+        "$TURBO_ROOT$/apps/*/components/**",
+        "$TURBO_ROOT$/apps/*/hooks/**",
+        "$TURBO_ROOT$/apps/*/Dockerfile",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/packages/*/src/**",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/turbo.json",
+        "!**/node_modules/**"
+      ],
+      "outputs": ["coverage/**"]
+    },
     // A web spec that imports from apps/mobile (a web<->mobile parity guard) needs the mobile files
     // it reads hashed into ITS cache key. apps/web's $TURBO_DEFAULT$ covers only apps/web, so without
     // an entry a mobile-only edit replays a CACHED green for the very guard meant to catch drift

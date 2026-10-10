@@ -1,6 +1,7 @@
 import {
   PIECE_LABEL,
   computeLineSubtotal,
+  defaultSellingLabel,
   resolveLadderLevel,
   resolveUnitPrice,
   roundMoney,
@@ -150,6 +151,39 @@ function formatMoney(value: number): string {
 function formatQty(value: number): string {
   if (!Number.isFinite(value)) return "0";
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+/**
+ * The unit a new line starts on (#2784): the level flagged `isDefaultSelling` — only if the picker actually offers it —
+ * else the pack (`""`). Mirrors web's `defaultUnitValue`; both call `@routeflow/pricing`'s `defaultSellingLabel`.
+ */
+export function defaultUnitValue(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string = 1,
+): string {
+  const flagged = defaultSellingLabel(product, units.map(toLadderUnit));
+  if (!flagged) return "";
+  const offered = buildUnitOptions(product, units, tier).find(
+    (o) => o.kind !== "pack" && norm(o.value) === norm(flagged),
+  );
+  return offered?.value ?? "";
+}
+
+/**
+ * #2784: the picker option a NEW line should be moved onto, or null (stay on the pack). Null when the line already holds
+ * a unit or the operator typed its price, when nothing is flagged, or the flagged level is not offered.
+ */
+export function defaultStartOption(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string,
+  line: { hasUnit: boolean; priceEdited?: boolean },
+): UnitOption | null {
+  if (line.hasUnit || line.priceEdited) return null;
+  const value = defaultUnitValue(product, units, tier);
+  if (!value) return null;
+  return buildUnitOptions(product, units, tier).find((o) => o.value === value) ?? null;
 }
 
 /** The picker row's detail line, e.g. "240 pcs · $220.00" — everything `unitOptionText` shows

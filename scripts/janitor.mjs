@@ -9,7 +9,9 @@
 // Order: (1) node_modules in worktrees whose branch is merged into
 // origin/master, (2) whole merged+clean+pushed worktrees, (3) orphan dirs
 // under .claude/worktrees/ that git no longer lists, (4) Docker BUILD CACHE
-// only, (5) npm cache, (6) proof/audit folders older than 7 days.
+// only, (5) npm cache, (6) proof/audit folders older than 7 days, (7) Jest cache entries
+// older than JEST_CACHE_AGE_DAYS (#2671: the legacy SHARED OS-temp cache `jest_*`, which grew to
+// 8 GB, and each worktree's own per-workspace `.jest-cache`).
 //
 // NEVER touched, ever: Docker volumes / `docker system prune`, the main
 // checkout, a worktree with uncommitted changes, a worktree whose HEAD moved
@@ -67,12 +69,46 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const PROTECTED_WORKTREE_NAMES = new Set(["rf-migrate", "rf-crm-cloud"]);
 export const PROTECTED_BRANCHES = new Set(["master", "main"]);
 export const STALE_PROOF_AGE_DAYS = 7;
+/** #2671: a Jest cache entry untouched this long is dead weight (every worktree path re-keys it). */
+export const JEST_CACHE_AGE_DAYS = 3;
+/** The per-workspace Jest cache directory every jest config now points at (#2671). */
+export const WORKTREE_JEST_CACHE_DIR = ".jest-cache";
+
+/**
+ * #2671: Jest's DEFAULT cache directory name in the OS temp dir: `jest_<uid in base 36>` (e.g.
+ * `jest_dx` for uid 501), or plain `jest` where there is no uid (Windows).
+ */
+export function isJestCacheDirName(name) {
+  return /^jest(_[a-z0-9]+)?$/i.test(name);
+}
+
+/** The cache entries (paths) whose newest mtime is older than `days`. */
+export function staleJestCacheEntries(entries, nowMs, days = JEST_CACHE_AGE_DAYS) {
+  return entries.filter((e) => nowMs - e.mtimeMs > days * 86_400_000).map((e) => e.path);
+}
+
+/**
+ * #2671: the refusal reason for deleting `targetReal` as a Jest cache entry, or null. Deliberately
+ * narrow (the B815 guard only allows the repo's own trees): the target must be a DIRECT child of
+ * one of the planned cache roots, and that root must itself be named like a Jest cache.
+ */
+export function jestCacheDeleteRefusal(targetReal, rootsReal, { caseInsensitive = false } = {}) {
+  const norm = (x) => (caseInsensitive ? x.toLowerCase() : x);
+  const parent = dirname(targetReal);
+  if (!rootsReal.some((r) => norm(r) === norm(parent)))
+    return "not a direct child of a planned Jest cache directory";
+  const b = basename(parent);
+  if (b !== WORKTREE_JEST_CACHE_DIR && !isJestCacheDirName(b))
+    return "its parent is not named like a Jest cache directory";
+  return null;
+}
 export const DEFAULT_TARGET_GB = 10;
 export const RECENT_ACTIVITY_HOURS = 24;
 
@@ -1014,7 +1050,97 @@ export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
     }
   }
 
+  // #2671: Jest caches. The legacy SHARED default cache in the OS temp dir (every verify from a new
+  // worktree path re-keyed it; it reached 8 GB) and each worktree's per-workspace `.jest-cache`.
+  // Only entries untouched for JEST_CACHE_AGE_DAYS go; a live run's recent entries stay.
+  actions.push(
+    ...planJestCacheActions(
+      jestCacheRoots(worktrees.map((w) => w.path).concat(mainCheckoutPath)),
+      now,
+    ),
+  );
+
   return { actions, skipped };
+}
+
+/**
+ * #2671: the step-7 actions for these Jest cache roots: one per direct entry untouched for
+ * JEST_CACHE_AGE_DAYS. A symlink entry is never planned and never followed for its age (its target
+ * could be anywhere); a real directory's age is its own and its direct children's newest lstat mtime.
+ */
+export function planJestCacheActions(roots, nowMs) {
+  const actions = [];
+  for (const root of roots) {
+    const entries = [];
+    for (const name of safeReaddir(root)) {
+      const full = join(root, name);
+      const m = newestMtimeMs(full);
+      if (m != null) entries.push({ path: full, mtimeMs: m });
+    }
+    for (const target of staleJestCacheEntries(entries, nowMs)) {
+      actions.push({ step: 7, kind: "jest-cache", target, root });
+    }
+  }
+  return actions;
+}
+
+function safeReaddir(dir) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/** An entry's newest mtime: itself, or for a directory the newest of it and its direct children. */
+function newestMtimeMs(p) {
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return null;
+  }
+  if (st.isSymbolicLink()) return null; // never follow a link out of a cache dir
+  let newest = st.mtimeMs;
+  if (st.isDirectory()) {
+    for (const child of safeReaddir(p)) {
+      try {
+        newest = Math.max(newest, lstatSync(join(p, child)).mtimeMs);
+      } catch {
+        /* vanished mid-scan */
+      }
+    }
+  }
+  return newest;
+}
+
+/** #2671: the Jest cache roots to sweep: the OS-temp shared caches and every worktree's per-workspace ones. */
+function jestCacheRoots(worktreePaths) {
+  const roots = new Set();
+  const temps = new Set(
+    [tmpdir(), "/tmp", "/private/tmp"].filter(existsSync).map((t) => realOr(t)),
+  );
+  for (const t of temps)
+    for (const name of safeReaddir(t))
+      if (isJestCacheDirName(name) && statSafeIsDir(join(t, name))) roots.add(join(t, name));
+  for (const wt of new Set(worktreePaths)) {
+    for (const group of ["apps", "packages"]) {
+      for (const ws of safeReaddir(join(wt, group))) {
+        const dir = join(wt, group, ws, WORKTREE_JEST_CACHE_DIR);
+        if (statSafeIsDir(dir)) roots.add(dir);
+      }
+    }
+  }
+  return [...roots];
+}
+
+function statSafeIsDir(p) {
+  try {
+    const st = lstatSync(p);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function describeAction(a) {
@@ -1031,6 +1157,8 @@ function describeAction(a) {
       return `[5] npm cache clean --force`;
     case "stale-proof-dir":
       return `[6] remove stale proof/handoff dir — ${a.target} (older than ${STALE_PROOF_AGE_DAYS}d)`;
+    case "jest-cache":
+      return `[7] remove stale Jest cache entry — ${a.target} (untouched ${JEST_CACHE_AGE_DAYS}d+)`;
     default:
       return `[?] ${a.kind}`;
   }
@@ -1039,6 +1167,9 @@ function describeAction(a) {
 /** The real OS/git calls execute() uses; the self-test injects fakes instead. */
 const EXECUTE_DEPS = {
   refuseDelete: (target, opts) => refuseDelete(target, resolveRepoContext(), opts),
+  // #2671: the Jest-cache guard (the B815 guard only allows the repo's own trees).
+  refuseJestCacheDelete: (target, root) =>
+    jestCacheDeleteRefusal(realOr(target), [realOr(root)], { caseInsensitive: isWindows() }),
   isDirty: (worktreePath) => isDirty(worktreePath),
   removeTree: (t) => safeRemoveTree(t),
   removeWorktree: (t) => {
@@ -1073,6 +1204,15 @@ export function execute(a, deps = EXECUTE_DEPS) {
       deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
+  }
+  if (a.kind === "jest-cache") {
+    const why = deps.refuseJestCacheDelete(a.target, a.root);
+    if (why) {
+      deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
+      return "refused";
+    }
+    deps.removeTree(a.target);
+    return "done";
   }
   switch (a.kind) {
     case "node_modules":

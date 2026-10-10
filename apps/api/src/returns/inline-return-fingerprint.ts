@@ -1,4 +1,5 @@
 import { ConflictException, Logger } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * #2424 (tier 1): an inline-return `returnKey` replay must be a replay of the SAME capture.
@@ -14,11 +15,15 @@ import { ConflictException, Logger } from "@nestjs/common";
  * with every compared field present (explicit nulls) and the EFFECTIVE reason (the item's, else the
  * request's), sorted, so the same items in another order are the same capture. It is
  * re-canonicalised on read too: Postgres `jsonb` does not keep key order.
+ *
+ * SA-727 (F6): the capture's RESOLUTION is part of what a replay must match. A REFUND capture stores `resolution: "REFUND"`; a
+ * STORE_CREDIT capture stores no such key (so every pre-existing payload stays byte for byte what it was, and an absent
+ * key reads as STORE_CREDIT). The same key replayed with another resolution is a mismatch, never a silent replay.
  */
 
 /** The 409 code (also `INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS`). */
 export const INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS =
-  "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+  API_ERROR_CODES.INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS;
 
 type CaptureItemLike = {
   productId: string;
@@ -38,16 +43,25 @@ export type InlineReturnReplayLines = {
   returnKey?: string;
   items?: readonly CaptureItemLike[];
   reason?: string | null;
+  /** SA-727 (F6): the request's resolution (absent = STORE_CREDIT). */
+  resolution?: string | null;
 };
 
 export type InlineReturnItemsFingerprint = {
   v: 1;
   items: Array<Required<{ [K in keyof CaptureItemLike]: CaptureItemLike[K] | null }>>;
+  /** Present ONLY on a REFUND capture; absent = STORE_CREDIT. */
+  resolution?: "REFUND";
 };
+
+/** The two resolutions a capture can carry; anything but the literal "REFUND" is STORE_CREDIT (the default). */
+const resolutionOf = (resolution: unknown): "STORE_CREDIT" | "REFUND" =>
+  resolution === "REFUND" ? "REFUND" : "STORE_CREDIT";
 
 export function inlineReturnItemsFingerprint(
   items: readonly CaptureItemLike[],
   requestReason?: string | null,
+  resolution?: string | null,
 ): InlineReturnItemsFingerprint {
   const canon = items.map((i) => ({
     productId: i.productId,
@@ -64,22 +78,32 @@ export function inlineReturnItemsFingerprint(
   }));
   const key = (x: (typeof canon)[number]) => JSON.stringify(x);
   canon.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
-  return { v: 1, items: canon };
+  return resolutionOf(resolution) === "REFUND"
+    ? { v: 1, items: canon, resolution: "REFUND" }
+    : { v: 1, items: canon };
 }
 
 /**
  * `match` when a stored `capturePayload` records exactly these request items; `legacy` when the row
  * was captured before #2424 and has no payload (nothing to compare: accepted, and the caller warns);
- * `mismatch` otherwise, including an unreadable payload.
+ * `mismatch` otherwise, including an unreadable payload or a different resolution (F6).
  */
 export function replayItemsMatch(
   stored: unknown,
   items: readonly CaptureItemLike[],
   requestReason?: string | null,
+  requestResolution?: string | null,
 ): "match" | "mismatch" | "legacy" {
   if (stored == null) return "legacy";
   const storedItems = (stored as { items?: unknown }).items;
   if (!Array.isArray(storedItems)) return "mismatch";
+  // F6: an absent stored `resolution` is STORE_CREDIT; a different request resolution is never a replay
+  if (
+    resolutionOf((stored as { resolution?: unknown }).resolution) !==
+    resolutionOf(requestResolution)
+  ) {
+    return "mismatch";
+  }
   // The stored entries already carry their effective reason, so no request reason is re-applied.
   return JSON.stringify(inlineReturnItemsFingerprint(storedItems as CaptureItemLike[])) ===
     JSON.stringify(inlineReturnItemsFingerprint(items, requestReason))
@@ -117,7 +141,12 @@ export function assertReplayItems(
   lines: InlineReturnReplayLines,
   logger: { warn(msg: string): void } = legacyLogger,
 ): void {
-  const verdict = replayItemsMatch(existing.capturePayload, lines.items ?? [], lines.reason);
+  const verdict = replayItemsMatch(
+    existing.capturePayload,
+    lines.items ?? [],
+    lines.reason,
+    lines.resolution,
+  );
   if (verdict === "mismatch") throw keyReusedWithDifferentItems(existing);
   if (verdict === "legacy")
     logger.warn(

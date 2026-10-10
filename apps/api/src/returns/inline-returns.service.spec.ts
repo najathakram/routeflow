@@ -597,7 +597,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx: nothing yet
@@ -779,7 +781,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       const raced = {
@@ -806,7 +810,9 @@ describe("InlineReturnsService", () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
         const err: any = new Error("Unique constraint failed");
         err.code = "P2002";
-        err.meta = { target: ["tenantId", "returnKey"] };
+        err.meta = {
+          driverAdapterError: { cause: { constraint: { index: "Return_tenantId_returnKey_key" } } },
+        }; // the pg driver adapter's shape (B1186)
         throw err;
       });
       prisma.return.findFirst.mockResolvedValueOnce(null);
@@ -1071,6 +1077,224 @@ describe("InlineReturnsService", () => {
 
   // ─── approve / reject (N-5, Q-C, HIGH-2, HIGH-4) ─────────────────────────────
 
+  // ─── B961 / SA-071c: a chunk of goods the customer ALREADY returned or was credited for ──────────
+
+  describe("B961: an 'already returned or credited' chunk is staff-with-a-reason only; a driver capture is held", () => {
+    const alreadyReturnedQuote = () => {
+      const q = priced(30, 28, 2, 0);
+      q.chunks[0] = {
+        ...q.chunks[0],
+        sourceInvoiceItemId: null,
+        sourceOrderId: null,
+        sourceOrderItemId: null,
+        priceSource: "BASE" as const,
+        alreadyReturned: true,
+      } as any;
+      return q;
+    };
+    const withReason = (reason?: string) => ({
+      ...CAPTURE_DTO,
+      returnKey: "nonce-ar",
+      items: [
+        {
+          productId: "prod-1",
+          qty: 6,
+          ...(reason !== undefined ? { alreadyReturnedReason: reason } : {}),
+        },
+      ],
+    });
+
+    it("STAFF without a reason is a 400 INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED (readable) and NOTHING is written", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const err: any = await service.capture(withReason() as any, OPERATOR).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      });
+      expect(String(err.getResponse().message)).toMatch(/already returned or credited/i);
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("a blank / whitespace reason is the same refusal", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      expect(await codeOf(service.capture(withReason("   ") as any, OPERATOR))).toBe(
+        "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      );
+    });
+
+    it("STAFF with a reason is credited, and an audit row records the ACTOR and the REASON", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      await service.capture(withReason("  customer kept the first credit slip  ") as any, OPERATOR);
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "inline_return.already_returned_credit",
+            userId: OPERATOR.sub,
+            meta: expect.objectContaining({
+              items: [
+                expect.objectContaining({
+                  productId: "prod-1",
+                  reason: "customer kept the first credit slip",
+                }),
+              ],
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("a DRIVER capture is HELD for the office: no restock, no ledger reversal, no credit note; audited; the response says why", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED", heldAmount: 30 }),
+        }),
+      );
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "inline_return.already_returned_hold",
+            entityId: "ret-1",
+          }),
+        }),
+      );
+      expect(result.alreadyReturnedHold).toBe(true);
+      expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
+    it("when BOTH the driver cap and the flag apply, ALREADY_RETURNED wins (it needs a reason)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 5, // tiny gross: the $30 return is also over the driver cap
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED" }),
+        }),
+      );
+    });
+
+    it("a chunk that is NOT flagged is untouched: a staff capture needs no reason, a driver capture is not held", async () => {
+      await service.capture({ ...CAPTURE_DTO, returnKey: "nonce-plain" } as any, OPERATOR);
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      prisma.return.create.mockClear();
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ holdReason: "DRIVER_CAP" }),
+        }),
+      );
+    });
+
+    it("the edit-path PREFLIGHT refuses a staff return without the reason BEFORE anything commits outside the tx", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const code = await codeOf(
+        service.preflightCapture(
+          { ...withReason(), customerId: "cust-1", orderId: "ord-carrying" } as any,
+          OPERATOR,
+          { routeRunId: null },
+        ),
+      );
+      expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
+    });
+
+    it("the NEW-order preflight refuses a staff return without the reason BEFORE a credit-note number is reserved", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const code = await codeOf(
+        service.preflightNewOrderReturn(
+          { items: [{ productId: "prod-1", qty: 6 }], returnKey: "k-new" } as any,
+          "cust-1",
+          OPERATOR,
+        ),
+      );
+      expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
+    });
+
+    it("N4: a REPLAY of the held capture keeps the readable holdMessage", async () => {
+      const heldRow = {
+        id: "ret-held-replay",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: "ALREADY_RETURNED",
+        heldAmount: 30,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        returnKey: "nonce-driver",
+        capturePayload: null,
+        items: [{ productId: "prod-1", qty: 6 }],
+      };
+      prisma.return.findFirst.mockResolvedValue(heldRow); // no audit rows are read: the COLUMN carries the hold
+      const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(result.alreadyReturnedHold).toBe(true);
+      expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
+    describe("approving an already-returned hold", () => {
+      const HELD_AR: any = {
+        id: "ret-held",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: "ALREADY_RETURNED",
+        heldAmount: 30,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+        returnNumber: "RET-1",
+        items: [{ productId: "prod-1", qty: 6, restock: true, sourceOrderId: null }],
+      };
+      beforeEach(() => {
+        prisma.return.findFirst.mockResolvedValue(HELD_AR);
+        prisma.return.updateMany.mockResolvedValue({ count: 1 });
+        // SA-071f N3: approve() reads the holdReason COLUMN; the audit rows are evidence only. None exist here (as if pruned).
+        prisma.auditLog.findFirst.mockResolvedValue(null);
+      });
+
+      it("without a reason is the same coded 400 and nothing is minted", async () => {
+        expect(await codeOf(service.approve("ret-held", OPERATOR))).toBe(
+          "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+        );
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      });
+
+      it("with a reason it mints and audits the actor + reason", async () => {
+        await service.approve("ret-held", OPERATOR, {
+          reason: " verified with the office ",
+        } as any);
+        expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+        expect(prisma.auditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              action: "inline_return.already_returned_credit",
+              userId: OPERATOR.sub,
+              meta: expect.objectContaining({ reason: "verified with the office" }),
+            }),
+          }),
+        );
+      });
+
+      it("a DRIVER_CAP-only hold approves exactly as before (no reason needed)", async () => {
+        prisma.return.findFirst.mockResolvedValue({ ...HELD_AR, holdReason: "DRIVER_CAP" });
+        await service.approve("ret-held", OPERATOR);
+        expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      });
+    });
+  });
+
   describe("approve", () => {
     const HELD: any = {
       id: "ret-held",
@@ -1289,7 +1513,10 @@ describe("InlineReturnsService", () => {
       const result = await service.reject("ret-held", OPERATOR);
       expect(prisma.return.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ holdReason: "DRIVER_CAP" }),
+          // B961: an ALREADY_RETURNED hold is rejectable too (the same hold family)
+          where: expect.objectContaining({
+            holdReason: { in: ["DRIVER_CAP", "ALREADY_RETURNED"] },
+          }),
           data: expect.objectContaining({ status: "REJECTED" }),
         }),
       );
@@ -1444,11 +1671,12 @@ describe("InlineReturnsService", () => {
 // nonce. These pin the codes the server puts on each such refusal, and that the mobile client's
 // set is exactly this set (read from the mobile source, the enum-parity precedent).
 describe("InlineReturnsService — refusal codes (SA-204)", () => {
-  it("exports the five capture refusal codes", () => {
+  it("exports the six capture refusal codes", () => {
     expect(INLINE_RETURN_ERROR_CODES).toEqual({
       ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
       ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
       ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+      ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
       RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
       RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS", // #2424
     });

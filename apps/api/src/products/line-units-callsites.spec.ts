@@ -31,6 +31,11 @@ const BASELINE: Record<string, number> = {
   // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
   // same behavior, only relocated.
   "orders/replace-all-line-build.ts": 5,
+  // #2717 M3: ONE read of a COMPONENT product's pack (`p.unitsPerBox`) in buildComponentSnapshots,
+  // feeding synthesizeLegacyBarcodes for a held tenant's legacy unit barcode. It is a barcode
+  // synthesis input, never a line-factor decision (the line's own snapshot is planFixedComposition's
+  // input). Retires if the synthesis moves to a named non-line helper.
+  "orders/line-composition.ts": 1,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:
@@ -108,6 +113,17 @@ const NON_WRITERS = new Set([
   // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
   // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
   "sales-facts/product-insights.service.ts",
+  // B948: reads the live pack ONLY as the LAST fallback to express an inline return's PIECES on a legacy
+  // line's own qty axis (the same fallback order the inline pricing uses); writes no line, snapshots nothing.
+  "credit-notes/line-credit-headroom.ts",
+  // Price-history popover (step 2A): read-only. Reads the live pack ONLY as salePackOf's GATE for a
+  // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
+  // and pack come from the line's own snapshot. Writes no line.
+  "customers/customer-price-history.service.ts",
+  // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
+  // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
+  // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
+  "customers/customer-order-suggestions.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

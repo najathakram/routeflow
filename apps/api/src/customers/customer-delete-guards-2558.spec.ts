@@ -22,6 +22,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import {
   assertNoBlockingInvoices,
   assertRecordFreeInTx,
@@ -79,6 +80,7 @@ describe("CustomersService — in-tx delete guards (#2558, SA-510a)", () => {
         },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: {

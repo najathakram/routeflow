@@ -59,6 +59,7 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { AfterCommit } from "../common/after-commit";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -158,6 +159,7 @@ describeDb(
           { provide: MessagingService, useValue: mockMessaging },
           { provide: StorageService, useValue: mockStorage },
           { provide: EntitlementsService, useValue: mockEntitlements },
+          entitlementAuthorityFromEntitlements, // #2241
           { provide: CommissionEngineService, useValue: mockCommissionEngine },
         ],
       }).compile();

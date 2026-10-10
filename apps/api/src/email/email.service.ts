@@ -1,10 +1,17 @@
+import { redactAddresses } from "./redact-addresses";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { isInternalEmail } from "../common/internal-email";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import {
+  EmailDeliveryService,
+  sanitizeDeliveryError,
+  type EmailDeliveryContext,
+} from "./email-delivery.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
@@ -177,19 +184,7 @@ export function mapSmtpError(
   return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
 }
 
-/**
- * Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback).
- * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
- * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
- * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
- * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
- * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
- */
-function redactAddresses(msg: string): string {
-  return msg
-    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
-    .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
-}
+export { redactAddresses };
 
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
 interface PlatformSmtpConfig {
@@ -314,6 +309,59 @@ function renderBrandButton(label: string, url: string): string {
   </td></tr></table>`;
 }
 
+/** The argument of the transport chain (and of the public `send`, which adds `delivery`). */
+export type EmailSendParams = {
+  to: string;
+  subject: string;
+  html: string;
+  replyTo?: string;
+  /** Plain-text alternative (added independently by both N1 and N3 — same field,
+   *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
+   *  email clients that can't/won't render HTML fall back to this. Optional so every
+   *  EXISTING caller is unaffected — a transport that doesn't get one just sends
+   *  HTML-only, same as before this field existed. */
+  text?: string;
+  /**
+   * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+   * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+   * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+   * verification, new-device, email/role-change notices) must never leave from a tenant's
+   * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+   * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+   * specific call sites migrated to `"platform"`.
+   */
+  senderClass?: "tenant" | "platform";
+  /**
+   * Files to attach (invoice PDF today). Threaded through every transport this
+   * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
+   * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
+   * by every EXISTING caller, so no prior behavior changes for anything but the new
+   * invoice-attachment callers.
+   */
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
+};
+
+/** What a send resolves to. */
+export type EmailSendResult = {
+  delivered: boolean;
+  transport: "mailbox" | "smtp" | "resend" | "none";
+  id?: string;
+  error?: string;
+  /**
+   * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
+   * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
+   * rejection, no-transport). This is what lets a Resend-rescued send still tell the
+   * operator their own mail is broken instead of quietly looking fine.
+   */
+  smtpFallbackReason?: string;
+  /**
+   * The bare platform address actually used, set alongside `smtpFallbackReason` on a
+   * Resend rescue — the From identity silently changed from the tenant's own mailbox
+   * to the platform address, and that's part of the disclosure, not a footnote.
+   */
+  fromAddress?: string;
+};
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -333,6 +381,8 @@ export class EmailService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly mailboxSend: MailboxSendService,
+    // WS4: best-effort audit rows for sends that carry a `delivery` context.
+    private readonly deliveries: EmailDeliveryService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -1088,6 +1138,35 @@ export class EmailService {
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
+  /** B911: the log form of a recipient — the domain only, never the full address. */
+  private logRecipient(to: string): string {
+    const at = to.lastIndexOf("@");
+    return at >= 0 ? to.slice(at) : "<no-domain>";
+  }
+
+  /**
+   * #2854 Opus B4+r2: ONE refusal shared by BOTH public send paths — `send()` and
+   * `sendPlatform()` (which is called directly by set-password / tenant-welcome /
+   * email-change / role-change, billing-notification and onboarding, so a guard in
+   * `send()` alone left an admin resetPassword mailing an @imported.local user).
+   * Import sentinels (@imported.local / @placeholder.local) are non-routable;
+   * refusing is treated exactly like "no email on file". Honest result (R5).
+   * The warn log carries the sentinel DOMAIN only, never the full address.
+   */
+  private refuseSentinel(
+    to: string,
+  ): { delivered: false; transport: "none"; error: string } | null {
+    if (!isInternalEmail(to)) return null;
+    this.logger.warn(
+      `send refused: recipient is at the internal sentinel domain ${this.logRecipient(to)} (no real email on file)`,
+    );
+    return {
+      delivered: false,
+      transport: "none",
+      error: "Recipient is an internal placeholder address (no real email on file).",
+    };
+  }
+
   /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
@@ -1098,55 +1177,79 @@ export class EmailService {
    * mock, tenant-SMTP failure → fallthrough → mock, and Resend API-level rejection
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
+   *
+   * WS4: pass `delivery` to record exactly one `EmailDelivery` row (SENT/FAILED) for the attempt.
+   * The row write is best-effort and never changes the result; without `delivery` nothing is
+   * recorded (every existing caller is unchanged).
    */
-  async send(params: {
-    to: string;
-    subject: string;
-    html: string;
-    replyTo?: string;
-    /** Plain-text alternative (added independently by both N1 and N3 — same field,
-     *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
-     *  email clients that can't/won't render HTML fall back to this. Optional so every
-     *  EXISTING caller is unaffected — a transport that doesn't get one just sends
-     *  HTML-only, same as before this field existed. */
-    text?: string;
-    /**
-     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
-     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
-     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
-     * verification, new-device, email/role-change notices) must never leave from a tenant's
-     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
-     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
-     * specific call sites migrated to `"platform"`.
-     */
-    senderClass?: "tenant" | "platform";
-    /**
-     * Files to attach (invoice PDF today). Threaded through every transport this
-     * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
-     * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
-     * by every EXISTING caller, so no prior behavior changes for anything but the new
-     * invoice-attachment callers.
-     */
-    attachments?: { filename: string; content: Buffer; contentType?: string }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    id?: string;
-    error?: string;
-    /**
-     * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
-     * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
-     * rejection, no-transport). This is what lets a Resend-rescued send still tell the
-     * operator their own mail is broken instead of quietly looking fine.
-     */
-    smtpFallbackReason?: string;
-    /**
-     * The bare platform address actually used, set alongside `smtpFallbackReason` on a
-     * Resend rescue — the From identity silently changed from the tenant's own mailbox
-     * to the platform address, and that's part of the disclosure, not a footnote.
-     */
-    fromAddress?: string;
-  }> {
+  async send(
+    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+  ): Promise<EmailSendResult> {
+    // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
+    // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
+    // FAILED row (SA-615(3)); without a ctx nothing is recorded.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) {
+      const ctx = params.delivery;
+      if (ctx) {
+        try {
+          await this.deliveries.record({
+            tenantId: ctx.tenantId,
+            kind: ctx.kind,
+            toAddress: `***${this.logRecipient(params.to)}`,
+            entityType: ctx.entityType,
+            entityId: ctx.entityId,
+            status: "FAILED",
+            providerMessageId: null,
+            error: refusedTo.error,
+            attempts: 0,
+            sentAt: null,
+          });
+        } catch {
+          // audit failure must never change the refusal result
+        }
+      }
+      return refusedTo;
+    }
+
+    const { delivery, ...rest } = params;
+    if (!delivery) return this.sendUnrecorded(rest);
+
+    let result: EmailSendResult;
+    try {
+      result = await this.sendUnrecorded(rest);
+    } catch (err) {
+      result = {
+        delivered: false,
+        transport: "none",
+        error: (err as Error)?.message ?? "Email send failed",
+      };
+    }
+    try {
+      await this.deliveries.record({
+        tenantId: delivery.tenantId,
+        kind: delivery.kind,
+        toAddress: params.to,
+        entityType: delivery.entityType,
+        entityId: delivery.entityId,
+        status: result.delivered ? "SENT" : "FAILED",
+        providerMessageId: result.delivered ? (result.id ?? null) : null,
+        error: result.delivered
+          ? null
+          : sanitizeDeliveryError(
+              result.error ?? result.smtpFallbackReason ?? "Email was not delivered",
+            ),
+        attempts: 1,
+        sentAt: result.delivered ? new Date() : null,
+      });
+    } catch {
+      // audit failure must never change the send result
+    }
+    return result;
+  }
+
+  /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. PRIVATE: every caller goes through `send`, the one entry a recipient guard can sit on. */
+  private async sendUnrecorded(params: EmailSendParams): Promise<EmailSendResult> {
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
@@ -1238,7 +1341,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via tenant SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1278,7 +1381,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return {
           delivered: true,
@@ -1327,10 +1430,19 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected email to ${params.to}: ${msg}`);
-          return { delivered: false, transport: "resend", error: msg, smtpFallbackReason };
+          this.logger.error(
+            `Resend rejected email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
+          );
+          return {
+            delivered: false,
+            transport: "resend",
+            error: redactAddresses(String(msg)),
+            smtpFallbackReason,
+          };
         }
-        this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
+        this.logger.log(
+          `Email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
+        );
         // Resend rescued a failing tenant SMTP send — delivered:true is honest (the mail
         // DID go out), but smtpFallbackReason must still ride along: this is exactly the
         // case where, without it, nobody ever learns their own mailbox is broken. The From
@@ -1343,11 +1455,13 @@ export class EmailService {
           fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
         };
       } catch (err: any) {
-        this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
+        );
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
           smtpFallbackReason,
         };
       }
@@ -1355,7 +1469,7 @@ export class EmailService {
 
     // 4. No transport configured — NOT delivered (was a silent mock "success").
     this.logger.warn(
-      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
+      `[EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
     return {
       delivered: false,
@@ -1393,6 +1507,12 @@ export class EmailService {
     id?: string;
     error?: string;
   }> {
+    // Sentinel guard (#2854 Opus r2): sendPlatform is PUBLIC and called directly
+    // (set-password / welcome / email-change / role-change, billing-notification,
+    // onboarding) — it needs its own refusal, not just send()'s.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) return refusedTo;
+
     // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
     // platform-SMTP step, but the From identity is always the bare platform address.
     if (this.platformSmtp) {
@@ -1413,7 +1533,7 @@ export class EmailService {
           replyTo: params.replyTo,
         });
         this.logger.log(
-          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Platform email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1438,26 +1558,30 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
-          return { delivered: false, transport: "resend", error: msg };
+          this.logger.error(
+            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
+          );
+          return { delivered: false, transport: "resend", error: redactAddresses(String(msg)) };
         }
         this.logger.log(
-          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+          `Platform email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
         );
         return { delivered: true, transport: "resend", id: (result.data as any)?.id };
       } catch (err: any) {
-        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
+        );
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
         };
       }
     }
 
     // 3. No platform transport configured.
     this.logger.warn(
-      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
+      `[PLATFORM EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
     );
     return { delivered: false, transport: "none" };
   }

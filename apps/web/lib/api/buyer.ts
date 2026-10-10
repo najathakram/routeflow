@@ -2,16 +2,29 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
-import { getStoredActiveSeller } from "@/lib/buyer-auth";
+import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
+import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
-import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
+import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
+import {
+  isTrackingLive,
+  type FulfilmentMethod,
+  type InvoiceStatus,
+  type OrderTrackingResponse,
+} from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderListItem,
   BuyerPayment,
+  BuyerProduct,
   BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
@@ -42,81 +55,18 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  /** Presigned URLs (max 4) for the tile dot-pager; first entry == thumbnailUrl. */
-  imageUrls?: string[];
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining — present only while stockStatus === "LOW". */
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): catalog row + favorites = ONE declaration in @routeflow/types.
+export type {
+  BuyerFavoriteProduct,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+} from "@routeflow/types";
 
 /** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
 export interface BuyerProductDetail
   extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  subtotal: number;
-  tax: number;
-  discountAmount: number;
-  urgent: boolean;
-  notes: string | null;
-  requestedDeliveryDate: string | null;
-  createdAt: string;
-  /** When the order was delivered (null until then); the tracking card shows it. */
-  deliveredAt?: string | null;
-  customer: { id: string; businessName: string };
-  lineItems: Array<{
-    id: string;
-    /** Null for a staff-added custom (unlisted) line — it has no `product` either. */
-    productId: string | null;
-    /** Free-text label of a custom line (its `product` is null). */
-    name?: string | null;
-    qty: number;
-    unitPrice: number;
-    subtotal: number;
-    priceType: string;
-    originalPrice: number | null;
-    notes: string | null;
-    status: string;
-    deliveredQty: number;
-    boxes: number | null;
-    pieces: number | null;
-    /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
-     *  boxed line). Drives the "{n} free" label and the edit preview's subtotal. */
-    promoFreeUnits?: number | null;
-    product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
-  }>;
-  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  /** P5-09: post-dispatch change requests, newest first (absent on older API). */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — editing closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  /** Run state backing the edit window (null until the order is on a run). */
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
 
 export interface DashboardData {
   recentOrders: Array<{
@@ -127,6 +77,9 @@ export interface DashboardData {
     createdAt: string;
     requestedDeliveryDate: string | null;
     itemCount: number;
+    /** Business profiles 1B: the badge reads the order detail's label (buyerOrderStatusLabel). */
+    fulfillPath: string;
+    shippedAt: string | null;
   }>;
   stats: {
     activeOrders: number;
@@ -191,6 +144,8 @@ export interface BuyerOrderTemplate {
     productId: string;
     qty: number;
     notes: string | null;
+    /** Set when the seller suspended this line — a manual reorder never places it. */
+    suspendedAt?: string | null;
     product: { id: string; name: string; unit: string };
   }>;
   customer: { id: string; businessName: string };
@@ -371,21 +326,18 @@ export function toPromotionRules(promos: BuyerPromotion[] | undefined): Promotio
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export function useBuyerActiveOrder() {
+/**
+ * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
+ * merge search); omitted = the buyer's most recent active order, as before.
+ */
+export function useBuyerActiveOrder(fulfillPath?: string) {
   return useQuery<BuyerOrder | null>({
-    queryKey: ["buyer", "activeOrder"],
-    queryFn: () => buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
+    queryKey: fulfillPath ? ["buyer", "activeOrder", fulfillPath] : ["buyer", "activeOrder"],
+    queryFn: () =>
+      buyerApiClient
+        .get("/buyer/orders/active", fulfillPath ? { params: { fulfillPath } } : undefined)
+        .then((r) => r.data),
   });
-}
-
-export interface BuyerOrderListItem {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  totalAmount?: number;
-  createdAt: string;
-  itemCount?: number;
 }
 
 export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
@@ -434,6 +386,8 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
+    // The cart and shelf render their own sentence for the "order already placed" refusals.
+    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
     mutationFn: (data: {
       items: Array<{
         productId: string;
@@ -447,8 +401,22 @@ export function useBuyerCreateOrder() {
       requestedDeliveryDate?: string;
       status?: "DRAFT" | "PENDING";
       forceNew?: boolean;
-    }) => buyerApiClient.post("/buyer/orders", data).then((r) => r.data),
+      /** order ahead: the buyer's pickup / ship choice; omitted = the server's own default */
+      fulfillPath?: FulfilmentMethod;
+    }) =>
+      // B1094: the same cart carries the same key, so a double click / timeout retry applies once.
+      buyerApiClient
+        .post("/buyer/orders", data, {
+          headers: {
+            "Idempotency-Key": buyerSubmitKeyFor(
+              data,
+              `${getStoredBuyerId() ?? ""}|${getStoredActiveSeller()?.tenant.id ?? ""}`,
+            ),
+          },
+        })
+        .then((r) => r.data),
     onSuccess: () => {
+      clearBuyerSubmitKey();
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
@@ -511,7 +479,7 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: number;
   taxAmount: number;
   discount: number;
@@ -537,31 +505,9 @@ export interface BuyerInvoiceDetail {
   creditApplied?: number;
   /** Confirmed advance-payment applications (B421) — same treatment. */
   advanceApplied?: number;
-  items: Array<{
-    id: string;
-    description: string;
-    productId: string | null;
-    qty: number;
-    unitPrice: number;
-    discount: number;
-    subtotal: number;
-    priceType: string;
-    /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
-     *  label so a reduced subtotal doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-  }>;
-  payments: Array<{
-    id: string;
-    amount: number;
-    method: string;
-    status?: string;
-    checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-    nsfFeeAmount?: number | null;
-    paidAt?: string | null;
-    createdAt?: string;
-  }>;
+  /** #2703: one declaration in @routeflow/types, shared with mobile. */
+  items: BuyerInvoiceItem[];
+  payments: BuyerInvoicePayment[];
   customer: { id: string; businessName: string };
 }
 
@@ -596,9 +542,12 @@ export function useBuyerTemplates() {
   });
 }
 
-export function useBuyerReorder() {
+/** `localErrorToast`: the caller (the reorder review sheet) renders its own fixed error sentence,
+ *  so the app-wide "Something went wrong…" toast must not also fire (one message per failure). */
+export function useBuyerReorder(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (templateId: string) =>
       buyerApiClient.post(`/buyer/templates/${templateId}/reorder`).then((r) => r.data),
     onSuccess: () => {
@@ -610,21 +559,8 @@ export function useBuyerReorder() {
 
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
-export interface BuyerFavoriteItem {
-  id: string;
-  productId: string;
-  name: string;
-  sku: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  createdAt: string;
-}
-
 export function useBuyerFavorites() {
-  return useQuery<BuyerFavoriteItem[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer", "favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
   });
@@ -755,9 +691,10 @@ export function useBuyerAuthorizations() {
 }
 
 /** Submit or renew a license for the active seller's review (→ PENDING_REVIEW). */
-export function useSubmitBuyerAuthorization() {
+export function useSubmitBuyerAuthorization(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<unknown, Error, SubmitBuyerAuthorizationInput>({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (dto) => buyerApiClient.post("/buyer/authorizations", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer", "authorizations"] }),
   });

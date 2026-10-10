@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { isOverdue, overdueCutoff, startOfCalendarDay } from "../common/calendar-date";
@@ -743,6 +744,9 @@ export class BookkeepingService implements OnModuleInit {
     paidAt: Date,
   ): Promise<{ ok: true; amount: number } | { ok: false; reason: string }> {
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock the bill before reading its payments (a concurrent payment/void otherwise
+      // leaves this write planning from a stale balance).
+      await lockBillRows(tx, this.prisma.getTenantId(), [billId]);
       const bill = await tx.vendorBill.findUnique({
         where: { id: billId },
         include: { payments: true },

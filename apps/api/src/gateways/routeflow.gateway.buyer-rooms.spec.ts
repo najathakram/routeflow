@@ -1130,12 +1130,17 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         payments: [],
       };
       const tx = {
+        $executeRaw: jest.fn(async () => 0), // SA-608g: deleteInvoice takes the invoice row lock
         invoice: { findUnique: jest.fn(async () => inv), delete: jest.fn(async () => inv) },
         creditNote: {
           findMany: jest.fn(async () => []),
           updateMany: jest.fn(async () => ({ count: 0 })),
         },
-        invoiceItem: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+        invoiceItem: {
+          findMany: jest.fn(async () => []), // the cash-refund guard reads the invoice's lines
+          deleteMany: jest.fn(async () => ({ count: 0 })),
+        },
+        return: { findFirst: jest.fn(async () => null) }, // ... and finds no cash refund
       };
       const db = {
         tenantTransaction: (fn: (t: typeof tx) => unknown) => fn(tx),
@@ -1157,6 +1162,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         { removeInvoiceCommission: jest.fn(async () => undefined) } as never,
         none, // numbering
         none, // selling restrictions
+        none, // entitlement authority (#2241)
       );
       jest
         .spyOn(

@@ -130,8 +130,8 @@ export const real = 1;`);
  * T4/R6 (`@routeflow/pricing`): every `@routeflow/<name>` package the API
  * value-imports from a compiled source file must ship a built (`.js`) `main`
  * — a source-direct workspace package (like `@routeflow/types`, guarded
- * above) crashes `node dist/main.js` at startup. `@routeflow/pricing` is the
- * only workspace package the API is allowed to import at runtime.
+ * above) crashes `node dist/main.js` at startup. `@routeflow/pricing` and
+ * `@routeflow/scanning` are the only workspace packages the API may import at runtime.
  */
 function collectRuntimeWorkspacePackages(dir: string): string[] {
   const found = new Set<string>();
@@ -155,44 +155,50 @@ function collectRuntimeWorkspacePackages(dir: string): string[] {
   return Array.from(found).sort();
 }
 
-describe("API runtime imports — @routeflow/pricing (T4/R6)", () => {
-  it("value-imports exactly @routeflow/pricing among @routeflow/* packages from compiled source files", () => {
+// Compiled workspace packages the API may value-import. Both ship a built `.js` main.
+// - @routeflow/pricing: money math (T4/R6).
+// - @routeflow/scanning: scan matching (products.service, buyer.controller, scan-match) — added
+//   by #2717 M4a-0/M4a-1; resolved at runtime through its compiled dist, never raw source.
+const COMPILED_RUNTIME_PACKAGES = ["pricing", "scanning"] as const;
+const REPO_ROOT = join(SRC_ROOT, "..", "..", "..");
+
+describe("API runtime imports — compiled workspace packages (T4/R6, #2717)", () => {
+  it("value-imports exactly @routeflow/pricing + @routeflow/scanning among @routeflow/* packages from compiled source files", () => {
     const imported = collectRuntimeWorkspacePackages(SRC_ROOT);
-    expect(imported).toEqual(["@routeflow/pricing"]);
+    expect(imported).toEqual(COMPILED_RUNTIME_PACKAGES.map((n) => `@routeflow/${n}`));
   });
 
-  it("resolves @routeflow/pricing's package.json main to a compiled dist file ending in .js", () => {
-    let main: string | undefined;
-    try {
-      const pkgJsonPath = require.resolve("@routeflow/pricing/package.json");
-      const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
-      main = typeof pkgJson.main === "string" ? pkgJson.main : undefined;
-    } catch {
-      main = undefined;
-    }
+  describe.each(COMPILED_RUNTIME_PACKAGES)("@routeflow/%s", (name) => {
+    it("package.json main points at a compiled dist file ending in .js", () => {
+      const pkgJson = JSON.parse(
+        readFileSync(join(REPO_ROOT, "packages", name, "package.json"), "utf8"),
+      );
+      expect(typeof pkgJson.main === "string" ? pkgJson.main : "").toMatch(/^\.\/dist\/.*\.js$/);
+    });
 
-    // Coerce to a string so a missing/unresolvable package fails on the match
-    // assertion below, not on an uncaught resolution error.
-    expect(main ?? "").toMatch(/\.js$/);
-  });
+    it("apps/api/package.json jest moduleNameMapper resolves it to its src/index.ts", () => {
+      const apiPackageJson = JSON.parse(readFileSync(join(SRC_ROOT, "..", "package.json"), "utf8"));
+      const mapped = apiPackageJson.jest?.moduleNameMapper?.[`^@routeflow/${name}$`];
+      expect(mapped ?? "").toMatch(new RegExp(`packages/${name}/src/index\\.ts$`));
+    });
 
-  it("apps/api/package.json jest moduleNameMapper resolves ^@routeflow/pricing$ to packages/pricing/src/index.ts", () => {
-    const apiPackageJsonPath = join(SRC_ROOT, "..", "package.json");
-    const apiPackageJson = JSON.parse(readFileSync(apiPackageJsonPath, "utf8"));
-    const mapped = apiPackageJson.jest?.moduleNameMapper?.["^@routeflow/pricing$"];
+    it("apps/mobile/jest.config.js moduleNameMapper resolves it to its src/index.ts", () => {
+      const source = readFileSync(join(SRC_ROOT, "..", "..", "mobile", "jest.config.js"), "utf8");
+      // Read the mapper by regex, not `require`, so this stays a plain-text check.
+      const match = source.match(
+        new RegExp(`["']\\^@routeflow/${name}\\$["']\\s*:\\s*["']([^"']+)["']`),
+      );
+      expect(match?.[1] ?? "").toMatch(new RegExp(`packages/${name}/src/index\\.ts$`));
+    });
 
-    expect(mapped ?? "").toMatch(/packages\/pricing\/src\/index\.ts$/);
-  });
+    it("the api Dockerfile copies the whole package directory (postinstall build needs its sources)", () => {
+      const dockerfile = readFileSync(join(SRC_ROOT, "..", "Dockerfile"), "utf8");
+      expect(dockerfile).toMatch(new RegExp(`^COPY packages/${name}/\\s+packages/${name}/$`, "m"));
+    });
 
-  it("apps/mobile/jest.config.js moduleNameMapper resolves ^@routeflow/pricing$ to packages/pricing/src/index.ts", () => {
-    const mobileJestConfigPath = join(SRC_ROOT, "..", "..", "mobile", "jest.config.js");
-    const mobileJestConfigSource = readFileSync(mobileJestConfigPath, "utf8");
-    // Read the mapper by regex, not `require`, so this stays a plain-text
-    // check independent of how Jest would transform/execute the mobile config.
-    const match = mobileJestConfigSource.match(
-      /["']\^@routeflow\/pricing\$["']\s*:\s*["']([^"']+)["']/,
-    );
-
-    expect(match?.[1] ?? "").toMatch(/packages\/pricing\/src\/index\.ts$/);
+    it("the root postinstall builds it so dist exists before `node dist/main.js`", () => {
+      const rootPkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8"));
+      expect(rootPkg.scripts?.postinstall ?? "").toContain(`npm run build -w @routeflow/${name}`);
+    });
   });
 });

@@ -39,6 +39,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { Logger } from "@nestjs/common";
+import { INLINE_RETURN_ERROR_CODES } from "../returns/inline-returns.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -135,8 +136,13 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
         { skipAutoMerge: true },
       ),
     );
-  const ret = (productId: string, qty: number, returnKey: string) => ({
-    items: [{ productId, qty }], // $10 unreferenced price unless a sold line matches
+  const ret = (
+    productId: string,
+    qty: number,
+    returnKey: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    items: [{ productId, qty, ...extra }], // $10 unreferenced price unless a sold line matches
     returnKey,
   });
 
@@ -323,13 +329,19 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     expect(await raw.return.count({ where: { orderId: o.id } })).toBe(1);
   }, 60_000);
 
-  it("R2c the lock: a create() and a STANDALONE capture for one customer over ONE sold line never match more pieces than were sold, and together match all of it", async () => {
-    const f = await seedCustomer("lock"); // f.productId: the SOLD product both returns reference
+  /**
+   * The R2c race, shared by R2c (WITH a re-credit reason) and R2e (WITHOUT): a create() and a STANDALONE capture for one
+   * customer, 7 pieces each, over ONE sold line of 10, forced to overlap at the customer advisory lock. `reason` is the
+   * B961 `alreadyReturnedReason` both items carry (staff may re-credit already-returned goods only WITH one).
+   */
+  const raceTwoReturns = async (tag: string, reason?: string) => {
+    const extra = reason === undefined ? {} : { alreadyReturnedReason: reason };
+    const f = await seedCustomer(tag); // f.productId: the SOLD product both returns reference
     // The order lines use a DIFFERENT product: with the same product the product row lock would
     // serialize the two before the customer advisory lock is ever exercised.
     const other = await raw.product.create({
       data: {
-        name: `lock other ${run}`,
+        name: `${tag} other ${run}`,
         unit: "each",
         pricePerUnit: "10.00",
         currentStock: 100,
@@ -343,7 +355,7 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     orderIds.push(soldOrder.id);
     const inv = await raw.invoice.create({
       data: {
-        invoiceNumber: `INV-2094-${run}`,
+        invoiceNumber: `INV-2094-${tag}-${run}`,
         customerId: f.customerId,
         orderId: soldOrder.id,
         tenantId,
@@ -407,20 +419,20 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
       }
       return out;
     };
-    let o1: any;
+    let settled: PromiseSettledResult<any>[];
     try {
-      [o1] = await Promise.all([
+      settled = await Promise.allSettled([
         create(
           { customerId: f.customerId, productId: other.id },
           1,
-          ret(f.productId, 7, `k-lock-1-${run}`),
+          ret(f.productId, 7, `k-${tag}-1-${run}`, extra),
         ),
         tenantCtx.run(tenantId, () =>
           inlineSvc.capture(
             {
               customerId: f.customerId,
               orderId: carrier.id,
-              ...ret(f.productId, 7, `k-lock-2-${run}`),
+              ...ret(f.productId, 7, `k-${tag}-2-${run}`, extra),
             },
             staff(),
           ),
@@ -432,12 +444,35 @@ describeDb("#2094 — a return inside POST /orders through create(), real Postgr
     }
     expect(outcome).toBe("blocked"); // the second caller was queued behind the first, never priced alongside
     expect(pricedInTx).toBe(2); // and both did price inside their transactions in the end
-    orderIds.push(o1.id);
+    const created = settled[0];
+    if (created.status === "fulfilled") orderIds.push(created.value.id);
     const matched = await raw.returnItem.aggregate({
       where: { sourceInvoiceItemId: line.id, return: { customerId: f.customerId, kind: "INLINE" } },
       _sum: { qty: true },
     });
-    expect(Number(matched._sum.qty ?? 0)).toBe(10); // 7 + 3: never more than sold, and all of it matched
+    return { settled, matched: Number(matched._sum.qty ?? 0) };
+  };
+
+  it("R2c the lock: a create() and a STANDALONE capture for one customer over ONE sold line never match more pieces than were sold, and together match all of it", async () => {
+    // B961: the loser's 4 unmatched pieces re-credit goods already returned, which staff may do only WITH a reason
+    const { settled, matched } = await raceTwoReturns("lock", "customer re-sent the goods");
+    for (const r of settled) if (r.status === "rejected") throw r.reason;
+    expect(matched).toBe(10); // 7 + 3: never more than sold, and all of it matched
+  }, 60_000);
+
+  it("R2e the lock WITHOUT a reason (B961): exactly one caller succeeds, the other is refused ALREADY_RETURNED_REASON_REQUIRED, and never more than was sold is matched", async () => {
+    const { settled, matched } = await raceTwoReturns("lock-noreason");
+    const fulfilled = settled.filter((r) => r.status === "fulfilled");
+    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason?.getStatus?.()).toBe(400);
+    expect(rejected[0].reason?.getResponse?.()).toMatchObject({
+      code: INLINE_RETURN_ERROR_CODES.ALREADY_RETURNED_REASON_REQUIRED,
+    });
+    // the winner matched its 7 against the sold line; the loser wrote nothing, so the total never exceeds the 10 sold
+    expect(matched).toBe(7);
+    expect(matched).toBeLessThanOrEqual(10);
   }, 60_000);
 
   it("a create whose return prices to $0 mints no credit note, writes no intent and reserves no number (the dry-run skips it)", async () => {

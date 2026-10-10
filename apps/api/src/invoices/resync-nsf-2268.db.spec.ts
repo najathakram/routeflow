@@ -38,6 +38,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { EstimatesService } from "../estimates/estimates.service";
@@ -126,6 +127,7 @@ describeDb(
             provide: EntitlementsService,
             useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
           },
+          entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
           {
             provide: CommissionEngineService,
             useValue: {

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
@@ -156,10 +157,7 @@ export default function BuyerDetailPage() {
       fetchBuyer();
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: unknown) {
-      setSaveError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Save failed",
-      );
+      setSaveError(safeTextErrorCopy(err) ?? "Save failed");
     } finally {
       setSaving(false);
     }

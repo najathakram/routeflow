@@ -47,6 +47,20 @@ if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
   exit 1
 fi
 
+# B897: refuse a push that adds build/cache output (.jest-cache, .turbo, dist, coverage, .next,
+# node_modules) or more than 5 MiB of new files outside the heavy-files policy's asset dirs. It runs
+# BEFORE the SKIP_VERIFY hatch and before verify, so it holds even when verify is skipped. It reads
+# git's pre-push stdin (`<local ref> <local sha> <remote ref> <remote sha>` per ref), so capture it
+# once here; nothing else in this hook reads stdin. Override (audited): PUSH_GUARD_OVERRIDE_REASON.
+refs="$(cat)"
+printf '%s\n' "$refs" | node scripts/push-guard.mjs || exit 1
+
+# #2865: the size ratchet (apps/api size-ratchet.spec.ts, CI's test:repo-truth lane) runs on EVERY
+# push, ahead of the SKIP_VERIFY hatch and the verified-tree fast path, so skipping verify can no
+# longer carry an over-cap file into a public CI window. Only that one spec, a few seconds. There is
+# no override: a red here means extract the new code into its own module, never raise the baseline.
+node scripts/size-ratchet-gate.mjs || exit 1
+
 if [ "$SKIP_VERIFY" = "1" ]; then
   upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"
   changed="$(git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only origin/master...HEAD)"

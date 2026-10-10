@@ -16,7 +16,8 @@ COPY packages/eslint-config/package.json     packages/eslint-config/
 # runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
 # already be here — a manifest-only copy makes that build fail with no inputs.
 COPY packages/pricing/                       packages/pricing/
-COPY packages/scanning/package.json          packages/scanning/
+# @routeflow/scanning is COMPILED the same way (built right after pricing).
+COPY packages/scanning/                      packages/scanning/
 # The same postinstall then builds @routeflow/returns (`npm run build -w
 # @routeflow/returns`), and returns imports types from `@routeflow/types` —
 # so both need a full-directory copy here too, not just their manifests.

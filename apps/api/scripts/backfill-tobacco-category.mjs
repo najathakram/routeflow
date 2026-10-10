@@ -23,6 +23,11 @@
  *                 splitting and filing attribution for that product — the
  *                 owner resolves these by hand via the product form.
  *
+ *   recipe-locked  (SA-587b) a would-be link product that sits in a non-RETIRED
+ *                 recipe (recipe product, family, or component) is SKIPPED, never
+ *                 written: its tracked category is locked while the recipe is open.
+ *                 Reported as a COUNT ONLY (never names, ids or slugs).
+ *
  * link rows have trackedCategoryId == null, so they carry no subcategory and
  * no synced Product.category — this script deliberately touches ONLY
  * trackedCategoryId / isTobacco, never category / trackedSubcategoryId.
@@ -51,6 +56,14 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import { applyTobaccoPlan, planTobaccoTenant, summarizePlans } from "./lib/recipe-locked.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: `--execute` never writes a PROTECTED tenant (paying | stripe-linked |
+// PROTECTED_TENANT_SLUGS), with or without --live-tenant-override. Dry-run reads stay unrestricted.
+const { assertWritableTenant, ProtectedTenantError } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // ─── Connection (mirrors repair-receiving-units.mjs) ──────────────────────────
 function resolveDbUrl() {
@@ -119,93 +132,33 @@ if (execute) {
   }
 }
 
-const pool = new Pool({ connectionString: resolveDbUrl() });
+const dbUrl = resolveDbUrl();
+// Loaded ONCE, against the URL this script dials, before connecting (only a write needs it).
+let protectedSlugs = null;
+if (execute) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+  } catch (err) {
+    console.error(`\n${err.message} Nothing was written.\n`);
+    process.exit(1);
+  }
+}
+const pool = new Pool({ connectionString: dbUrl });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
-const CI_TOBACCO = { equals: "Tobacco", mode: "insensitive" };
-
-async function planForTenant(tenant) {
-  const tobaccoCat = await prisma.trackedCategory.findFirst({
-    where: { tenantId: tenant.id, name: CI_TOBACCO },
-    select: { id: true, name: true, active: true },
-  });
-  const products = await prisma.product.findMany({
-    where: {
-      tenantId: tenant.id,
-      OR: [{ isTobacco: true }, ...(tobaccoCat ? [{ trackedCategoryId: tobaccoCat.id }] : [])],
-    },
-    select: {
-      id: true,
-      name: true,
-      isTobacco: true,
-      trackedCategoryId: true,
-      trackedCategory: { select: { name: true } },
-    },
-  });
-  return {
-    tenant,
-    tobaccoCat,
-    // Flagged but pointing nowhere → link into the Tobacco type.
-    link: products.filter((p) => p.isTobacco && p.trackedCategoryId == null),
-    // Flagged but assigned to a DIFFERENT type → NEVER auto-moved. Reported
-    // for the owner to resolve by hand (moving could change invoice splitting
-    // and filing attribution for that product).
-    conflicts: products.filter(
-      (p) => p.isTobacco && p.trackedCategoryId != null && p.trackedCategoryId !== tobaccoCat?.id,
-    ),
-    // Members of the Tobacco type missing the mirror flag → set it.
-    flag: products.filter(
-      (p) => !p.isTobacco && tobaccoCat && p.trackedCategoryId === tobaccoCat.id,
-    ),
-    // No Tobacco type yet AND there are link rows that need one → create it
-    // (W1-seed values). Gated on link rows specifically: a tenant whose flagged
-    // products are ALL conflicts (assigned elsewhere, never auto-moved) must not
-    // get an empty "Tobacco" type it would then carry forever in the hub.
-    createCategory: !tobaccoCat && products.some((p) => p.isTobacco && p.trackedCategoryId == null),
-  };
-}
+const planForTenant = (tenant) => planTobaccoTenant(prisma, tenant);
 
 async function executePlan(plan) {
-  await prisma.$transaction(async (tx) => {
-    let catId = plan.tobaccoCat?.id;
-    if (plan.createCategory) {
-      const created = await tx.trackedCategory.create({
-        data: {
-          tenantId: plan.tenant.id,
-          name: "Tobacco",
-          taxType: "NONE",
-          requiresLicense: false,
-          reportTemplate: "CA_CDTFA",
-          reportCadence: "MONTHLY",
-          invoiceTreatment: "SEPARATE_INVOICE",
-          active: true,
-        },
-        select: { id: true },
-      });
-      catId = created.id;
-    }
-    if (plan.link.length > 0 && catId) {
-      await tx.product.updateMany({
-        where: { id: { in: plan.link.map((p) => p.id) } },
-        data: { trackedCategoryId: catId },
-      });
-    }
-    if (plan.flag.length > 0) {
-      await tx.product.updateMany({
-        where: { id: { in: plan.flag.map((p) => p.id) } },
-        data: { isTobacco: true },
-      });
-    }
-  });
+  await prisma.$transaction((tx) => applyTobaccoPlan(tx, plan));
 }
 
 // ─── Reporting ─────────────────────────────────────────────────────────────
 function printPlan(plan) {
-  const { tenant, link, conflicts, flag, createCategory } = plan;
+  const { tenant, link, recipeLocked, conflicts, flag, createCategory } = plan;
   const writeCount = link.length + flag.length + (createCategory ? 1 : 0);
 
   console.log(`\nTenant: ${tenant.slug} (${tenant.status})`);
-  if (writeCount === 0 && conflicts.length === 0) {
+  if (writeCount === 0 && conflicts.length === 0 && recipeLocked.length === 0) {
     console.log(`  clean — nothing to do`);
     return;
   }
@@ -220,6 +173,11 @@ function printPlan(plan) {
     for (const p of link) {
       console.log(`    ${p.id} · ${p.name} · link`);
     }
+  }
+  if (recipeLocked.length > 0) {
+    console.log(
+      `  recipe-locked (${recipeLocked.length}) — in a non-retired recipe, skipped (count only)`,
+    );
   }
   if (flag.length > 0) {
     console.log(`  flag (${flag.length}) — member of Tobacco type, isTobacco=false → set true:`);
@@ -250,19 +208,19 @@ function printPlan(plan) {
     console.log(`\n===== TOBACCO-CATEGORY BACKFILL (DRY-RUN, --all-tenants) =====`);
     console.log(`Tenants scanned: ${tenants.length}\n`);
 
-    let totalWrites = 0;
-    let totalConflicts = 0;
+    const plans = [];
     for (const tenant of tenants) {
       const plan = await planForTenant(tenant);
       printPlan(plan);
-      totalWrites += plan.link.length + plan.flag.length + (plan.createCategory ? 1 : 0);
-      totalConflicts += plan.conflicts.length;
+      plans.push(plan);
     }
+    const { writes: totalWrites, conflicts: totalConflicts, recipeLocked } = summarizePlans(plans);
 
     console.log(`\n===== SUMMARY =====`);
     console.log(
       `${tenants.length} tenant(s) scanned · ${totalWrites} planned write(s) · ` +
-        `${totalConflicts} conflict(s) needing manual review`,
+        `${totalConflicts} conflict(s) needing manual review · ` +
+        `${recipeLocked} recipe-locked total (skipped, count only)`,
     );
     console.log(
       `\nDRY-RUN complete — nothing written (--all-tenants is dry-run-only).\n` +
@@ -273,11 +231,24 @@ function printPlan(plan) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
   });
   if (!tenant) {
     console.error(`Tenant "${tenantSlug}" not found. Nothing was written.`);
     process.exit(1);
+  }
+  if (execute) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenant.id },
+      select: { planKey: true, stripeSubId: true },
+    });
+    try {
+      assertWritableTenant(tenant, sub, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      console.error(`\n${err.message} Nothing was written.\n`);
+      process.exit(1);
+    }
   }
 
   console.log(`\n===== TOBACCO-CATEGORY BACKFILL (${execute ? "EXECUTE" : "DRY-RUN"}) =====`);

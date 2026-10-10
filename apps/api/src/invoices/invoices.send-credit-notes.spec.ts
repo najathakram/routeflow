@@ -43,6 +43,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -178,6 +179,7 @@ describe("InvoicesService", () => {
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

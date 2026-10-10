@@ -82,6 +82,11 @@ async function makeService(): Promise<{
   prisma: ReturnType<typeof createMockPrisma>;
 }> {
   const prisma = createMockPrisma();
+  // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+  prisma.vendorBill.findUnique.mockImplementation(
+    () =>
+      prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+  );
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       VendorBillsService,
@@ -105,7 +110,11 @@ async function makeService(): Promise<{
       { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
       {
         provide: InventoryService,
-        useValue: { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() },
+        useValue: {
+          recomputeProductInTx: jest.fn(),
+          lockProducts: jest.fn(),
+          fireStockAlerts: jest.fn(),
+        },
       },
       // receive/revertToDraft/voidBill never touch alias resolution — a bare
       // stub is enough to satisfy the constructor (added by WP2).

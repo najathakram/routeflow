@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useCreateSupplier, type Supplier } from "@/lib/api/suppliers";
@@ -95,7 +96,7 @@ export function InlineCreateSupplierModal({
       onError: (err: any) => {
         toast({
           title: "Failed to create supplier",
-          description: err?.response?.data?.message ?? "Check the details and try again.",
+          description: genericToastCopy(err),
           variant: "error",
         });
       },

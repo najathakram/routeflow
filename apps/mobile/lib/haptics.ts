@@ -9,8 +9,13 @@ import * as Haptics from "expo-haptics";
  * Web has no haptics engine; the call is a no-op there rather than a rejected
  * promise. Failures are swallowed: a device without a vibrator must not break a scan.
  */
-export function scanHaptic(kind: "added" | "error"): void {
+export function scanHaptic(kind: "added" | "error" | "info"): void {
   if (Platform.OS === "web") return;
+  // "info": a prompt is waiting on the user (confirm / pick) — neither a success nor a failure.
+  if (kind === "info") {
+    void Haptics.selectionAsync().catch(() => undefined);
+    return;
+  }
   const type =
     kind === "added"
       ? Haptics.NotificationFeedbackType.Success

@@ -6,7 +6,13 @@ import { Button, cn } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
-import { useLooseUnitsToggle, type LineItemRowItem } from "@/components/LineItemRow";
+import { PendingUnitStatus, type LineItemRowProps } from "@/components/LineItemRow";
+import {
+  caseWord,
+  unitWord,
+  useLooseUnitsToggle,
+  type LineItemRowItem,
+} from "@/components/LineItemRow";
 
 export interface PriceEditorProps {
   line: LineItemRowItem;
@@ -16,6 +22,8 @@ export interface PriceEditorProps {
   costRevealed: boolean;
   priceHistoryEntry?: { lastPrice: number };
   onQtyDelta: (delta: number) => void;
+  /** #2865 case c (SA-632): set while the line's default selling unit is not yet resolved: the qty controls are locked. */
+  pendingUnit?: LineItemRowProps["pendingUnit"];
   onSetBoxes: (value: number) => void;
   onSetPieces: (value: number) => void;
   onSetUnitQty: (value: number) => void;
@@ -25,6 +33,11 @@ export interface PriceEditorProps {
   onAckFloor: () => void;
   onToggleCostRevealed: () => void;
   onClose: () => void;
+  /** #2696(c): `decideStaffOverride(...).refused === "REASON_REQUIRED"` for this line, decided by
+   *  the caller with @routeflow/pricing — the server's own rule. */
+  reasonRequired?: boolean;
+  /** Given ⇒ an overridden price shows a Reason field (required when `reasonRequired`). */
+  onSetOverrideReason?: (reason: string) => void;
 }
 
 /**
@@ -47,6 +60,7 @@ export function PriceEditor({
   costRevealed,
   priceHistoryEntry,
   onQtyDelta,
+  pendingUnit,
   onSetBoxes,
   onSetPieces,
   onSetUnitQty,
@@ -56,9 +70,12 @@ export function PriceEditor({
   onAckFloor,
   onToggleCostRevealed,
   onClose,
+  reasonRequired = false,
+  onSetOverrideReason,
 }: PriceEditorProps) {
   // #2696 (d): the loose-units field is opt-in ("+ units"); shown whenever pieces > 0 regardless.
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
+  const qtyLocked = !!pendingUnit;
   const boxed = !!li.unitsPerBox;
   // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
@@ -115,7 +132,16 @@ export function PriceEditor({
         </div>
 
         {/* Quantity — the row's own case/unit control, one field at a time. */}
-        <section className="space-y-2">
+        <fieldset
+          disabled={qtyLocked}
+          aria-busy={qtyLocked}
+          aria-label={
+            qtyLocked
+              ? "Line quantity controls, locked while the selling unit loads"
+              : "Line quantity controls"
+          }
+          className="m-0 border-0 p-0 min-w-0 space-y-2"
+        >
           {boxed ? (
             <>
               <div className="inline-flex overflow-hidden rounded border border-surface-border text-xs font-medium">
@@ -161,11 +187,12 @@ export function PriceEditor({
                     className={cn(inputCls, "w-20")}
                     aria-label="Cases"
                   />
-                  cases
+                  <span>{caseWord(li.boxes ?? 0)}</span>
                   {/* #2696 (d): loose units on top of cases are opt-in, as on the row. */}
                   {showLooseUnits ? (
                     <>
-                      +
+                      {/* SA-558d: its own element — a bare "+" text node glued to "cases". */}
+                      <span className="text-navy/30">+</span>
                       <input
                         type="number"
                         min={0}
@@ -176,7 +203,7 @@ export function PriceEditor({
                         className={cn(inputCls, "w-20")}
                         aria-label="Extra loose units"
                       />
-                      units
+                      <span>{unitWord(li.pieces ?? 0)}</span>
                       {/* SA-563: hidden at 0 cases, as on the row. */}
                       {(li.boxes ?? 0) >= 1 && (
                         <button
@@ -234,38 +261,67 @@ export function PriceEditor({
               </button>
             </div>
           )}
-        </section>
+        </fieldset>
+        {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
 
-        {/* Price — a customer-specific price is permanent, so (as in the row) it is not overridden here. */}
-        {li.priceType !== "SPECIAL" ? (
-          <section className="space-y-1">
-            <label className="block text-xs font-medium text-navy/70">
-              {packed ? "Case price" : "Price"}
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">
-                <span className="text-sm text-navy/40">$</span>
-                <MoneyInput
-                  min={0}
-                  placeholder={li.listPrice.toFixed(2)}
-                  value={li.discountedPrice ?? null}
-                  onChange={(v) => onSetDiscountedPrice(v)}
-                  aria-label="Price"
-                  className="w-24 rounded-none border-0 bg-transparent px-1 py-1.5 text-right text-sm focus:ring-0"
-                />
+        {/* Price — #2696(c): a special (customer) price is the default here, never locked; moving
+            off it needs a reason (below), as the server requires. */}
+        <section className="space-y-1">
+          <label className="block text-xs font-medium text-navy/70">
+            {packed ? "Case price" : "Price"}
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center rounded border border-surface-border bg-white px-2 focus-within:ring-2 focus-within:ring-brand-500">
+              <span className="text-sm text-navy/40">$</span>
+              <MoneyInput
+                min={0}
+                placeholder={(li.specialPrice ?? li.listPrice).toFixed(2)}
+                value={li.discountedPrice ?? null}
+                onChange={(v) => onSetDiscountedPrice(v)}
+                aria-label="Price"
+                disabled={qtyLocked}
+                className="w-24 rounded-none border-0 bg-transparent px-1 py-1.5 text-right text-sm focus:ring-0"
+              />
+            </span>
+            {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
+              <span className="text-xs text-navy/50">
+                Last: ${priceHistoryEntry.lastPrice.toFixed(2)}
               </span>
-              {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
-                <span className="text-xs text-navy/50">
-                  Last: ${priceHistoryEntry.lastPrice.toFixed(2)}
+            )}
+          </div>
+          {li.specialPrice != null && (
+            <p className="text-xs text-emerald-700">
+              Special price ${li.specialPrice.toFixed(2)} / {li.unit} for this customer.
+            </p>
+          )}
+          {onSetOverrideReason && li.discountedPrice != null && (
+            <div className="space-y-1 pt-1">
+              <label className="block space-y-1">
+                <span className="block text-xs font-medium text-navy/70">
+                  {reasonRequired ? "Reason (required)" : "Reason (optional)"}
+                </span>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={li.overrideReason ?? ""}
+                  onChange={(e) => onSetOverrideReason(e.target.value)}
+                  aria-invalid={reasonRequired}
+                  aria-describedby={reasonRequired ? "price-reason-hint" : undefined}
+                  placeholder="e.g. dented cans, manager approved"
+                  className={cn(
+                    "w-full rounded border bg-white px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+                    reasonRequired ? "border-danger" : "border-surface-border",
+                  )}
+                />
+              </label>
+              {reasonRequired && (
+                <span id="price-reason-hint" className="block text-xs text-danger">
+                  This changes the customer&apos;s special price — say why.
                 </span>
               )}
             </div>
-          </section>
-        ) : (
-          <p className="text-xs text-emerald-700">
-            Special price ${li.unitPrice.toFixed(2)} / {li.unit} — set for this customer.
-          </p>
-        )}
+          )}
+        </section>
 
         {/* The negotiation floor: the SAME component the row renders. */}
         <MarginHint

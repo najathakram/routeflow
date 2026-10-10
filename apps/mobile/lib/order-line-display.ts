@@ -5,6 +5,9 @@ import {
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
 import { freeUnitsLabel } from "./buyer-cart-logic";
+import type { LineComponentView } from "@routeflow/types";
+import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
+import { componentSubLineTexts } from "./line-components";
 
 /**
  * Pure display logic for the operator order-detail line CARD (order-ui-redesign-spec §3, T8 — the
@@ -144,11 +147,15 @@ export interface OrderLineCardModel {
   tag: (LinePriceTag & { originalText: string | null }) | null;
   freeLabel: string | null;
   note: string | null;
+  /** #2717 M3: sub-lines of a composed (mixed-pack) line; the key is absent on a plain line. */
+  subLines?: string[];
   /** Formatted line total, or null for a cancelled line (rendered as "—"). */
   total: string | null;
   cancelled: boolean;
   status: { label: string; variant: "green" | "orange" | "red" | "gray" } | null;
   deliveryText: string | null;
+  /** SA-714: pieces sold past stock (staff-only, 0 = none/not live); > 0 shows the "Backorder" tag. */
+  backorderPieces: number;
   /** One screen-reader sentence for the whole card (see `spokenLine`). */
   spoken: string;
 }
@@ -167,6 +174,7 @@ export function spokenLine(p: {
   status: string | null;
   cancelled: boolean;
   total: string | null;
+  backorder?: boolean;
 }): string {
   return [
     p.name,
@@ -174,6 +182,7 @@ export function spokenLine(p: {
     p.tagText,
     p.freeLabel,
     p.deliveryText,
+    p.backorder ? "backorder" : null,
     p.cancelled ? "Cancelled, no charge" : p.status,
     p.cancelled ? null : p.total ? `total ${p.total}` : null,
   ]
@@ -198,9 +207,13 @@ interface LineInput {
   /** units_v1: the unit a line is sold by ("Case", "Pallet") — names the box level of a boxed line. */
   unitLabel?: string | null;
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (a Decimal string over the wire). */
+  backorderedPieces?: number | string | null;
   status: string;
   notes?: string | null;
   deliveredQty?: number | null;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line. */
+  components?: ReadonlyArray<LineComponentView> | null;
 }
 
 /** Everything the card renders for one order line. Pure — the view only lays it out. */
@@ -277,7 +290,9 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       : null;
   const tagText = tag ? `${tag.label} price` : null;
   const totalText = cancelled ? null : money(total);
+  const backorderPieces = lineBackorderPieces(li, orderStatus);
   const spoken = spokenLine({
+    backorder: backorderPieces > 0,
     name: stem ? `${stem} ${anchor}` : anchor,
     qtyPriceLine,
     tagText,
@@ -294,6 +309,7 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
     anchor,
     sku: li.product?.sku ?? null,
     custom: !li.productId,
+    backorderPieces,
     qtyPriceLine,
     tag: tag
       ? {
@@ -304,6 +320,7 @@ export function orderLineCardModel(li: LineInput, orderStatus: string): OrderLin
       : null,
     freeLabel: freeUnitsLabel(li.promoFreeUnits),
     note: li.notes?.trim() ? li.notes.trim() : null,
+    ...(li.components?.length ? { subLines: componentSubLineTexts(li.components) } : {}),
     total: totalText,
     cancelled,
     status,

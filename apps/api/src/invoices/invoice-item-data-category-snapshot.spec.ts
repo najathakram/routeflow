@@ -11,7 +11,7 @@ import { InvoicesService } from "./invoices.service";
  * is enough to call it; no DI module, no mocked collaborators.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const service = new InvoicesService(...(Array(14).fill(undefined) as any[]));
+const service = new InvoicesService(...(Array(15).fill(undefined) as any[]));
 const build = (li: any, billQty: number) =>
   (service as any).buildInvoiceItemData(li, billQty, "test-tenant");
 

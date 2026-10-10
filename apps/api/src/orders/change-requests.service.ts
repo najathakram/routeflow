@@ -24,12 +24,15 @@ import {
   UserRole,
   UserStatus,
 } from "@prisma/client";
+import { assertSellableLines } from "../products/sellable-lines";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
   ChangeRequestResolveAction,
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
 import { assertDriverMayEditOrder, underOrderLockForDriver } from "./driver-edit-access";
+import { throwIfWithCarrierChangeRequest } from "./order-carrier-guard";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -61,7 +64,7 @@ export function reconcileFiledAddSplit(args: {
   const b = args.boxes ?? 0;
   const p = args.pieces ?? 0;
   const invalid = (message: string) =>
-    new BadRequestException({ code: "INVALID_LINE_SPLIT", message });
+    new BadRequestException({ code: API_ERROR_CODES.INVALID_LINE_SPLIT, message });
 
   if (
     typeof b !== "number" ||
@@ -81,7 +84,7 @@ export function reconcileFiledAddSplit(args: {
   const filed = `${plural(b, "box", "boxes")} + ${plural(p, "piece", "pieces")}`;
   const refuse = (reason: string) =>
     new BadRequestException({
-      code: "CHANGE_REQUEST_PACK_CHANGED",
+      code: API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED,
       message: `Change request filed as ${filed}${reason}. Decline it and re-add the item to the next order.`,
     });
 
@@ -147,8 +150,13 @@ export class ChangeRequestsService {
 
     // G7 inverse gate: change requests exist ONLY where direct editing ended.
     if (order.routeRun == null || order.routeRun.status === "SCHEDULED") {
+      // B1135: a with-carrier order never reaches a route run and its lines are frozen (SA-696).
+      await throwIfWithCarrierChangeRequest(
+        { featureConfig: this.ordersService.featureConfig, prisma: this.prisma },
+        order,
+      );
       throw new ConflictException({
-        code: "EDIT_WINDOW_OPEN",
+        code: API_ERROR_CODES.EDIT_WINDOW_OPEN,
         message: "This order is still directly editable — use PATCH /orders/:id/items.",
       });
     }
@@ -157,7 +165,7 @@ export class ChangeRequestsService {
       !["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)
     ) {
       throw new ConflictException({
-        code: "CHANGE_WINDOW_CLOSED",
+        code: API_ERROR_CODES.CHANGE_WINDOW_CLOSED,
         message: "This order's delivery run is no longer active.",
       });
     }
@@ -172,10 +180,12 @@ export class ChangeRequestsService {
         if (!dto.productId || !dto.qty) {
           throw new BadRequestException("ADD_ITEM requires productId and qty");
         }
-        const product = await this.prisma
-          .forTenant()
-          .product.findFirst({ where: { id: dto.productId }, select: { id: true, name: true } });
+        const product = await this.prisma.forTenant().product.findFirst({
+          where: { id: dto.productId },
+          select: { id: true, name: true, kind: true },
+        });
         if (!product) throw new BadRequestException("Product not found");
+        assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
         productId = product.id;
         payload = {
           productId: product.id,
@@ -300,7 +310,10 @@ export class ChangeRequestsService {
     // "the office" and may resolve only while PENDING — which the atomic claim enforces anyway.
     // Fast-path (the atomic claim in each branch remains authoritative).
     if (cr.status !== ChangeRequestStatus.PENDING) {
-      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: cr.status });
+      throw new ConflictException({
+        code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED,
+        status: cr.status,
+      });
     }
 
     switch (dto.action) {
@@ -342,7 +355,7 @@ export class ChangeRequestsService {
       }),
     );
     if (claimed.count !== 1) {
-      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+      throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
     }
     await this.notifyRequester(cr, order, "declined", `Reason: ${reason.trim()}`);
     return this.prisma.forTenant().changeRequest.findUnique({ where: { id: cr.id } });
@@ -411,7 +424,7 @@ export class ChangeRequestsService {
       const delta = Number(payload.newQty) - Number(li.qty);
       if (delta <= 0) {
         throw new BadRequestException({
-          code: "INVALID_RESOLUTION_FOR_TYPE",
+          code: API_ERROR_CODES.INVALID_RESOLUTION_FOR_TYPE,
           message: "Only a qty increase can roll to the next delivery",
         });
       }
@@ -449,7 +462,7 @@ export class ChangeRequestsService {
         }
         if (upb == null) {
           throw new BadRequestException({
-            code: "LINE_PACK_UNDERIVABLE",
+            code: API_ERROR_CODES.LINE_PACK_UNDERIVABLE,
             message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
           });
         }
@@ -463,7 +476,7 @@ export class ChangeRequestsService {
       }
     } else {
       throw new BadRequestException({
-        code: "INVALID_RESOLUTION_FOR_TYPE",
+        code: API_ERROR_CODES.INVALID_RESOLUTION_FOR_TYPE,
         message: "Only ADD_ITEM / CHANGE_QTY-increase requests can roll to the next delivery",
       });
     }
@@ -575,7 +588,7 @@ export class ChangeRequestsService {
         }),
       );
       if (claimed.count !== 1) {
-        throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+        throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
       }
     } catch (e) {
       // Compensation: never leave an orphan draft behind a failed approval.

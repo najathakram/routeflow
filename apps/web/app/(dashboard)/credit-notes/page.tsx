@@ -774,7 +774,9 @@ export default function CreditNotesPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Source</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Applied To</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Issued against
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
                 <th className="w-10 px-3 py-3" />
               </tr>
@@ -852,7 +854,7 @@ export default function CreditNotesPage() {
                           {cn.invoice?.invoiceNumber ?? cn.invoiceId}
                         </span>
                       ) : (
-                        <span className="text-xs text-navy/40">next invoice (auto)</span>
+                        <span className="text-xs text-navy/40">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">

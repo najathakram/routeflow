@@ -26,10 +26,11 @@ push to master  →  Railway deploys  →  (in parallel)
   └─ GitHub Actions ci.yml
        └─ e2e job        waits for Railway health, then runs full Playwright suite
 
-Railway deploy finishes  →  Railway sends webhook  →
-  └─ GitHub Actions post-deploy.yml
-       ├─ api-smoke      post-deploy-check.mjs: login + 5 endpoints + float scan + invoice math
-       └─ playwright     Playwright: all 6 specs including critical-paths
+push to master (Railway deployment_status)  →  ci.yml e2e job owns the automatic post-deploy Playwright run.
+
+manual / ad-hoc only: Actions → "Post-Deploy Verification" (post-deploy.yml, workflow_dispatch)
+  ├─ api-smoke      post-deploy-check.mjs: login + 5 endpoints + float scan + invoice math
+  └─ playwright     Playwright: all 6 specs including critical-paths
 
 nightly 02:00 UTC
   └─ GitHub Actions nightly.yml
@@ -75,40 +76,28 @@ npx playwright test --project=critical-paths   # fast (~3 min)
 npx playwright test                            # all specs (~15 min)
 ```
 
-## One-time Railway webhook setup
+## Post-deploy trigger (no webhook to set up)
 
-This makes every Railway deploy trigger `post-deploy.yml` automatically:
+The automatic post-deploy Playwright run is `ci.yml`'s `e2e` job, which fires on Railway's
+`deployment_status` event (its declared fallback is `repository_dispatch: railway-deploy`).
+`post-deploy.yml` had that webhook trigger removed on 2026-08-30 — it never fired, and two
+workflows on one event would bill two Playwright suites — so it is now a manual, ad-hoc
+"check production right now" workflow. Do not re-add a Railway deploy hook for it. To run it:
+Actions tab → "Post-Deploy Verification" → "Run workflow".
 
-1. Create a GitHub Personal Access Token (Settings → Developer Settings → Tokens → Classic):
-   - Scope: `repo`
-   - Name: `railway-deploy-hook`
+Secrets both workflows read (Settings → Secrets → Actions):
 
-2. In Railway dashboard → your API service → Settings → Deploy Hooks → Add Hook:
-   - **URL**: `https://api.github.com/repos/YOUR_ORG/routeflow/dispatches`
-   - **Method**: POST
-   - **Headers**:
-     ```
-     Authorization: Bearer <your-PAT>
-     Accept: application/vnd.github+json
-     X-GitHub-Api-Version: 2022-11-28
-     Content-Type: application/json
-     ```
-   - **Body**:
-     ```json
-     { "event_type": "railway-deploy", "client_payload": {} }
-     ```
+- `SMOKE_BASE_URL` → `https://routeflowapi-production.up.railway.app`
+- `PLAYWRIGHT_BASE_URL` → `https://routeflowweb-production.up.railway.app`
+- `PLAYWRIGHT_TENANT_SLUG` → `e2e-routeflow`
 
-3. Add these GitHub repository secrets (Settings → Secrets → Actions):
-   - `SMOKE_BASE_URL` → `https://routeflowapi-production.up.railway.app`
-   - `PLAYWRIGHT_BASE_URL` → `https://routeflowweb-production.up.railway.app`
-   - `PLAYWRIGHT_TENANT_SLUG` → `e2e-routeflow`
+For nightly GitHub Actions (free on public repo only):
 
-4. For nightly GitHub Actions (free on public repo only):
-   - Keep repo public when CI is expected, or use a self-hosted runner.
-   - Self-hosted runner on Railway: deploy `myoung34/github-runner` as a Railway service
-     with env `RUNNER_SCOPE=repo`, `REPO_URL=https://github.com/YOUR_ORG/routeflow`,
-     `ACCESS_TOKEN=<PAT>`, then change `runs-on: ubuntu-latest` → `runs-on: self-hosted`
-     in the workflow files.
+- Keep repo public when CI is expected, or use a self-hosted runner.
+- Self-hosted runner on Railway: deploy `myoung34/github-runner` as a Railway service
+  with env `RUNNER_SCOPE=repo`, `REPO_URL=https://github.com/YOUR_ORG/routeflow`,
+  `ACCESS_TOKEN=<PAT>`, then change `runs-on: ubuntu-latest` → `runs-on: self-hosted`
+  in the workflow files.
 
 ## GitHub Actions budget ($0 plan)
 

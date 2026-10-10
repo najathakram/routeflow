@@ -59,6 +59,8 @@ export interface DraftLineItem {
   listPrice: number;
   specialPrice?: number;
   discountedPrice?: number;
+  /** #2696(c): the reason a special price was overridden (web parks it on its LineItem). */
+  overrideReason?: string;
   unitPrice: number;
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
@@ -142,6 +144,8 @@ export interface DraftCatalogLine {
   listPrice: number;
   specialPrice?: number;
   discountedPrice?: number;
+  /** #2696(c): the reason a special price was overridden (web parks it on its LineItem). */
+  overrideReason?: string;
   unitPrice: number;
   priceType: DraftLineItem["priceType"];
   qty: number;
@@ -184,6 +188,7 @@ const CATALOG_MODELED_KEYS = new Set([
   "listPrice",
   "specialPrice",
   "discountedPrice",
+  "overrideReason",
   "unitPrice",
   "priceType",
   "qty",
@@ -266,6 +271,8 @@ export function toOrderDraftPayload(state: DraftBuilderState): OrderDraftPayload
     listPrice: li.listPrice,
     specialPrice: li.specialPrice,
     discountedPrice: li.discountedPrice,
+    // #2696(c): emitted only when set — a mobile line without one parks exactly as before.
+    ...(li.overrideReason ? { overrideReason: li.overrideReason } : {}),
     unitPrice: li.unitPrice,
     priceType: li.priceType,
     qty: li.qty,
@@ -339,6 +346,7 @@ export function fromOrderDraftPayload(payload: OrderDraftPayload): DraftBuilderS
         listPrice: li.listPrice,
         specialPrice: li.specialPrice,
         discountedPrice: li.discountedPrice,
+        overrideReason: li.overrideReason,
         unitPrice: li.unitPrice,
         priceType: li.priceType,
         qty: li.qty,

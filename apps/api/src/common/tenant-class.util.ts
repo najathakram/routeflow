@@ -11,6 +11,21 @@ import { TenantClass } from "@prisma/client";
 const TEST_TENANT_SLUGS = new Set(["test", "e2e-routeflow", "routeflow-demo"]);
 const TEST_TENANT_PATTERN = /^(qa|e2e|ux-audit)-/;
 
+/** True for the approved test tenants of the policy (`isTestTenant` in scripts/lib/test-tenants.cjs). */
+export function isApprovedTestTenantSlug(slug: unknown): slug is string {
+  return (
+    typeof slug === "string" && (TEST_TENANT_SLUGS.has(slug) || TEST_TENANT_PATTERN.test(slug))
+  );
+}
+
+/** Throws unless `slug` is an approved test tenant (`assertTestTenant` in the .cjs). */
+export function assertApprovedTestTenantSlug(slug: unknown, context?: string): string {
+  if (isApprovedTestTenantSlug(slug)) return slug;
+  throw new Error(
+    `Test-tenant policy violation${context ? ` (${context})` : ""}: tenant "${String(slug)}" is not an approved test tenant.`,
+  );
+}
+
 /** The one hardcoded exception: routeflow-demo is TEST_TENANT_SLUGS-approved for the write
  * policy but is classified DEMO here — visible in lists, excluded from revenue and sends,
  * distinct from TEST which is hidden by default everywhere. */

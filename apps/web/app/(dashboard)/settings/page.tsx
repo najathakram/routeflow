@@ -80,6 +80,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
@@ -87,9 +88,14 @@ import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
+import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
+import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
+import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { describeSaveError } from "@/lib/reason-copy";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -401,6 +407,8 @@ function AddUserModal({
   onCreated: (tempPassword: string) => void;
 }) {
   const createOperator = useCreateOperator();
+  // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
+  const { fleet } = useFleetAccess();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -415,6 +423,10 @@ function AddUserModal({
     resolver: zodResolver(addUserSchema),
     defaultValues: { role: "DRIVER" },
   });
+
+  React.useEffect(() => {
+    if (!fleet) setValue("role", "OPERATOR");
+  }, [fleet, setValue]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -506,7 +518,7 @@ function AddUserModal({
       ) : (
         <form id="add-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
           {createOperator.error && (
-            <p className="text-sm text-danger">{createOperator.error.message}</p>
+            <p className="text-sm text-danger">{describeSaveError(createOperator.error)}</p>
           )}
           <Input
             label="Full Name"
@@ -517,7 +529,7 @@ function AddUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -565,6 +577,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
+  const { fleet } = useFleetAccess();
   const { toast } = useToast();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -643,7 +657,9 @@ function EditUserModal({
       }
     >
       <form id="edit-user-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-        {updateUser.error && <p className="text-sm text-danger">{updateUser.error.message}</p>}
+        {updateUser.error && (
+          <p className="text-sm text-danger">{describeSaveError(updateUser.error)}</p>
+        )}
         {user?.role === "TENANT_ADMIN" ? (
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">Role</label>
@@ -656,7 +672,7 @@ function EditUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet || user?.role === "DRIVER" ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -1949,10 +1965,16 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch, EXCEPT while
+  // it is already ON, so it can still be turned off.
+  const { fleet: hasFleet } = useFleetAccess();
+  const canToggleDriver =
+    (hasFleet || !!me?.canActAsDriver) && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setIsLinking(true);
     try {
       const { data } = await apiClient.get("/auth/google/link");
@@ -2021,72 +2043,75 @@ function MyAccountTab() {
         </Card>
       )}
 
-      <Card title="Google Sign-In">
-        <div className="space-y-4">
-          <p className="text-sm text-navy/70">
-            Connect your Google account to sign in without a password.
-          </p>
+      {/* #2653: Google sign-in isn't offered inside the app shell (app/shell.css). */}
+      <div data-google-signin>
+        <Card title="Google Sign-In">
+          <div className="space-y-4">
+            <p className="text-sm text-navy/70">
+              Connect your Google account to sign in without a password.
+            </p>
 
-          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex items-center gap-3">
-              {/* Google logo */}
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
-                <svg viewBox="0 0 48 48" className="h-5 w-5">
-                  <path
-                    fill="#EA4335"
-                    d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
-                  />
-                </svg>
+            <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
+              <div className="flex items-center gap-3">
+                {/* Google logo */}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
+                  <svg viewBox="0 0 48 48" className="h-5 w-5">
+                    <path
+                      fill="#EA4335"
+                      d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-navy">Google</p>
+                  <p className="text-xs text-navy/70">
+                    {isLoading
+                      ? "Checking status…"
+                      : googleLinked
+                        ? "Connected — you can sign in with Google"
+                        : "Not connected"}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-navy">Google</p>
-                <p className="text-xs text-navy/70">
-                  {isLoading
-                    ? "Checking status…"
-                    : googleLinked
-                      ? "Connected — you can sign in with Google"
-                      : "Not connected"}
-                </p>
-              </div>
+              {isLoading ? null : googleLinked ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Connected
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<LinkIcon className="h-4 w-4" />}
+                  loading={isLinking}
+                  onClick={handleLinkGoogle}
+                >
+                  Connect Google
+                </Button>
+              )}
             </div>
-            {isLoading ? null : googleLinked ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Connected
-              </span>
-            ) : (
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<LinkIcon className="h-4 w-4" />}
-                loading={isLinking}
-                onClick={handleLinkGoogle}
-              >
-                Connect Google
-              </Button>
+
+            {!googleLinked && !isLoading && (
+              <p className="text-xs text-navy/70">
+                After connecting, you can sign in to RouteFlow with your Google account in addition
+                to your username and password.
+              </p>
             )}
           </div>
-
-          {!googleLinked && !isLoading && (
-            <p className="text-xs text-navy/70">
-              After connecting, you can sign in to RouteFlow with your Google account in addition to
-              your username and password.
-            </p>
-          )}
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       <PasswordCard />
 
@@ -2398,14 +2423,6 @@ function TierLabelsCard() {
 
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
-const TERMS_OPTIONS = [
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 function InvoicingTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -2419,23 +2436,27 @@ function InvoicingTab() {
 
   const [invoiceNotes, setInvoiceNotes] = React.useState("");
   const [invoiceTerms, setInvoiceTerms] = React.useState("");
-  const [invoicePrefix, setInvoicePrefix] = React.useState("");
-  const [paymentDueDays, setPaymentDueDays] = React.useState("");
   const [savingDefaults, setSavingDefaults] = React.useState(false);
 
   React.useEffect(() => {
     if (savedSettings) {
       setInvoiceNotes(savedSettings.invoiceNotes ?? "");
       setInvoiceTerms(savedSettings.invoiceTerms ?? "");
-      setInvoicePrefix(savedSettings.invoicePrefix ?? "");
-      setPaymentDueDays(savedSettings.paymentDueDays ?? "");
     }
   }, [savedSettings]);
 
+  // ONE value for the "Payment Terms" select and the Invoice Numbering "Payment Due Days" select
+  // (B1188): the draft shows the pick at once in both; it is dropped once the save settles, when
+  // the refetched server value takes over (or the pick reverts on failure).
+  const [termsDraft, setTermsDraft] = React.useState<string | null>(null);
+  const shownTerms = termsDraft ?? invoiceSettings?.defaultTerms ?? "Net 30";
+
   const handleTermsChange = (value: string) => {
+    setTermsDraft(value);
     updateSettings.mutate(
       { defaultTerms: value },
       {
+        onSettled: () => setTermsDraft(null),
         onSuccess: () =>
           toast({
             title: "Invoice settings saved",
@@ -2543,8 +2564,6 @@ function InvoicingTab() {
       await apiClient.patch("/settings", {
         invoiceNotes,
         invoiceTerms,
-        invoicePrefix,
-        paymentDueDays,
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
@@ -2571,11 +2590,12 @@ function InvoicingTab() {
               <p className="text-sm font-semibold text-navy">Payment Terms</p>
               <select
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={invoiceSettings?.defaultTerms ?? "Net 30"}
+                aria-label="Payment Terms"
+                value={shownTerms}
                 onChange={(e) => handleTermsChange(e.target.value)}
                 disabled={isLoading || updateSettings.isPending}
               >
-                {TERMS_OPTIONS.map((opt) => (
+                {INVOICE_TERMS_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -2670,46 +2690,11 @@ function InvoicingTab() {
         </div>
       </Card>
 
-      <Card title="Invoice Numbering">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">
-              Invoice Number Prefix
-            </label>
-            <input
-              type="text"
-              value={invoicePrefix}
-              onChange={(e) => setInvoicePrefix(e.target.value)}
-              placeholder="INV-"
-              maxLength={10}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Prepended to invoice numbers (e.g. INV-, 2026-).
-            </p>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy">Payment Due Days</label>
-            <input
-              type="number"
-              value={paymentDueDays}
-              onChange={(e) => setPaymentDueDays(e.target.value)}
-              placeholder="30"
-              min="0"
-              max="365"
-              className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            <p className="mt-1 text-xs text-navy/70">
-              Default days until payment is due (0 = due on receipt).
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={handleSaveDefaults} loading={savingDefaults} size="sm">
-            Save Numbering
-          </Button>
-        </div>
-      </Card>
+      <InvoiceNumberingCard
+        terms={shownTerms}
+        onTermsChange={handleTermsChange}
+        termsDisabled={isLoading || updateSettings.isPending}
+      />
 
       <Card title="Invoice Defaults">
         <div className="space-y-4">
@@ -2793,6 +2778,15 @@ function SettingsPageInner() {
     if (activeTab === "import") router.replace("/settings/import");
   }, [activeTab, router]);
 
+  // Settings → Fulfillment is dark behind the API's FULFILMENT_SELF_SERVE: the endpoint is asked ONLY on
+  // `?tab=fulfilment` (staff roles), and the tab exists only when it says `selfServe`; otherwise the page is
+  // exactly what it was (an unknown tab falls back to the hub). No hub entry points at it.
+  const fulfilmentQuery = useFulfilmentSettings({
+    enabled: activeTab === "fulfilment" && user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
+  // Only a confirmed `selfServe: true` shows the tab: while loading or on an error nothing of it appears.
+  const showFulfilment = activeTab === "fulfilment" && fulfilmentQuery.data?.selfServe === true;
+
   // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
   // "← All settings" back link (the old tab strip is retired). Every screen component
   // is reused unchanged, so the individual settings behave exactly as before, and the
@@ -2817,6 +2811,15 @@ function SettingsPageInner() {
       width: "max-w-4xl",
     },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
+    ...(showFulfilment
+      ? {
+          fulfilment: {
+            title: "Fulfillment",
+            node: <FulfillmentSettingsTab />,
+            width: "max-w-3xl",
+          },
+        }
+      : {}),
     ...(isAdmin
       ? {
           regulated: {
@@ -2829,6 +2832,20 @@ function SettingsPageInner() {
   };
 
   const section = activeTab ? SECTIONS[activeTab] : undefined;
+
+  // REG-B1013: a CUSTOMER or DRIVER manages only their own account — never the business hub, a
+  // `?tab=` deep link into it (user management + Add User, invoicing, email ...), the Stripe card
+  // or the tier labels. (The API refuses these roles on the business endpoints too.)
+  if (user?.role === "CUSTOMER" || user?.role === "DRIVER") {
+    return (
+      <div className="mx-auto max-w-5xl p-6">
+        <h2 className="mb-5 text-2xl font-bold text-navy">My account</h2>
+        <div className="max-w-3xl">
+          <MyAccountTab />
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Centred, width-capped column so settings forms don't strand the whole

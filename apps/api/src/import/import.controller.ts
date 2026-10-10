@@ -5,6 +5,7 @@ import {
   Get,
   Delete,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -31,9 +32,16 @@ export class ImportController {
   @Post("contacts")
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
-  importContacts(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
+  importContacts(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+    @Query("dryRun") dryRun?: string,
+  ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    return this.importService.importContacts(file.buffer, user.sub);
+    return this.importService.importContacts(file.buffer, user.sub, {
+      dryRun: dryRun === "true",
+      fileName: file.originalname,
+    });
   }
 
   @Post("invoices")
@@ -89,9 +97,16 @@ export class ImportController {
   @Post("products")
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
-  importProducts(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
+  importProducts(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+    @Query("dryRun") dryRun?: string,
+  ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    return this.importService.importProducts(file.buffer, user.sub);
+    return this.importService.importProducts(file.buffer, user.sub, {
+      dryRun: dryRun === "true",
+      fileName: file.originalname,
+    });
   }
 
   @Post("inventory")

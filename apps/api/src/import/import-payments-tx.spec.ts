@@ -17,6 +17,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 type Write = {
@@ -58,6 +59,18 @@ describe("#2262 import writes payments + the Invoice row in one transaction (SA-
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        // #2185 (B858/B859): ImportService routes product writes through ProductsService. This
+        // suite imports payments only, so it never calls it; the stub just satisfies DI.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         {
           provide: SellingRestrictionsService,
           useValue: {

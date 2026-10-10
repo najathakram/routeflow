@@ -61,6 +61,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -136,6 +137,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -346,6 +348,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
     expect(invoicesService.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
       basis: "order",
+      shortDraftIsPartial: true, // SA-681: Mark Delivered only
     });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
   });

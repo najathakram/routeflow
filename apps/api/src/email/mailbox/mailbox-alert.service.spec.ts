@@ -301,9 +301,16 @@ describe("MailboxAlertService — subscription wiring", () => {
       },
     };
     prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
-    const mailboxSend = new MailboxSendService(prisma, encryption, {
-      get: () => undefined,
-    } as unknown as ConfigService);
+    const mailboxSend = new MailboxSendService(
+      prisma,
+      encryption,
+      {
+        get: () => undefined,
+      } as unknown as ConfigService,
+      {
+        decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+      } as any,
+    );
     const {
       notifications,
       email,

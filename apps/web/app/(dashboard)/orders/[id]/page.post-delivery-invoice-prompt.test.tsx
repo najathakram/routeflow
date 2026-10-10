@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Providers } from "@/app/providers";
+import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
@@ -72,7 +73,11 @@ const deliver = async (invoiceStatus: string) => {
   fireEvent.click(await screen.findByRole("button", { name: /Mark as Delivered/ }));
 };
 
-beforeEach(() => jest.clearAllMocks());
+// B1134: the action bar is staff-only; these specs exercise staff behaviour, so sign in as one.
+beforeEach(() => {
+  jest.clearAllMocks();
+  seedSession("OPERATOR");
+});
 
 describe("order detail — post-delivery invoice prompt (#2089)", () => {
   it("opens the send prompt on DELIVERED, worded 'Issue & Send' for the DRAFT createInvoiceFromOrder always returns", async () => {

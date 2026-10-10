@@ -63,15 +63,16 @@ CP-04/05 — API money fields have ≤2 dp; CP-10 — no float artifacts in line
 
 ## Autonomous pipeline (no manual trigger needed)
 
-| When                       | What                                  | Config                                                  |
-| -------------------------- | ------------------------------------- | ------------------------------------------------------- |
-| Every push (any branch)    | Layer 1 (lint + types + unit tests)   | `.github/workflows/ci.yml`                              |
-| Every master push          | + Playwright e2e after Railway health | `.github/workflows/ci.yml` `e2e` job                    |
-| After every Railway deploy | Layer 2 + 3 (smoke + e2e)             | `.github/workflows/post-deploy.yml` via Railway webhook |
-| Nightly 02:00 UTC          | Layer 2 + 3                           | `.github/workflows/nightly.yml`                         |
-| Nightly 02:00 local        | Layer 2 + 3 (Claude Code agent)       | Scheduled task `routeflow-nightly-regression`           |
+| When                       | What                                  | Config                                                             |
+| -------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| Every push (any branch)    | Layer 1 (lint + types + unit tests)   | `.github/workflows/ci.yml`                                         |
+| Every master push          | + Playwright e2e after Railway health | `.github/workflows/ci.yml` `e2e` job                               |
+| After every Railway deploy | Layer 3 (e2e), automatic              | `.github/workflows/ci.yml` `e2e` job (Railway `deployment_status`) |
+| On demand                  | Layer 2 + 3 (smoke + e2e)             | `.github/workflows/post-deploy.yml` (manual `workflow_dispatch`)   |
+| Nightly 02:00 UTC          | Layer 2 + 3                           | `.github/workflows/nightly.yml`                                    |
+| Nightly 02:00 local        | Layer 2 + 3 (Claude Code agent)       | Scheduled task `routeflow-nightly-regression`                      |
 
-To wire the Railway webhook → see the header comment in `.github/workflows/post-deploy.yml`.
+There is no Railway webhook to wire: `post-deploy.yml` is manual only (see its header comment); the automatic post-deploy run is `ci.yml`'s `e2e` job.
 
 ## When extending
 

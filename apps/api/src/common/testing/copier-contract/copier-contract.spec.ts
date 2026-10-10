@@ -56,6 +56,7 @@ import { COPIERS, Copier, INFRA, Model, NOT_A_COPIER, NOT_SALES_FILES } from "./
 const REGISTRY_ONLY_PINNED = ["C10", "C15", "C16a", "C16b"];
 const SRC = path.resolve(__dirname, "../../..");
 const ROOT = path.resolve(SRC, "../../..");
+const COMPONENT_TARGETS = new Set<Model>(["OrderItem", "InvoiceItem"]);
 const words = (s?: string) => (s ?? "").split(/\s+/).filter(Boolean);
 const isClient = (c: Copier) => c.file.startsWith("apps/");
 
@@ -106,6 +107,17 @@ export function evaluate(w: World): string[] {
           bad.push(`${at}: "${col}" is classified twice (${seen.get(col)} and ${b})`);
         seen.set(col, b);
       }
+    // #2717 M3: the `components` relation is skipped by the column check (it is not a scalar), so a
+    // line copier says separately what happens to the frozen component rows: carried (copied from
+    // the source line's rows), rederived (rebuilt from the recipe or rescaled from the line's own
+    // rows) or na (a line that can never carry components).
+    if (
+      COMPONENT_TARGETS.has(c.target) &&
+      !["carried", "rederived", "na"].includes(c.components ?? "")
+    )
+      bad.push(
+        `${at}: NEW/UNCLASSIFIED components bucket on ${c.target} — set components to carried, rederived or na`,
+      );
     for (const col of cols)
       if (!seen.has(col))
         bad.push(
@@ -255,6 +267,22 @@ describe("copier contract mutation proofs (each must turn the spec red)", () => 
         (c) => c.target === "InvoiceItem" && c.coverage !== "registry-only" && !isClient(c),
       ).length,
     );
+  });
+  it("(#2717 M3) a copier of an order/invoice line with no components bucket -> red", () => {
+    const out = evaluate(
+      realWorld(COPIERS.map((c) => (c.id === "C1" ? { ...c, components: undefined } : c))),
+    );
+    expect(out.join()).toMatch(/C1 .*NEW\/UNCLASSIFIED components bucket on InvoiceItem/);
+  });
+  it("(#2717 M3) every order/invoice line copier declares a components bucket", () => {
+    const missing = COPIERS.filter(
+      (c) =>
+        COMPONENT_TARGETS.has(c.target) &&
+        c.coverage !== "registry-only" &&
+        !isClient(c) &&
+        !c.components,
+    ).map((c) => c.id);
+    expect(missing).toEqual([]);
   });
   it("(b) an unregistered write site -> red", () =>
     expect(evaluate(world({ sites: () => ["fx.ts::copy", "fx.ts::sneaky"] })).join()).toMatch(

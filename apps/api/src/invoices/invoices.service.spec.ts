@@ -36,6 +36,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
@@ -183,6 +184,13 @@ describe("InvoicesService", () => {
         { provide: StorageService, useValue: mockStorage },
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
@@ -5375,7 +5383,7 @@ describe("InvoicesService", () => {
       expect(updOf("d-only").data.subtotal).toBe(50);
     });
 
-    it("bails to legacy when a finalized invoice already bills part of the order", async () => {
+    it('SA-681: with a finalized invoice already billing part of the order, nothing is rebuilt ("partials")', async () => {
       prisma.invoice.findMany.mockResolvedValue([
         ...splitDrafts(),
         {
@@ -5395,14 +5403,16 @@ describe("InvoicesService", () => {
       prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
       prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
 
-      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+      const res = await service.reconcileOrderDraftInvoice("ord-1", {
+        basis: "order",
+        tx: prisma as any,
+      });
 
-      // Legacy single-draft path took over → exactly ONE invoice.update (the base), not
-      // the two-sibling rebuild.
-      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-      expect(updOf("d-base")).toBeDefined();
-      // The legacy group-unaware path must NOT touch the ledger (folding the regulated
-      // line onto the base + writing a SALE would double-count vs the live -R1 SALE).
+      // Pre-SA-681 the legacy single-draft path took over and folded EVERY line onto the base while
+      // the SENT invoice and the -R1 sibling still billed theirs (a double bill). Now: no rebuild.
+      expect(res).toBe("partials");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
       expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });

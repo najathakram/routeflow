@@ -1182,7 +1182,7 @@ describe("edit-items-draft: applyPickToDraft (SA-108d pin 1 — the transform li
     catalogPrice: 24,
     name: "Boxed widget",
     unit: "box",
-    kind: "case" as const,
+    level: "BOX" as const,
   };
 
   it("a fresh add (boxed) starts at 1 box, unitPrice = startPrice", () => {

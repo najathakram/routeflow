@@ -1,4 +1,5 @@
 import {
+  linePack,
   computeLineSubtotal,
   computeLineSubtotalStrict,
   lineAmbiguity,
@@ -1461,6 +1462,21 @@ describe("pricing — upsell direction & sticky effective price", () => {
       expect(effectiveBuyerPrice(8, 10, null)).toBe(8);
       expect(effectiveBuyerPrice(8, 10, undefined)).toBe(8);
     });
+  });
+});
+
+describe("linePack (B699/B722, #2066): the line's stored pack wins over the live catalog pack", () => {
+  it("a stored pack > 1 wins, even after the product is repacked or un-boxed", () => {
+    expect(linePack({ packSize: 12 }, 6)).toBe(12);
+    expect(linePack({ packSize: 12 }, 0)).toBe(12);
+  });
+
+  it("no usable stored pack (absent, null, 0 or 1) falls back to the live pack", () => {
+    expect(linePack({}, 6)).toBe(6);
+    expect(linePack({ packSize: null }, 6)).toBe(6);
+    expect(linePack({ packSize: 0 }, 6)).toBe(6);
+    expect(linePack({ packSize: 1 }, 6)).toBe(6);
+    expect(linePack({ packSize: null }, 0)).toBe(0);
   });
 });
 

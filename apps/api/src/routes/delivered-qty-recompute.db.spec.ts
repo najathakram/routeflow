@@ -44,6 +44,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -138,6 +139,7 @@ describeDb("SA-133 (B785): deliveredQty recompute across visits and reopen — r
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         // #2101 (on master): InvoicesService's ban check — this harness never sells a restricted line.
         {

@@ -35,6 +35,7 @@ import { BadRequestException } from "@nestjs/common";
 import { VOIDED_DURING_EMAIL } from "./invoice-send-guard";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 const INVOICE_ID = "inv-2255-1";
 const CUSTOMER_ID = "cust-2255-1";
@@ -123,6 +124,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
         },
         { provide: StorageService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241
         {
           provide: CommissionEngineService,
           useValue: { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) },
@@ -251,7 +253,7 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const inv = read("invoices/invoices.service.ts");
     for (const label of ["invoice mark-sent", "invoice send pre-check", "invoice void"]) {
-      expect(inv).toMatch(new RegExp(`retryOnTxConflict\\(\\s*\\\`${label}`));
+      expect(inv).toMatch(new RegExp(`retry(?:OnTxConflict|CreditTx)\\(\\s*\\\`${label}`));
     }
     // send() and sendEmail() share the one retried mark-sent transaction.
     expect(inv.match(/this\.markSent\(/g)).toHaveLength(2);

@@ -22,6 +22,8 @@
 // R3). These specs exercise the merge FOLD's money math, not the lock, so run
 // the critical section inline — the real helper would open a `pg` pool.
 // `lockRowsNoWait` stays REAL: it is a plain `$executeRaw` on the caller's tx, no pool.
+// B1053: fold-math spec — row guard passed through (testing/merge-recheck.ts)
+jest.mock("./merge-lock-recheck", () => require("./testing/merge-recheck").pass());
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
   withAdvisoryLock: jest.fn(async (_opts: unknown, fn: () => Promise<unknown>) => ({
@@ -52,6 +54,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { Prisma } from "@prisma/client";
@@ -77,6 +80,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -155,6 +159,7 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -54,7 +54,7 @@ describe("CustomersService — address state columns are derived at the write bo
           provide: PlanCatalogService,
           useValue: { getPublishedVersion: jest.fn().mockResolvedValue(null) },
         },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue({}) } },
         { provide: CommissionEngineService, useValue: {} },
         { provide: RegulatedLedgerService, useValue: {} },

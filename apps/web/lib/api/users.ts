@@ -1,3 +1,4 @@
+import type { PreferencePatch } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
@@ -77,7 +78,7 @@ export function usePreferences() {
 
 export function useSavePreferences() {
   const qc = useQueryClient();
-  return useMutation<Record<string, string>, Error, Record<string, string>>({
+  return useMutation<Record<string, string>, Error, PreferencePatch>({
     mutationFn: (prefs) => apiClient.patch("/users/me/preferences", prefs).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
   });

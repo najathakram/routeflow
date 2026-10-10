@@ -23,8 +23,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
@@ -40,6 +42,7 @@ describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     const module = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,
@@ -87,6 +90,7 @@ describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
         },
         { provide: StorageService, useValue: {} },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
         {
           provide: CommissionEngineService,
           useValue: {

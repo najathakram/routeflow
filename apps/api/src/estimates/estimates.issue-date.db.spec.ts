@@ -23,6 +23,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -60,6 +61,13 @@ describeDb("REG-B79 estimates issueDate — real Postgres round-trip (T17)", () 
         // actually mint through the tenant-scoped NumberingSequence primitive.
         NumberingService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: RegulatedLedgerService, useValue: {} }, // create() never touches the ledger
       ],

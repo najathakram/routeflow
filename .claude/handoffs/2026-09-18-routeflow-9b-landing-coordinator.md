@@ -32,7 +32,7 @@
     same as every other docs-only PR tonight).
   - **Lane F** — reproduce B523, then a whole-set 390px regression pass.
   - Standard landing pattern all night: `git merge-tree <merge-base> origin/master
-    origin/<branch>` first; a single-line-append collision on `.claude/campaign/bugs.jsonl` (two
+origin/<branch>` first; a single-line-append collision on `.claude/campaign/bugs.jsonl` (two
     PRs' filed rows landing near the same insertion point) is the routine, safe-to-hand-resolve
     case — keep both entries in sequence, no markers left, verify the `.md` filing is
     byte-identical to the original branch, run `bugs.mjs sync --check` (shrink=0 is the gate).
@@ -45,4 +45,4 @@
 - Do not: touch `rf-C2C3-detail-audit` (uncommitted Lane C work from an ended session — leave
   alone). Do not retry deleting `rf-893-land`'s worktree dir — lead confirmed harmless, leave it.
   Do not flip visibility public without a fresh watchdog started first. Do not trust `gh run
-  rerun` to pick up a base-branch fix — push a real commit (see L-198).
+rerun` to pick up a base-branch fix — push a real commit (see L-198).

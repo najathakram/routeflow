@@ -45,7 +45,13 @@ function makeService(opts: {
   } as any;
   const encryption = { decrypt: (v: string) => v } as any;
   const mailboxSend = { trySend: jest.fn().mockResolvedValue(opts.mailboxResult) };
-  const svc = new EmailService(config, prisma, encryption, mailboxSend as any);
+  const svc = new EmailService(
+    config,
+    prisma,
+    encryption,
+    mailboxSend as any,
+    { record: jest.fn() } as any,
+  );
 
   const nodemailerSendMail = jest.fn().mockResolvedValue({ messageId: "smtp-msg-1" });
   (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail: nodemailerSendMail });

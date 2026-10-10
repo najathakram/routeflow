@@ -20,6 +20,7 @@ import {
   type ValidationError,
 } from "class-validator";
 import type { IntakeSectionKey } from "@prisma/client";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
  * One class-validator DTO per IntakeSectionKey (#2159 S2) — playbook Appendix A, sections B–H.
@@ -229,7 +230,7 @@ export async function validateSectionAnswers(
   if (errors.length > 0) {
     throw new BadRequestException({
       statusCode: 400,
-      code: "INTAKE_ANSWERS_INVALID",
+      code: API_ERROR_CODES.INTAKE_ANSWERS_INVALID,
       message: "Some answers need fixing",
       errors: flatten(errors),
     });

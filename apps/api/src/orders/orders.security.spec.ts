@@ -22,6 +22,7 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -56,6 +57,7 @@ describe("OrdersService — cross-tenant id 404s on scoped reads", () => {
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

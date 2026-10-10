@@ -35,8 +35,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 describe("InvoicesService — B760", () => {
@@ -87,6 +89,7 @@ describe("InvoicesService — B760", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(false) } },
         InvoicesService,
         {
           provide: SellingRestrictionsService,
@@ -112,6 +115,7 @@ describe("InvoicesService — B760", () => {
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
         { provide: EntitlementsService, useValue: mockEntitlements },
+        entitlementAuthorityFromEntitlements, // #2241: EntitlementAuthority
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
       ],

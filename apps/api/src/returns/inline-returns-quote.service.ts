@@ -43,6 +43,12 @@ import {
   type RemainingSupply,
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  canRefundRole,
+  loadSourceInvoicesState,
+  sourcesAreRefundable,
+} from "./inline-return-refund";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -79,6 +85,13 @@ export function creditOverridesOf(
   for (const item of items) {
     const price = item.creditUnitPrice;
     const rawReason = item.overrideReason;
+    // B961: the "already returned" confirmation reason is staff-only too (a driver's capture is HELD, never confirmed).
+    if (item.alreadyReturnedReason !== undefined && !CREDIT_OVERRIDE_ROLES.has(user.role)) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+        message: "Only office staff can confirm a return of goods already returned or credited.",
+      });
+    }
     if (price === undefined && rawReason === undefined) continue;
     if (!CREDIT_OVERRIDE_ROLES.has(user.role)) {
       throw new BadRequestException({
@@ -119,8 +132,39 @@ export class InlineReturnsQuoteService {
   async quote(
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
-  ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
-    return this.priceInlineReturn(dto, user, this.prisma.forTenant());
+  ): Promise<
+    QuoteBreakdown & {
+      productBreakdown: Record<string, QuoteBreakdown>;
+      canRefund: boolean;
+      paidInFull: boolean;
+      paidMethods: string[];
+      paidWithStoreCredit: boolean;
+      customerIsWalkIn: boolean;
+    }
+  > {
+    const db = this.prisma.forTenant();
+    const priced = await this.priceInlineReturn(dto, user, db);
+    // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
+    // only; POST /returns/inline/:id/refund re-checks everything under its locks.
+    const [customer, source] = await Promise.all([
+      db.customer.findFirst({
+        where: { id: dto.customerId, deletedAt: null },
+        select: { isWalkIn: true },
+      }),
+      loadSourceInvoicesState(
+        db,
+        priced.chunks.map((c) => c.sourceInvoiceItemId),
+      ),
+    ]);
+    return {
+      ...priced,
+      // F4/F5: paid in full AND none of it paid with store credit (store credit is never turned into cash) AND worth money
+      canRefund: canRefundRole(user.role) && sourcesAreRefundable(source) && priced.total > 0.001,
+      paidInFull: source.paidInFull,
+      paidMethods: source.paidMethods,
+      paidWithStoreCredit: source.paidWithStoreCredit,
+      customerIsWalkIn: customer?.isWalkIn === true,
+    };
   }
 
   /**
@@ -293,6 +337,49 @@ export class InlineReturnsQuoteService {
     // quote — it does not vary per item — never inside the per-item loop below.
     const tenantTaxRate = await currentTaxRate(this.systemConfig);
 
+    // B961 (SA-071h): the in-window candidate lines of this product carry prior returns (priorReturnedMap) or non-refund credits.
+    const windowHasPriorReturns = async (productId: string): Promise<boolean> => {
+      const lines = matchingSet.filter((l) => l.productId === productId);
+      if (lines.length === 0) return false;
+      for (const orderId of new Set(lines.map((l) => l.sourceOrderId))) {
+        const prior = priorReturnedMap.get(orderId)?.[productId];
+        if (prior && "pieces" in prior && prior.pieces > 0) return true;
+      }
+      return (await this.creditNotedPiecesOutsideReturns(db, lines)) > 0;
+    };
+
+    // B961 (SA-071f): Σ returned + Σ credit-noted pieces >= Σ sold pieces across ALL this customer's live invoices of the product.
+    // Cached per product; an unclassifiable prior return counts as exhausted (fail toward staff review).
+    const lifetimeCache = new Map<string, boolean>();
+    const lifetimeExhausted = async (productId: string): Promise<boolean> => {
+      const cached = lifetimeCache.get(productId);
+      if (cached !== undefined) return cached;
+      // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
+      const lifeSet = await this.fetchMatchingSet(
+        db,
+        dto.customerId,
+        [productId],
+        productUpbMap,
+        null,
+        opts.excludeInvoiceIds,
+      );
+      const lines = lifeSet.filter((l) => l.productId === productId);
+      const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
+      let exhausted = false;
+      if (sold > 0) {
+        const { returned, unknown } = await this.lifetimeReturned(
+          db,
+          lines,
+          productId,
+          priorReturnedMap,
+        );
+        const credited = unknown ? 0 : await this.creditNotedPiecesOutsideReturns(db, lines);
+        exhausted = unknown || returned + credited >= sold - 0.001;
+      }
+      lifetimeCache.set(productId, exhausted);
+      return exhausted;
+    };
+
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
@@ -321,14 +408,14 @@ export class InlineReturnsQuoteService {
         const prior = priorReturnedMap.get(orderId)?.[item.productId];
         if (prior && "unknown" in prior) {
           throw new ConflictException({
-            code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+            code: API_ERROR_CODES.INLINE_RETURN_PRIOR_BASIS_UNKNOWN,
             message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
           });
         }
       }
       if (conflictingPacks) {
         throw new ConflictException({
-          code: "INLINE_RETURN_PACK_CONFLICT",
+          code: API_ERROR_CODES.INLINE_RETURN_PACK_CONFLICT,
           message:
             `${productName} is packed at more than one size in this customer's recent ` +
             `history (${conflictingPacks.join(", ")}) — return these lines from the order ` +
@@ -347,7 +434,7 @@ export class InlineReturnsQuoteService {
         (resolvedUnitsPerBox == null || resolvedUnitsPerBox <= 0)
       ) {
         throw new ConflictException({
-          code: "INLINE_RETURN_PACK_UNKNOWN",
+          code: API_ERROR_CODES.INLINE_RETURN_PACK_UNKNOWN,
           message:
             `${productName}'s pack size is unknown — return these lines from the order ` +
             `page's standard return instead.`,
@@ -384,6 +471,12 @@ export class InlineReturnsQuoteService {
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
       const override = overrides.get(item);
+      // B961 (SA-071h): flag = unreferenced AND (the in-window lines carry prior returns/credits OR lifetime exhaustion). The 90-day
+      // window still scopes PRICING; an old never-returned sale alone is not exhaustion, but it is no reason for silence when the
+      // recent purchases were returned (repeat buyer).
+      const hasPriorReturns = allocated.some((c) => !c.line)
+        ? (await windowHasPriorReturns(item.productId)) || (await lifetimeExhausted(item.productId))
+        : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
@@ -400,7 +493,11 @@ export class InlineReturnsQuoteService {
               fallbackTaxRate,
               customer.isTaxExempt,
             );
-        if (!override) return priced;
+        // B961: the unreferenced chunk of a product the customer DID buy AND already has prior returns of is "already returned
+        // or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
+        const flag = (c: PricedChunk): PricedChunk =>
+          !chunk.line && hasPriorReturns ? { ...c, alreadyReturned: true } : c;
+        if (!override) return flag(priced);
         // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
         // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice
         // charged no tax), an unreferenced chunk's product pack and quote rate.
@@ -430,7 +527,7 @@ export class InlineReturnsQuoteService {
               `credit is $${result.defaultUnitPrice.toFixed(2)} per unit.`,
           });
         }
-        return result.chunk;
+        return flag(result.chunk);
       });
 
       productBreakdown[item.productId] = totalChunks(chunks);
@@ -440,6 +537,101 @@ export class InlineReturnsQuoteService {
     return { ...totalChunks(allChunks), productBreakdown };
   }
 
+  /**
+   * B961 (SA-071f/h, lead N-a): Σ returned pieces of one product across many source orders in a BOUNDED number of reads (2), never a
+   * per-order or per-invoice loop (the capture runs this inside a 5 s transaction). Orders already read for pricing are reused. For the
+   * rest: one read of the STANDARD return items (their qty is in the order line's own unit, converted to pieces with that order's
+   * sold-line factor, Σ piecesQty / Σ qty of the product's lines on that order) and one of the INLINE items (already pieces). The flag
+   * is a soft reason for staff, so this conversion is deliberately the simple one (an unclassifiable pack no longer short-circuits).
+   */
+  private async lifetimeReturned(
+    db: any,
+    lines: ReadonlyArray<{ sourceOrderId: string; piecesQty: number; qty: number }>,
+    productId: string,
+    priorReturnedMap: Map<string, Awaited<ReturnType<typeof returnedPiecesByProduct>>>,
+  ): Promise<{ returned: number; unknown: boolean }> {
+    const orderIds = [...new Set(lines.map((l) => l.sourceOrderId))];
+    let returned = 0;
+    let unknown = false;
+    const need: string[] = [];
+    for (const orderId of orderIds) {
+      const known = priorReturnedMap.get(orderId);
+      if (!known) need.push(orderId);
+      else {
+        const prior = known[productId];
+        if (prior && "unknown" in prior) unknown = true;
+        else returned += prior?.pieces ?? 0;
+      }
+    }
+    if (need.length === 0) return { returned, unknown };
+    const notDead = { notIn: ["REJECTED", "CANCELLED"] };
+    const [standardItems, inlineItems] = await Promise.all([
+      db.returnItem.findMany({
+        where: {
+          productId,
+          return: { orderId: { in: need }, kind: "STANDARD", status: notDead },
+        },
+        select: { qty: true, return: { select: { orderId: true } } },
+      }),
+      db.returnItem.findMany({
+        where: {
+          sourceOrderId: { in: need },
+          productId,
+          return: { kind: "INLINE", status: notDead },
+        },
+        select: { sourceOrderId: true, qty: true },
+      }),
+    ]);
+    const factorByOrder = new Map<string, number>();
+    for (const orderId of need) {
+      const mine = lines.filter((l) => l.sourceOrderId === orderId);
+      const qty = mine.reduce((n, l) => n + l.qty, 0);
+      factorByOrder.set(orderId, qty > 0 ? mine.reduce((n, l) => n + l.piecesQty, 0) / qty : 1);
+    }
+    for (const it of (standardItems ?? []) as Array<{
+      qty: unknown;
+      return: { orderId: string };
+    }>) {
+      returned += Number(it.qty) * (factorByOrder.get(it.return.orderId) ?? 1);
+    }
+    for (const it of (inlineItems ?? []) as Array<{ qty: unknown }>) returned += Number(it.qty);
+    return { returned, unknown };
+  }
+
+  /**
+   * B961 (SA-071f): pieces of these invoice lines credited by CREDIT NOTES that are NOT a return's own refund (a return's refund
+   * note is already counted as a returned piece by the prior-returned reader, so counting its items too would double it).
+   * Non-VOID notes only; qty is on the line's own axis, converted to pieces by the line's piecesQty / qty.
+   */
+  private async creditNotedPiecesOutsideReturns(
+    db: any,
+    lines: ReadonlyArray<{ sourceInvoiceItemId: string; piecesQty: number; qty: number }>,
+  ): Promise<number> {
+    const ids = lines.map((l) => l.sourceInvoiceItemId);
+    const items: Array<{ invoiceItemId: string | null; qty: unknown; creditNoteId: string }> =
+      (await db.creditNoteItem.findMany({
+        where: { invoiceItemId: { in: ids }, creditNote: { status: { not: "VOID" } } },
+        select: { invoiceItemId: true, qty: true, creditNoteId: true },
+      })) ?? [];
+    if (items.length === 0) return 0;
+    const noteIds = [...new Set(items.map((i) => i.creditNoteId))];
+    const linked: Array<{ creditNoteId: string | null }> =
+      (await db.return.findMany({
+        where: { creditNoteId: { in: noteIds } },
+        select: { creditNoteId: true },
+      })) ?? [];
+    const returnNotes = new Set(linked.map((r) => r.creditNoteId));
+    const byId = new Map(lines.map((l) => [l.sourceInvoiceItemId, l]));
+    let pieces = 0;
+    for (const it of items) {
+      if (returnNotes.has(it.creditNoteId)) continue;
+      const line = it.invoiceItemId ? byId.get(it.invoiceItemId) : undefined;
+      if (!line || !(line.qty > 0)) continue;
+      pieces += Number(it.qty ?? 0) * (line.piecesQty / line.qty);
+    }
+    return pieces;
+  }
+
   /** §3.1's matching set: REAL_INVOICE_STATUSES ∪ non-VOID DRAFT of a DELIVERED/
    * PARTIALLY_DELIVERED order, within the sold window, newest invoice first. */
   private async fetchMatchingSet(
@@ -447,18 +639,21 @@ export class InlineReturnsQuoteService {
     customerId: string,
     productIds: string[],
     productUpbMap: Map<string, number | null>,
-    soldWindowDays = DEFAULT_SOLD_WINDOW_DAYS,
+    // null = the customer's WHOLE history (B961's lifetime flag): no date filter, and only invoices that HAVE the product
+    soldWindowDays: number | null = DEFAULT_SOLD_WINDOW_DAYS,
     excludeInvoiceIds: readonly string[] = [],
   ): Promise<CandidateInvoiceLine[]> {
     const since = new Date();
-    since.setDate(since.getDate() - soldWindowDays);
+    since.setDate(since.getDate() - (soldWindowDays ?? 0));
 
     const invoices = await db.invoice.findMany({
       where: {
         customerId,
         orderId: { not: null },
         ...(excludeInvoiceIds.length > 0 ? { id: { notIn: [...excludeInvoiceIds] } } : {}),
-        issueDate: { gte: since },
+        ...(soldWindowDays === null
+          ? { items: { some: { productId: { in: productIds } } } }
+          : { issueDate: { gte: since } }),
         OR: [
           { status: REAL_INVOICE_STATUSES },
           {
