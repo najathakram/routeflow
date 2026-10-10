@@ -49,7 +49,13 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
   async function sale(opts: {
     fulfillPath: "PICKUP" | "ROUTE";
     counterSale: boolean;
-    payments: Array<{ method: string; amount: number; group?: "v5" | "other" | null }>;
+    invoiceStatus?: string;
+    payments: Array<{
+      method: string;
+      amount: number;
+      group?: "v5" | "other" | null;
+      status?: string;
+    }>;
   }) {
     n += 1;
     const order = await raw.order.create({
@@ -71,7 +77,7 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
         customerId,
         orderId: order.id,
         tenantId,
-        status: "SENT",
+        status: (opts.invoiceStatus ?? "SENT") as never,
         subtotal: 100,
         total: 100,
       },
@@ -85,7 +91,7 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
           paidAt: new Date(AT),
           amount: p.amount,
           method: p.method as never,
-          status: "PAID",
+          status: (p.status ?? "PAID") as never,
           paymentGroupId:
             p.group === "v5"
               ? pickupTenderGroupId(order.id)
@@ -147,11 +153,23 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
       counterSale: true,
       payments: [{ method: "CASH", amount: 30, group: null }],
     });
-    // a ROUTE order's payment carrying a pickup-shaped id never counts
+    // a PICKUP-SHAPED id on a ROUTE order's payment must NOT count (the order predicate is the guard)
     await sale({
       fulfillPath: "ROUTE",
       counterSale: false,
-      payments: [{ method: "CASH", amount: 5, group: "other" }],
+      payments: [{ method: "CASH", amount: 5, group: "v5" }],
+    });
+    // a VOID payment with the matching id, and a PAID one on a VOID invoice, neither counts
+    await sale({
+      fulfillPath: "PICKUP",
+      counterSale: false,
+      payments: [{ method: "CASH", amount: 7, group: "v5", status: "VOID" }],
+    });
+    await sale({
+      fulfillPath: "PICKUP",
+      counterSale: false,
+      invoiceStatus: "VOID",
+      payments: [{ method: "CASH", amount: 9, group: "v5" }],
     });
     const res = await tenantCtx.run(tenantId, () =>
       new CounterSaleTodayService(prisma).today({ day: DAY, page: 1, limit: 50 } as never, NOW),
