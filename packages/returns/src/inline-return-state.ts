@@ -230,6 +230,8 @@ export function buildQuoteRequest(
   customerId: string,
   lines: InlineReturnLineDraft[],
   routeRunStopId?: string,
+  /** SA-740: the sale this return is from (a counter return sends the sale's order id; REQUIRED for a walk-in). */
+  sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
   const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
     lines
@@ -248,7 +250,22 @@ export function buildQuoteRequest(
     pieces,
     ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
   }));
-  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
+}
+
+/** The quote request envelope: routeRunStopId and sourceOrderId ride along only when supplied. */
+function quoteRequestOf(
+  customerId: string,
+  items: QuoteInlineReturnItem[],
+  routeRunStopId?: string,
+  sourceOrderId?: string,
+): QuoteInlineReturnRequest {
+  return {
+    customerId,
+    items,
+    ...(routeRunStopId ? { routeRunStopId } : {}),
+    ...(sourceOrderId ? { sourceOrderId } : {}),
+  };
 }
 
 // ─── B961 / SA-071c: goods already returned or credited ────────────────────────
@@ -385,6 +402,8 @@ export function dropExcessAndRequote(
    *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
    *  the capture that follows price the same chunks. */
   lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
+  /** SA-740: the re-quote stays pinned to the same source sale the first quote was. */
+  sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
   const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
@@ -393,7 +412,7 @@ export function dropExcessAndRequote(
       const line = firstLine(productId);
       return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
     });
-  return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
 }
 
 /**
@@ -446,6 +465,8 @@ export function buildCaptureRequest(params: {
    *  item's `condition` — the DTO's only per-item free-text field). */
   notes?: string;
   routeRunStopId?: string;
+  /** SA-740: the SAME source sale the quote priced (a walk-in defaults to `orderId` server-side when omitted). */
+  sourceOrderId?: string;
 }): CaptureInlineReturnRequest {
   const items: CaptureInlineReturnItem[] = mergeDuplicateProductItems(
     params.lines
@@ -479,6 +500,7 @@ export function buildCaptureRequest(params: {
     returnKey: params.returnKey,
     reason: params.reason,
     ...(params.routeRunStopId ? { routeRunStopId: params.routeRunStopId } : {}),
+    ...(params.sourceOrderId ? { sourceOrderId: params.sourceOrderId } : {}),
     ...(params.notes ? { notes: params.notes } : {}),
   };
 }

@@ -108,7 +108,7 @@ describe("CreateOrderModal product search - variant hits and families (B1215)", 
     type("strawberry");
     expect(await screen.findByText("Sample Pod")).toBeInTheDocument();
     expect(screen.queryByText("No products found.")).not.toBeInTheDocument();
-    const row = await screen.findByRole("button", { name: /Sample Pod - Strawberry/ });
+    const row = await screen.findByRole("option", { name: /Sample Pod - Strawberry/ });
     fireEvent.click(row);
     // the order line is named "<Parent> - <Variant>"
     await waitFor(() => expect(screen.getAllByTitle("Remove")).toHaveLength(1));
@@ -119,9 +119,9 @@ describe("CreateOrderModal product search - variant hits and families (B1215)", 
     mockRows = [FAMILY];
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     type("pod");
-    const header = await screen.findByRole("button", { name: /Sample Pod/ });
+    const header = await screen.findByRole("option", { name: /Sample Pod/ });
     fireEvent.click(header);
-    expect(await screen.findByRole("button", { name: /Sample Pod - Mint/ })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Sample Pod - Mint/ })).toBeInTheDocument();
     expect(screen.queryAllByTitle("Remove")).toHaveLength(0);
   });
 

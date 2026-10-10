@@ -124,6 +124,8 @@ describe("computeInvoiceTotals — discount, shipping, tax", () => {
       lineTotals: [],
       subtotal: 0,
       tax: 0,
+      regularTax: 0,
+      categoryTax: 0,
       discount: 0,
       shipping: 0,
       total: 0,

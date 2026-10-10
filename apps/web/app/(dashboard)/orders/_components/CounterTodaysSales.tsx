@@ -24,6 +24,7 @@ import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
 import { useEmailReceipt } from "./useEmailReceipt";
+import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 
 const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
   CASH: "Cash",
@@ -63,6 +64,10 @@ function Stat({ label, value, testId }: { label: string; value: string; testId?:
 /** Server numbers only: nothing here adds, subtracts or derives a figure. */
 function Summary({ s }: { s: TodaysSalesSummary }) {
   const r = s.refunds;
+  // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
+  // refunds until the mobile minimum moves): then the breakdown shows and the labels say which figure lacks a method. A
+  // comparison only; no figure is derived here.
+  const someTenderRecorded = !r.tenderKnown && (r.cash > 0 || r.card > 0 || r.check > 0);
   return (
     <section
       aria-label="Today's summary"
@@ -86,11 +91,17 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
         />
         <Stat label="On account" value={money(s.onAccount)} testId="today-on-account" />
         <Stat
-          label={r.tenderKnown ? "Refunds" : "Refunds (method not recorded)"}
+          label={
+            r.tenderKnown
+              ? "Refunds"
+              : someTenderRecorded
+                ? "Refunds (some without a recorded method)"
+                : "Refunds (method not recorded)"
+          }
           value={money(r.total)}
           testId="today-refunds"
         />
-        {r.tenderKnown ? (
+        {r.tenderKnown || someTenderRecorded ? (
           <>
             <Stat label="Cash refunds" value={money(r.cash)} testId="today-refunds-cash" />
             <Stat label="Card refunds" value={money(r.card)} testId="today-refunds-card" />
@@ -105,7 +116,13 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
         />
         <Stat label="Net collected" value={money(s.netCollected)} testId="today-net-collected" />
         <Stat
-          label={r.tenderKnown ? "Cash expected in drawer" : "Cash expected, before refunds"}
+          label={
+            r.tenderKnown
+              ? "Cash expected in drawer"
+              : someTenderRecorded
+                ? "Cash expected, before refunds with no method recorded"
+                : "Cash expected, before refunds"
+          }
           value={money(s.cashExpectedInDrawer)}
           testId="today-cash-expected"
         />
@@ -153,6 +170,9 @@ function Reprint({
             balanceDue: row.balanceDue,
             methods: row.methods,
             createdAt: row.createdAt,
+            cashTendered: row.cashTendered,
+            customerName: row.isWalkIn ? null : row.customerName,
+            taxRatePercent: row.taxRatePercent,
             timezone,
           },
         })
@@ -198,6 +218,7 @@ function SaleRow({
   row,
   timezone,
   onReprint,
+  onVoid,
   onDone,
 }: {
   focusReprint: boolean;
@@ -205,6 +226,7 @@ function SaleRow({
   row: TodaysSaleRow;
   timezone: string;
   onReprint: () => void;
+  onVoid: () => void;
   onDone: () => void;
 }) {
   const reprintRef = React.useRef<HTMLButtonElement>(null);
@@ -253,6 +275,9 @@ function SaleRow({
               onDone={onDone}
               canReturn={row.returned.state !== "FULL"}
             />
+            {row.returned.state === "NONE" ? (
+              <CounterVoidSaleAction orderNumber={row.orderNumber} onOpen={onVoid} />
+            ) : null}
           </>
         )}
         <Link
@@ -273,6 +298,10 @@ function SaleRow({
 export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
+  // SA-762r: the sale being voided. The dialog sits here (not on the row) so it outlives the row turning Voided.
+  const [voidRow, setVoidRow] = React.useState<{ orderId: string; orderNumber: string } | null>(
+    null,
+  );
   // the row whose Reprint button gets focus back after "Back to sales"
   const [refocusId, setRefocusId] = React.useState<string | null>(null);
   const clearRefocus = React.useCallback(() => setRefocusId(null), []);
@@ -361,6 +390,7 @@ export function CounterTodaysSales() {
                     focusReprint={refocusId === r.orderId}
                     onFocused={clearRefocus}
                     onReprint={() => setReprint(r)}
+                    onVoid={() => setVoidRow({ orderId: r.orderId, orderNumber: r.orderNumber })}
                     onDone={refetchList}
                   />
                 ))}
@@ -379,6 +409,15 @@ export function CounterTodaysSales() {
           </div>
         )}
       </Modal>
+      {voidRow ? (
+        <CounterVoidSaleDialog
+          open
+          orderId={voidRow.orderId}
+          orderNumber={voidRow.orderNumber}
+          onClose={() => setVoidRow(null)}
+          onVoided={refetchList}
+        />
+      ) : null}
     </>
   );
 }

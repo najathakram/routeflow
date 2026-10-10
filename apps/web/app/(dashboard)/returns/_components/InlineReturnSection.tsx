@@ -50,6 +50,10 @@ import {
   ALREADY_RETURNED_NOTE,
   alreadyReturnedProductIds,
 } from "@routeflow/returns";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: returns carry no per-product label yet, so this prints the default words.
+const UW = unitWords();
 
 // See RecordInlineReturnDialog's original SA-108 comment: `lineKey` is a section-local
 // synthetic row identity (never sent on the wire) so two rows of the same product — a Case
@@ -84,6 +88,9 @@ export interface InlineReturnSectionProps {
    *  "opened from an order" hydration) — used by the dialog and the order-edit host. Omit for
    *  a customer with no carrying order yet (CreateOrderModal — the order doesn't exist yet). */
   entryOrderId?: string;
+  /** SA-740: the sale this return is from, sent on the quote and the excess re-quote (REQUIRED for a walk-in; the host
+   *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
+  sourceOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -119,6 +126,7 @@ export interface InlineReturnSectionProps {
 export function InlineReturnSection({
   customerId,
   entryOrderId,
+  sourceOrderId,
   resetToken,
   getQuoteEnabled = true,
   onStateChange,
@@ -259,7 +267,7 @@ export function InlineReturnSection({
 
   function handleGetQuote() {
     setQuoteError("");
-    quoteMutation.mutate(buildQuoteRequest(customerId, lines), {
+    quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // A new quote from the lines step credits its excess at current price by default —
@@ -285,7 +293,7 @@ export function InlineReturnSection({
     const previousOption = excessOption;
     setExcessOption(option);
     if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines), {
+    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines, sourceOrderId), {
       onSuccess: (data) => {
         setQuote(data);
         // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a
@@ -359,7 +367,7 @@ export function InlineReturnSection({
                       {boxed ? (
                         <>
                           <Input
-                            label="Boxes"
+                            label={UW.pack.other}
                             type="number"
                             min={0}
                             inputMode="numeric"
@@ -367,7 +375,7 @@ export function InlineReturnSection({
                             onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
                           />
                           <Input
-                            label="Pieces"
+                            label={UW.base.other}
                             type="number"
                             min={0}
                             inputMode="numeric"
@@ -377,7 +385,7 @@ export function InlineReturnSection({
                         </>
                       ) : (
                         <Input
-                          label="Qty (pieces)"
+                          label={UW.base.other}
                           type="number"
                           min={0}
                           inputMode="numeric"
@@ -405,7 +413,9 @@ export function InlineReturnSection({
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
                         <Input
                           label={
-                            boxed ? "Credit price per box (optional)" : "Credit price (optional)"
+                            boxed
+                              ? `Credit price per ${UW.pack.lower} (optional)`
+                              : "Credit price (optional)"
                           }
                           type="text"
                           inputMode="decimal"
@@ -576,8 +586,8 @@ export function InlineReturnSection({
                   );
                 })}
               <p className="text-xs text-navy/70">
-                {excess.reduce((s, c) => s + c.pieces, 0)} piece(s) priced at the customer&apos;s
-                current price.
+                {excess.reduce((s, c) => s + c.pieces, 0)} {UW.base.lower}(s) priced at the
+                customer&apos;s current price.
               </p>
               {excess.map((c, i) => (
                 <CreditOverrideNote
@@ -699,7 +709,9 @@ function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxe
           {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
           {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
         </span>
-        <span className="text-navy/70">{chunk.pieces} pc</span>
+        <span className="text-navy/70">
+          {chunk.pieces} {UW.base.short.one}
+        </span>
       </div>
       <div className="mt-1 flex justify-between text-navy/70">
         <span>Net {money(chunk.subtotal)}</span>

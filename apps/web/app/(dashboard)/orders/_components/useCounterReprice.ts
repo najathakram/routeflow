@@ -32,9 +32,11 @@ export function useCounterReprice<C extends PickedLike>(deps: {
   setLines: React.Dispatch<React.SetStateAction<SaleLine[]>>;
   /** Outcome unknown: the held cart is frozen, never re-priced. */
   locked: boolean;
+  /** SA-748: bumped when a parked cart is restored, so its lines are re-priced even when the customer did not change. */
+  epoch?: number;
 }) {
-  const { customer, lines, setLines, locked } = deps;
-  const key = keyOf(customer);
+  const { customer, lines, setLines, locked, epoch = 0 } = deps;
+  const key = keyOf(customer) + (epoch ? `#${epoch}` : "");
   const prices = useCustomerPrices(customer?.id);
   const cpMap = React.useMemo(() => {
     const m = new Map<string, number | null>();

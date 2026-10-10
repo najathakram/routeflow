@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
+import { ToastProvider } from "@routeflow/ui/web";
 import type { BuyerProduct } from "@routeflow/types";
 import { ProductTile } from "./ProductTile";
 
@@ -61,6 +62,74 @@ describe("ProductTile tap targets and Notify me", () => {
     expect(heart.className).toMatch(/\bmin-h-11\b/);
     expect(heart.className).toMatch(/\bmin-w-11\b/);
   });
+
+  it("the heart has an accessible name that follows its state, and says whether it is on", () => {
+    const { unmount } = render(
+      <ProductTile
+        product={product()}
+        sellerSlug="acme"
+        cartItem={undefined}
+        promoRules={[]}
+        onAdd={jest.fn()}
+        onUpdateQty={jest.fn()}
+        onToggleFavorite={jest.fn()}
+        onToggleStockAlert={jest.fn()}
+        isFavorite={false}
+      />,
+    );
+    const off = screen.getByRole("button", { name: "Add to favorites" });
+    expect(off).toHaveAttribute("aria-pressed", "false");
+    unmount();
+    render(
+      <ProductTile
+        product={product()}
+        sellerSlug="acme"
+        cartItem={undefined}
+        promoRules={[]}
+        onAdd={jest.fn()}
+        onUpdateQty={jest.fn()}
+        onToggleFavorite={jest.fn()}
+        onToggleStockAlert={jest.fn()}
+        isFavorite
+      />,
+    );
+    const on = screen.getByRole("button", { name: "Remove from favorites" });
+    expect(on).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([undefined, "sm" as const])(
+    "with the item in the cart the stepper gets its OWN full-width row below sm (density %s)",
+    (size) => {
+      render(
+        <ToastProvider>
+          <ProductTile
+            product={product()}
+            sellerSlug="acme"
+            cartItem={{ productId: "p1", qty: 3 } as never}
+            promoRules={[]}
+            onAdd={jest.fn()}
+            onUpdateQty={jest.fn()}
+            onToggleFavorite={jest.fn()}
+            onToggleStockAlert={jest.fn()}
+            isFavorite={false}
+            size={size}
+          />
+        </ToastProvider>,
+      );
+      const plus = screen.getByRole("button", { name: "Increase Widget" });
+      // the stepper's own root is a full-width row below sm and inline again from sm
+      const stepperRoot = plus.closest("[data-qty-stepper]") as HTMLElement;
+      expect(stepperRoot).not.toBeNull();
+      expect(stepperRoot.className).toMatch(/\bw-full\b/);
+      expect(stepperRoot.className).toMatch(/\bsm:w-auto\b/);
+      // the price row wraps so the stepper drops under the price instead of overshooting the tile
+      expect(stepperRoot.parentElement!.className).toMatch(/\bflex-wrap\b/);
+      expect(stepperRoot.parentElement!.className).toMatch(/\bsm:flex-nowrap\b/);
+      // the grid's middle track (minmax(36px,1fr)) lets the field fill the row
+      expect(stepperRoot.className).toContain("grid-cols-[44px_minmax(36px,1fr)_44px]");
+      expect(screen.getByRole("textbox", { name: "Quantity" }).className).toMatch(/\bw-full\b/);
+    },
+  );
 
   it.each([undefined, "sm" as const])("Add has a 44px hit height (density %s)", (size) => {
     setup(product(), size);

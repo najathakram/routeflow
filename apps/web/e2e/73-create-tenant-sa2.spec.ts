@@ -16,6 +16,7 @@ test("SA-2 create ux-audit-pos tenant with the POS profile, review sheet, then O
   await page.getByLabel("Business Name").fill("UX Audit POS");
   await page.getByLabel("Admin Email").fill(`${slug}@example.test`);
   await page.getByLabel("Admin Username").fill("owner");
+  await page.getByLabel("Time zone").fill("America/New_York");
   await page.getByRole("radio", { name: /POS only: counter sales/ }).check();
   await expect(page.getByText("Counter in the menu")).toBeVisible();
 

@@ -262,7 +262,7 @@ describe("Order again", () => {
 
     // boxed: 2 cases + 6 loose = 30 pieces, at today's tier-2 case price
     await waitFor(() => expect(lineFor("Sample Chips")).toBeTruthy());
-    expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("2");
+    expect((screen.getByTitle("Number of whole boxes") as HTMLInputElement).value).toBe("2");
     expect(lineFor("Sample Chips").textContent).toContain("30 pcs total");
     expect(lineFor("Sample Chips").textContent).toContain("$27.00");
     expect(mockToast).toHaveBeenCalledWith(
