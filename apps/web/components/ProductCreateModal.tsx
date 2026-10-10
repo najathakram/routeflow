@@ -329,6 +329,13 @@ export function ProductCreateModal({
       setIsUploading(true);
       try {
         await uploadProductImages(product.id, pendingImages);
+      } catch {
+        // The product EXISTS now: say the photos missed, hand the product back, and close (a retry here would duplicate it).
+        toast({
+          title: "Product created, but its photos didn't upload",
+          description: "Add them from the product page.",
+          variant: "warning",
+        });
       } finally {
         setIsUploading(false);
       }
