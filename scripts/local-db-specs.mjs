@@ -50,12 +50,28 @@ export function assertSpecDbName(name) {
 
 /**
  * The compose connection (same POSTGRES_USER / POSTGRES_PASSWORD defaults as docker-compose.yml and
- * scripts/local-env.mjs), always on localhost:5432. `database` is the spec database, or the
+ * scripts/local-env.mjs), always on loopback port 5432. `database` is the spec database, or the
  * compose maintenance database `postgres` for CREATE/DROP.
+ *
+ * The host is the literal 127.0.0.1, not the name `localhost`: Prisma's engine resolves the name to
+ * ::1 on some machines, where a stale relay can answer (P1001). RF_DBSPEC_HOST overrides it, but
+ * only with `localhost` or a 127.x.x.x address, so this DROP-capable lane can never be aimed at a
+ * remote database through the environment.
  */
+const LOOPBACK_HOST = /^(localhost|127(\.\d{1,3}){3})$/;
+
+export function dbSpecHost(env) {
+  const host = env.RF_DBSPEC_HOST;
+  if (!host) return "127.0.0.1";
+  if (!LOOPBACK_HOST.test(host)) {
+    throw new Error(`RF_DBSPEC_HOST must be localhost or a 127.x.x.x address, got "${host}"`);
+  }
+  return host;
+}
+
 export function composeConnection(env, database) {
   return {
-    host: "localhost",
+    host: dbSpecHost(env),
     port: 5432,
     user: env.POSTGRES_USER || "user",
     password: env.POSTGRES_PASSWORD || "pass",
@@ -82,10 +98,11 @@ const HELP = `${TAG}.mjs — run the DB spec lane on its own fresh database
 
 Usage: node scripts/local-db-specs.mjs [--keep] -- "<command string>"
 
-Creates rf_dbspec_<time>_<pid> on the local compose Postgres (localhost:5432, POSTGRES_USER /
+Creates rf_dbspec_<time>_<pid> on the local compose Postgres (127.0.0.1:5432, POSTGRES_USER /
 POSTGRES_PASSWORD as in docker-compose.yml), applies every migration, runs the command with the
 compose connection pointed at it and RUN_DB_SPECS=local, then drops it (also on failure or Ctrl-C).
-Any RAILWAY_* variable is removed from the command's environment.
+Any RAILWAY_* variable is removed from the command's environment. RF_DBSPEC_HOST overrides the host
+(localhost or a 127.x.x.x address only).
 
   --keep   leave the database in place afterwards and print its name
   --help   print this help and exit 0
@@ -119,7 +136,9 @@ async function main() {
   try {
     await withAdmin(process.env, (c) => c.query(`CREATE DATABASE "${name}"`));
   } catch (e) {
-    console.error(`${TAG}: could not create ${name} on localhost:5432: ${e.message}`);
+    console.error(
+      `${TAG}: could not create ${name} on ${dbSpecHost(process.env)}:5432: ${e.message}`,
+    );
     console.error(`${TAG}: is the compose Postgres up? (npm run db:up)`);
     return 2;
   }
