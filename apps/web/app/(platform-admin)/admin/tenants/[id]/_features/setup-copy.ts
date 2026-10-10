@@ -46,6 +46,3 @@ export function fulfilmentModeLabel(value: string): string {
     ? FULFILMENT_MODE_LABELS[value as FulfilmentMode]
     : UNKNOWN_MODE_LABEL;
 }
-
-/** In-store profiles are listed but cannot be applied until counter sales exist. */
-export const IN_STORE_UNAVAILABLE_NOTE = "Available when counter sales launch";

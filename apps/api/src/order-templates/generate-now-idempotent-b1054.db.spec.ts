@@ -22,7 +22,7 @@ import { randomUUID } from "crypto";
 import { Logger } from "@nestjs/common";
 import { PrismaClient, UserRole } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { _resetLockPoolForTests } from "../common/db-locks";
 import { PrismaService } from "../prisma/prisma.service";
@@ -68,6 +68,23 @@ describeDb("generate order now is idempotent (B1054)", () => {
     order: { lineItems: Array<{ productId: string | null; qty: unknown }> },
     p = productId,
   ) => order.lineItems.filter((l) => l.productId === p).reduce((s, l) => s + Number(l.qty), 0);
+
+  /** Block until Postgres shows `n` backends waiting on a template row lock. */
+  async function waitForBlockedOnTemplateLock(n: number) {
+    const deadline = Date.now() + 20_000;
+    for (;;) {
+      const { rows } = await pool.query(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query ILIKE '%FOR NO KEY UPDATE%' AND query LIKE '%"OrderTemplate"%'`,
+      );
+      if (Number(rows[0].n) >= n) return;
+      if (Date.now() > deadline) {
+        throw new Error(`only ${rows[0].n} of ${n} runs reached the template lock within 20 s`);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
 
   async function reset() {
     await raw.stockMovement.deleteMany({ where: { product: { tenantId } } });
@@ -223,7 +240,27 @@ describeDb("generate order now is idempotent (B1054)", () => {
   });
 
   it("REG-B1054: two CONCURRENT calls place ONE order of 5 and both answer with it", async () => {
-    const [a, b] = await Promise.all([generate(), generate()]);
+    // A held row lock is the barrier: both calls pass their unlocked checks (no order yet) and
+    // queue on the template row, so the locked re-read is what answers the second one.
+    const holder = new Client({ connectionString: requireLocalDatabaseUrl() });
+    await holder.connect();
+    let first: Promise<any> | undefined;
+    let second: Promise<any> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "OrderTemplate" WHERE id = $1 FOR NO KEY UPDATE`, [
+        templateId,
+      ]);
+      first = generate();
+      second = generate();
+      await waitForBlockedOnTemplateLock(2);
+    } finally {
+      await holder.query("COMMIT").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+      // Never leave a call in flight past a barrier timeout: it would overlap reset()/afterAll.
+      await Promise.allSettled([first, second].filter(Boolean));
+    }
+    const [a, b] = await Promise.all([first!, second!]);
 
     const all = await orders();
     expect(all.map((o) => qtyOf(o))).toEqual([TEMPLATE_QTY]);
