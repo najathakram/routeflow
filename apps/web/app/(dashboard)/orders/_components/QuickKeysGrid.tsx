@@ -47,6 +47,23 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
   // Client-only (it renders once the data has arrived), so reading storage at init cannot mismatch the server HTML.
   const [collapsed, setCollapsed] = React.useState(readCollapsed);
   const [editing, setEditing] = React.useState(false);
+  // #3356: a tap awaits a refetch, so the handler must judge the sale as it is NOW, not as it was at tap time.
+  // `onAddRef` is the parent's current closure; `lockEpochRef` bumps whenever the cart locks and when this grid
+  // unmounts (the receipt view / a New sale replaces it), so a tap that started before either is dropped.
+  const onAddRef = React.useRef(onAdd);
+  onAddRef.current = onAdd;
+  const lockedRef = React.useRef(locked);
+  lockedRef.current = locked;
+  const lockEpochRef = React.useRef(0);
+  React.useEffect(() => {
+    if (locked) lockEpochRef.current += 1;
+  }, [locked]);
+  React.useEffect(
+    () => () => {
+      lockEpochRef.current += 1;
+    },
+    [],
+  );
 
   if (!data || !Array.isArray(data.keys)) return null;
   const keys = data.keys;
@@ -106,6 +123,7 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
                     )}
                     onClick={async (e) => {
                       if (locked) return;
+                      const epoch = lockEpochRef.current;
                       // #3356: re-read the answer so the added price is the server's current one, like a scan's
                       // lookup. A failed or empty refresh falls back to the loaded key: the till never blocks.
                       let key = k;
@@ -117,7 +135,9 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
                       } catch {
                         /* keep the loaded key */
                       }
-                      onAdd(key, e);
+                      // The cart locked (or the sale ended / reset) while the refresh was in flight: add nothing.
+                      if (lockedRef.current || lockEpochRef.current !== epoch) return;
+                      onAddRef.current(key, e);
                     }}
                   >
                     {k.pinned ? (

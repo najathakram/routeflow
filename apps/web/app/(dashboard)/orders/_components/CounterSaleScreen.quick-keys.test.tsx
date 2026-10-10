@@ -298,6 +298,33 @@ describe("QuickKeysGrid: frozen carts ignore taps", () => {
     await screen.findByTestId("counter-sale-receipt");
   });
 
+  it("#3356: a tap whose refresh outlives the sale never lands in the finished sale or the next cart", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.click(await colaKey());
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    // the NEXT tap's refresh hangs on a promise the test controls
+    let release!: () => void;
+    quickKeysAnswer = () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            data: { register: "main", cap: 12, keys: [keyFor(WATER)] },
+          });
+      });
+    fireEvent.click(screen.getByTestId("quick-key-p-water"));
+    await waitFor(() => expect(release).toBeDefined());
+    // meanwhile the sale finishes, then the clerk starts a new one
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await screen.findByTestId("counter-sale-receipt");
+    fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+    await screen.findByTestId("quick-keys");
+    release();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lines()).toHaveLength(0);
+    expect(total()).toHaveTextContent("$0.00");
+  });
+
   it("the receipt view has no grid to tap", async () => {
     renderWithProviders(<CounterSaleScreen />);
     fireEvent.click(await colaKey());
