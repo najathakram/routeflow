@@ -400,12 +400,17 @@ export class PickupCompleteService {
         : undefined;
       try {
         for (const { invoiceId, due } of writes) {
-          await this.invoices.recordPayment(invoiceId, {
-            amount: due,
-            method: toPrismaMethod(payment.method)!,
-            reference: payment.reference,
-            ...(paidAt ? { paidAt } : {}),
-          } as never);
+          // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
+          await this.invoices.recordPayment(
+            invoiceId,
+            {
+              amount: due,
+              method: toPrismaMethod(payment.method)!,
+              reference: payment.reference,
+              ...(paidAt ? { paidAt } : {}),
+            } as never,
+            { tillLockHeld: true },
+          );
         }
       } catch (e) {
         this.logger.warn(

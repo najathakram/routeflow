@@ -44,6 +44,25 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     ).resolves.toBe(true);
   });
 
+  it("allows closing the day while READ_ONLY, and ONLY that exact endpoint (owner ruling 2026-10-10)", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/orders/counter-sale/day-close")),
+    ).resolves.toBe(true);
+    for (const blocked of [
+      "/api/v1/orders/counter-sale", // a sale stays blocked
+      "/api/v1/orders/counter-sale/day-close/x/reopen",
+      "/api/v1/orders/counter-sale/day-close/x/report",
+      "/api/v1/orders/counter-sale/day-close/",
+      "/api/v1/orders/counter-sale/day-closed",
+    ]) {
+      const err = await guardFor("READ_ONLY")
+        .canActivate(ctx("POST", blocked))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    }
+  });
+
   it("allows /billing/quote while READ_ONLY (the plan-change classifier /choose-plan fires before subscribe)", async () => {
     await expect(
       guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/billing/quote")),

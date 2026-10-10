@@ -228,6 +228,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 37.25, method: "CASH" }),
+          { tillLockHeld: true },
         );
         expect(res).toMatchObject({
           orderId: "ord-1",
@@ -248,6 +249,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
+        { tillLockHeld: true },
       );
       expect(res).toMatchObject({
         paid: 37.25,
@@ -266,6 +268,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ method: "CREDIT_CARD", reference: "auth9" }),
+        { tillLockHeld: true },
       );
     });
     it("only DRAFT invoices are sent; an already-SENT one is not re-sent", async () => {
@@ -302,6 +305,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 40, method: "CASH" }),
+          { tillLockHeld: true },
         );
         expect(first).toMatchObject({
           total: 50,
@@ -324,7 +328,9 @@ describe("PickupCompleteService.complete", () => {
       invoices = [inv("inv-1", 50, "SENT", [pay("dep-1", 10, "CASH", T_DEPOSIT)])];
       const res = await run(cash(50));
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 40 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 40 }), {
+        tillLockHeld: true,
+      });
       expect(res).toMatchObject({ paid: 50, balanceDue: 0, change: 10, alreadyPickedUp: true });
     });
 
@@ -345,6 +351,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 27.25 }),
+        { tillLockHeld: true },
       );
       expect(res).toMatchObject({ total: 37.25, paid: 37.25, balanceDue: 0 });
     });
@@ -474,7 +481,9 @@ describe("PickupCompleteService.complete", () => {
       invoices = [inv("inv-1", 37.25, "PARTIAL", [pay("pay-1", 20)])];
       await run(cash(30)); // plan 30, 20 already stored for this hand-over
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 10 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 10 }), {
+        tillLockHeld: true,
+      });
     });
     it("a sibling-invoice first attempt that failed part-way is resumed: only the unpaid sibling is recorded", async () => {
       order = orderRow("DELIVERED");
@@ -622,6 +631,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-2",
         expect.objectContaining({ amount: 12.5, method: "CASH" }),
+        { tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
     });
@@ -681,6 +691,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 12.25, method: "CASH" }),
+        { tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true, alreadyPickedUp: true });
     });
@@ -859,6 +870,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25, method: "CASH" }),
+        { tillLockHeld: true },
       );
       expect(res).toMatchObject({ paymentRecorded: true, balanceDue: 0 });
     });

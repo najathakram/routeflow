@@ -161,7 +161,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
-import { counterPay } from "./counter-payment-guard";
+import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -4565,7 +4565,7 @@ export class InvoicesService {
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
-  async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
+  async recordPayment(id: string, dto: RecordInvoicePaymentDto, opts?: CounterPayOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
@@ -4575,21 +4575,17 @@ export class InvoicesService {
     // Refuse a null tenant BEFORE the transaction opens — same policy as sites
     // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
+    const till = await counterPay.scope(this.prisma, id, !opts?.tillLockHeld); // SA-750r3
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // Lock the invoice row so concurrent payment requests serialize here
+      // SA-750r3: a counter sale's shared close lock first (the tender/pickup hold it already), then the invoice row
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
       const inv = await tx.invoice.findUnique({
         where: { id },
-        // PR-2 (check-payments B1 hardening, review-opus-v2 condition #6): fetches
-        // every non-VOID row now, not just CONFIRMED — the capacity guard below
-        // moves to remainingCapacity() (DRAFT+PAID, N4: capacity must count DRAFT,
-        // closing a real double-book gap this narrower query previously masked),
-        // while recomputeStatus below keeps reading CONFIRMED-only via sumConfirmed
-        // — F03/R1 status discipline is unchanged. Feeds remainingCapacity()'s own
-        // internal not-void filter; @routeflow/pricing deliberately exports no
-        // Prisma "not void" filter (see remainingCapacity's docstring), so this is
-        // the correct inline form, not a re-derived mirror.
+        // PR-2 (N4): every non-VOID row, so remainingCapacity() counts DRAFT (closes a double-book gap);
+        // recomputeStatus below still reads CONFIRMED-only via sumConfirmed (F03/R1). @routeflow/pricing exports
+        // no Prisma "not void" filter (see remainingCapacity's docstring), so this inline form is the correct one.
         // scan-ok: draft-payment-not-void — see comment above.
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
@@ -4621,6 +4617,8 @@ export class InvoicesService {
           );
       }
 
+      const paidAt = await counterPay.assertDatedOk(tx, till, inv.orderId, dto, paymentStatus);
+
       // Auto-generate payment number — use tenantId as the counter row key so
       // each tenant has its own independent sequence. Include a short tenant hash
       // in the payment number to avoid global @unique collisions across tenants.
@@ -4640,7 +4638,7 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+          paidAt,
           // Never clamped: a post-dated check settles in the future.
           settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           bankCharges: roundMoneyOrNull(dto.bankCharges),

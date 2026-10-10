@@ -1,5 +1,8 @@
-import { lockCounterClose, registerKeyOfOrder } from "../returns/counter-close-lock";
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "../returns/counter-close-lock";
 import { assertCounterWindowOpen } from "../returns/counter-close-window";
+import { isTillCashRow } from "../orders/counter-sale/counter-till-cash";
 
 /**
  * SA-750r3 / SA-762r F7: the payment-edit paths (voidPayment, deletePayment, updatePayment, setCheckStatus(BOUNCED)) of a COUNTER
@@ -66,5 +69,58 @@ async function assertOpen(
   }
 }
 
+/** `recordPayment`'s third parameter: the counter tender / pickup already hold the SHARED close lock on their pinned connection. */
+export interface CounterPayOpts {
+  tillLockHeld?: boolean;
+}
+
+type DatedTx = Parameters<typeof dbClockNow>[0] & {
+  counterDayClose: {
+    findFirst: (args: {
+      where: { tenantId: string; registerKey: string; reopenedAt: null };
+      orderBy: { windowEnd: "desc" };
+      select: { windowEnd: true };
+    }) => Promise<{ windowEnd: Date } | null>;
+  };
+};
+
+/**
+ * `recordPayment`, under the shared lock (`scope` non-null only): a till-CASH row (`isTillCashRow`) dated strictly BEFORE the
+ * latest STANDING close's cutoff of the register would change that closed Z report, so it is refused 409
+ * DAY_CLOSED_FOR_PAYMENT_DATE (`closedThrough` = that cutoff). A reopened close is not standing. A CHECK / card / ACH / DRAFT
+ * moves no close total and keeps its true date. Returns the instant to store: `paidAt` as given, else "now" (for a till-cash row
+ * on a counter invoice, the DATABASE clock the close reads its cutoff from, so a lagging app clock cannot back-date into it).
+ */
+async function assertDatedOk(
+  tx: DatedTx,
+  scope: CounterPaymentScope | null,
+  orderId: string | null,
+  dto: { method: string; paidAt?: Date | string | null },
+  status: string,
+): Promise<Date> {
+  const given = dto.paidAt ? new Date(dto.paidAt) : null;
+  // The row recordPayment is about to store: ungrouped, and a CHECK is stored RECORDED.
+  const row = {
+    method: dto.method,
+    status,
+    paymentGroupId: null,
+    checkStatus: dto.method === "CHECK" ? "RECORDED" : null,
+  };
+  if (!scope || !isTillCashRow(orderId ?? "", row)) return given ?? new Date();
+  const at = given ?? (await dbClockNow(tx));
+  const close = await tx.counterDayClose.findFirst({
+    where: { tenantId: scope.tenantId, registerKey: scope.registerKey, reopenedAt: null },
+    orderBy: { windowEnd: "desc" },
+    select: { windowEnd: true },
+  });
+  if (close && at < close.windowEnd)
+    throw new ConflictException({
+      code: API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE,
+      message: "That day is closed. Record it with today's date.",
+      closedThrough: close.windowEnd.toISOString(),
+    });
+  return at;
+}
+
 /** One namespace so the 5.9k-line invoices service imports it in a single line (size ratchet). */
-export const counterPay = { scope, lock, assertOpen };
+export const counterPay = { scope, lock, assertOpen, assertDatedOk };

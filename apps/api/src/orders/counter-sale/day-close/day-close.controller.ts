@@ -40,6 +40,22 @@ export class CounterDayCloseController {
     return this.dayClose.state(query.registerKey);
   }
 
+  /** The latest close of the register (404 when none): "Last close · View". Declared before `:id` so it is never read as one. */
+  @Get("counter-sale/day-close/latest")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  latest(@Query() query: DayCloseQueryDto) {
+    return this.dayClose.latestClose(query.registerKey);
+  }
+
+  /** One past close by id. */
+  @Get("counter-sale/day-close/:id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  byId(@Param("id", ParseUUIDPipe) id: string) {
+    return this.dayClose.closeById(id);
+  }
+
   /** Closes the window (or re-closes a reopened one). The server recomputes every figure. */
   @Post("counter-sale/day-close")
   @UseGuards(RolesGuard)

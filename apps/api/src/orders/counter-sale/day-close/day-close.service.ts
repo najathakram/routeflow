@@ -204,6 +204,28 @@ export class CounterDayCloseService {
 
   // ─── GET ────────────────────────────────────────────────────────────────────────────────────────
 
+  /** GET .../day-close/latest: the latest close of the register (windowEnd is its `closedThrough`), or 404 when it has none. */
+  async latestClose(rawRegisterKey?: string): Promise<DayCloseSnapshot> {
+    const tenantId = this.tenantId();
+    await this.assertCounterOn(tenantId);
+    const registerKey = parseRegisterKey(rawRegisterKey);
+    const row = await this.latest(this.prisma.forTenant(), tenantId, registerKey);
+    if (!row) throw new NotFoundException("No close yet");
+    return this.snapshotOf(row);
+  }
+
+  /** GET .../day-close/:id: one past close (404 for an unknown id or another tenant's). */
+  async closeById(id: string): Promise<DayCloseSnapshot> {
+    const tenantId = this.tenantId();
+    await this.assertCounterOn(tenantId);
+    const row = await this.prisma.forTenant().counterDayClose.findFirst({
+      where: { id, tenantId },
+      include: WITH_CLOSER,
+    });
+    if (!row) throw new NotFoundException("Close not found");
+    return this.snapshotOf(row);
+  }
+
   async state(rawRegisterKey?: string, now: Date = new Date()): Promise<DayCloseState> {
     const tenantId = this.tenantId();
     await this.assertCounterOn(tenantId);

@@ -244,13 +244,32 @@ describeDb("the end-of-day close and every writer of till money, real Postgres (
     method: "CASH" | "CHECK",
     minAgo: number,
   ) {
-    await tenantCtx.run(tenantId, () =>
-      invoices.recordPayment(invoiceId, {
-        amount: 30,
-        method,
-        paidAt: new Date(Date.now() - minAgo * MIN).toISOString(),
-      } as any),
-    );
+    // History is seeded as it happened: the payment was taken BEFORE the close. The office door now refuses a backdated CASH
+    // into a closed window (SA-750r3, DAY_CLOSED_FOR_PAYMENT_DATE), so lift any standing close of the tenant for this one
+    // seeding call and put it back (that refusal has its own spec: counter-record-payment-closed-day.db.spec.ts).
+    const standing = await prisma.counterDayClose.findMany({
+      where: { tenantId, reopenedAt: null },
+      select: { id: true },
+    });
+    const ids = standing.map((c) => c.id);
+    await prisma.counterDayClose.updateMany({
+      where: { id: { in: ids } },
+      data: { reopenedAt: new Date() },
+    });
+    try {
+      await tenantCtx.run(tenantId, () =>
+        invoices.recordPayment(invoiceId, {
+          amount: 30,
+          method,
+          paidAt: new Date(Date.now() - minAgo * MIN).toISOString(),
+        } as any),
+      );
+    } finally {
+      await prisma.counterDayClose.updateMany({
+        where: { id: { in: ids } },
+        data: { reopenedAt: null },
+      });
+    }
     return prisma.invoicePayment.findFirstOrThrow({ where: { invoiceId, method } });
   }
 

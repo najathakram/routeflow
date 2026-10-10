@@ -147,12 +147,16 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
 
   it("dates the payment from the database clock, read after the lock and before the write", async () => {
     await run();
-    expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-      amount: 37.25,
-      method: "CASH",
-      reference: undefined,
-      paidAt: DB_NOW.toISOString(),
-    });
+    expect(recordPayment).toHaveBeenCalledWith(
+      "inv-1",
+      {
+        amount: 37.25,
+        method: "CASH",
+        reference: undefined,
+        paidAt: DB_NOW.toISOString(),
+      },
+      { tillLockHeld: true },
+    );
     expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({
       tenantId: "test-tenant",
       registerKey: "main",
@@ -196,10 +200,14 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
     expect(lockCalls.every((c) => c.sharedAlso === undefined)).toBe(true);
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
-    expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-      amount: 37.25,
-      method: "CASH",
-      reference: undefined,
-    });
+    expect(recordPayment).toHaveBeenCalledWith(
+      "inv-1",
+      {
+        amount: 37.25,
+        method: "CASH",
+        reference: undefined,
+      },
+      { tillLockHeld: true },
+    );
   });
 });

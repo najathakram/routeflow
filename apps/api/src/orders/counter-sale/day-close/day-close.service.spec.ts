@@ -321,6 +321,34 @@ describe("CounterDayCloseService: registers", () => {
     expect(fake.closes.map((c) => c.registerKey)).toEqual(["main", "b"]);
   });
 
+  it("latestClose returns the register's newest close, 404 when it has none, and ignores another register's", async () => {
+    const { service, fake } = setup();
+    await expect(service.latestClose()).rejects.toBeInstanceOf(NotFoundException);
+    fake.seedClose(standingClose());
+    fake.seedClose(
+      standingClose({
+        day: T("2026-10-09T00:00:00.000Z"),
+        windowStart: T("2026-10-08T16:00:00.000Z"),
+        windowEnd: T("2026-10-09T16:00:00.000Z"),
+        closedAt: T("2026-10-09T16:00:00.000Z"),
+      }),
+    );
+    const latest = await service.latestClose();
+    expect(latest.windowEnd).toBe("2026-10-09T16:00:00.000Z");
+    expect(latest.totals).toBeDefined();
+    await expect(service.latestClose("b")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("closeById returns one close with its figures, 404 for an unknown id", async () => {
+    const { service, fake } = setup();
+    fake.seedClose(standingClose());
+    const [row] = fake.closes;
+    const snap = await service.closeById(row.id);
+    expect(snap.id).toBe(row.id);
+    expect(snap.countedCash).toBe(Number(row.countedCash));
+    await expect(service.closeById("nope")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("the state of register 'b' ignores main's close", async () => {
     const { service, fake } = setup();
     fake.seedClose(standingClose({ registerKey: "main" }));

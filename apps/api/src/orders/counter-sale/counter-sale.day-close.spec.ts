@@ -160,12 +160,16 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
       return null;
     });
     await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
-    expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-      amount: 37.25,
-      method: "CASH",
-      reference: undefined,
-      paidAt: DB_NOW.toISOString(),
-    });
+    expect(recordPayment).toHaveBeenCalledWith(
+      "inv-1",
+      {
+        amount: 37.25,
+        method: "CASH",
+        reference: undefined,
+        paidAt: DB_NOW.toISOString(),
+      },
+      { tillLockHeld: true },
+    );
     expect(events).toEqual(["lock", "window-read", "record", "unlock"]);
     expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({
       windowStart: { lte: DB_NOW },

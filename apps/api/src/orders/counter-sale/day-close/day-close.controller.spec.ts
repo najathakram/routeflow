@@ -21,12 +21,14 @@ describe("CounterDayCloseController: routes", () => {
   it("is the exact route list, under the orders base", () => {
     expect(Reflect.getMetadata("path", CounterDayCloseController)).toBe("orders");
     expect(
-      (["state", "close", "reopen", "report"] as const).map((n) => {
+      (["state", "latest", "byId", "close", "reopen", "report"] as const).map((n) => {
         const r = routeOf(n);
         return `${r.method} ${r.path}`;
       }),
     ).toEqual([
       "GET counter-sale/day-close",
+      "GET counter-sale/day-close/latest",
+      "GET counter-sale/day-close/:id",
       "POST counter-sale/day-close",
       "POST counter-sale/day-close/:id/reopen",
       "POST counter-sale/day-close/:id/report",
@@ -34,7 +36,7 @@ describe("CounterDayCloseController: routes", () => {
   });
 
   it("every route is OPERATOR (which admits TENANT_ADMIN) behind the roles guard", () => {
-    for (const n of ["state", "close", "reopen", "report"] as const) {
+    for (const n of ["state", "latest", "byId", "close", "reopen", "report"] as const) {
       expect(routeOf(n).roles).toEqual([UserRole.OPERATOR]);
       expect(routeOf(n).guards).toHaveLength(1);
     }
@@ -43,7 +45,9 @@ describe("CounterDayCloseController: routes", () => {
 
   it("no GET route of the other orders controllers can take the day-close path", () => {
     const takes = (template: string) =>
-      new RegExp(`^${template.replace(/:[^/]+/g, "[^/]+")}$`).test("orders/counter-sale/day-close");
+      ["orders/counter-sale/day-close", "orders/counter-sale/day-close/latest"].some((p) =>
+        new RegExp(`^${template.replace(/:[^/]+/g, "[^/]+")}$`).test(p),
+      );
     for (const ctrl of [OrdersController, CounterSaleController]) {
       const base = String(Reflect.getMetadata("path", ctrl));
       for (const name of Object.getOwnPropertyNames(ctrl.prototype)) {
