@@ -1,4 +1,5 @@
 export * from "./pricing";
+export * from "./counter-register";
 export * from "./tier-pricing";
 export * from "./payment-confirmation";
 export * from "./money-invariants";

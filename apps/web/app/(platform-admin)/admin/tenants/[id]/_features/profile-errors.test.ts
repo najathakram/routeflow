@@ -38,9 +38,7 @@ describe("profileErrorCopy — fixed copy chosen by the API's error code", () =>
         }),
         FALLBACK,
       ),
-    ).toBe(
-      "That business profile is not available yet. In-store profiles open when counter sales launch.",
-    );
+    ).toBe("This business profile isn't available for this tenant.");
   });
 
   it("FULFILMENT_MODE_NEEDS_FLEET → names the fleet features, never raw keys", () => {
