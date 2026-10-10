@@ -5,6 +5,7 @@ import type {
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
+import { priceUnitWord } from "@/lib/product-unit-label";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
@@ -19,6 +20,8 @@ export interface ReceiptLineInput {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** Row 298: the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent: no word. */
+  unit?: string | null;
   /** POS-3: the cashier's optional per-line note, printed under the line. */
   note?: string | null;
   /**
@@ -119,7 +122,10 @@ const isBoxed = (l: ReceiptLineInput) => (l.unitsPerBox ?? 0) > 1;
 
 function lineDetail(l: ReceiptLineInput): string {
   const price = formatReceiptMoney(l.unitPrice);
-  if (!isBoxed(l)) return `${l.qty} × ${price}`;
+  if (!isBoxed(l)) {
+    const unit = (l.unit ?? "").trim() ? ` / ${priceUnitWord(l.unit)}` : "";
+    return `${l.qty} × ${price}${unit}`;
+  }
   const boxes = l.boxes ?? 0;
   const pieces = l.pieces ?? 0;
   const parts = [`${boxes} box${boxes === 1 ? "" : "es"}`];
@@ -282,6 +288,7 @@ export interface ReprintOrderLike {
       variantName?: string | null;
       parentProductId?: string | null;
       parent?: { name: string } | null;
+      unit?: string | null;
     } | null;
     qty: number;
     unitPrice: number;
@@ -368,6 +375,7 @@ export function receiptModelFromOrder(input: {
         unitsPerBox: l.unitsPerBox == null ? undefined : num(l.unitsPerBox),
         boxes: l.boxes == null ? undefined : num(l.boxes),
         pieces: l.pieces == null ? undefined : num(l.pieces),
+        unit: l.product?.unit ?? null,
       };
       return {
         key: line.tempId,

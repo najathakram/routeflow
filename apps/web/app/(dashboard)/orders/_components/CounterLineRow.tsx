@@ -1,6 +1,7 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
+import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -9,7 +10,7 @@ import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-// The counter has no per-product label on a sale line yet, so its price unit prints the default words.
+// A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
@@ -214,7 +215,10 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {money(l.unitPrice)} {isBoxedLine(l) ? `/ ${UW.pack.lower}` : `/ ${UW.base.lower}`}
+              {money(l.unitPrice)}{" "}
+              {isBoxedLine(l)
+                ? `/ ${UW.pack.lower}`
+                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
             </span>
           </span>
         </span>
