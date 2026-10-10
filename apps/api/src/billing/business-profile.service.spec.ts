@@ -143,7 +143,7 @@ describe("BusinessProfileService.preview", () => {
       ...previewResponse,
       planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
       changes: [
-        "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+        "Where orders go: Not configured (today's behavior) → Ship by carrier",
         "Turn off At-door payment collection",
       ],
       profile: "shipping_wholesaler",
@@ -158,7 +158,7 @@ describe("BusinessProfileService.preview", () => {
       },
       summary: [
         "Recurring routes will be switched off and its billing stopped",
-        "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+        "Where orders go: Not configured (today's behavior) → Ship by carrier",
         "Turn off At-door payment collection",
       ],
     });
@@ -170,7 +170,7 @@ describe("BusinessProfileService.preview", () => {
     });
     const res = await svc.preview(T, "shipping_wholesaler");
     expect(res.summary).toEqual([
-      "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+      "Where orders go: Not configured (today's behavior) → Ship by carrier",
       'Turn off Recurring routes (replaces the current "on" override)',
     ]);
   });

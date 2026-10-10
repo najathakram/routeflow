@@ -86,6 +86,7 @@ import {
   tenantSafeParent,
   tenantSafeParentView,
 } from "./product-parent";
+import { scanReadInclude } from "./scan-product-view";
 import {
   activeVariantIds,
   assertParentActiveForReactivation,
@@ -629,12 +630,7 @@ export class ProductsService {
       this.prisma.forTenant(),
       candidates,
       {},
-      {
-        variants: {
-          where: { isActive: true, ...(readTenantId ? { tenantId: readTenantId } : {}) },
-        },
-        parent: true,
-      },
+      scanReadInclude(readTenantId),
     );
     if (!hit) throw new NotFoundException("Product not found");
     return {
