@@ -6,6 +6,7 @@ import {
   ReadOnlyGateProvider,
   ReadOnlyHint,
   WriteButton,
+  WriteLink,
   markReadOnlyRefused,
   resetReadOnlyRefusedForTests,
 } from "./read-only-gate";
@@ -107,5 +108,26 @@ describe("read-only gate - a 403 READ_ONLY refusal", () => {
       jest.advanceTimersByTime(61_000);
     });
     expect(screen.getByRole("button", { name: "Record Payment" })).toBeEnabled();
+  });
+});
+
+describe("WriteLink", () => {
+  it("read-only: a disabled button (cannot navigate) pointing at the line; open: a real link", () => {
+    const ro = renderWithProviders(
+      <ReadOnlyGateProvider view={view()}>
+        <WriteLink href="/invoices/new">New Invoice</WriteLink>
+        <ReadOnlyHint />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.queryByRole("link", { name: "New Invoice" })).toBeNull();
+    const btn = screen.getByRole("button", { name: "New Invoice" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-describedby", screen.getByTestId("read-only-line").id);
+    ro.unmount();
+    renderWithProviders(<WriteLink href="/invoices/new">New Invoice</WriteLink>);
+    expect(screen.getByRole("link", { name: "New Invoice" })).toHaveAttribute(
+      "href",
+      "/invoices/new",
+    );
   });
 });

@@ -30,6 +30,7 @@ import {
   PAYMENT_METHOD_COLORS as METHOD_COLORS,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -593,12 +594,10 @@ export default function FinancePaymentsPage() {
           <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
-        >
-          + Record Payment
-        </button>
+        <div className="flex flex-col items-end">
+          <WriteButton onClick={() => setShowModal(true)}>+ Record Payment</WriteButton>
+          <ReadOnlyHint />
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -800,9 +799,9 @@ export default function FinancePaymentsPage() {
                           title="No payments yet"
                           description="Record a payment to mark invoices as paid and track receipts."
                           action={
-                            <Button size="sm" onClick={() => setShowModal(true)}>
+                            <WriteButton size="sm" onClick={() => setShowModal(true)}>
                               Record payment
-                            </Button>
+                            </WriteButton>
                           }
                         />
                       )}

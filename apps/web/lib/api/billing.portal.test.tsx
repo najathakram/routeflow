@@ -7,7 +7,7 @@ const mockPost = jest.fn();
 jest.mock("../api-client", () => ({
   apiClient: { get: jest.fn(), post: (...a: unknown[]) => mockPost(...a) },
 }));
-const mockGuard = jest.fn(() => false);
+const mockGuard = jest.fn((_f?: () => void) => false);
 jest.mock("../counter-cart-signal", () => ({
   guardCounterLeave: (f?: () => void) => mockGuard(f),
 }));

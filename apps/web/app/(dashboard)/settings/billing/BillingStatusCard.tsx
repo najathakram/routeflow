@@ -53,10 +53,7 @@ export function BillingStatusCard({
         <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
           <p className="min-w-0 flex-1 text-sm text-slate-800">{owedCopy}</p>
           {state.cardPay && (
-            <Button
-              loading={portal.isPending}
-              onClick={() => portal.mutate({ intent: state.cardPay!.intent })}
-            >
+            <Button loading={portal.isPending} onClick={() => portal.mutate({ intent: "pay" })}>
               {state.cardPay.label}
             </Button>
           )}

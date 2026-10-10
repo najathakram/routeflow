@@ -116,6 +116,7 @@ import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
 import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
 import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -1711,7 +1712,8 @@ export function CreateOrderModal({
             <Button variant="ghost" type="button" onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            <WriteButton
               variant="secondary"
               type="button"
               loading={createOrder.isPending}
@@ -1719,8 +1721,8 @@ export function CreateOrderModal({
               onClick={onSaveDraft}
             >
               Save as Draft
-            </Button>
-            <Button
+            </WriteButton>
+            <WriteButton
               type="submit"
               form="create-order-form"
               loading={createOrder.isPending}
@@ -1731,7 +1733,7 @@ export function CreateOrderModal({
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order
-            </Button>
+            </WriteButton>
           </div>
         </div>
       }

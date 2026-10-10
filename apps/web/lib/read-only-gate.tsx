@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import type { SubscriptionView } from "@routeflow/types";
 import { Button, type ButtonProps } from "@routeflow/ui/web";
 import { readOnlyLine } from "./subscription-banner-state";
@@ -90,6 +91,40 @@ export function WriteButton({ href, onClick, disabled, ...rest }: ButtonProps) {
     );
   }
   return <Button {...rest} href={href} onClick={onClick} disabled={disabled} />;
+}
+
+/**
+ * A link that WRITES (it opens a create / record-payment flow). Read-only: a plain disabled button with the same look,
+ * pointing at the screen's one `ReadOnlyHint`; it cannot navigate.
+ */
+export function WriteLink({
+  href,
+  className,
+  children,
+}: {
+  href: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const gate = useReadOnlyGate();
+  if (gate.readOnly) {
+    return (
+      <button
+        type="button"
+        disabled
+        aria-describedby={gate.hintId}
+        title={gate.line ?? undefined}
+        className={`${className ?? ""} cursor-not-allowed opacity-50`}
+      >
+        {children}
+      </button>
+    );
+  }
+  return (
+    <Link href={href} className={className}>
+      {children}
+    </Link>
+  );
 }
 
 /** The line next to a disabled control. Controls are `WriteButton`s. */

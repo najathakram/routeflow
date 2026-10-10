@@ -91,7 +91,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
-import { ReadOnlyHint, useReadOnlyGate } from "@/lib/read-only-gate";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
   id: string;
@@ -779,9 +779,9 @@ export function CounterSaleScreen() {
             Print
           </Button>
           <CounterReturnAction orderId={receipt.orderId} />
-          <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
+          <WriteButton className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
             New sale
-          </Button>
+          </WriteButton>
         </div>
       </div>
     );
@@ -797,14 +797,14 @@ export function CounterSaleScreen() {
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
         {gate.offerShipInstead ? (
-          <Button
+          <WriteButton
             className="min-h-[44px]"
             variant="secondary"
             disabled={locked || salePosting || createDraft.isPending}
             onClick={onShipClick}
           >
             Ship this order instead
-          </Button>
+          </WriteButton>
         ) : null}
       </div>
 
