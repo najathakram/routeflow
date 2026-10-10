@@ -60,7 +60,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
         stripeState.paid.has(id)
           ? { ...OPEN, status: "paid", amountPaid: 14900, amountRemaining: 0 }
           : OPEN,
-      listOpenSubscriptionInvoices: async () => [],
+      listOwedSubscriptionInvoices: async () => [],
       getSubscription: async () => ({ status: "active" }),
       updateSubscription: async (...a: any[]) => {
         stripeState.calls.push(a);
@@ -196,7 +196,9 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
     ).toHaveLength(1);
   });
 
-  it("a sweep racing invoice.paid: the paid side wins - no pause survives the resume and the ledger nets to zero", async () => {
+  // SMOKE only: Promise.all does not control the interleaving. The guard for the stranded-pause interleaving is the
+  // deterministic dunning-race.spec.ts; this proves the same invariants hold against real locks and real rows.
+  it("SMOKE: a sweep racing invoice.paid ends consistent - no pause survives the resume and the ledger nets to zero", async () => {
     for (let i = 0; i < 4; i++) {
       const t = await overdueTenant(`paid${i}`);
       // Stripe still shows the invoice OPEN to the sweep (so it tries to pause) while invoice.paid is delivered.

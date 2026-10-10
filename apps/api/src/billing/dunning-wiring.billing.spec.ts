@@ -108,7 +108,7 @@ function make(
       },
     }),
     getInvoiceFacts: jest.fn().mockResolvedValue(OPEN_FACTS),
-    listOpenSubscriptionInvoices: jest.fn().mockResolvedValue([]),
+    listOwedSubscriptionInvoices: jest.fn().mockResolvedValue([]),
     updateSubscription: jest.fn().mockResolvedValue({}),
     createBillingPortalSession: jest.fn().mockResolvedValue({ url: "https://billing.test/p" }),
     createCheckoutSession: jest.fn(),
