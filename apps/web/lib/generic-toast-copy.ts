@@ -7,6 +7,7 @@ import {
 } from "./credit-note-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
+import { ORDER_EDIT_WOULD_OVERPAY, ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 
@@ -96,6 +97,8 @@ const CODE_COPY: Record<string, string> = {
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
+  // P-4: bare key until the API registers the code in API_ERROR_CODES (P-3); a surface with the structured numbers uses orderOverpayCopy.
+  [ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

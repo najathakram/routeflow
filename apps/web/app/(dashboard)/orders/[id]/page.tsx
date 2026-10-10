@@ -74,6 +74,7 @@ import {
   useOrderInlineReturnSave,
 } from "../_components/use-order-inline-return-save";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
+import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -1946,7 +1947,9 @@ export default function OrderDetailPage() {
   const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
+  const overpay = useOrderOverpayGuard(order);
   const guardError = (retry: () => void) => (err: unknown) => {
+    if (overpay.capture(err)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -2980,6 +2983,7 @@ export default function OrderDetailPage() {
                   {canEdit && " Change a line's price or apply a per-item discount."} Changes are
                   applied when you save.
                 </p>
+                {overpay.node}
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}

@@ -474,3 +474,11 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     expect(src).not.toMatch(/["'`]CREDIT_LIMIT_EXCEEDED["'`]/);
   });
 });
+
+describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
+  it("is fixed copy, never the server sentence", () => {
+    const copy = genericToastCopy(err(409, { code: "ORDER_EDIT_WOULD_OVERPAY", excess: 5 }));
+    expect(copy).toMatch(/overpaid/);
+    expect(copy).not.toContain(RAW);
+  });
+});

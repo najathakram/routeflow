@@ -23,6 +23,8 @@ export function handleMutationError(
   // — don't also surface them as a generic error toast.
   const HANDLED_CODES = [
     "MERGE_CHOICE_REQUIRED",
+    // P-4: the order edit screen shows its own notice (fixed copy + "Record a return").
+    "ORDER_EDIT_WOULD_OVERPAY",
     "REGULATED_AUTH_REQUIRED",
     // P5-10/11: change-request 409s are turned into guided flows by the
     // initiating components (friendly buyer banners; operator toast +
