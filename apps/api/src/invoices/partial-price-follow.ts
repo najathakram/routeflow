@@ -1,8 +1,12 @@
+import { BadRequestException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
 import { regularTaxShare } from "./manual-invoice-context";
+import { UnitLineSplitError } from "../orders/unit-line-split";
+
+const logger = new Logger("PartialPriceFollow");
 
 /**
  * SA-760 Q-760-1 (OWNER answer 10-10): when an admin / operator order edit changes the PRICE of a line that
@@ -80,6 +84,7 @@ export async function planPartialPriceFollow(
           priceType: true,
           subtotal: true,
           unitsPerBox: true,
+          promoFreeUnits: true, // the staleness rule compares it (BUY_N_GET_M lines)
           categoryTaxAmount: true,
           systemKind: true,
           description: true,
@@ -137,7 +142,14 @@ export async function planPartialPriceFollow(
           priorBilledQty: priorOf(it.orderItemId),
           priorPack: it.unitsPerBox,
         });
-      } catch {
+      } catch (err) {
+        // Only the builder's own REFUSALS (a fractional-piece bill, a unit line missing its split) skip the
+        // line; anything else is a real fault and must surface. The skip is logged, never silent.
+        if (!(err instanceof BadRequestException) && !(err instanceof UnitLineSplitError))
+          throw err;
+        logger.warn(
+          `price follow skipped a line the builder refuses: invoice ${inv.id} item ${it.id}: ${(err as Error).message}`,
+        );
         continue;
       }
       const stale =

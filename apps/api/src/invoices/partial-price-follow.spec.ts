@@ -17,7 +17,9 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+import { BadRequestException, Logger } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
+import { planPartialPriceFollow } from "./partial-price-follow";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "./testing/split-invoice-fake-db";
 import { buildSplitInvoicesService } from "./testing/split-invoice-service";
@@ -167,6 +169,82 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
     expect(Number(inv.subtotal)).toBe(180);
     expect(Number(inv.taxAmount)).toBe(14.85); // 29.7 x 180/360, the same helper the creator uses
     expect(Number(inv.total)).toBe(194.85);
+  });
+
+  describe("a BOGO partial is not stale just because the select forgot promoFreeUnits", () => {
+    // 10 boxes with 2 free (BUY_N_GET_M): paid 8 boxes = 225.60; line B is an unrelated plain line.
+    const seedBogo = () => {
+      db.honorItemSelect = true; // read items through the planner's own select, like Prisma
+      Object.assign(db.line("oi-A"), { promoFreeUnits: 2, subtotal: 225.6 });
+      Object.assign(db.orders.get("ord-1")!, { subtotal: 285.6, total: 285.6 });
+    };
+    const editLineB = () => {
+      // an unrelated qty edit on line B: 5 -> 6 boxes at the same 1.00
+      Object.assign(db.line("oi-B"), { qty: 72, boxes: 6, subtotal: 72 });
+      Object.assign(db.orders.get("ord-1")!, { subtotal: 297.6, total: 297.6 });
+    };
+
+    it("a DRAFT BOGO partial: [] listed and ZERO writes (no pdfUrl null-out)", async () => {
+      seedBogo();
+      const created = await partialA(72);
+      expect(db.invoiceItems.find((i) => i.invoiceId === created.id)!.promoFreeUnits).toBe(1);
+      editLineB();
+      const out = await service.followPartialPrices("ord-1");
+      expect(out.issuedPartialsUnchanged).toEqual([]);
+      expect(out.followed).toEqual([]);
+      expect(db.invoiceUpdateCalls).toHaveLength(0);
+      expect((prisma as any).invoiceItem.update).not.toHaveBeenCalled();
+    });
+
+    it("an ISSUED BOGO partial is not listed in issuedPartialsUnchanged", async () => {
+      seedBogo();
+      const created = await partialA(72);
+      db.invoices.find((i) => i.id === created.id)!.status = "SENT";
+      editLineB();
+      const out = await service.followPartialPrices("ord-1");
+      expect(out.issuedPartialsUnchanged).toEqual([]);
+    });
+
+    it("the planner reads promoFreeUnits (the staleness rule compares it)", async () => {
+      seedBogo();
+      await partialA(72);
+      const spy = (prisma as any).invoice.findMany;
+      spy.mockClear();
+      await planPartialPriceFollow(
+        (service as any).followDeps(),
+        (prisma as any).forTenant(),
+        "ord-1",
+      );
+      expect(spy.mock.calls[0][0].select.items.select.promoFreeUnits).toBe(true);
+    });
+  });
+
+  describe("a line the builder cannot rebuild", () => {
+    const planWith = async (buildItem: () => never) => {
+      await partialA(72);
+      repriceA();
+      const deps = { ...(service as any).followDeps(), buildItem };
+      return planPartialPriceFollow(deps, (prisma as any).forTenant(), "ord-1");
+    };
+
+    it("its refusal (BadRequest) skips the line and is logged", async () => {
+      const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const plan = await planWith(() => {
+        throw new BadRequestException("not a whole number of pieces");
+      });
+      expect(plan.drafts).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("not a whole number of pieces"));
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/invoice .+ item ii-/));
+      warn.mockRestore();
+    });
+
+    it("anything else is a real fault and is rethrown, not swallowed", async () => {
+      await expect(
+        planWith(() => {
+          throw new TypeError("cannot read properties of undefined");
+        }),
+      ).rejects.toThrow(TypeError);
+    });
   });
 
   it("the sole invoice that bills the whole order is the MIRROR, not a partial: left to the re-sync", async () => {
