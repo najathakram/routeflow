@@ -48,7 +48,8 @@ describe("parseRegisterKey", () => {
     expect(parseRegisterKey("")).toBe("main");
     expect(parseRegisterKey("b")).toBe("b");
     expect(parseRegisterKey("driver:9f1")).toBe("driver:9f1");
-    for (const bad of ["a b", "-x", "x".repeat(65), "a;drop", 5]) {
+    expect(parseRegisterKey("-x")).toBe("-x"); // the union with the park / quick-key pattern
+    for (const bad of ["a b", ":x", "x".repeat(65), "a;drop", 5]) {
       expect(() => parseRegisterKey(bad)).toThrow(/registerKey/);
     }
     expect(REGISTER_KEY_PATTERN.test("main")).toBe(true);
