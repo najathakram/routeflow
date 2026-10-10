@@ -249,6 +249,13 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     status: "live",
     screen: "implicit",
   },
+  {
+    key: PREF.ordersPosMode,
+    home: "userPref",
+    kind: "preference",
+    status: "pending WS4",
+    plannedSurface: "SA-763r P-2: the POS mode switch in the Create Order header",
+  },
 ];
 
 /** True when `key` is covered by an exact row or a `prefix*` pattern row. */

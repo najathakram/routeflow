@@ -46,6 +46,7 @@ module.exports = {
     locale: "locale",
     billLastSupplierId: "bill.lastSupplierId",
     paymentLastMethod: "payment.lastMethod",
+    ordersPosMode: "orders.posMode",
   },
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
