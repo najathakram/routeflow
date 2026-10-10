@@ -848,7 +848,12 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
       expect(tx.tenantSubscription.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
         tx.tenantSubscription.upsert.mock.invocationCallOrder[0],
       );
-      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+      // no compare-and-set: the only subscription updateMany is the reinstatement's dunning clear (SA-733r2 N5)
+      expect(
+        tx.tenantSubscription.updateMany.mock.calls.filter(
+          (c: any[]) => !("pausedAt" in c[0].data),
+        ),
+      ).toEqual([]);
     });
 
     it("the flag flipped OFF between the two reads: still no hook, the upsert in the locked transaction (prepared.enabled is false)", async () => {
@@ -1265,7 +1270,17 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
 
         await (svc as any).onCheckoutCompleted(withId("cs_order"));
 
-        expect(order).toEqual(["advisory", "hook", "tenant-lock", "cas", "sub-write", "audit"]);
+        // The checkout tx ends at "audit". The reinstatement that follows it (transitionAndEmit -> the one path to
+        // ACTIVE, SA-733r2 N5) also clears the dunning clock on the subscription row, which this mock records as one
+        // more "cas" AFTER the checkout tx - it is not part of the order this test pins.
+        expect(order.slice(0, 6)).toEqual([
+          "advisory",
+          "hook",
+          "tenant-lock",
+          "cas",
+          "sub-write",
+          "audit",
+        ]);
       });
 
       it("#2560: a single 40P01 on the checkout tx is retried and the checkout applies once, no alarm row", async () => {
@@ -1363,7 +1378,12 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         ).toBe(true);
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
-        expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled(); // no CAS, no tx write
+        // no CAS, no tx write (the reinstatement's dunning clear is the one subscription updateMany, SA-733r2 N5)
+        expect(
+          tx.tenantSubscription.updateMany.mock.calls.filter(
+            (c: any[]) => !("pausedAt" in c[0].data),
+          ),
+        ).toEqual([]);
         // B1157: the plain apply tx writes the APPLIED marker (and nothing else) — every apply path does
         expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
         expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({
@@ -2548,26 +2568,13 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
     });
 
-    it("the warning email carries the billing-portal link", async () => {
+    // SA-733r7 PR-B3: B410's direct email is GONE - the d0 notice is DunningService's (BillingNotificationLog,
+    // keyed by invoice), so a failure sends no email and creates no portal session from here.
+    it("PR-B3: sends NO direct email and creates no billing-portal session (B410 removed)", async () => {
       const { svc, stripe, email } = make({ sub: FAILING });
       await (svc as any).onPaymentFailed(failed());
-      // The second argument (#2476's request cap) is pinned by its own test below.
-      expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
-        expect.objectContaining({ customerId: "cus_1" }),
-      );
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("https://billing.stripe.test/p/session_1");
-    });
-
-    // #2476 Opus MED fold: stripe-node's defaults (80 s timeout, network retries) could hold the
-    // webhook claim for minutes; the email's portal link is best-effort, so its call is capped.
-    it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
-      const { svc, stripe } = make({ sub: FAILING });
-      await (svc as any).onPaymentFailed(failed());
-      expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
-        expect.objectContaining({ customerId: "cus_1" }),
-        { timeoutMs: 10_000, maxNetworkRetries: 0 },
-      );
+      expect(email.send).not.toHaveBeenCalled();
+      expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
     });
 
     it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {
@@ -2575,14 +2582,6 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       await svc.createBillingPortalSession("t1");
       expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
       expect(stripe.createBillingPortalSession.mock.calls[0][1]).toBeUndefined();
-    });
-
-    it("a portal failure still sends the email, with today's fallback text", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
-      await (svc as any).onPaymentFailed(failed());
-      expect(email.send).toHaveBeenCalledTimes(1);
-      expect(email.send.mock.calls[0][0].html).toContain("contacting support");
     });
 
     it("changes no tenant status", async () => {
@@ -2601,19 +2600,14 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(email.send).not.toHaveBeenCalled();
     });
 
-    // #2476 / SA-472: the increment is the event's effect; everything after it (admin lookup, portal,
-    // email) is non-throwing and logged — a later throw must never mark the event "error:" and make a
-    // redelivery re-run the increment.
-    it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
-      const { svc, prisma, email } = make({ sub: FAILING });
-      prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
-      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-      await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
-      expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
-      expect(email.send).not.toHaveBeenCalled();
-      expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
-        true,
-      );
+    // SA-733r7 PR-B3: the clock is stamped BEFORE the non-idempotent increment (like the coupon sync), so a
+    // throwing stamp aborts with the count unmoved and the redelivery runs the handler once.
+    it("PR-B3: a throwing dunning stamp aborts before failedPaymentCount moves", async () => {
+      const { svc, prisma } = make({ sub: FAILING });
+      const dunning = { onPaymentFailed: jest.fn().mockRejectedValue(new Error("stripe down")) };
+      (svc as any).dunning = dunning;
+      await expect((svc as any).onPaymentFailed(failed())).rejects.toThrow("stripe down");
+      expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
     });
 
     it("an invoice with no subscription (free pilot / one-off) is untouched", async () => {

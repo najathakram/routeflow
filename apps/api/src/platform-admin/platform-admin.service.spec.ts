@@ -44,6 +44,7 @@ import { AdminAuditAction } from "./audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
 import * as manualActivationAddons from "../billing/manual-activation-addons";
 import { UserRole } from "@prisma/client";
+import { DunningService } from "../billing/dunning.service";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -91,6 +92,8 @@ describe("PlatformAdminService — audit provenance", () => {
   // #2439: named so the WEB_URL tests can point `urls.web` at a public host or localhost.
   let configMock: { get: jest.Mock };
   let tenantMirror: { upsert: jest.Mock };
+  // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
+  let dunning: { clearPauseAfterCommit: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -205,6 +208,7 @@ describe("PlatformAdminService — audit provenance", () => {
     };
     // R18: the mirror call sites are best-effort — tests that care override upsert to reject.
     tenantMirror = { upsert: jest.fn().mockResolvedValue(undefined) };
+    dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -227,6 +231,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PlanTransitionConfigService, useValue: planTransition },
         { provide: StripeService, useValue: { isConfigured: false } },
+        { provide: DunningService, useValue: dunning },
       ],
     }).compile();
 
@@ -297,8 +302,16 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
 
-      // RED against the round-2 build, which cleared the three fields here.
-      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      // RED against the round-2 build, which cleared the three fields here. The ONLY subscription write is the
+      // one path back to ACTIVE clearing the dunning clock + pause (SA-733r7): never the schedule.
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { tenantId: TENANT_ID },
+            data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+          },
+        ],
+      ]);
       expect(auditLog).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "TENANT_REACTIVATED",
@@ -308,6 +321,34 @@ describe("PlatformAdminService — audit provenance", () => {
           }),
         }),
       );
+    });
+
+    it("PR-B3: reactivating a PAUSED tenant clears the dunning clock and then Stripe's pause_collection (after commit)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+        downgradeToPlanKey: null,
+        downgradeEffectiveAt: null,
+      });
+
+      await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+      // a non-ACTIVE target never exits a pause
+      dunning.clearPauseAfterCommit.mockClear();
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
     });
 
     it("REG-B402 a reactivation with NO armed downgrade audits neither schedule field", async () => {
@@ -330,7 +371,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(meta).not.toHaveProperty("downgradeEffectiveAt");
     });
 
-    it("guard: updateStatus NEVER writes to TenantSubscription on any path — the schedule and cancelAtPeriodEnd are both the tenant's to change", async () => {
+    it("guard: updateStatus NEVER writes the schedule or cancelAtPeriodEnd — the tenant's to change; its only subscription write clears the dunning clock (SA-733r7)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
@@ -345,7 +386,14 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
 
-      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.updateMany.mock.calls).toEqual([
+        [
+          {
+            where: { tenantId: TENANT_ID },
+            data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+          },
+        ],
+      ]);
       expect((prisma as any).tenantSubscription.update).not.toHaveBeenCalled();
     });
 
@@ -405,9 +453,10 @@ describe("PlatformAdminService — audit provenance", () => {
 
       // RED against pre-fix updateStatus(), which never wraps any of this in a transaction.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // SA-733r2 N5: the ONE path back to ACTIVE also nulls readOnlyReason.
       expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
         where: { id: TENANT_ID, status: { not: "ACTIVE" } },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", readOnlyReason: null },
       });
     });
   });
@@ -430,6 +479,9 @@ describe("PlatformAdminService — audit provenance", () => {
       } as any);
       // The "before" read this fix adds — no subscription row exists yet.
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "PROFESSIONAL",
         status: "TRIAL",
         class: "PRODUCTION",
         deletedAt: null,
@@ -562,6 +614,37 @@ describe("PlatformAdminService — audit provenance", () => {
         );
         expect(prisma.tenant.update).not.toHaveBeenCalled();
         expect(auditLog).not.toHaveBeenCalled();
+      });
+
+      it("PR-B3 (r4 F4 #7): extending the trial of a PAUSED tenant clears the dunning columns itself and queues the unpause", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          catchupState: null,
+          pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+          stripeSubId: "sub_1",
+        });
+
+        await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+
+        // Tenant FOR UPDATE first, then the subscription clear, in ONE transaction
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(prisma.$queryRaw as jest.Mock).toHaveBeenCalled();
+        expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+          where: { tenantId: TENANT_ID },
+          data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+        });
+        expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+          tenantId: TENANT_ID,
+          stripeSubId: "sub_1",
+          exitAt: expect.any(Date),
+        });
+      });
+
+      it("PR-B3: a refused extension (ACTIVE) clears nothing and unpauses nothing", async () => {
+        prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+        await refusedWith(() => service.extendTrial(TENANT_ID, 30, ADMIN_ID));
+        expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+        expect(dunning.clearPauseAfterCommit).not.toHaveBeenCalled();
       });
 
       it.each(["TRIAL", "SUSPENDED", "READ_ONLY"])(
@@ -4312,10 +4395,50 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
-      expect(prisma.tenant.update.mock.calls.at(-1)?.[0]).toMatchObject({
+      expect(prisma.tenant.updateMany.mock.calls.at(-1)?.[0]).toMatchObject({
         where: { id: TENANT_ID },
         data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
       });
+    });
+
+    // SA-733r7 PR-B3 (r3 F4): activating a tenant that is paused for non-payment is an exit from payment_overdue:
+    // the clock + pause clear in the same tx and Stripe's pause_collection is cleared AFTER the commit.
+    it("PR-B3: activating a PAUSED tenant clears the dunning clock + pause in the tx, then pause_collection after commit", async () => {
+      tenantBefore({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 }); // the ACTIVE write landed
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      const order: string[] = [];
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => {
+        const r = await fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription });
+        order.push("commit");
+        return r;
+      });
+      dunning.clearPauseAfterCommit.mockImplementation(async () => {
+        order.push("unpause");
+      });
+
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+      });
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+      expect(order).toEqual(["commit", "unpause"]);
+    });
+
+    it("PR-B3: activating a tenant that was never paused owes Stripe nothing", async () => {
+      tenantBefore({ status: "TRIAL" });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null);
+      await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
     });
 
     it("S4: the activation crossing reads only BILLABLE add-ons (a comp with a stale snapshot is never booked)", async () => {

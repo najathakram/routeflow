@@ -462,7 +462,8 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
         BILLING_EVENTS.ADDON_ENABLED,
       ]),
     );
-    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({
+    // SA-733r2 N5: subscribe() reaches ACTIVE through transitionToActiveTx (a CAS updateMany)
+    expect(tx.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
       status: "ACTIVE",
       plan: "TEAM",
     });
@@ -936,7 +937,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       sub: { planKey: "BUSINESS" },
     });
     await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
-    expect(tx.tenant.update).toHaveBeenCalledWith(
+    expect(tx.tenant.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "ACTIVE", readOnlyReason: null }),
       }),
@@ -978,7 +979,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       planKey: "GROWTH",
       currentPlan: "TEAM",
     });
-    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
+    expect(tx.tenant.updateMany.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
   });
 
   /**
