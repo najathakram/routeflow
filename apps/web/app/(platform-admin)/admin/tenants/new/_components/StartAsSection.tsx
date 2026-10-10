@@ -70,6 +70,7 @@ export function StartAsSection({
   value,
   onChange,
   disabled,
+  trialError,
 }: {
   plan: string;
   planName: string;
@@ -78,6 +79,8 @@ export function StartAsSection({
   value: StartAs;
   onChange: (next: StartAs) => void;
   disabled?: boolean;
+  /** Fixed copy under the trial-length field when it is empty or out of range. */
+  trialError?: string | null;
 }) {
   const trialOff = isTrialDisabled(plan);
   const mode = effectiveMode(plan, value.mode);
@@ -122,8 +125,15 @@ export function StartAsSection({
             required
             value={value.trialDays}
             onChange={(e) => set({ trialDays: e.target.value })}
+            aria-invalid={trialError ? true : undefined}
+            aria-describedby={trialError ? "create-tenant-start-days-error" : undefined}
             className={`${FIELD} sm:max-w-[10rem]`}
           />
+          {trialError && (
+            <p id="create-tenant-start-days-error" className="text-xs text-red-400">
+              {trialError}
+            </p>
+          )}
         </div>
       )}
 
