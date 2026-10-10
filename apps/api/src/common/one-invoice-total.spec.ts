@@ -19,7 +19,7 @@ import * as path from "path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 
 /** `roundMoney(subtotal - discount`, `roundMoney(a.subtotal - b.invDiscount`, … */
-export const INLINE_TOTAL = /roundMoney\([\w.]*[sS]ubtotal\s*-\s*[\w.]*[dD]iscount/;
+export const INLINE_TOTAL = /roundMoney\(\s*[\w.]*[sS]ubtotal\s*-\s*(?:Number\()?[\w.]*[dD]iscount/;
 
 /** Production source roots (relative to the repo root). packages/pricing is the ONE home, never scanned. */
 const SCAN_ROOTS = ["apps/api/src", "apps/mobile/lib", "apps/web/app", "apps/web/lib"];
@@ -43,7 +43,14 @@ const ALLOWLIST: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "mobile own computeInvoiceTotals (B1028): a thin adapter over @routeflow/pricing in INV-B",
   },
-  "apps/mobile/lib/run-money.ts": { count: 3, why: "run settlement money (B810 -> SA-761a T-4b)" },
+  "apps/mobile/lib/run-money.ts": {
+    count: 4,
+    why: "run settlement money (B810 -> SA-761a T-4b); the 4th is the multi-line delivered-basis form",
+  },
+  "apps/api/src/invoices/invoices.service.ts": {
+    count: 2,
+    why: "order-derived draft reconcile (reconcileOrderDraftInvoice totals, B1048 / B297 PR3 region): the two copies in the reconcile/rebuild paths",
+  },
 };
 
 const SOURCE = /\.[cm]?[tj]sx?$/;
@@ -122,6 +129,10 @@ describe("B1043 / G4 — one invoice total formula (sumInvoiceTotals)", () => {
       "const total = roundMoney(subtotal - discount + taxTotal);",
       "return roundMoney(t.subtotal - t.discount + ship);",
       "roundMoney(linesSubtotal - dto.discount",
+      // the shapes the first predicate missed: Number() around the discount, and a newline after the paren
+      "const total = roundMoney(invSubtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);",
+      "return roundMoney(\n    deliveredSubtotal -\n      discount +\n      shippingFee);",
+      "return roundMoney(\n    pd.subtotal - Number(pd.draft.discount ?? 0) + pd.shippingFee);",
     ]) {
       expect({ line, caught: INLINE_TOTAL.test(line) }).toEqual({ line, caught: true });
     }
