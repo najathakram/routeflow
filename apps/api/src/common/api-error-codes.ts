@@ -372,6 +372,8 @@ export const API_ERROR_CODES = {
    * variants of its own). Nothing was written.
    */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
+  /** 400 from PATCH /settings and create-tenant: `timezone` is not an IANA zone (SA-738). Nothing was written. */
+  INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

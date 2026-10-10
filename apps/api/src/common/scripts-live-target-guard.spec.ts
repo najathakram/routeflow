@@ -115,6 +115,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
+  "apps/api/scripts/report-tenant-timezone-census.mjs": "read-only",
   "apps/api/scripts/report-train4-damage.mjs": "read-only",
   "apps/api/scripts/report-unsafe-customer-names.mjs": "read-only",
   "apps/api/scripts/sa077-split-qty-consistency.mjs": "read-only",

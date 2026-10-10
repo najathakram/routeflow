@@ -335,7 +335,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
   it("B3: the zone comes from an EXPLICIT tenant id when there is no ambient tenant", async () => {
     jest.spyOn(prisma, "getTenantId").mockReturnValue(undefined as any);
     prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: CHICAGO });
-    await expect(tenantTimeZone(prisma as any, "t-explicit")).resolves.toBe(CHICAGO);
+    await expect(tenantTimeZone(prisma as any, { tenantId: "t-explicit" })).resolves.toBe(CHICAGO);
     expect(prisma.tenantConfig.findUnique.mock.calls[0][0].where).toEqual({
       tenantId: "t-explicit",
     });
@@ -347,7 +347,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       "utf8",
     );
     expect(cn).toMatch(
-      /async settleOrderCreditsInTx\([\s\S]*?tenantTimeZone\(this\.prisma, tenantId\)/,
+      /async settleOrderCreditsInTx\([\s\S]*?tenantTimeZone\(this\.prisma, \{ tenantId \}\)/,
     );
   });
 

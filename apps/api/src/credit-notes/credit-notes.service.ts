@@ -1846,7 +1846,7 @@ export class CreditNotesService {
     // the payment would be written tenant-orphaned.
     tenantId: string | null = this.prisma.getTenantId(),
   ): Promise<{ applied: number; unapplied: number }> {
-    const tz = await tenantTimeZone(this.prisma, tenantId); // #2556 B3: the explicit tenant, not the ambient one
+    const tz = await tenantTimeZone(this.prisma, { tenantId }); // #2556 B3: the explicit tenant, not the ambient one
     const result = { applied: 0, unapplied: 0 };
     // B1052: the FIRST statements — lock this Order, its invoices and every note this settle can
     // touch (SA-214 order, each set in id order) BEFORE any balance is read. Two office settles
