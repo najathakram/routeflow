@@ -98,8 +98,11 @@ import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
+import { useInvalidFocus } from "@/lib/form-errors";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
+
+const RECEIPT_FOOTER_MAX_CHARS = 200;
 
 const profileShape = {
   businessName: z.string().min(1, "Required"),
@@ -112,6 +115,10 @@ const profileShape = {
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
+  // Plain text, counted in characters like the API does (SA-762r F6).
+  receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
+    message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
+  }),
 };
 /** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
 const profileSchemaFor = (canEditTimeZone: boolean) =>
@@ -164,7 +171,15 @@ function BusinessProfileTab() {
         toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
         return;
       }
-      toast({ title: "Failed to save settings", variant: "error" });
+      toast(
+        res?.status === 400
+          ? {
+              title: "Couldn't save the receipt footer",
+              description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
+              variant: "error",
+            }
+          : { title: "Failed to save settings", variant: "error" },
+      );
     },
   });
 
@@ -208,6 +223,8 @@ function BusinessProfileTab() {
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
+    // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
+    shouldFocusError: false,
     defaultValues: {
       businessName: "",
       email: "",
@@ -220,6 +237,7 @@ function BusinessProfileTab() {
       zip: "",
       taxRate: 0,
       timezone: "",
+      receiptFooter: "",
     },
   });
 
@@ -237,6 +255,7 @@ function BusinessProfileTab() {
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
         ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
+        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -261,9 +280,10 @@ function BusinessProfileTab() {
       .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
       .catch(() => undefined);
   };
+  const onInvalid = useInvalidFocus();
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-6">
       <Card title="Business Information">
         <div className="grid grid-cols-2 gap-4">
           <Input
@@ -431,11 +451,28 @@ function BusinessProfileTab() {
             />
             <span className="absolute right-3 top-[34px] text-sm text-navy/70">%</span>
           </div>
+          <p className="mt-1 text-xs text-navy/70">Charged on counter sales and invoices</p>
         </div>
       </Card>
 
+      <Card title="Receipt">
+        {/* Plain text only: the footer is never rendered as HTML. */}
+        <Textarea
+          label="Receipt footer"
+          rows={3}
+          register={register("receiptFooter")}
+          error={errors.receiptFooter?.message}
+        />
+        <p className="mt-1 text-xs text-navy/70">
+          Printed at the bottom of counter receipts. Plain text.{" "}
+          <span aria-live="polite">
+            {Array.from(watch("receiptFooter") ?? "").length}/{RECEIPT_FOOTER_MAX_CHARS}
+          </span>
+        </p>
+      </Card>
+
       <div className="flex justify-end">
-        <Button type="submit" loading={isSubmitting} disabled={Object.keys(errors).length > 0}>
+        <Button type="submit" loading={isSubmitting}>
           Save Changes
         </Button>
       </div>

@@ -3,6 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+
 /**
  * #2865 case c (SA-632): while a line's default selling unit is unresolved the qty controls are DISABLED and
  * aria-busy, the row shows the PENDING TAP COUNT ("3 · loading units"), and a failed load shows a readable error with
@@ -78,8 +83,8 @@ describe("LineItemRow, pending selling unit", () => {
     );
     expect(screen.getByTestId("line-qty-controls")).toBeDisabled();
     expect(screen.getByTestId("line-qty-controls")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Case" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "+ units" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Box" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: ADD_EXTRA })).toBeDisabled();
   });
 
   it("FAILED: a readable error and a REAL Retry button (reachable by keyboard); the controls stay locked, nothing is added", () => {

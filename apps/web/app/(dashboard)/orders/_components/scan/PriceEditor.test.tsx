@@ -4,6 +4,11 @@ import { computeLineSubtotal } from "@routeflow/pricing";
 import type { LineItemRowItem } from "@/components/LineItemRow";
 import { PriceEditor, type PriceEditorProps } from "./PriceEditor";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+
 // MarginHint is the SAME component the row renders; stubbing it lets these tests assert it is wired
 // with the row's exact props (so the floor check cannot be bypassed by the sheet) without its
 // query hooks.
@@ -89,13 +94,13 @@ describe("PriceEditor", () => {
 
     it("labels a case-packed line's price as the CASE price", () => {
       setup(boxed());
-      expect(screen.getByText("Case price")).toBeInTheDocument();
+      expect(screen.getByText("Box price")).toBeInTheDocument();
     });
 
     it("but a pack of 1 is just 'Price', as in the row", () => {
       setup(boxed({ unitsPerBox: 1, boxes: 2, qty: 2 }));
       expect(screen.getByText("Price")).toBeInTheDocument();
-      expect(screen.queryByText("Case price")).not.toBeInTheDocument();
+      expect(screen.queryByText("Box price")).not.toBeInTheDocument();
     });
 
     it("shows the customer's last price when it differs from list", () => {
@@ -153,7 +158,7 @@ describe("PriceEditor", () => {
   describe("case wording", () => {
     it("singular at one case, and the '+' is its own element", () => {
       setup(boxed({ boxes: 1, pieces: 2, qty: 8 }));
-      expect(screen.getByText("case")).toBeInTheDocument();
+      expect(screen.getByText("box")).toBeInTheDocument();
       const plus = screen.getByText("+");
       expect(plus.tagName).toBe("SPAN");
       expect(plus.textContent).toBe("+");
@@ -161,8 +166,8 @@ describe("PriceEditor", () => {
 
     it("plural otherwise", () => {
       setup(boxed({ boxes: 2, pieces: 1, qty: 13 }));
-      expect(screen.getByText("cases")).toBeInTheDocument();
-      expect(screen.getByText("unit")).toBeInTheDocument();
+      expect(screen.getByText("boxes")).toBeInTheDocument();
+      expect(screen.getByText("pc")).toBeInTheDocument();
     });
   });
 
@@ -184,9 +189,9 @@ describe("PriceEditor", () => {
   describe("quantity — a case-packed line", () => {
     it("Case mode edits whole cases and extra units through the row's handlers", () => {
       const props = setup(boxed());
-      fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "3" } });
-      fireEvent.click(screen.getByRole("button", { name: "+ units" })); // #2696 (d): opt-in
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "2" } });
+      fireEvent.change(screen.getByLabelText("Boxes"), { target: { value: "3" } });
+      fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA })); // #2696 (d): opt-in
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "2" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(3);
       expect(props.onSetPieces).toHaveBeenLastCalledWith(2);
     });
@@ -195,9 +200,9 @@ describe("PriceEditor", () => {
     // row's setters (and from there qty / the subtotal). Same guard as the unit-quantity field.
     it("clearing Cases or Extra units passes 0, never NaN, to the row's handlers", () => {
       const props = setup(boxed({ boxes: 2, pieces: 3 }));
-      fireEvent.change(screen.getByLabelText("Cases"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("Boxes"), { target: { value: "" } });
       expect(props.onSetBoxes).toHaveBeenLastCalledWith(0);
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "" } });
       expect(props.onSetPieces).toHaveBeenLastCalledWith(0);
       for (const fn of [props.onSetBoxes, props.onSetPieces]) {
         for (const [arg] of (fn as jest.Mock).mock.calls) expect(Number.isNaN(arg)).toBe(false);
@@ -206,45 +211,45 @@ describe("PriceEditor", () => {
 
     it("SA-563: cases 0 + units n ⇒ no remove-extra-units control", () => {
       setup(boxed({ boxes: 0, pieces: 3 }));
-      expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Remove extra pieces")).not.toBeInTheDocument();
     });
 
     it("SA-563: cases ≥ 1 + units n ⇒ remove sets units 0 and leaves cases alone", () => {
       const props = setup(boxed({ boxes: 2, pieces: 3 }));
-      fireEvent.click(screen.getByLabelText("Remove extra units"));
+      fireEvent.click(screen.getByLabelText("Remove extra pieces"));
       expect(props.onSetPieces).toHaveBeenCalledWith(0);
       expect(props.onSetBoxes).not.toHaveBeenCalled();
     });
 
     it("extra units are capped below one case", () => {
       setup(boxed());
-      fireEvent.click(screen.getByRole("button", { name: "+ units" }));
-      expect(screen.getByLabelText("Extra loose units")).toHaveAttribute("max", "5");
+      fireEvent.click(screen.getByRole("button", { name: ADD_EXTRA }));
+      expect(screen.getByLabelText("Extra pieces")).toHaveAttribute("max", "5");
     });
 
     it("the Case | Unit toggle drives onSetSellBy and reflects the current mode", () => {
       const props = setup(boxed({ sellBy: "case" }));
-      expect(screen.getByRole("button", { name: "Case" })).toHaveAttribute("aria-pressed", "true");
-      fireEvent.click(screen.getByRole("button", { name: "Unit" }));
+      expect(screen.getByRole("button", { name: "Box" })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Piece" }));
       expect(props.onSetSellBy).toHaveBeenCalledWith("unit");
     });
 
     it("Unit mode edits a TOTAL unit count through onSetUnitQty", () => {
       const props = setup(boxed({ sellBy: "unit", qty: 12 }));
-      fireEvent.change(screen.getByLabelText("Total units"), { target: { value: "7" } });
+      fireEvent.change(screen.getByLabelText("Total pieces"), { target: { value: "7" } });
       expect(props.onSetUnitQty).toHaveBeenLastCalledWith(7);
       expect(screen.queryByLabelText("Cases")).not.toBeInTheDocument();
     });
 
     it("states the pack size and the unit total", () => {
       setup(boxed());
-      expect(screen.getByText("1 case = 6 units · 12 units total")).toBeInTheDocument();
+      expect(screen.getByText("1 box = 6 pcs · 12 pcs total")).toBeInTheDocument();
     });
 
     it("a non-boxed line has no case/unit toggle", () => {
       setup(line());
-      expect(screen.queryByRole("button", { name: "Case" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Box" })).not.toBeInTheDocument();
     });
   });
 

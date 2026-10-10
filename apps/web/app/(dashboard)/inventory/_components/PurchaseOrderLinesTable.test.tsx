@@ -5,6 +5,11 @@ import * as React from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { PurchaseOrderLinesTable, type CatalogProduct } from "./PurchaseOrderLinesTable";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the cost input is labelled by the default unit words (no per-product label on a PO line yet).
+const UW = unitWords();
+const UNIT_COST = new RegExp(`^Cost per (${UW.pack.lower}|${UW.base.lower})$`);
 
 const products: CatalogProduct[] = [
   { id: "p-each", name: "Napkins", sku: "NAP", unitsPerBox: 1 },
@@ -123,7 +128,7 @@ describe("PurchaseOrderLinesTable", () => {
       />,
     );
     fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "7.5" } });
-    fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: "2.25" } });
+    fireEvent.change(screen.getByLabelText(UNIT_COST), { target: { value: "2.25" } });
     expect(seen.lines[0]).toMatchObject({ qty: "7.5", unitCost: "2.25" });
   });
 });
