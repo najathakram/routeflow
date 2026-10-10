@@ -8,6 +8,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("SettingsController — PATCH/GET /settings/route depot", () => {
@@ -31,6 +32,7 @@ describe("SettingsController — PATCH/GET /settings/route depot", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
     controller = module.get<SettingsController>(SettingsController);
@@ -89,6 +91,7 @@ describe("SettingsController — PATCH /settings/route over HTTP (real RolesGuar
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: createMockPrisma() },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        quickKeysSettingsStubProvider,
       ],
     })
       .overrideGuard(JwtAuthGuard)
