@@ -480,6 +480,7 @@ describe("create-tenant business profile", () => {
       profile: "shipping_wholesaler",
       plan: {
         overrides: [],
+        comps: [],
         modes: [],
         billing: [{ featureKey: "driver_payments", action: "disable", manual: false }],
       },

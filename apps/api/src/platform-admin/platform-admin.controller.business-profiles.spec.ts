@@ -71,6 +71,8 @@ function fakeTenant(start: {
     setKey: start.setFails as string | undefined,
   };
   const paid = new Set(start.addons ?? []);
+  // SA-769: rows written by a comp enable (the SA-693 path) and seeded comp rows carry isComp
+  const compRows = new Set<string>(start.comped ?? []);
   const modes: Record<string, string> = {
     fulfilment_model: "unset",
     counter_sales: "unset",
@@ -110,6 +112,23 @@ function fakeTenant(start: {
   };
   const addonService = {
     getActiveAddons: jest.fn(async () => [...addons]),
+    // SA-769: the SA-693 comp path (isComp true, no Stripe call, books nothing) - modelled here; the
+    // real AddonService body is exercised in platform-admin.controller.business-profile-comps.sa769.spec.ts
+    enableAddon: jest.fn(
+      async (
+        _t: string,
+        key: string,
+        _price?: string,
+        _ack?: boolean,
+        opts?: { comp?: boolean; lockHeld?: boolean },
+      ) => {
+        if (addons.has(key)) throw new ConflictException(`Add-on "${key}" is already active`);
+        addons.add(key);
+        if (opts?.comp) compRows.add(key);
+        writes.push(`comp ${key}`);
+        return { addonKey: key, active: true, isComp: opts?.comp === true };
+      },
+    ),
     // The EXISTING disable (Stripe item removal + the locked ledger update) — modelled here.
     disableAddon: jest.fn(async (_t: string, key: string) => {
       if (key === failing.key) {
@@ -117,6 +136,7 @@ function fakeTenant(start: {
       }
       addons.delete(key);
       paid.delete(key);
+      compRows.delete(key);
       writes.push(`disable ${key}`);
       return { addonKey: key, active: false };
     }),
@@ -182,6 +202,7 @@ function fakeTenant(start: {
           active: true,
           stripeItemId: isPaid ? "si_x" : null,
           priceSnapshot: isPaid ? "49.00" : null,
+          isComp: compRows.has(key),
         };
       }),
     },
@@ -432,19 +453,31 @@ describe("POST business-profile (confirm) — through the existing audited write
       { profile: "delivery_distributor" },
       admin,
     );
+    // SA-769: the grants are COMP rows (the SA-693 path), never GRANT overrides
     expect(t.writes).toEqual([
-      "override GRANT recurring_routes",
-      "override GRANT order_delivery",
-      "override GRANT driver_payments", // M2: not on by default, so the profile turns it on
+      "comp recurring_routes",
+      "comp order_delivery",
+      "comp driver_payments", // M2: not on by default, so the profile turns it on
       "mode fulfilment_model=delivery",
     ]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
+    expect(t.addonService.enableAddon).toHaveBeenCalledWith(
+      T,
+      "recurring_routes",
+      undefined,
+      undefined,
+      expect.objectContaining({ comp: true, lockHeld: true }),
+    );
     expect(t.state().modes.fulfilment_model).toBe("delivery");
-    // every override write went through the controller's own audited path
+    // every comp went through the controller's own audited path (ADDON_COMPED, reason names the profile)
     expect(t.svc.recordAdminAction).toHaveBeenCalledWith(
       T,
       "admin-1",
-      AdminAuditAction.FEATURE_OVERRIDE_SET,
-      expect.objectContaining({ featureKey: "recurring_routes", effect: "GRANT" }),
+      AdminAuditAction.ADDON_COMPED,
+      expect.objectContaining({
+        addonKey: "recurring_routes",
+        reason: "business profile delivery_distributor",
+      }),
     );
     expect(t.featureConfig.set).toHaveBeenCalledWith(
       T,
@@ -498,19 +531,20 @@ describe("POST business-profile (confirm) — through the existing audited write
       modes: { fulfilment_model: "ship" },
     });
     await t.controller.applyBusinessProfile(T, { profile: "delivery_distributor" }, admin);
+    // SA-769: each DENY is revoked, then the module is comped (no GRANT override is written)
     expect(t.writes).toEqual([
       "revoke DENY recurring_routes",
-      "override GRANT recurring_routes",
+      "comp recurring_routes",
       "revoke DENY order_delivery",
-      "override GRANT order_delivery",
+      "comp order_delivery",
       "revoke DENY driver_payments",
-      "override GRANT driver_payments",
+      "comp driver_payments",
       "mode fulfilment_model=delivery",
     ]);
     expect(t.state()).toEqual({
       modes: { fulfilment_model: "delivery", counter_sales: "unset" },
       held: { recurring_routes: true, order_delivery: true, driver_payments: true },
-      activeOverrides: 3,
+      activeOverrides: 0,
     });
   });
 
@@ -520,7 +554,8 @@ describe("POST business-profile (confirm) — through the existing audited write
     const first = [...t.writes];
     t.writes.length = 0;
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(first).toEqual(["mode fulfilment_model=ship", "override DENY order_delivery"]);
+    // SA-769: a comp row is switched off by the disable path (no Stripe item, so no billing call)
+    expect(first).toEqual(["disable order_delivery", "mode fulfilment_model=ship"]);
     expect(t.writes).toEqual([]);
   });
 
@@ -657,11 +692,12 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
     });
   });
 
-  it("a free/comped add-on row: NO billing call — the module is switched off with a DENY override", async () => {
+  it("SA-769: a comp add-on row (isComp) is switched off by the add-on disable - it has no Stripe item, so no billing is stopped - and needs no DENY override", async () => {
     const t = fakeTenant({ comped: ["recurring_routes"] });
     await t.controller.applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin);
-    expect(t.addonService.disableAddon).not.toHaveBeenCalled();
-    expect(t.writes).toEqual(["mode fulfilment_model=ship", "override DENY recurring_routes"]);
+    expect(t.addonService.disableAddon.mock.calls).toEqual([[T, "recurring_routes"]]);
+    expect(t.writes).toEqual(["disable recurring_routes", "mode fulfilment_model=ship"]);
+    expect(t.featureOverrides.create).not.toHaveBeenCalled();
   });
 
   it("a comp via GRANT override: NO billing call", async () => {
@@ -833,7 +869,10 @@ describe("SA MUST: a failure AFTER a successful billing disable returns the SAME
   });
 
   it("with NO billing disable done, a later failure keeps its own error (nothing was stopped to report)", async () => {
-    const t = fakeTenant({ comped: ["recurring_routes"], setFails: "fulfilment_model" });
+    const t = fakeTenant({
+      overrides: { recurring_routes: "GRANT" },
+      setFails: "fulfilment_model",
+    });
     const err = await t.controller
       .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
       .catch((e) => e);

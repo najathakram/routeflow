@@ -419,6 +419,7 @@ describe("SA-2 chain and partial failure", () => {
       profile: "shipping_wholesaler",
       plan: {
         overrides: [],
+        comps: [],
         modes: [],
         billing: [{ featureKey: "driver_payments", action: "disable", manual: false }],
       },
