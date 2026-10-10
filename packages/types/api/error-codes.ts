@@ -577,6 +577,11 @@ export const API_ERROR_CODES = {
    * Narrow by customer and retry. Nothing was read.
    */
   OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice has no balance due (exactly paid, overpaid or fully
+   * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
+   */
+  REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

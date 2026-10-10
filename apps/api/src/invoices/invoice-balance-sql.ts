@@ -1,7 +1,8 @@
-import { UnprocessableEntityException } from "@nestjs/common";
+import { BadRequestException, UnprocessableEntityException } from "@nestjs/common";
 import { InvoiceStatus, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { CONFIRMED_STATUS } from "./payment-predicates";
+import { roundMoney } from "@routeflow/pricing";
+import { CONFIRMED_STATUS, sumConfirmed } from "./payment-predicates";
 
 /**
  * SA-770 (ACTION-ITEMS row 294): "overdue" means a BALANCE IS DUE. The `Invoice` model stores no balance
@@ -123,10 +124,18 @@ export async function overdueInvoiceCount(
 
 /**
  * The overdue sweep's write: flip the tenant's `statuses` invoices to OVERDUE once their due day has
- * ended AND they still owe, in ONE statement — so a payment that lands between a read and the write can
- * never leave a paid or overpaid invoice marked OVERDUE (Postgres re-evaluates the WHERE on the row it
- * locks). Returns the number of rows flipped. `updatedAt` is stamped here because a raw UPDATE bypasses
- * Prisma's `@updatedAt`.
+ * ended AND they still owe, in ONE statement. Returns the number of rows flipped. `updatedAt` is stamped
+ * here because a raw UPDATE bypasses Prisma's `@updatedAt`.
+ *
+ * RACE, stated exactly. Under READ COMMITTED, when this UPDATE waits on a row lock and the holder
+ * commits, Postgres re-checks the WHERE against the NEW version of that Invoice row only; the correlated
+ * InvoicePayment subquery keeps the statement's snapshot, so the balance test is NOT re-evaluated. What
+ * keeps a just-paid invoice from being flipped today is the STATUS re-check: the payment path takes
+ * `lockInvoicesForPayment` (FOR UPDATE) and moves the invoice to PAID or PARTIAL, so the re-check on
+ * `status IN (SENT, VIEWED)` fails. That protection ends once P-3 holds an OVERPAID invoice at SENT:
+ * an overpayment would then leave the status unchanged and the stale balance could flip it.
+ * TODO (tied to P-3): make it lock-first, in one transaction: `SELECT id ... FOR UPDATE` the candidate
+ * ids, then `UPDATE ... WHERE id = ANY(ids) AND <balanceDueSql>`, so the balance is read after the lock.
  */
 export async function markInvoicesOverdue(
   db: RawSqlDb,
@@ -141,4 +150,21 @@ export async function markInvoicesOverdue(
       SET "status" = ${InvoiceStatus.OVERDUE}::"InvoiceStatus", "updatedAt" = NOW()
       WHERE ${overdueWhere(tenantId, cutoff, statuses)}`,
   );
+}
+
+/**
+ * A payment reminder demands a balance: refuse (coded 400, before any PDF or email work) when the
+ * confirmed payments already cover the total. `sendReminder` only refused VOID and PAID, so an
+ * exactly-paid or overpaid invoice still SENT (P-3) emailed a "$0.00 balance due" reminder. Same
+ * arithmetic as `deriveInvoiceDetailFields`: `roundMoney(total - sumConfirmed(payments)) > 0`.
+ */
+export function assertReminderOwes(
+  total: unknown,
+  payments: ReadonlyArray<{ amount: unknown; status?: string }> | null | undefined,
+): void {
+  if (roundMoney(Number(total) - sumConfirmed(payments)) > 0) return;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.REMINDER_NO_BALANCE_DUE,
+    message: "This invoice has no balance due, so there is nothing to remind about.",
+  });
 }

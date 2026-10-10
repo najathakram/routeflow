@@ -67,6 +67,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-770: the overdue list refuses past its id cap. The server's text is never shown.
   [API_ERROR_CODES.OVERDUE_FILTER_TOO_BROAD]:
     "Too many invoices are overdue to list at once. Filter by customer, then try again.",
+  [API_ERROR_CODES.REMINDER_NO_BALANCE_DUE]:
+    "This invoice has no balance due, so there is nothing to remind about.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
