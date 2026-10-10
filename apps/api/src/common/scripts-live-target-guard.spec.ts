@@ -116,6 +116,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b965-mixed-unit-returns.mjs": "read-only",
   "apps/api/scripts/report-escaped-entities.mjs": "read-only",
   "apps/api/scripts/report-orphaned-order-docs-b1053.mjs": "read-only",
+  "apps/api/scripts/report-profile-grant-overrides.mjs": "read-only",
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",

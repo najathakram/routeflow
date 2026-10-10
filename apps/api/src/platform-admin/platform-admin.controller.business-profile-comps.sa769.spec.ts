@@ -74,7 +74,7 @@ jest.mock("../common/db-locks", () => {
 });
 
 import "reflect-metadata";
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
 import { AdminAuditAction } from "./audit-actions.constant";
@@ -200,7 +200,7 @@ function world(
   };
   const entitlements = {
     invalidate: jest.fn(),
-    resolve: jest.fn().mockResolvedValue({ flags: {} }),
+    resolve: jest.fn().mockResolvedValue({ flags: new Set<string>() }),
   };
   const featureResolver = { invalidate: jest.fn() };
   const catalog = { getPublishedCatalog: jest.fn().mockResolvedValue({ addonSkus: [] }) };
@@ -303,6 +303,8 @@ function world(
     overrideRows,
   };
 }
+
+beforeAll(() => Logger.overrideLogger(false));
 
 beforeEach(() => {
   held.clear();

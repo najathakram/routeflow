@@ -382,7 +382,7 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     expect(t.addonService.disableAddon).not.toHaveBeenCalled();
   });
 
-  it("billing and its manual flag are part of the fingerprint", async () => {
+  it("billing and its manual / comp flags are part of the fingerprint", async () => {
     const paidStripe = fakeTenant({ addons: ["driver_payments"] });
     const a = await paidStripe.controller.previewBusinessProfile(T, {
       profile: "shipping_wholesaler",
@@ -390,7 +390,10 @@ describe("confirm applies only the plan that was previewed (#3199 review)", () =
     const comped = fakeTenant({ comped: ["driver_payments"] });
     const b = await comped.controller.previewBusinessProfile(T, { profile: "shipping_wholesaler" });
     expect(a.plan.billing.length).toBe(1);
-    expect(b.plan.billing.length).toBe(0);
+    // SA-769: a comp row is switched off through the same disable, flagged comp (no billing to stop)
+    expect(b.plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+    ]);
     expect(a.planFingerprint).not.toBe(b.planFingerprint);
   });
 

@@ -72,7 +72,9 @@ describe("report-profile-grant-overrides.mjs", () => {
     expect(code).not.toMatch(/\bt\.(slug|name)\b|"createdById"|\bemail\b/);
     // the reason is free text an admin typed: it may classify a row, it is never selected for output
     expect(code).not.toMatch(/SELECT[^;]*o\.reason\s*(,|\n)/);
-    const printed = code.slice(code.indexOf("const rows"), code.indexOf("main()"));
+    // the mapped output rows and the summary built from them: everything printed
+    const printed = code.slice(code.indexOf("const rows"), code.indexOf("if (json)"));
+    expect(printed.length).toBeGreaterThan(100);
     expect(printed).not.toMatch(/slug|name|reason|userId|actorId|createdById/);
   });
 
