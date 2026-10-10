@@ -24,6 +24,8 @@ import { buildOrdersService } from "./testing/orders-service-harness";
  * `findActiveOrder` (staff create auto-merge, the buyer's active-order fold), `mergeAllPendingForCustomer`
  * (the post-commit sweeps, the standing-order templates, the hourly sweep) and `forceConsolidateCustomer`.
  */
+/** An OPERATOR: staff audience, a role (SA-763r M1 makes both part of every `mergeAs`). */
+const STAFF = { audience: "staff", role: "OPERATOR" } as const;
 const line = (id: string) => ({
   id,
   productId: "prod-1",
@@ -170,10 +172,13 @@ describe("OrdersService merge entry points", () => {
     h.prisma.order.findFirst.mockResolvedValue(null);
     h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
     // an explicit SHIP request: only SHIP orders are merge targets
-    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { explicit: "SHIP" } });
+    await h.service.findActiveOrder("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "SHIP", ...STAFF },
+    });
     expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "SHIP" });
     // nothing explicit (a buyer cart): the customer's stored path
-    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: {} });
+    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { ...STAFF } });
     expect(h.prisma.order.findFirst.mock.calls[1][0].where).toMatchObject({ fulfillPath: "ROUTE" });
     // no mergeAs (a display read): no path filter at all
     await h.service.findActiveOrder("cust-1");
@@ -184,10 +189,16 @@ describe("OrdersService merge entry points", () => {
     (h.service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
     h.prisma.order.findFirst.mockResolvedValue(null);
     h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
-    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { explicit: "ROUTE" } });
+    await h.service.findActiveOrder("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "ROUTE", ...STAFF },
+    });
     expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "SHIP" });
     // a buyer cart in the same tenant: the portal default
-    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { audience: "buyer" } });
+    await h.service.findActiveOrder("cust-1", {
+      forMerge: true,
+      mergeAs: { audience: "buyer", role: "CUSTOMER" },
+    });
     expect(h.prisma.order.findFirst.mock.calls[1][0].where).toMatchObject({ fulfillPath: "SHIP" });
   });
 
@@ -195,7 +206,7 @@ describe("OrdersService merge entry points", () => {
     (h.service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("unset") };
     h.prisma.order.findFirst.mockResolvedValue(null);
     h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
-    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: {} });
+    await h.service.findActiveOrder("cust-1", { forMerge: true, mergeAs: { ...STAFF } });
     expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "ROUTE" });
   });
 
@@ -203,11 +214,16 @@ describe("OrdersService merge entry points", () => {
     h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
     h.prisma.order.findFirst.mockResolvedValue({ id: "open-1" });
     await expect(
-      assertNoBackdatedMerge(h.service as any, "cust-1", FulfillPath.SHIP),
+      assertNoBackdatedMerge(h.service as any, "cust-1", {
+        explicit: FulfillPath.SHIP,
+        ...STAFF,
+      }),
     ).rejects.toThrow(/open order/);
     expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({ fulfillPath: "SHIP" });
     h.prisma.order.findFirst.mockResolvedValue(null);
-    await expect(assertNoBackdatedMerge(h.service as any, "cust-1")).resolves.toBeUndefined();
+    await expect(
+      assertNoBackdatedMerge(h.service as any, "cust-1", STAFF),
+    ).resolves.toBeUndefined();
   });
 
   it("X1: an already-shipped order is NEVER merged away (a SHIP-into-SHIP fold would delete it and its shippedAt)", async () => {

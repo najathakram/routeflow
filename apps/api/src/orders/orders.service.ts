@@ -90,7 +90,7 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
-import { resolveFulfilPath } from "./fulfil-path-resolver";
+import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -119,12 +119,8 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import {
-  cancelBlockedMessage,
-  cancelImpact,
-  lockedOrderStatus,
-  lockOrderForCancel,
-} from "./order-cancel-impact";
+import { cancelBlockedMessage, cancelImpact } from "./order-cancel-impact";
+import { cancelOrderInTx, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
@@ -1576,7 +1572,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
+      await assertNoBackdatedMerge(this, customerId, {
+        explicit: dto.fulfillPath,
+        ...fulfilCaller(user),
+      });
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1614,7 +1613,7 @@ export class OrdersService implements OnApplicationBootstrap {
       (await resolveFulfilPath(this.fulfilDeps(), {
         explicit: dto.fulfillPath,
         stored: customerRecord?.fulfillPath,
-        audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+        ...fulfilCaller(user),
       }));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
@@ -2565,64 +2564,21 @@ export class OrdersService implements OnApplicationBootstrap {
         // #2255 / SA-404d: re-run on a write conflict (SA-269). The CANCELLED status write sits in this
         // locked tx, so a refusal under the lock leaves the order exactly as it was — never
         // cancelled-but-not-unwound — and voidInvoiceInTx's claim keeps a re-run from voiding twice.
+        // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
+        // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
+        const fromStatuses = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
+          ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
+        ) as OrderStatus[];
         return retryOnTxConflict(`order cancel void order=${id}`, () =>
           this.prisma.tenantTransaction(
-            async (tx) => {
-              await lockOrderForCancel(tx, id);
-              await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
-              // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
-              const lockedStatus = await lockedOrderStatus(tx, id);
-              carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
-              const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
-              const lockedOrder = { ...order, status: lockedStatus };
-              // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
-              // a 40001 caused by a concurrent DELIVERED must never cancel a delivered order.
-              const cancellable = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k) =>
-                ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
-              );
-              const claimed = await tx.order.updateMany({
-                where: { id, status: { in: cancellable as OrderStatus[] } },
-                data: statusUpdateData,
-              });
-              if (claimed.count === 0)
-                throw new ConflictException({
-                  code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
-                  message:
-                    "The order changed while it was being cancelled — review it and try again.",
-                });
-              const row = (await tx.order.findUnique({ where: { id } }))!; // the locked row, never gone
-              if (cancelReturnsStock) {
-                const activeItems = await tx.orderItem.findMany({
-                  where: { orderId: id, status: { not: "CANCELLED" } },
-                  select: STOCK_SETTLE_SELECT,
-                });
-                // Return the creation-time decrement, clamped to the undelivered remainder (empty final
-                // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
-                await this.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
-                  notes: "CANCEL",
-                });
-              }
-
-              const invoices = await tx.invoice.findMany({
-                where: { orderId: id, status: { not: "VOID" } },
-                select: { id: true },
-              });
-              await this.creditNotes.releaseOrderCreditsInTx(tx, id);
-              for (const inv of invoices) {
-                await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
-                await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
-              }
-              if (cancelReturnsStock) {
-                // Mark what this cancel released. Pre-F07 cancels left items untouched
-                // and got no stock credit — reopenOrder re-decrements ONLY item-CANCELLED
-                // lines, so both eras stay conservation-consistent.
-                await tx.orderItem.updateMany({
-                  where: { orderId: id, status: { not: "CANCELLED" } },
-                  data: { status: "CANCELLED" },
-                });
-              }
-              return row;
-            },
+            (tx) =>
+              this.cancelOrderInTx(tx, order, {
+                fromStatuses,
+                statusUpdateData,
+                carrier,
+                user,
+                notes: "CANCEL",
+              }),
             // Headroom over Prisma's 5s default, matching every other
             // settleStockForEdit call site (:3053, :4755): this transaction now runs
             // that helper's per-product lock/read/write loop alongside the voids.
@@ -4560,6 +4516,20 @@ export class OrdersService implements OnApplicationBootstrap {
 
   private settleStockForEdit(...args: StockArgs<typeof settleStockForEdit>) {
     return settleStockForEdit(this.stockDeps(), ...args);
+  }
+
+  /** SA-762r F1: the order-cancel unwind (order-cancel-tx.ts), bound to this service's collaborators. */
+  cancelOrderInTx(tx: any, order: { id: string }, opts: CancelOrderTxOptions) {
+    return cancelOrderInTx(
+      {
+        settleStockForEdit: (...args) => this.settleStockForEdit(...args),
+        creditNotes: this.creditNotes,
+        invoices: this.invoicesService,
+      },
+      tx,
+      order,
+      opts,
+    );
   }
 
   /**

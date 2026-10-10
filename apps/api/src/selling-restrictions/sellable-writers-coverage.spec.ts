@@ -17,8 +17,8 @@ import * as ts from "typescript";
  *             price-only rewrites, copies of goods an already-checked order carries, other models).
  *
  * Scope: `.ts` class methods under `apps/api/src` (not scripts, seeds, `.tsx`). The surface "paths that
- * make goods sellable" is a superset of "line writers" (the DRAFT promotion in `changeStatus` is
- * caught only through its cancel branch). Shared with the units spec, change both or neither: the
+ * make goods sellable" is a superset of "line writers" (the DRAFT promotion in `changeStatus` writes no
+ * line itself: it is inventoried because it CALLS the choke point). Shared with the units spec, change both or neither: the
  * nested-write rule matches the `items` / `lineItems` name, so other models appear as EXEMPT rows.
  *
  * The inventory must EQUAL this table both ways: a NEW line writer fails until it is classified, and
@@ -56,6 +56,13 @@ const TABLE: Record<string, Row> = {
   [tpl("createOrderFromTemplate")]: G,
   [ord("recomputeLineCategoryTaxes")]: X("categoryTaxAmount only"),
   [ord("deleteOrder")]: X("removes lines"),
+  // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus (whose own row stays: it calls the choke point).
+  "orders/order-cancel-tx.ts::cancelOrderInTx": X(
+    "line status flips on a cancel: releases goods, adds none",
+  ),
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": X(
+    "deliveredQty reset to 0 (the counter-sale void): adds no quantity",
+  ),
   // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
   // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
   // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
@@ -343,17 +350,55 @@ const files = new Map(
   ]),
 );
 
+/**
+ * Exported FUNCTIONS of these files are inventoried like class methods (SA-762r): the cancel's line write moved out of
+ * `changeStatus` into a free function, and a class-method-only scan lost it. Keep in step with FREE_WRITER_FILES in
+ * orders/unit-line-writers.ast.spec.ts.
+ */
+const FREE_WRITER_FILES = ["orders/order-cancel-tx.ts", "orders/delivered-stamp.ts"];
+
+type WriterNode = ts.MethodDeclaration | ts.FunctionDeclaration;
+
+function exportedFunctions(sf: ts.SourceFile): Map<string, ts.FunctionDeclaration> {
+  const out = new Map<string, ts.FunctionDeclaration>();
+  for (const st of sf.statements)
+    if (
+      ts.isFunctionDeclaration(st) &&
+      st.name &&
+      st.body &&
+      st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    )
+      out.set(st.name.text, st);
+  return out;
+}
+
+function scannedUnits(sf: ts.SourceFile, file: string): Map<string, WriterNode> {
+  return new Map<string, WriterNode>([
+    ...classMethods(sf),
+    ...(FREE_WRITER_FILES.includes(file) ? exportedFunctions(sf) : []),
+  ]);
+}
+
+/**
+ * The inventory: every unit that writes an order / invoice line, PLUS every class method that calls the choke point
+ * (an enforcement point does not have to write a line itself: `changeStatus` promotes a DRAFT through a stock helper).
+ * Both come from the tree, so neither kind of row can go stale unnoticed.
+ */
 function writers(): Set<string> {
   const found = new Set<string>();
-  for (const [file, sf] of files)
-    for (const [name, node] of classMethods(sf))
+  for (const [file, sf] of files) {
+    for (const [name, node] of scannedUnits(sf, file))
       if (lineWritePositions(node, sf).length > 0) found.add(`${file}::${name}`);
+    if (file.startsWith("selling-restrictions/")) continue; // the definition itself
+    for (const [name, node] of classMethods(sf))
+      if (callPositions(node, CHOKE_POINT).length > 0) found.add(`${file}::${name}`);
+  }
   return found;
 }
 const methodOf = (key: string) => {
   const [file, name] = key.split("::");
   const sf = files.get(file)!;
-  return { node: classMethods(sf).get(name)!, sf };
+  return { node: scannedUnits(sf, file).get(name)!, sf };
 };
 
 describe("the scanner and the proof themselves (so a silent no-match cannot pass below)", () => {

@@ -20,6 +20,7 @@ import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import * as resolver from "../orders/fulfil-path-resolver";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -151,5 +152,19 @@ describe("OrderTemplatesService fulfil path", () => {
     await build(new Error("db down"));
     await service.generateOrderForUser("t1", staff);
     expect(createData().fulfillPath).toBe("ROUTE");
+  });
+
+  it("SA-763r: a standing order resolves as a system caller (role null), never as the operator who ran it", async () => {
+    await build("ship");
+    const spy = jest.spyOn(resolver, "resolveFulfilPath");
+    try {
+      await service.generateOrderForUser("t1", staff);
+      expect(spy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ audience: "staff", role: null }),
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

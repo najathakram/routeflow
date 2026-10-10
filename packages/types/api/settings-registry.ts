@@ -90,6 +90,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("settings.logoUrl", "/settings?tab=profile"),
   // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
   cfg("settings.quickKeys", "/orders/counter-sale"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",
@@ -251,6 +252,13 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     kind: "memo",
     status: "live",
     screen: "implicit",
+  },
+  {
+    key: PREF.ordersPosMode,
+    home: "userPref",
+    kind: "preference",
+    status: "pending WS4",
+    plannedSurface: "SA-763r P-2: the POS mode switch in the Create Order header",
   },
 ];
 

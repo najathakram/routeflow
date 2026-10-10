@@ -11,6 +11,7 @@ export const PREF = {
   locale: "locale",
   billLastSupplierId: "bill.lastSupplierId",
   paymentLastMethod: "payment.lastMethod",
+  ordersPosMode: "orders.posMode",
 } as const;
 
 export const PREFERENCE_KEYS = [
@@ -21,6 +22,7 @@ export const PREFERENCE_KEYS = [
   PREF.locale,
   PREF.billLastSupplierId,
   PREF.paymentLastMethod,
+  PREF.ordersPosMode,
 ] as const;
 
 export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];

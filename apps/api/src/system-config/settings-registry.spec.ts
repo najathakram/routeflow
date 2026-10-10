@@ -221,6 +221,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
     await controller.updateSettings({
       taxRate: 5,
       logoUrl: "u",
+      receiptFooter: "Thank you",
       // Every other field the handler accepts is NOT tenant-editable: none may reach SystemConfig.
       businessName: "b",
       ownerName: "o",
@@ -269,9 +270,10 @@ describe("settings registry — every SystemConfig key the settings writers writ
     expect(written).toContain("margin.floor.category.SNACKS");
   });
 
-  it("driving every settings.* field writes only settings.taxRate and settings.logoUrl", () => {
+  it("driving every settings.* field writes only settings.taxRate, settings.logoUrl and settings.receiptFooter", () => {
     expect([...written].filter((k) => k.startsWith("settings.")).sort()).toEqual([
       "settings.logoUrl",
+      "settings.receiptFooter",
       "settings.taxRate",
     ]);
   });
