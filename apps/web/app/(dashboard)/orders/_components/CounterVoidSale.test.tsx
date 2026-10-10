@@ -98,6 +98,12 @@ describe("Void sale: who sees the button", () => {
     expect(screen.queryByRole("button", { name: /Void sale/ })).toBeNull();
   });
 
+  it("a sale with a return has none (the server would refuse COUNTER_SALE_VOID_HAS_RETURN)", async () => {
+    serve(() => [row({ returned: { amount: 5, state: "PARTLY", returns: [] } })]);
+    await openSheet();
+    expect(screen.queryByRole("button", { name: /Void sale/ })).toBeNull();
+  });
+
   it("a voided row has none", async () => {
     serve(() => [row({ voided: true })]);
     await openSheet();

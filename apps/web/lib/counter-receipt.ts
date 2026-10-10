@@ -127,6 +127,9 @@ function lineDetail(l: ReceiptLineInput): string {
   return `${parts.join(" + ")} × ${price} per box`;
 }
 
+/** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
+const num = (v: unknown): number => Number(v ?? 0) || 0;
+
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 
 export function receiptHeader(profile: ReceiptBusinessProfile | null | undefined) {
@@ -346,11 +349,11 @@ export function receiptModelFromOrder(input: {
       const line: ReceiptLineInput = {
         tempId: l.id,
         name: base || "Item",
-        unitPrice: l.unitPrice,
-        qty: l.qty,
-        unitsPerBox: l.unitsPerBox ?? undefined,
-        boxes: l.boxes ?? undefined,
-        pieces: l.pieces ?? undefined,
+        unitPrice: num(l.unitPrice),
+        qty: num(l.qty),
+        unitsPerBox: l.unitsPerBox == null ? undefined : num(l.unitsPerBox),
+        boxes: l.boxes == null ? undefined : num(l.boxes),
+        pieces: l.pieces == null ? undefined : num(l.pieces),
       };
       return {
         key: line.tempId,
@@ -373,8 +376,9 @@ export function receiptModelFromOrder(input: {
   const hasTender = sale.methods.length > 0;
   const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
-  const tax = roundMoney(order.tax ?? 0);
-  const adjustments = roundMoney(order.total - subtotal - tax) || 0; // never -0
+  const orderTotal = num(order.total);
+  const tax = roundMoney(num(order.tax));
+  const adjustments = roundMoney(orderTotal - subtotal - tax) || 0; // never -0
   const rate = sale.taxRatePercent;
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
   const taxRatePercent =
@@ -395,7 +399,7 @@ export function receiptModelFromOrder(input: {
     tax,
     adjustments,
     discounts: 0,
-    total: order.total,
+    total: orderTotal,
     paid,
     balanceDue,
     onAccount,

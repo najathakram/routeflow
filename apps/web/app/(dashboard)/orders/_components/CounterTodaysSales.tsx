@@ -249,7 +249,9 @@ function SaleRow({
               onDone={onDone}
               canReturn={row.returned.state !== "FULL"}
             />
-            <CounterVoidSaleAction orderNumber={row.orderNumber} onOpen={onVoid} />
+            {row.returned.state === "NONE" ? (
+              <CounterVoidSaleAction orderNumber={row.orderNumber} onOpen={onVoid} />
+            ) : null}
           </>
         )}
         <Link

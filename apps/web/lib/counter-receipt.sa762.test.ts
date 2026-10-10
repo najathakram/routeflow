@@ -130,3 +130,30 @@ describe("receipt footer", () => {
     expect(reprint(43.3, 3.3).footer).toBeNull();
   });
 });
+
+describe("GET /orders/:id Decimals arrive as strings", () => {
+  it("a string tax and total still split into Tax (8.25%) with no Adjustments", () => {
+    const m = receiptModelFromOrder({
+      order: {
+        orderNumber: "ORD-1",
+        total: "43.30" as unknown as number,
+        tax: "3.30" as unknown as number,
+        lineItems: [{ id: "l1", name: "Cola", qty: 4, unitPrice: "10.00" as unknown as number }],
+      },
+      sale: {
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        paid: 43.3,
+        balanceDue: 0,
+        methods: [{ method: "CARD", amount: 43.3 }],
+        createdAt: "2026-10-07T15:15:00.000Z",
+        taxRatePercent: 8.25,
+      },
+      profile: null,
+    });
+    expect(m.tax).toBe(3.3);
+    expect(m.total).toBe(43.3);
+    expect(m.adjustments).toBe(0);
+    expect(m.taxRatePercent).toBe(8.25);
+  });
+});
