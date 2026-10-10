@@ -8,8 +8,16 @@
  *
  * Source scan, comments excluded; `*.spec.ts` skipped. Paths are relative to apps/api/src.
  */
+jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
+jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
+jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
+
 import * as fs from "fs";
 import * as path from "path";
+import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
+import { CustomersService } from "../customers/customers.service";
+import { createMockPrisma } from "../testing/prisma-mock";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 const norm = (p: string) => path.relative(SRC_ROOT, p).split(path.sep).join("/");
@@ -140,14 +148,26 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     expect(src.match(c.clamp)?.length ?? 0).toBeGreaterThanOrEqual(1);
     if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
     // the raw, unclamped accumulations are gone
-    expect(src).not.toMatch(/overdue\s*\+=\s*bal/);
+    expect(src).not.toMatch(/overdue\s*\+=\s*bal\b/);
   });
+
+  // What each classifier user must actually CALL (an import alone proves nothing).
+  const REQUIRED_CALL: Record<string, RegExp> = {
+    "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
+    "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\([\s\S]*\bconfirmedBalance\(/,
+    "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
+    "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
+    "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,
+  };
 
   it.each(Object.keys(USES_CLASSIFIER))("%s uses the one TS classifier", (rel) => {
     const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
     expect(src).toMatch(/from\s+["'](\.\.?\/)+(invoices\/)?invoice-balance-classify["']/);
-    // the inline copies are gone: no hand-rolled `total - sumConfirmed(...)` balance in these readers
-    expect(src).not.toMatch(/Number\((inv|i)\.total\) - (sumConfirmed|totalConfirmed)/);
+    expect(src).toMatch(REQUIRED_CALL[rel]);
+    // the inline copies are gone: no hand-rolled `total - <paid>` balance in these readers
+    expect(src).not.toMatch(
+      /Number\((inv|i|invoice)\.total\)\s*-\s*(sumConfirmed|totalConfirmed|totalPaid|paidAmount|amountPaid|paid)\b/,
+    );
   });
 
   it.each(Object.keys(USES_SQL_PREDICATE))("%s imports the shared SQL predicate", (rel) => {
@@ -165,5 +185,56 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     const balance = src.indexOf("applyOverdueBalanceFilter(where, query");
     expect(status).toBeGreaterThan(-1);
     expect(balance).toBeGreaterThan(status);
+  });
+});
+
+/** The BEHAVIOUR behind the source-shape pin: an overpaid open past-due invoice adds 0, never a negative. */
+describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinely overdue invoice still counts)", () => {
+  const PAST = new Date("2020-01-01T00:00:00.000Z");
+  const overpaid = {
+    id: "over",
+    invoiceNumber: "OVER",
+    customerId: "c1",
+    status: "SENT",
+    total: 100,
+    dueDate: PAST,
+    createdAt: PAST,
+    payments: [{ amount: 110, status: "PAID", method: "CASH" }],
+  };
+  const owes = { ...overpaid, id: "owes", invoiceNumber: "OWES", total: 50, payments: [] };
+
+  it("customers: both statement readers", async () => {
+    const prisma = createMockPrisma();
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", userId: "u1", businessName: "Acme" });
+    prisma.creditNote.findMany.mockResolvedValue([]);
+    prisma.advancePayment.findMany.mockResolvedValue([]);
+    prisma.order.findMany.mockResolvedValue([]);
+    const svc = Object.create(CustomersService.prototype) as CustomersService;
+    Object.assign(svc as any, {
+      prisma,
+      findCustomerOrThrow: jest.fn().mockResolvedValue({ id: "c1" }),
+    });
+    for (const rows of [[overpaid], [overpaid, owes]]) {
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      const want = rows.length === 1 ? 0 : 50;
+      expect((await svc.getMyStatement({ sub: "u1" } as any)).overdueAmount).toBe(want);
+      expect((await svc.getStatementForOperator("c1")).overdueAmount).toBe(want);
+    }
+  });
+
+  it("bookkeeping: the per-customer aging overdue figure", async () => {
+    const prisma = createMockPrisma();
+    prisma.tenantConfig.findUnique.mockResolvedValue(null);
+    const svc = Object.create(BookkeepingService.prototype) as BookkeepingService;
+    (svc as any).prisma = prisma;
+    const cust = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    for (const [rows, want] of [
+      [[overpaid], 0],
+      [[overpaid, owes], 50],
+    ] as const) {
+      prisma.invoice.findMany.mockResolvedValue(rows.map((r) => ({ ...r, customer: cust })));
+      const res: any = await svc.getCustomerBalanceSummary();
+      expect(res.data[0].overdue).toBe(want);
+    }
   });
 });

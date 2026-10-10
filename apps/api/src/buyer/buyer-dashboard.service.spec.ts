@@ -102,7 +102,16 @@ describe("BuyerDashboardService — W7 gate", () => {
             customerId: "c1",
             status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] },
           }),
-          select: expect.objectContaining({ payments: expect.anything(), total: true }),
+          // dropping `status`/`method` from the payments select would silently show gross
+          select: {
+            status: true,
+            total: true,
+            dueDate: true,
+            payments: {
+              where: { status: "PAID" },
+              select: { amount: true, status: true, method: true },
+            },
+          },
         }),
       );
     });
