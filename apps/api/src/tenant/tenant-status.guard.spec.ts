@@ -87,6 +87,11 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
 describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
   const ALLOWED: Array<[string, string]> = [
     ["POST", "/api/v1/billing/portal"],
+    ["POST", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/downgrade"],
+    ["POST", "/api/v1/billing/subscription/cancel"],
+    ["POST", "/api/v1/billing/subscription/resume"],
+    ["POST", "/api/v1/billing/subscription/checkout"],
     ["POST", "/api/v1/orders/counter-sale/day-close"],
     ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reopen"],
     ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/report"],
@@ -94,6 +99,9 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
   ];
   const BLOCKED: Array<[string, string]> = [
     ["POST", "/api/v1/invoices/inv1/payments"],
+    // SA ruling: staff approving a buyer's cash request is a staff PAYMENT write - still READ_ONLY (the buyer's own
+    // declaration is exempt at the buyer seller-context guard, a different guard)
+    ["POST", "/api/v1/payment-requests/pr1/approve"],
     ["POST", "/api/v1/orders"],
     ["POST", "/api/v1/orders/counter-sale"],
     ["POST", "/api/v1/orders/counter-sale/o1/void"],
@@ -113,6 +121,10 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab"],
     // the plan-restore paths are POST-only (a read passes anyway); nothing else rides on the prefix
     ["DELETE", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/anything-else"],
+    ["POST", "/api/v1/billing/subscription/cancel/extra"],
+    // the receipt id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/o1/receipt"],
     ["PUT", "/api/v1/billing/subscription/cancel"],
   ];
 
@@ -133,12 +145,13 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
       ["ANY", /^\/api\/v1\/auth\//],
       [["POST"], /^\/api\/v1\/billing\/subscribe$/],
       [["POST"], /^\/api\/v1\/billing\/quote$/],
-      [["POST"], /^\/api\/v1\/billing\/subscription(\/.*)?$/],
+      [["POST"], /^\/api\/v1\/billing\/subscription$/],
+      [["POST"], /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/],
       [["POST"], /^\/api\/v1\/billing\/portal$/],
       [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close$/],
       [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
       [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
-      [["POST"], /^\/api\/v1\/orders\/[^/]+\/receipt$/],
+      [["POST"], /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/],
     ]);
   });
 });

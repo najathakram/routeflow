@@ -34,7 +34,11 @@ export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<{
   { methods: "ANY", pattern: /^\/api\/v1\/auth\// },
   { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscribe$/ },
   { methods: ["POST"], pattern: /^\/api\/v1\/billing\/quote$/ },
-  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscription(\/.*)?$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscription$/ },
+  {
+    methods: ["POST"],
+    pattern: /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/,
+  },
   { methods: ["POST"], pattern: /^\/api\/v1\/billing\/portal$/ },
   // SA-750r3 O1 (as built on feat/counter-day-close): the close AND the re-close are the same POST.
   { methods: ["POST"], pattern: /^\/api\/v1\/orders\/counter-sale\/day-close$/ },
@@ -47,7 +51,7 @@ export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<{
     methods: ["POST"],
     pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/,
   },
-  { methods: ["POST"], pattern: /^\/api\/v1\/orders\/[^/]+\/receipt$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/ },
 ];
 
 export function isReadOnlyAllowedMutation(method: string, path: string): boolean {

@@ -1,5 +1,8 @@
 import { ForbiddenException, Logger } from "@nestjs/common";
-import { BuyerSellerContextGuard } from "./buyer-seller-context.guard";
+import {
+  BuyerSellerContextGuard,
+  SELLER_READ_ONLY_EXEMPT_BUYER_WRITES,
+} from "./buyer-seller-context.guard";
 
 // Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
 // observable (L-081: a mock that injects a fixed result cannot see one). Strict: an unmodelled filter
@@ -68,7 +71,7 @@ const link = (
   },
 });
 
-function boot(rows: any[], opts: { tenantStatus?: string; method?: string } = {}) {
+function boot(rows: any[], opts: { tenantStatus?: string; method?: string; path?: string } = {}) {
   const prisma = {
     tenant: {
       findUnique: jest
@@ -88,6 +91,7 @@ function boot(rows: any[], opts: { tenantStatus?: string; method?: string } = {}
     user: { sub: "b-1", email: "buyer@example.test", name: "Buyer", type: "BUYER" },
     headers: { "x-tenant-slug": "acme" },
     method: opts.method,
+    path: opts.path,
   };
   const ctx: any = { switchToHttp: () => ({ getRequest: () => req }) };
   return { guard, req, ctx };
@@ -202,5 +206,63 @@ describe("BuyerSellerContextGuard - a read-only seller (B4)", () => {
     const { guard, ctx } = boot([], { tenantStatus: "READ_ONLY", method: "POST" });
     const err: any = await guard.canActivate(ctx).catch((e) => e);
     expect(err.getResponse().code).not.toBe("SELLER_UNAVAILABLE");
+  });
+});
+
+// SA ruling (option a): a buyer may still PAY a read-only seller - the seller is owed the money and the payment is
+// the buyer's own money moving to the seller's Stripe account or a cash declaration. The exemption is ONE named
+// constant of exact method + route; orders, the cart and every other buyer write stay SELLER_UNAVAILABLE.
+describe("BuyerSellerContextGuard - read-only seller: payments exempt, everything else refused (B4)", () => {
+  const live = () => [link("ACTIVE", null)];
+  const run = (method: string, path: string) =>
+    boot(live(), { tenantStatus: "READ_ONLY", method, path });
+
+  it("pins the exemption constant EXACTLY", () => {
+    expect(SELLER_READ_ONLY_EXEMPT_BUYER_WRITES.map((e) => [e.method, e.pattern])).toEqual([
+      ["POST", /^\/api\/v1\/buyer\/payments\/card$/],
+      ["POST", /^\/api\/v1\/buyer\/payments\/cash$/],
+      ["POST", /^\/api\/v1\/buyer\/payments\/requests\/[^/]+\/cancel$/],
+    ]);
+  });
+
+  it.each([
+    ["POST", "/api/v1/buyer/payments/card"],
+    ["POST", "/api/v1/buyer/payments/cash"],
+    ["POST", "/api/v1/buyer/payments/requests/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/cancel"],
+  ])(
+    "%s %s passes for a READ_ONLY seller and populates the buyer context",
+    async (method, path) => {
+      const { guard, req, ctx } = run(method, path);
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      expect(req.buyerCustomer.customerId).toBe("c-1");
+    },
+  );
+
+  it.each([
+    ["POST", "/api/v1/buyer/orders"],
+    ["PATCH", "/api/v1/buyer/orders/o1/items"],
+    ["POST", "/api/v1/buyer/orders/o1/cancel"],
+    ["POST", "/api/v1/buyer/templates/t1/reorder"],
+    ["POST", "/api/v1/buyer/favorites/p1"],
+    // look-alikes of the exempt routes stay refused
+    ["POST", "/api/v1/buyer/payments/card/extra"],
+    ["POST", "/api/v1/buyer/payments/cashx"],
+    ["POST", "/api/v1/buyer/payments/cash/"],
+    ["PUT", "/api/v1/buyer/payments/card"],
+    ["DELETE", "/api/v1/buyer/payments/cash"],
+    ["PATCH", "/api/v1/buyer/payments/requests/r1/cancel"],
+    ["POST", "/api/v1/buyer/payments/requests/r1/other/cancel"],
+    ["POST", "/api/v1/buyer/payments/requests/r1/approve"],
+    ["POST", "/api/v1/x/api/v1/buyer/payments/card"],
+  ])("%s %s is still SELLER_UNAVAILABLE", async (method, path) => {
+    const { guard, ctx } = run(method, path);
+    const err: any = await guard.canActivate(ctx).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.getResponse().code).toBe("SELLER_UNAVAILABLE");
+  });
+
+  it("a query string on an exempt route does not change the verdict", async () => {
+    const { guard, ctx } = run("POST", "/api/v1/buyer/payments/card?x=1");
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 });
