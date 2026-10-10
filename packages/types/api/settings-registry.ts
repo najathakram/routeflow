@@ -126,6 +126,18 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("margin.floor.category.*", "/settings?tab=costing"),
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
+  // Receipt email limits (SA-751r change 4): read with their defaults (3 per order, 100 per tenant per day); no editor yet.
+  ...[
+    "receipts.email.perOrder",
+    "receipts.email.perTenantPerDay",
+    "receipts.email.perAddressPerDay",
+  ].map((key): SettingRow => ({
+    key,
+    home: "systemConfig",
+    kind: "config",
+    status: "pending WS4",
+    plannedSurface: "Receipt email limits (no editor yet; the defaults apply until one ships)",
+  })),
   // ── systemConfig: other writers ──────────────────────────────────────────────
   cfg("tobacco.excludeFromMainAnalytics", "/compliance/[categoryId]", { adminOnly: true }),
   {

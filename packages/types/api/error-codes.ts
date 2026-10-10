@@ -486,6 +486,16 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
   COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
+  /** 429 from POST /orders/:id/receipt: this order's receipt was already emailed its per-order maximum (default 3). Final: no retry. */
+  RECEIPT_EMAIL_ORDER_LIMIT: "RECEIPT_EMAIL_ORDER_LIMIT",
+  /** 429 from POST /orders/:id/receipt: the tenant's receipt emails for today reached the per-day maximum (default 100). Final for the day. */
+  RECEIPT_EMAIL_DAY_LIMIT: "RECEIPT_EMAIL_DAY_LIMIT",
+  /** 429 from POST /orders/:id/receipt: this address already received its per-day maximum of receipt emails from the tenant (default 5, counted across all statuses). Final for that address today; another address still works. */
+  RECEIPT_EMAIL_ADDRESS_LIMIT: "RECEIPT_EMAIL_ADDRESS_LIMIT",
+  /** 502 from POST /orders/:id/receipt: the email did not go out (no transport, a rejected address, a provider error). Nothing counted; the cashier may try again. */
+  RECEIPT_EMAIL_NOT_SENT: "RECEIPT_EMAIL_NOT_SENT",
+  /** 409 from POST /orders/:id/receipt: the order is cancelled or has no live invoice (every one VOID / WRITTEN_OFF, or none), so there is no receipt to send. */
+  RECEIPT_NOT_AVAILABLE: "RECEIPT_NOT_AVAILABLE",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).

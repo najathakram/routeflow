@@ -14,10 +14,19 @@ import { CounterReceiptView } from "./CounterReceiptView";
  * Tax / Adjustments split and the footer are checked on the paper, and the footer can only ever be text.
  */
 const live = (
-  over: { customerName?: string | null; total?: number; profile?: ReceiptBusinessProfile } = {},
+  over: {
+    customerName?: string | null;
+    total?: number;
+    profile?: ReceiptBusinessProfile;
+    tax?: number;
+    taxRatePercent?: number | null;
+  } = {},
 ) =>
   buildCounterReceipt({
     receipt: {
+      // the server-owned tax figure and stored rate (SA-762r); the default sale is $40.00 + 8.25% tax
+      tax: over.tax ?? 3.3,
+      taxRatePercent: over.taxRatePercent === undefined ? 8.25 : over.taxRatePercent,
       orderId: "o1",
       orderNumber: "ORD-1",
       invoiceId: "i1",
@@ -84,7 +93,7 @@ describe("customer name", () => {
 });
 
 describe("tax and adjustments", () => {
-  it("the live receipt prints Tax (8.25%) from the settings rate, and no Adjustments row", () => {
+  it("the live receipt prints Tax (8.25%) from the server's tax and rate, and no Adjustments row", () => {
     show(live());
     expect(screen.getByTestId("receipt-tax")).toHaveTextContent("Tax (8.25%)");
     expect(screen.getByTestId("receipt-tax")).toHaveTextContent("$3.30");

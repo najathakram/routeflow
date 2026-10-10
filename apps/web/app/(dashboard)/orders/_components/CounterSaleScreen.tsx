@@ -94,7 +94,7 @@ import {
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
-import { CounterReturnAction } from "./CounterReturnAction";
+import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
@@ -113,8 +113,6 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
-/** The receipt's own controls: a full 44 px target with a visible keyboard focus ring. */
-const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visible:ring-navy";
 
 export function CounterSaleScreen() {
   const router = useRouter();
@@ -802,15 +800,11 @@ export function CounterSaleScreen() {
           customerName={customer?.businessName}
           headingRef={receiptHeadingRef}
         />
-        <div className="flex flex-wrap gap-2 print:hidden">
-          <Button className={RECEIPT_BTN} onClick={() => window.print()}>
-            Print
-          </Button>
-          <CounterReturnAction orderId={receipt.orderId} />
-          <Button className={RECEIPT_BTN} variant="secondary" onClick={resetSale}>
-            New sale
-          </Button>
-        </div>
+        <CounterReceiptActions
+          orderId={receipt.orderId}
+          customer={customer}
+          onNewSale={resetSale}
+        />
       </div>
     );
   }

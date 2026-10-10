@@ -84,9 +84,16 @@ describe("CounterReceiptBody", () => {
     expect(h.querySelector("img")).toHaveAttribute("src", "https://cdn.example/logo.png");
   });
 
-  it("SA-762r: the named customer, the settings tax rate and the footer reach the paper; a walk-in has no customer line", () => {
-    const profile = { taxRate: 10, receiptFooter: "Thanks!" };
-    const withTax = { ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never };
+  it("SA-762r: the named customer, the server's tax and rate and the footer reach the paper; a walk-in has no customer line", () => {
+    const profile = { receiptFooter: "Thanks!" };
+    const withTax = {
+      ...RECEIPT,
+      total: 24.75,
+      paid: 24.75,
+      change: undefined as never,
+      tax: 2.25,
+      taxRatePercent: 10,
+    };
     const { unmount } = renderWithProviders(
       <CounterReceiptBody
         receipt={withTax}

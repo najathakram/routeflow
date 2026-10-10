@@ -175,6 +175,7 @@ export class CounterSaleService {
       select: {
         id: true,
         orderNumber: true,
+        tax: true,
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
           where: { overriddenBy: { not: null } },
@@ -222,13 +223,19 @@ export class CounterSaleService {
     // Any non-ON_ACCOUNT request, so a CARD replay on a sale first tendered in CASH serves what by-key serves.
     const tendered =
       method !== "ON_ACCOUNT"
-        ? await this.prisma
-            .forTenant()
-            .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
+        ? await this.prisma.forTenant().order.findFirst({
+            where: { id: orderId },
+            select: { counterCashTendered: true, tax: true },
+          })
         : null;
     return buildCounterSaleResponse({
       payment: dto.payment,
-      order: order && { ...order, counterCashTendered: tendered?.counterCashTendered },
+      order: order && {
+        ...order,
+        counterCashTendered: tendered?.counterCashTendered,
+        // the tax as the tender left it (the invoice back-sync can move it); ON_ACCOUNT keeps the first read
+        tax: tendered?.tax ?? order.tax,
+      },
       invoices,
       replayed,
       planError,
@@ -462,7 +469,11 @@ export class CounterSaleService {
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
-      include: { payments: { orderBy: { createdAt: "asc" } } },
+      include: {
+        payments: { orderBy: { createdAt: "asc" } },
+        // the line rates the sale's tax rate is read from
+        items: { select: { taxRate: true, categoryTaxAmount: true } },
+      },
       orderBy: { createdAt: "asc" },
     });
   }
