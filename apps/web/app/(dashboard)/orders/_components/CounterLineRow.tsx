@@ -170,7 +170,7 @@ export function CounterLineRow({
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
   onQty: (tempId: string, typed: TypedQty) => boolean;
-  /** POS-5: the ONE gate (`canEditPrices(user)`). False = the price control does not exist (hidden, never disabled). */
+  /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
