@@ -74,6 +74,9 @@ export const AdminAuditAction = {
   RF_INVOICE_VOIDED: "RF_INVOICE_VOIDED",
   RF_INVOICE_IRREGULAR_PERIOD: "RF_INVOICE_IRREGULAR_PERIOD",
   RF_INVOICE_SENT: "RF_INVOICE_SENT",
+  // Counter day close (SA-750r3): a tenant operator or admin reopened a closed till window. Written INSIDE the reopen transaction
+  // (entityType "CounterDayClose", meta = the snapshot that was in force), so the old figures are never lost.
+  COUNTER_DAY_CLOSE_REOPENED: "COUNTER_DAY_CLOSE_REOPENED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -124,6 +127,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   RF_INVOICE_VOIDED: "RouteFlow invoice voided",
   RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
   RF_INVOICE_SENT: "RouteFlow invoice emailed",
+  COUNTER_DAY_CLOSE_REOPENED: "Counter day close reopened",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

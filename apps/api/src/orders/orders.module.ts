@@ -37,6 +37,10 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+// SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
+import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
+import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { EmailModule } from "../email/email.module";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -76,8 +80,15 @@ import { StorageModule } from "../storage/storage.module";
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
     StorageModule,
+    // CounterDayCloseService sends the Z report through EmailService.
+    EmailModule,
   ],
-  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
+  controllers: [
+    OrdersController,
+    CounterSaleController,
+    CounterDayCloseController,
+    PickupCompleteController,
+  ],
   providers: [
     OrdersService,
     ChangeRequestsService,
@@ -85,6 +96,7 @@ import { StorageModule } from "../storage/storage.module";
     BuyerBackorderViewResolver,
     CounterSaleService,
     CounterSaleTodayService,
+    CounterDayCloseService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
