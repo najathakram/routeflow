@@ -105,6 +105,20 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
 
   it("4. EXTERNAL_REFUND is untouched: it mints nothing by design and still resolves an unbilled-only return", async () => {
     withReturn(order([invoice("inv-1", [LINE_A])]), [{ productId: "pz", qty: 1 }]);
+    // SA-740r2: a recorded refund needs the order's invoice paid in full (read inside the claim's transaction)
+    prisma.return.findFirst.mockResolvedValue({ id: "ret-1", status: "RECEIVED" });
+    prisma.invoice.findMany.mockImplementation(async ({ where }: any) =>
+      where?.id?.in
+        ? [
+            {
+              id: "inv-1",
+              status: "PAID",
+              total: 100,
+              payments: [{ amount: 100, status: "PAID", method: "CASH" }],
+            },
+          ]
+        : [{ id: "inv-1" }],
+    );
     const res: any = await service.processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any);
     expect(prisma.return.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({

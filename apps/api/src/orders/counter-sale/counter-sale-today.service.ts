@@ -127,6 +127,7 @@ export class CounterSaleTodayService {
       ),
       select: {
         refundMethod: true,
+        refundTender: true, // SA-740r2: the tender of a recorded refund (the ONLY source; null = not recorded)
         refundAmount: true,
         creditSubtotal: true,
         creditTax: true,

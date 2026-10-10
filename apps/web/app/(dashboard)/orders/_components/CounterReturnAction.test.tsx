@@ -65,6 +65,12 @@ describe("CounterReturnAction", () => {
       expect.objectContaining({ open: true, orderId: "o1", customerId: "c1" }),
     );
   });
+  it("SA-740: pins the return to THIS sale (sourceOrderId = the sale's order) so a walk-in never matches another receipt", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    expect(dialogProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderId: "o1", sourceOrderId: "o1" }),
+    );
+  });
   it("passes allowRefund to the dialog and styles the button full-width on a phone", () => {
     render(<CounterReturnAction orderId="o1" />);
     expect(dialogProps).toHaveBeenLastCalledWith(expect.objectContaining({ allowRefund: true }));

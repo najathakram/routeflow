@@ -46,6 +46,10 @@ export interface QuoteInlineReturnRequest {
   /** Required for a DRIVER caller only (M8) — an office (OPERATOR/TENANT_ADMIN) caller
    *  never sends this. */
   routeRunStopId?: string;
+  /** SA-740: the sale this return is from. REQUIRED for a walk-in (decided by the server; 400 `SOURCE_SALE_REQUIRED`
+   *  without it); a named customer sends it only to pin the matching to that one order. Must be the customer's own
+   *  counter sale or delivered order (400 `SOURCE_SALE_INVALID`). */
+  sourceOrderId?: string;
 }
 
 // ─── Request: POST /returns/inline/capture ───────────────────────────────────────
@@ -82,6 +86,9 @@ export interface CaptureInlineReturnRequest {
   /** The order that CARRIES the credit — never necessarily the order(s) the goods were
    *  originally sold on (resolved server-side per item via ReturnItem.sourceOrderId). */
   orderId: string;
+  /** SA-740: the sale the goods are from when it is not the carrying order (send the SAME value the quote priced). A
+   *  walk-in capture defaults it to `orderId`. */
+  sourceOrderId?: string;
   items: CaptureInlineReturnItem[];
   /** Required for a DRIVER caller only (M8) — never sent by an office capture. */
   routeRunStopId?: string;

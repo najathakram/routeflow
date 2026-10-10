@@ -126,6 +126,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/seed-marketing-screenshot-products.js": "local-only",
   "apps/api/scripts/seed-test-catalog.js": "test-slug-only",
   "apps/api/scripts/stock-ledger-gap.mjs": "read-only",
+  "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/t6-backfill-census.mjs": "read-only",
   "apps/api/scripts/t6-drop-guards.mjs": "schema-only",
   "apps/api/scripts/t6-null-census.mjs": "read-only",

@@ -143,6 +143,12 @@ module.exports = {
     INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
     INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
     INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+    /** SA-740: a walk-in return names the sale it is from (the quote requires it; the capture defaults to the carrying order). 400. */
+    SOURCE_SALE_REQUIRED: "SOURCE_SALE_REQUIRED",
+    /** SA-740: the named source sale is not this customer's counter sale or delivered order in this tenant (or is cancelled). 400. */
+    SOURCE_SALE_INVALID: "SOURCE_SALE_INVALID",
+    /** SA-740: a walk-in return of more than the source sale had left to return; never priced as an unreferenced chunk. 409. */
+    RETURN_EXCEEDS_SALE: "RETURN_EXCEEDS_SALE",
     UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
     MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
     ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
@@ -295,6 +301,7 @@ module.exports = {
     RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
     REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
     REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+    REFUND_EXCEEDS_CASH_PAID: "REFUND_EXCEEDS_CASH_PAID",
     REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
     RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
     RETURN_NOT_REFUNDABLE: "RETURN_NOT_REFUNDABLE",

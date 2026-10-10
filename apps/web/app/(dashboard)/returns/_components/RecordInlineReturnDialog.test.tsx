@@ -577,6 +577,49 @@ describe("RecordInlineReturnDialog — office capture never sends routeRunStopId
   });
 });
 
+// ─── SA-740 (row 190): a counter return names the sale it is from ───────────────────────────
+
+describe("RecordInlineReturnDialog — SA-740: sourceOrderId rides on the quote AND the capture", () => {
+  async function openWithSource(sourceOrderId?: string) {
+    renderWithProviders(
+      <RecordInlineReturnDialog
+        open
+        onClose={jest.fn()}
+        customerId="cust-1"
+        orderId="order-1"
+        customerName="Walk-in"
+        sourceOrderId={sourceOrderId}
+      />,
+    );
+    await screen.findByText(/what came back/i);
+  }
+
+  it("a dialog opened from a sale sends that sale as sourceOrderId on the quote and the capture", async () => {
+    await openWithSource("order-1");
+    await enterQtyAndGetQuote("10");
+    expect(quoteMutate.mock.calls[0][0]).toMatchObject({ sourceOrderId: "order-1" });
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0]).toMatchObject({
+      orderId: "order-1",
+      sourceOrderId: "order-1",
+    });
+  });
+
+  it("without the prop (named customer, order detail / customer detail) neither request carries one", async () => {
+    await openWithSource(undefined);
+    await enterQtyAndGetQuote("10");
+    expect(quoteMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
+  });
+});
+
 // ─── #2097 — the result's credit amount, and the excess option across a re-quote ───────────
 
 const captureResult = (over: Record<string, unknown> = {}) => ({

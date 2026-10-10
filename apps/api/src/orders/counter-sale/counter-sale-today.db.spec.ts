@@ -465,7 +465,8 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
     expect(s.refunds).toMatchObject({ count: want.refundCount, total: want.refundTotal });
     expect(s.storeCreditIssued).toEqual({ count: 2, amount: want.creditIssued });
     expect(s.netCollected).toBe(want.net);
-    // the refund tender is not stored: cash expected is cash taken, not reduced
+    // these fixtures record no refund tender (refundTender null = not recorded): nothing is subtracted from the cash, and the
+    // sheet says so (SA-740r2: a recorded CASH refund would be subtracted; see counter-sale-today.pure.spec.ts)
     expect(s.cashExpectedInDrawer).toBe(want.cash);
     expect(s.refunds.tenderKnown).toBe(false);
   });

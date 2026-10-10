@@ -236,6 +236,27 @@ describe("CounterTodaysSales", () => {
     expect(screen.getByTestId("today-cash-expected")).not.toHaveTextContent("before refunds");
   });
 
+  it("SA-740r2: some refunds with a recorded method and some without: the breakdown shows, and the labels say what is missing", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          refunds: { count: 2, cash: 3, card: 0, check: 0, other: 2, total: 5, tenderKnown: false },
+          cashExpectedInDrawer: 27,
+        },
+      }),
+    });
+    await open();
+    expect(await screen.findByTestId("today-refunds-cash")).toHaveTextContent("$3.00");
+    expect(screen.getByTestId("today-refunds-other")).toHaveTextContent("$2.00");
+    expect(screen.getByTestId("today-refunds")).toHaveTextContent(
+      /some without a recorded method/i,
+    );
+    expect(screen.getByTestId("today-cash-expected")).toHaveTextContent(
+      /before refunds with no method recorded/i,
+    );
+  });
+
   it("a voided row is labelled Voided, struck through, with no Reprint or Return", async () => {
     serve({ 1: page1([row({ voided: true })]) });
     await open();
