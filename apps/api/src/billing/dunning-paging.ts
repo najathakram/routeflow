@@ -21,7 +21,7 @@ export interface PagingOptions {
   unitMs: number;
   /**
    * Process-local rotation memory + its key: when a run is cut short by the TIME budget the next run starts where
-   * this one actually stopped (start + rows processed), so the tail is never starved. Without an entry (first run,
+   * this one actually stopped (the last tenantId it visited: a keyset cursor, not a row index), so the tail is never starved. Without an entry (first run,
    * restart, another replica) the hour-derived rotation below applies.
    */
   cursors?: Map<string, string>;

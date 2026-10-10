@@ -90,6 +90,78 @@ function make(
   return { svc, prisma, tx, stripe, notifications };
 }
 
+/** A DunningService wired to ONE clocked row, as the stamp left it, with this episode's notice log. */
+function sweepWorld(
+  stamped: { pastDueSince: Date; pastDueInvoiceId: string },
+  finalSentAt: Date | null,
+  history: any[] = [],
+) {
+  const key = `${stamped.pastDueInvoiceId}:${stamped.pastDueSince.toISOString()}`;
+  const logs = [
+    ...history,
+    ...(finalSentAt
+      ? [
+          { milestone: "DUNNING_D0", sentAt: stamped.pastDueSince, key },
+          { milestone: "DUNNING_D3", sentAt: stamped.pastDueSince, key },
+          { milestone: "DUNNING_D6", sentAt: finalSentAt, key },
+          { milestone: "DUNNING_FINAL", sentAt: finalSentAt, key },
+        ]
+      : []),
+  ];
+  const tx: any = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    tenant: { findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }) },
+    tenantSubscription: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
+    },
+  };
+  const prisma: any = {
+    getTenantId: () => null,
+    tenantSubscription: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          tenantId: "t1",
+          stripeSubId: "sub_t1",
+          externalPayment: false,
+          catchupState: null,
+          pastDueSince: stamped.pastDueSince,
+          pastDueInvoiceId: stamped.pastDueInvoiceId,
+          pausedAt: null,
+          tenant: {
+            status: "ACTIVE",
+            readOnlyReason: null,
+            deletedAt: null,
+            class: "PRODUCTION",
+          },
+        },
+      ]),
+      findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
+    },
+    tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: "UTC" }) },
+    billingNotificationLog: {
+      findMany: jest.fn(async (a: any) => logs.filter((l) => l.key === a.where.key)),
+    },
+    $transaction: jest.fn(async (fn: any) => fn(tx)),
+  };
+  const stripe: any = {
+    isConfigured: true,
+    getInvoiceFacts: jest.fn().mockResolvedValue(OPEN_FACTS),
+    updateSubscription: jest.fn().mockResolvedValue({}),
+  };
+  const notifications: any = {
+    notifyDunning: jest.fn().mockResolvedValue({ status: "sent", recipients: 1 }),
+    recordDunningMilestone: jest.fn(),
+    localDateLabel: jest.fn().mockResolvedValue("x"),
+  };
+  const transition = jest.fn(async () => true);
+  const svc = new DunningService(prisma, stripe, notifications, {
+    invalidate: jest.fn(),
+  } as any);
+  svc.bindTransition(transition as any);
+  return { svc, transition, notifications };
+}
+
 describe("DunningService.discover (daily open-invoice discovery)", () => {
   const saved = process.env.BILLING_PAUSE_MODE;
   beforeEach(() => {
@@ -112,78 +184,6 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
   });
 
   describe("a 40-day-old never-attempted invoice gets a FULL runway (a REAL hourly sweep decides)", () => {
-    /** A DunningService wired to ONE clocked row, as the stamp left it, with this episode's notice log. */
-    function sweepWorld(
-      stamped: { pastDueSince: Date; pastDueInvoiceId: string },
-      finalSentAt: Date | null,
-      history: any[] = [],
-    ) {
-      const key = `${stamped.pastDueInvoiceId}:${stamped.pastDueSince.toISOString()}`;
-      const logs = [
-        ...history,
-        ...(finalSentAt
-          ? [
-              { milestone: "DUNNING_D0", sentAt: stamped.pastDueSince, key },
-              { milestone: "DUNNING_D3", sentAt: stamped.pastDueSince, key },
-              { milestone: "DUNNING_D6", sentAt: finalSentAt, key },
-              { milestone: "DUNNING_FINAL", sentAt: finalSentAt, key },
-            ]
-          : []),
-      ];
-      const tx: any = {
-        $queryRaw: jest.fn().mockResolvedValue([]),
-        tenant: { findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }) },
-        tenantSubscription: {
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-          findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
-        },
-      };
-      const prisma: any = {
-        getTenantId: () => null,
-        tenantSubscription: {
-          findMany: jest.fn().mockResolvedValue([
-            {
-              tenantId: "t1",
-              stripeSubId: "sub_t1",
-              externalPayment: false,
-              catchupState: null,
-              pastDueSince: stamped.pastDueSince,
-              pastDueInvoiceId: stamped.pastDueInvoiceId,
-              pausedAt: null,
-              tenant: {
-                status: "ACTIVE",
-                readOnlyReason: null,
-                deletedAt: null,
-                class: "PRODUCTION",
-              },
-            },
-          ]),
-          findUnique: jest.fn().mockResolvedValue({ pausedAt: null }),
-        },
-        tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: "UTC" }) },
-        billingNotificationLog: {
-          findMany: jest.fn(async (a: any) => logs.filter((l) => l.key === a.where.key)),
-        },
-        $transaction: jest.fn(async (fn: any) => fn(tx)),
-      };
-      const stripe: any = {
-        isConfigured: true,
-        getInvoiceFacts: jest.fn().mockResolvedValue(OPEN_FACTS),
-        updateSubscription: jest.fn().mockResolvedValue({}),
-      };
-      const notifications: any = {
-        notifyDunning: jest.fn().mockResolvedValue({ status: "sent", recipients: 1 }),
-        recordDunningMilestone: jest.fn(),
-        localDateLabel: jest.fn().mockResolvedValue("x"),
-      };
-      const transition = jest.fn(async () => true);
-      const svc = new DunningService(prisma, stripe, notifications, {
-        invalidate: jest.fn(),
-      } as any);
-      svc.bindTransition(transition as any);
-      return { svc, transition, notifications };
-    }
-
     it("discovery stamps the STAMP time; the sweep does NOT pause at +167 h and DOES at +168 h", async () => {
       process.env.BILLING_PAUSE_MODE = "enforced";
       const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_old", 40 * 24)] } });

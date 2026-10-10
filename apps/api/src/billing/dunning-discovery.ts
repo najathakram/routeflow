@@ -1,11 +1,10 @@
 import { logClockStarted } from "./dunning-clock";
 import {
-  DISCOVERY_MIN_AGE_HOURS,
   type DunningDeps,
   dunningEligible,
   invoiceOwedSince,
-  isAgedOwedInvoice,
   isOwed,
+  isOwedInvoice,
 } from "./dunning-core";
 import { type PagedRow, forEachRotated } from "./dunning-paging";
 import { DUNNING_CLEAR } from "./transition-to-active";
@@ -58,10 +57,12 @@ export const SETTLE_WHERE = {
  * SA-733r M2 / SA-733r7 r-note (3): `invoice.payment_failed` only fires for an invoice Stripe ATTEMPTED. An open
  * invoice that was never attempted (marked unpaid, no card, auto-collection off) would run uncharged and unseen. Once
  * a day, for every Stripe-billed tenant without a clock, list its open invoices (all pages) and stamp the OLDEST one
- * that was finalized more than 24 h ago and still has money remaining - through the same stamp helper, so a clock is
- * written once per invoice. The invoice is re-read first (M8) and a payment still processing is skipped (N6).
- * `paid` / `void` / `uncollectible` never qualify (the list is `open` only and the status is re-checked), and the
- * clock starts at the invoice's finalization time (SA-733r M2). It sends nothing: the hourly sweep owns the notices.
+ * that is owed by the one rule in `isOwedInvoice` (open, money remaining, finalized over 24 h ago or already
+ * attempted) - through the same stamp helper, so a clock is written once per invoice. The invoice is re-read first
+ * (M8) and a payment still processing is skipped (N6). `paid` / `void` / `uncollectible` never qualify (the list is
+ * `open` only and the status is re-checked). The clock starts at the STAMP time (r-note 3: a full runway, a new
+ * episode), however old the invoice is; its finalization time is only logged. It sends nothing: the hourly sweep
+ * owns the notices.
  * `BILLING_PAUSE_MODE=off` does nothing.
  */
 export async function discoverUnstamped(
@@ -84,7 +85,7 @@ export async function discoverUnstamped(
     if (!dunningEligible(row)) return; // belt and braces: the query already excludes these
     try {
       const open: any[] = await deps.stripe.listOpenSubscriptionInvoices(row.stripeSubId as string);
-      const candidate = open.find((i) => isAgedOwedInvoice(i, now));
+      const candidate = open.find((i) => isOwedInvoice(i, now));
       if (!candidate) return;
       const facts = await deps.stripe.getInvoiceFacts(candidate.id);
       if (!isOwed(facts) || facts.paymentProcessing) return;
@@ -139,7 +140,7 @@ export async function discoverUnstamped(
       const facts = await deps.stripe.getInvoiceFacts(clockId);
       if (facts.status === "paid" || isOwed(facts)) return; // paid: invoice.paid / the sweep; open: still chased
       const open: any[] = await deps.stripe.listOpenSubscriptionInvoices(row.stripeSubId as string);
-      const next = open.find((i) => isAgedOwedInvoice(i, now) && i.id !== clockId) ?? null;
+      const next = open.find((i) => i.id !== clockId && isOwedInvoice(i, now)) ?? null;
       const since = next ? now : null; // r-note 3: a moved clock is a NEW episode
       const done = await deps.prisma.$transaction(async (tx) => {
         await lockTenantForLedger(tx, row.tenantId);

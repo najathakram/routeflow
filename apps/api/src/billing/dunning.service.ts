@@ -21,6 +21,7 @@ import {
   type DunningRow,
   dunningEligible,
   isOwed,
+  isPausedRow,
   type StatusTransition,
 } from "./dunning-core";
 import {
@@ -159,6 +160,7 @@ export class DunningService {
         { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
         facts,
         now,
+        { paused: isPausedRow(row) },
       );
     } catch (err) {
       this.logger.warn(
@@ -273,6 +275,19 @@ export class DunningService {
     if (!dunningEligible(row)) return "noop";
     const deps = this.deps();
     const invoiceId = row.pastDueInvoiceId;
+    const since = row.pastDueSince;
+    if (!since) {
+      // A clock with no start can be neither mailed nor paused over (and `now` is never a stand-in: that would
+      // restart the week every hour). Rows are only written through the stamp, so this is corruption: say so, once a day.
+      if (
+        this.once(`no_since:${row.tenantId}:${invoiceId}:${Math.floor(now.getTime() / 86_400_000)}`)
+      ) {
+        this.logger.warn(
+          `billing.dunning.clock_without_since tenant=${row.tenantId} invoice=${invoiceId}`,
+        );
+      }
+      return "noop";
+    }
 
     // M8: re-read Stripe before any email or pause. Paid / void / unknown = the clock is stale: resolve it.
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
@@ -299,12 +314,12 @@ export class DunningService {
     }
     if (facts.paymentProcessing) return "noop"; // N6: a bank debit in flight is not a failure
 
-    const since = row.pastDueSince ?? now;
     const finalSentAt = await runMilestones(
       deps,
       { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
       facts,
       now,
+      { paused: isPausedRow(row) },
     );
 
     if (row.tenant.status !== "ACTIVE" || row.pausedAt) return "noop";
@@ -313,8 +328,8 @@ export class DunningService {
     if (!pauseHourReached(now, zone)) return "noop";
 
     if (mode === "dark") {
-      // once per tenant and invoice, not every hourly sweep
-      if (this.once(`would_pause:${row.tenantId}:${invoiceId}`)) {
+      // once per tenant and EPISODE (a re-stamped clock on the same invoice is a new one), not every hourly sweep
+      if (this.once(`would_pause:${row.tenantId}:${episodeKey(invoiceId, since)}`)) {
         this.logger.log(
           `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
         );
@@ -329,7 +344,7 @@ export class DunningService {
       return "noop";
     }
 
-    const paused = await pauseTenantTx(deps, row, invoiceId, now);
+    const paused = await pauseTenantTx(deps, row, invoiceId, since, now);
     if (!paused) return "noop"; // CAS loser: another sweep paused it, or invoice.paid resumed it first
     this.tenantStatusGuard.invalidate(row.tenantId);
     this.logger.warn(`billing.dunning.paused tenant=${row.tenantId} invoice=${invoiceId}`);

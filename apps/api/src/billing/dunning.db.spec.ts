@@ -163,9 +163,9 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
   it("two pause attempts racing: exactly one pauses, one -MRR row, pausedAt set once (CAS count 0 = no pause)", async () => {
     const t = await overdueTenant("race");
     const results = await Promise.all([
-      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, NOW),
-      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, new Date(NOW.getTime() + 1)),
-      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, new Date(NOW.getTime() + 2)),
+      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, SINCE, NOW),
+      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, SINCE, new Date(NOW.getTime() + 1)),
+      pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, SINCE, new Date(NOW.getTime() + 2)),
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
     const row = await tenantRow(t.id);
@@ -180,7 +180,15 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
 
   it("a pause whose clock invoice moved on (pastDueInvoiceId != X) pauses nothing", async () => {
     const t = await overdueTenant("moved");
-    expect(await pauseTenantTx(deps(), { tenantId: t.id }, "in_other", NOW)).toBe(false);
+    expect(await pauseTenantTx(deps(), { tenantId: t.id }, "in_other", SINCE, NOW)).toBe(false);
+    expect((await tenantRow(t.id)).status).toBe("ACTIVE");
+    expect(await ledger(t.id)).toHaveLength(0);
+  });
+
+  it("a pause decided on an OLDER episode (same invoice re-stamped since) pauses nothing", async () => {
+    const t = await overdueTenant("restamped");
+    const older = new Date(SINCE.getTime() - 9 * 24 * H);
+    expect(await pauseTenantTx(deps(), { tenantId: t.id }, t.invoiceId, older, NOW)).toBe(false);
     expect((await tenantRow(t.id)).status).toBe("ACTIVE");
     expect(await ledger(t.id)).toHaveLength(0);
   });

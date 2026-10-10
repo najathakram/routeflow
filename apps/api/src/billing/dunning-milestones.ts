@@ -7,7 +7,7 @@ import {
   HOUR_MS,
 } from "./dunning-config";
 import { episodeKey } from "./dunning-clock";
-import type { DunningDeps } from "./dunning-core";
+import { type DunningDeps, remainingCents } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
 /**
@@ -20,6 +20,10 @@ import { hoursSince } from "./dunning-time";
  *     `enforced` pauses nobody in hour one: the pause waits for a `dunning_final` that is >= 24 h old.
  *   - Every send re-reads the invoice first (the caller passes the fresh facts): paid / void / processing = no email.
  *
+ *   - A tenant that is already PAUSED (SA G8) gets none of d0/d3/d6/final - there is nothing left to warn about. The
+ *     suppression is logged once per episode, and ONE `paused_still_owed` notice per episode says the workspace is
+ *     still read-only, which invoice is open and how to pay it. The tenant stays paused.
+ *
  * Returns the instant `dunning_final` was sent (this run or earlier), or null when it never was.
  */
 export async function runMilestones(
@@ -27,6 +31,7 @@ export async function runMilestones(
   row: { tenantId: string; pastDueInvoiceId: string; pastDueSince: Date },
   facts: InvoiceFacts,
   now: Date,
+  opts: { paused?: boolean } = {},
 ): Promise<Date | null> {
   const mode = deps.mode();
   if (mode === "off") return null;
@@ -36,12 +41,36 @@ export async function runMilestones(
   const M = DUNNING_MILESTONES;
 
   const logged = await deps.prisma.billingNotificationLog.findMany({
-    where: { tenantId, key, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL] } },
+    where: { tenantId, key, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL, M.PAUSED_STILL_OWED] } },
     select: { milestone: true, sentAt: true },
   });
   const sent = new Map(logged.map((l) => [l.milestone, l.sentAt]));
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
+
+  if (opts.paused) {
+    // SA G8: nothing to warn about any more. Log what is held back once per episode; tell the admin once.
+    if (deps.once(`paused_suppressed:${key}`)) {
+      deps.logger.log(
+        `billing.dunning.paused_notices_suppressed tenant=${tenantId} invoice=${invoiceId} episode=${key}`,
+      );
+    }
+    if (!sent.has(M.PAUSED_STILL_OWED)) {
+      await deps.notifications.notifyDunning(
+        tenantId,
+        M.PAUSED_STILL_OWED,
+        key,
+        "paused_still_owed",
+        {
+          payUrl,
+          invoiceNumber: facts.invoiceNumber ?? null,
+          amountCents: remainingCents(facts),
+          currency: facts.currency ?? null,
+        },
+      );
+    }
+    return null;
+  }
 
   const send = (
     milestone: string,

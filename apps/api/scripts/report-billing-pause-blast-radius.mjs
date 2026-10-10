@@ -41,7 +41,8 @@
  */
 import { createRequire } from "module";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
-const { Client } = createRequire(import.meta.url)("pg");
+import { episodeKey, utcTimestampTypes } from "./lib/pause-report-keys.mjs";
+const { Client, types: pgTypes } = createRequire(import.meta.url)("pg");
 
 const PAUSE_HOURS = 168; // DUNNING_PAUSE_HOURS in src/billing/dunning-config.ts
 const HOUR_MS = 60 * 60 * 1000;
@@ -52,7 +53,9 @@ const json = process.argv.slice(2).includes("--json");
 const databaseUrl = resolveReportDbUrl("report-billing-pause-blast-radius");
 if (!databaseUrl) process.exit(2);
 
-const client = new Client({ connectionString: databaseUrl });
+// pastDueSince is TIMESTAMP(3) WITHOUT a zone: read it as UTC (node-postgres would use the machine's zone and shift
+// the notice key and the hours overdue on anything but a UTC host). See scripts/lib/pause-report-keys.mjs.
+const client = new Client({ connectionString: databaseUrl, types: utcTimestampTypes(pgTypes) });
 const q = async (sql, params) => (await client.query(sql, params)).rows;
 
 async function main() {
@@ -80,16 +83,14 @@ async function main() {
         `SELECT l."tenantId", l.milestone, l.key, l."sentAt"
            FROM "BillingNotificationLog" l
           WHERE l."tenantId" = ANY($1::text[])
-            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED')`,
+            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED','DUNNING_PAUSED_STILL_OWED')`,
         [stampedIds],
       )
     : [];
   // notices are keyed per EPISODE: `<invoiceId>:<pastDueSince ISO>` (SA r-note 3)
   const sentFor = (tenantId, invoiceId, since) =>
     logRows
-      .filter(
-        (l) => l.tenantId === tenantId && l.key === `${invoiceId}:${new Date(since).toISOString()}`,
-      )
+      .filter((l) => l.tenantId === tenantId && l.key === episodeKey(invoiceId, since))
       .map((l) => l.milestone.replace("DUNNING_", "").toLowerCase())
       .sort();
 

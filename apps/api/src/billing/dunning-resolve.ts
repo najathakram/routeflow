@@ -1,12 +1,7 @@
 import { lockTenantForLedger } from "./addon-ledger";
 import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { logClockStarted } from "./dunning-clock";
-import {
-  type DunningDeps,
-  type DunningRow,
-  invoiceOwedSince,
-  isAgedOwedInvoice,
-} from "./dunning-core";
+import { type DunningDeps, type DunningRow, invoiceOwedSince, isOwedInvoice } from "./dunning-core";
 import { clearPauseCollection } from "./dunning-pause";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { DUNNING_CLEAR, type PauseExit } from "./transition-to-active";
@@ -47,7 +42,8 @@ export async function resolveClockInvoice(
   // OWED = status `open` with money remaining, nothing else (SA-733r M2, r7 r-note 2). RUNBOOK: void or mark
   // uncollectible to stop chasing; leave open to keep chasing. An uncollectible invoice is the owner's write-off and
   // never counts here, so paying the newer invoice resumes the tenant.
-  const others = open.filter((i) => isAgedOwedInvoice(i, now) && i.id !== paidInvoiceId);
+  // The clocked invoice is never age-filtered (a young one is still owed), siblings follow the one owed rule.
+  const others = open.filter((i) => i.id !== paidInvoiceId && isOwedInvoice(i, now, clockId));
   if (others.length > 0) {
     const oldest = others[0];
     if (oldest.id === clockId) return "unchanged";

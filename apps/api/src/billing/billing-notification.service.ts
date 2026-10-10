@@ -338,7 +338,14 @@ export class BillingNotificationService {
     milestone: string,
     key: string,
     kind: DunningEmailKind,
-    extra: { payUrl: string | null; readOnlyOn?: string; byDate?: string },
+    extra: {
+      payUrl: string | null;
+      readOnlyOn?: string;
+      byDate?: string;
+      invoiceNumber?: string | null;
+      amountCents?: number | null;
+      currency?: string | null;
+    },
   ): Promise<RfInvoiceSendResult> {
     return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
       dunningTemplate({
@@ -348,6 +355,9 @@ export class BillingNotificationService {
         payUrl: extra.payUrl,
         readOnlyOn: extra.readOnlyOn,
         byDate: extra.byDate,
+        invoiceNumber: extra.invoiceNumber,
+        amountCents: extra.amountCents,
+        currency: extra.currency,
       }),
     );
   }
