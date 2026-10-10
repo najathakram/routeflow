@@ -99,7 +99,10 @@ export async function judgeEditTail(
   const staffEdit = edit.role === UserRole.OPERATOR || edit.role === UserRole.TENANT_ADMIN;
   await assertEditCannotOverpay(deps, tx, orderId, {
     resync: edit.postDeliveryEdit && !skip, // the in-place re-sync will restate the invoices
-    partials: staffEdit && (edit.postDeliveryEdit ? skip : true), // DRAFT partials follow price edits
+    // A staff edit may reach the DRAFT partials whenever no rebuild restates the invoices (skipped, or the
+    // re-sync bails on an unclean partition). Whether it does is decided by projectEditedInvoiceTotals with
+    // the SAME predicate the writer uses (reconcileOrderAfterEdit's `rebuilt`), so the scope is a superset.
+    partials: staffEdit,
   });
   return skip;
 }

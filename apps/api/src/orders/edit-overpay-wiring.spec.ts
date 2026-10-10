@@ -71,12 +71,12 @@ describe("judgeEditTail: the scope the edit hands the judge", () => {
       scope: { resync: false, partials: true },
     });
   });
-  it("post-delivery, wholly invoiced: the in-place re-sync restates; no partials", async () => {
+  it("post-delivery, wholly invoiced: the re-sync restates (the partial scope is a superset the projection drops)", async () => {
     expect(
       await run({ heldItems: held(10, 10), postDeliveryEdit: true, role: "TENANT_ADMIN" }),
     ).toEqual({
       skip: false,
-      scope: { resync: true, partials: false },
+      scope: { resync: true, partials: true },
     });
   });
   it("post-delivery, partially invoiced (held lines): the re-sync is skipped, the DRAFT partials still follow", async () => {

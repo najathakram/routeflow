@@ -1462,16 +1462,19 @@ export class InvoicesService {
     scope: { resync: boolean; partials: boolean },
   ): Promise<Array<{ invoiceId: string; projectedTotal: number }>> {
     const out: Array<{ invoiceId: string; projectedTotal: number }> = [];
+    let rebuilt = false; // the re-sync will restate the invoices: the partial follow does not run (the writer's rule)
     if (scope.resync) {
       const loaded = await loadResyncInputs(tx, orderId);
-      if (loaded)
+      if (loaded) {
+        rebuilt = true;
         for (const p of await this.rebuildSiblingDrafts(loaded.order, loaded.pairs, "order", tx, {
           preserveStatus: true,
           planOnly: true,
         }))
           out.push({ invoiceId: p.id, projectedTotal: p.total });
+      }
     }
-    if (scope.partials)
+    if (scope.partials && !rebuilt)
       for (const d of (await planPartialPriceFollow(this.followDeps(), tx, orderId)).drafts)
         out.push({ invoiceId: d.invoiceId, projectedTotal: d.total });
     return out;

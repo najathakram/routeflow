@@ -22,7 +22,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "../invoices/testing/split-invoice-fake-db";
 import { buildSplitInvoicesService } from "../invoices/testing/split-invoice-service";
-import { assertEditCannotOverpay } from "./edit-overpay-judge";
+import { assertEditCannotOverpay, judgeEditTail } from "./edit-overpay-judge";
 
 describe("assertEditCannotOverpay", () => {
   let service: InvoicesService;
@@ -209,5 +209,80 @@ describe("assertEditCannotOverpay", () => {
     await expect(judge()).resolves.toBeUndefined();
     payments[0].amount = 70.01; // a cent over
     await expect(judge()).rejects.toBeInstanceOf(ConflictException);
+  });
+  it("an UNCLEAN partition (a freeform line) on a post-delivery staff edit: the DRAFT partial that will follow the price cut is still judged (409)", async () => {
+    // The re-sync bails on the freeform line (loadResyncInputs -> null), so the writer falls back to the
+    // DRAFT-partial price follow. The judge must project exactly what the writer will do.
+    db.addOrder(
+      {
+        id: "ord-1",
+        customerId: "cust-1",
+        orderNumber: "ORD-1",
+        subtotal: 282,
+        tax: 0,
+        shippingFee: 0,
+        total: 282,
+        status: "DELIVERED",
+      },
+      [fakeOrderLine({ invoicedQty: 120 })], // wholly invoiced by the counter: the re-sync is not skipped
+    );
+    db.invoices.push({
+      id: "inv-1",
+      orderId: "ord-1",
+      customerId: "cust-1",
+      tenantId: "test-tenant",
+      invoiceNumber: "INV-1",
+      status: "DRAFT",
+      deliveryBatchId: null,
+      depositPercent: null,
+      discount: 0,
+      shippingFee: 0,
+      dueDate: null,
+      subtotal: 179.2,
+      taxAmount: 0,
+      total: 179.2,
+      payments: [],
+      createdAt: new Date(Date.UTC(2026, 0, 1)),
+    });
+    db.invoiceItems.push(
+      {
+        id: "ii-1",
+        invoiceId: "inv-1",
+        orderItemId: "oi-1",
+        productId: "p-1",
+        qty: 72,
+        unitsPerBox: 12,
+        unitPrice: 2.35,
+        subtotal: 169.2,
+      },
+      {
+        id: "ii-2",
+        invoiceId: "inv-1",
+        orderItemId: null,
+        productId: null,
+        description: "Freight",
+        qty: 1,
+        subtotal: 10,
+      },
+    );
+    Object.assign(db.line("oi-1"), { unitPrice: 2, subtotal: 240 }); // the staff price cut
+    Object.assign(db.orders.get("ord-1")!, { subtotal: 240, total: 240 });
+    payments.push(cash(179.2)); // the delivery cash sits on the DRAFT partial
+
+    const err: any = await judgeEditTail(
+      { invoices: service, tenantId: "test-tenant" },
+      tx,
+      "ord-1",
+      { heldItems: db.orderItems, postDeliveryEdit: true, role: "OPERATOR" },
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "ORDER_EDIT_WOULD_OVERPAY",
+      invoiceId: "inv-1",
+      paid: 179.2,
+      projectedTotal: 154, // 72/120 of 240 = 144, plus the freeform 10
+      excess: 25.2,
+    });
+    expect(db.invoiceUpdateCalls).toHaveLength(0);
   });
 });
