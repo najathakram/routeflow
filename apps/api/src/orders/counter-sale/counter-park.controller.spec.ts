@@ -169,11 +169,25 @@ describe("the parked-sale routes over HTTP (roles and the DTO pipe)", () => {
     );
   });
 
+  it.each(["Front-1", "main", "a:b"])(
+    "park body: registerKey %s is accepted (shared pattern)",
+    async (key) => {
+      await call("post", "/orders/counter-sale/parked", "OPERATOR")
+        .send(body({ registerKey: key }))
+        .expect(201);
+      expect(svc.park).toHaveBeenCalledWith(
+        expect.objectContaining({ registerKey: key }),
+        expect.anything(),
+      );
+    },
+  );
+
   it.each([
     ["no id", { id: undefined }],
     ["a non-UUID id", { id: "not-a-uuid" }],
     ["a bad registerKey", { registerKey: "bad key!" }],
     ["a registerKey over 64", { registerKey: "x".repeat(65) }],
+    ["a registerKey with a leading colon", { registerKey: ":front" }],
     ["a label over 60", { label: "L".repeat(61) }],
     ["no payload", { payload: undefined }],
     ["a payload that is not an object", { payload: "lines" }],
