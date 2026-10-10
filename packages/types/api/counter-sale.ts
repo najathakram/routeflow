@@ -52,8 +52,9 @@ export interface CounterSaleResponse {
   balanceDue: number;
   /**
    * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
-   * own original CASH tender rows (so a same-key replay reads the stored amount's change); when nothing was stored it falls
-   * back to this call's tender less the cash on the sale. Omitted (not null) unless the sale is CASH and fully covered.
+   * own original CASH tender rows (so a same-key replay reads the stored amount's change). Omitted (not null) unless the
+   * sale's first stored tender is CASH, nothing is left to pay, and a non-negative change is stored (a legacy CASH sale
+   * with no stored `cashTendered` serves none).
    */
   change?: number;
   paymentId?: string;
@@ -178,8 +179,9 @@ export interface TodaysSaleRow {
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
   /**
-   * Server-owned: the stored `cashTendered` minus the sale's own original counter-tender CASH rows (credit-note, advance
-   * and voided rows never count); null when nothing was tendered or no cash tender exists.
+   * Server-owned, the same value and gate as `CounterSaleResponse.change`: the stored `cashTendered` minus the sale's own
+   * original counter-tender CASH rows (credit-note, advance and voided rows never count), served only for a CASH sale with
+   * nothing left to pay; null otherwise (card / check / on account, partly paid, nothing tendered, or a negative result).
    */
   change: number | null;
   /**

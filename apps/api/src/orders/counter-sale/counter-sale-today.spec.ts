@@ -367,4 +367,11 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
       ].sort(),
     );
   });
+
+  it("the per-invoice payments select is ordered oldest first (the first stored tender is decided by it)", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const args = prisma.order.findMany.mock.calls[0][0];
+    expect(args.select.invoices.select.payments.orderBy).toEqual({ createdAt: "asc" });
+  });
 });

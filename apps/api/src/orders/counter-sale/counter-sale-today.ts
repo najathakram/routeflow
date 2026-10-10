@@ -17,7 +17,7 @@ import type {
 } from "@routeflow/types";
 import { saleTaxRatePercent } from "./counter-sale-tax-rate";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, storedChange } from "./counter-sale-readback";
+import { counterMethodOf, servedChange } from "./counter-sale-readback";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -182,7 +182,10 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
-          payments: { select: { method: true, amount: true, status: true } },
+          payments: {
+            orderBy: { createdAt: "asc" },
+            select: { method: true, amount: true, status: true },
+          },
           items: { select: { taxRate: true } },
         },
       },
@@ -337,7 +340,7 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     methods,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
-    change: storedChange(o.counterCashTendered, payments),
+    change: servedChange(o.counterCashTendered, payments, balanceDue),
     taxRatePercent: saleTaxRatePercent(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,

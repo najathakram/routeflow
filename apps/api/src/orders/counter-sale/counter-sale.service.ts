@@ -24,7 +24,12 @@ import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
 import { staffMay } from "../../auth/permissions/staff-capabilities";
-import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
+import {
+  buildCounterSaleResponse,
+  isCounterTenderCashRow,
+  isTender,
+  type InvoiceRow,
+} from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -220,8 +225,9 @@ export class CounterSaleService {
     }
 
     // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
+    // Any non-ON_ACCOUNT request, so a CARD replay on a sale first tendered in CASH serves what by-key serves.
     const tendered =
-      method === "CASH"
+      method !== "ON_ACCOUNT"
         ? await this.prisma
             .forTenant()
             .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
@@ -328,9 +334,7 @@ export class CounterSaleService {
       // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
       // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
       if (method === "CASH") {
-        const anchored = invoices.some((i) =>
-          (i.payments ?? []).some((p) => isTender(p) && p.method === "CASH"),
-        );
+        const anchored = invoices.some((i) => (i.payments ?? []).some(isCounterTenderCashRow));
         try {
           await this.prisma.forTenant().order.updateMany({
             where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
@@ -464,7 +468,7 @@ export class CounterSaleService {
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
-      include: { payments: true },
+      include: { payments: { orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     });
   }

@@ -20,20 +20,45 @@ export const isTender = (p: { method?: string; status?: string }) =>
   p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE";
 
 /**
+ * A counter-tender CASH row: the shared `isTender` (never voided, never a credit-note / advance application)
+ * that is cash. The ONE definition behind both "does a CASH tender already anchor the stored tendered?" (the
+ * tender write) and "which rows is the change measured against?" (the read-back).
+ */
+export const isCounterTenderCashRow = (p: { method?: string; status?: string }) =>
+  isTender(p) && p.method === "CASH";
+
+/**
  * SA-764: the change a reprint shows, from STORAGE alone: the stored cash tendered less the sale's OWN original
- * counter-tender CASH rows (the shared `isTender`: never a credit-note / advance application, never a voided
- * row, never "today's cash" or a method roll-up), so later rows can not move it. null when nothing was
- * tendered or no cash tender exists. Not clamped; every figure is rounded to the cent.
+ * counter-tender CASH rows (`isCounterTenderCashRow`, summed with `sumConfirmed`: PAID rows only, never "today's
+ * cash" or a method roll-up), so later rows can not move it. null when nothing was tendered, no cash tender
+ * exists, or the result is negative (later cash on the sale, a shortfall replay): a negative change is never
+ * served. Every figure is rounded to the cent.
  */
 export function storedChange(
   tendered: unknown,
   payments: Array<{ amount: unknown; method?: string; status?: string }>,
 ): number | null {
   if (tendered == null) return null;
-  const cash = payments.filter((p) => isTender(p) && p.method === "CASH");
+  const cash = payments.filter(isCounterTenderCashRow);
   if (cash.length === 0) return null;
-  const cashTotal = roundMoney(cash.reduce((sum, p) => sum + Number(p.amount), 0));
-  return roundMoney(roundMoney(Number(tendered)) - cashTotal);
+  const change = roundMoney(roundMoney(Number(tendered)) - roundMoney(sumConfirmed(cash)));
+  return change < 0 ? null : change;
+}
+
+/**
+ * The ONE gate on serving change, shared by the POST / by-key read-back and the Today's-sales row so the two
+ * can not drift: only a sale whose FIRST stored tender is CASH (the method the read-back derives from storage)
+ * and that has nothing left to pay (`balanceDue <= 0`) serves a change, and then it is `storedChange`; else null.
+ */
+export function servedChange(
+  tendered: unknown,
+  payments: Array<{ amount: unknown; method?: string; status?: string }>,
+  balanceDue: number,
+): number | null {
+  const firstTender = payments.find(isTender);
+  if (!firstTender || counterMethodOf(firstTender.method) !== "CASH") return null;
+  if (balanceDue > 0) return null;
+  return storedChange(tendered, payments);
 }
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
@@ -51,12 +76,11 @@ export function counterMethodOf(
  * here, from STORED invoices and payments, so a recovered sale reads exactly like the call that rang it.
  *
  * - With the request's `payment` (POST): that method is echoed and the request's own rules apply (a throw
- *   part-way through the allocation is `planError`; `change` comes from this tender against a fully covered
- *   stored balance).
+ *   part-way through the allocation is `planError`).
  * - Without it (by-key): the method is DERIVED from storage (first stored tender; none = ON_ACCOUNT, since no
  *   marker separates "left on account" from "tender failed" and nothing new is persisted), a stored tender
- *   that leaves balance owing is NOT recorded (it may be an interrupted allocation), and there is no `change`
- *   (the response-only `change` needs this call's tender; the stored `cashTendered` is returned instead).
+ *   that leaves balance owing is NOT recorded (it may be an interrupted allocation).
+ * - Both: `change` is `servedChange` of the STORED tendered (CASH sale, nothing left to pay), never this call's request.
  */
 export function buildCounterSaleResponse(input: {
   payment?: CounterSaleDto["payment"];
@@ -96,15 +120,9 @@ export function buildCounterSaleResponse(input: {
     if (!settled) error = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
   }
 
-  // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
-  const cashPaid = roundMoney(sumConfirmed(payments.filter((p) => p.method === "CASH")));
-  const tendered = payment?.amount;
-  const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
-  // Change is handed back ONLY once the STORED balance is fully covered: this call's tender against stored
-  // cash is otherwise money still owed (a replay must never read an unpaid sibling's share as change).
-  const stored = storedChange(order.counterCashTendered, payments);
-  const change =
-    method === "CASH" && balanceDue <= 0 ? (stored ?? (owed > 0 ? owed : undefined)) : undefined;
+  // Change is handed back ONLY for a CASH sale whose STORED balance is fully covered (a replay must never read
+  // an unpaid sibling's share as change); the same gate the Today's-sales row uses.
+  const change = servedChange(order.counterCashTendered, payments, balanceDue);
 
   return {
     orderId: order.id,
