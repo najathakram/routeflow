@@ -4,6 +4,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("GET /settings — tenant timezone", () => {
@@ -19,6 +20,7 @@ describe("GET /settings — tenant timezone", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
     return m.get(SettingsController);
@@ -51,6 +53,7 @@ describe("GET /settings — tenant timezone", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
     const c = m.get(SettingsController);
