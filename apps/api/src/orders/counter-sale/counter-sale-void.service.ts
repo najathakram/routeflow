@@ -17,7 +17,7 @@ import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { assertNoCashRefundOnOrder } from "../../invoices/invoice-cash-refund-guard";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
-import { clearUnevidencedDelivered } from "../delivered-stamp";
+import { clearUnevidencedDelivered, unevidencedDeliveredFloor } from "../delivered-stamp";
 import { lockOrderAndInvoicesInTx } from "../order-cancel-impact";
 import { OrdersService } from "../orders.service";
 import { saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
@@ -239,6 +239,9 @@ export class CounterSaleVoidService {
 
     // 9. The void undoes the hand-over: a line that reads delivered with no DeliveryMutation row behind it goes back to
     // undelivered, so the cancel below restocks it in full (see delivered-stamp.ts). Order lock held (step 1).
+    // SA-763r: the units still booked out for those lines (stock books max(qty, delivered), and an office cut can leave
+    // qty below delivered) are read first, so the cancel's credit returns every one of them.
+    const bookedFloor = await unevidencedDeliveredFloor(tx, orderId);
     await clearUnevidencedDelivered(tx, orderId);
 
     // 10. The office cancel's unwind (stock back, credits and wallet released, every live invoice VOID, lines
@@ -249,6 +252,7 @@ export class CounterSaleVoidService {
       carrier: null,
       user,
       notes: "CANCEL",
+      bookedFloor,
     });
 
     // 11. The audit row, in the same tx: step 3's replay reads it back.

@@ -36,6 +36,16 @@ describe("the counter void and the DELIVERED write (structure)", () => {
     );
   });
 
+  it("the units still booked out are read BEFORE the reset and handed to the cancel as its bookedFloor (SA-763r)", () => {
+    const svc = read("counter-sale-void.service.ts");
+    const at = (needle: string) => svc.indexOf(needle);
+    expect(at("unevidencedDeliveredFloor(tx, orderId)")).toBeGreaterThan(-1);
+    expect(at("unevidencedDeliveredFloor(tx, orderId)")).toBeLessThan(
+      at("clearUnevidencedDelivered(tx, orderId)"),
+    );
+    expect(svc).toMatch(/notes: "CANCEL",\s*bookedFloor,/);
+  });
+
   it("the reset leaves evidence alone: it asks the delivery-evidence reader which lines have a qualifying row", () => {
     const src = read("../delivered-stamp.ts");
     expect(src).toMatch(/deliveredBasisByLine\(tx, orderId\)/);

@@ -260,3 +260,32 @@ export async function clearUnevidencedDelivered(tx: any, orderId: string): Promi
   await tx.orderItem.updateMany({ where: { id: { in: ids }, orderId }, data: { deliveredQty: 0 } });
   return ids;
 }
+
+/**
+ * The units the stock counter still holds out for the void's no-evidence hand-over lines, read BEFORE
+ * `clearUnevidencedDelivered` zeroes their deliveredQty: line id -> deliveredQty (> 0). The stock settle books
+ * `max(qty, deliveredQty)` per line, so an edit that cut a stamped counter line (qty 12 -> 10, d stays 12) moved
+ * no stock and left 12 booked out; after the clear the cancel would credit only qty (10) and lose 2. The void
+ * hands this map to `cancelOrderInTx` (`bookedFloor`), which credits `max(qty, floor)`: the counter ends where it
+ * started. Same selection as the clear (live lines, no evidence, never a route-stop order); read-only.
+ */
+export async function unevidencedDeliveredFloor(
+  tx: any,
+  orderId: string,
+): Promise<Map<string, number>> {
+  const floor = new Map<string, number>();
+  const order: { routeRunStopId: string | null } | null = await tx.order.findUnique({
+    where: { id: orderId },
+    select: { routeRunStopId: true },
+  });
+  if (!order || order.routeRunStopId) return floor;
+  const handed: Array<{ id: string; deliveredQty: unknown }> = await tx.orderItem.findMany({
+    where: { orderId, deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } },
+    select: { id: true, deliveredQty: true },
+  });
+  if (handed.length === 0) return floor;
+  const basis = await deliveredBasisByLine(tx, orderId);
+  for (const l of handed)
+    if (!hasDeliveryEvidence(basis, l.id)) floor.set(l.id, Number(l.deliveredQty));
+  return floor;
+}
