@@ -408,8 +408,12 @@ describe("BillingNotificationService - dunning notices (SA-733r7 PR-B3)", () => 
 
   it("the copy is truthful per kind: d6 names no date, final names the local date, paused says read-only now", async () => {
     const { svc, sendPlatform } = makeService();
-    await svc.notifyDunning("t1", "DUNNING_D6", "in_1", "d6", extra);
-    expect(sendPlatform.mock.calls[0][0].html).not.toMatch(/read-only/i);
+    await svc.notifyDunning("t1", "DUNNING_D6", "in_1", "d6", { ...extra, byDate: "Nov 8, 2026" });
+    // dark's d6 must not threaten what will not happen (SA r-note 2): neutral, and it names the date
+    expect(sendPlatform.mock.calls[0][0].html).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].text).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].subject).not.toMatch(/read-only|read only/i);
+    expect(sendPlatform.mock.calls[0][0].text).toContain("update your card by Nov 8, 2026");
     await svc.notifyDunning("t1", "DUNNING_FINAL", "in_1", "final", {
       ...extra,
       readOnlyOn: "Nov 9, 2026",

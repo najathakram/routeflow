@@ -56,31 +56,85 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect([...ALLOWED].every((f) => fs.existsSync(f))).toBe(true);
     });
 
-    it('no Tenant write outside the helper puts status: "ACTIVE" in its data', () => {
+    /**
+     * Every `status:` value a Tenant write can put in its data. A string literal that is not ACTIVE is fine. Anything
+     * that MENTIONS ACTIVE (`"ACTIVE"`, `'ACTIVE'`, `TenantStatus.ACTIVE`, `"ACTIVE" as const`) or is a non-literal
+     * expression is an offender unless it is one of the reviewed sites below (each one is guarded so that it can never
+     * carry ACTIVE). Raw SQL that sets a Tenant status to ACTIVE is an offender with no exception.
+     */
+    const REVIEWED_NON_LITERALS: { file: RegExp; expr: string; guard: RegExp }[] = [
+      {
+        // transitionAndEmit's non-ACTIVE branch: the ACTIVE branch above it goes through the helper
+        file: /billing[\\/]billing\.service\.ts$/,
+        expr: "toStatus",
+        guard: /if \(toStatus === "ACTIVE"\) \{[\s\S]*?transitionToActiveTx\([\s\S]*?\} else \{/,
+      },
+      {
+        // admin updateStatus: the ACTIVE target is written by the helper; only other targets reach this update
+        file: /platform-admin[\\/]platform-admin\.service\.ts$/,
+        expr: "dto.status",
+        guard: /dto\.status === "ACTIVE"\s*\?\s*\{ \.\.\.before/,
+      },
+    ];
+
+    it("no Tenant write outside the helper can write ACTIVE: literal, TenantStatus.ACTIVE, an unreviewed expression, or raw SQL", () => {
       const offenders: string[] = [];
       for (const f of files) {
         if (ALLOWED.has(f)) continue;
-        const src = code(read(f));
-        const re = /\.tenant\.(update|updateMany|upsert|create)\(/g;
+        const raw = read(f);
+        const src = code(raw);
+        const rel = path.relative(SRC, f);
+        const re = /\.tenant\.(update|updateMany|upsert|create|createMany)\(/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(src))) {
           const args = balanced(src, m.index + m[0].length - 1);
-          const dm = /\bdata\s*:\s*\{/.exec(args);
+          const dm = /\bdata\s*:\s*(\{)?/.exec(args);
+          const shorthand = /\bdata\s*[,}]/.test(args) && !dm;
+          if (shorthand || (dm && !dm[1])) {
+            offenders.push(`${rel}: Tenant write with a non-literal data object`);
+            continue;
+          }
           if (!dm) continue;
           const data = balanced(args, dm.index + dm[0].length - 1);
-          if (
-            /\bstatus\s*:\s*["']ACTIVE["']/.test(data) ||
-            /\bstatus\s*:\s*toStatus\b/.test(data)
-          ) {
-            // transitionAndEmit's non-ACTIVE branch writes `status: toStatus` AFTER the ACTIVE branch went
-            // through the helper; that single site is the only allowed spelling.
-            if (/billing\.service\.ts$/.test(f) && /toStatus/.test(data) && !/"ACTIVE"/.test(data))
-              continue;
-            offenders.push(path.relative(SRC, f));
+          const vre = /\bstatus\s*:\s*([^,}\n]+)/g;
+          let v: RegExpExecArray | null;
+          while ((v = vre.exec(data))) {
+            const expr = v[1].trim();
+            if (/^["'`](?!ACTIVE["'`])\w+["'`]$/.test(expr)) continue; // another status, spelled out
+            const reviewed = REVIEWED_NON_LITERALS.find(
+              (r) => r.file.test(f) && r.expr === expr && r.guard.test(src),
+            );
+            if (!reviewed) offenders.push(`${rel}: status: ${expr}`);
+          }
+        }
+        // raw SQL: UPDATE "Tenant" ... SET ... status ... ACTIVE
+        for (const t of raw.matchAll(/UPDATE\s+(?:"public"\.)?"Tenant"[\s\S]{0,400}/g)) {
+          if (/status[\s\S]{0,80}ACTIVE/i.test(t[0].split(/WHERE/i)[0])) {
+            offenders.push(`${rel}: raw SQL sets Tenant.status = ACTIVE`);
           }
         }
       }
       expect(offenders).toEqual([]);
+    });
+
+    it("the pin itself is not vacuous: it flags each spelling of an ACTIVE write", () => {
+      const flagged = (snippet: string) => {
+        const src = code(snippet);
+        const args = balanced(src, src.indexOf("("));
+        const dm = /\bdata\s*:\s*(\{)?/.exec(args)!;
+        const data = balanced(args, dm.index + dm[0].length - 1);
+        const v = /\bstatus\s*:\s*([^,}\n]+)/.exec(data);
+        return !!v && !/^["'`](?!ACTIVE["'`])\w+["'`]$/.test(v[1].trim());
+      };
+      expect(flagged('tx.tenant.updateMany({ where: {}, data: { status: "ACTIVE" } })')).toBe(true);
+      expect(
+        flagged("tx.tenant.update({ where: {}, data: { status: TenantStatus.ACTIVE } })"),
+      ).toBe(true);
+      expect(flagged("tx.tenant.update({ where: {}, data: { status: dto.status } })")).toBe(true);
+      expect(flagged('tx.tenant.update({ where: {}, data: { status: "ACTIVE" as const } })')).toBe(
+        true,
+      );
+      expect(flagged('tx.tenant.update({ where: {}, data: { status: "TRIAL" } })')).toBe(false);
     });
 
     it("transitionAndEmit routes toStatus === ACTIVE through transitionToActiveTx", () => {
@@ -101,7 +155,7 @@ describe("SA-733r7 PR-B3 structural pins", () => {
 
   describe("PAYMENT_OVERDUE guard on every plan-mutation entry point", () => {
     const mutation = code(read(path.join(SRC, "billing", "subscription-mutation.service.ts")));
-    const firstLines = (name: string, signature: RegExp) => {
+    const firstLines = (signature: RegExp) => {
       const m = signature.exec(mutation);
       expect(m).not.toBeNull();
       const body = mutation.slice(m!.index, m!.index + 900);
@@ -111,24 +165,60 @@ describe("SA-733r7 PR-B3 structural pins", () => {
 
     it.each([
       ["subscribe", /async subscribe\(/],
-      ["upgradeLocked", /private async upgradeLocked\(/],
+      ["upgrade", /private async upgradeLocked\(/],
       ["downgrade", /async downgrade\(/],
       ["resume", /async resume\(/],
-    ])("%s calls the guard as its first statement", (name, sig) => {
-      expect(firstLines(name, sig as RegExp)).toMatch(/await this\.assertNotOverdue\(tenantId\)/);
+    ])("%s calls the guard as its first statement, naming itself", (name, sig) => {
+      expect(firstLines(sig as RegExp)).toContain(
+        `await this.assertNotOverdue(tenantId, "${name}")`,
+      );
     });
 
-    it("checkout (BillingService.createCheckoutSession) calls the same guard", () => {
+    // The pin LISTS every call site. A new plan-mutation entry point that does not call the one helper (or a
+    // call site that is dropped) is a red build: the set of entry-point names is closed.
+    const EXPECTED_ENTRY_POINTS = [
+      "admin_plan_change",
+      "checkout",
+      "downgrade",
+      "resume",
+      "subscribe",
+      "upgrade",
+    ];
+    const callSites = () => {
+      const found: string[] = [];
+      for (const f of walk(SRC)) {
+        const src = code(read(f));
+        for (const m of src.matchAll(/assertNotOverdue\(\s*tenantId,\s*"(\w+)"\s*\)/g))
+          found.push(m[1]);
+        for (const m of src.matchAll(
+          /assertTenantNotPaymentOverdue\(\s*\{[^}]*\},\s*\w+,\s*"(\w+)"/g,
+        ))
+          found.push(m[1]);
+      }
+      return found.sort();
+    };
+
+    it("the closed list of entry points (each exactly once): subscribe / upgrade / downgrade / resume / checkout / the B1 admin plan change", () => {
+      expect(callSites()).toEqual(EXPECTED_ENTRY_POINTS);
+    });
+
+    it("checkout (BillingService.createCheckoutSession) and the admin plan change (updatePlanLocked) call the same helper", () => {
       const billing = code(read(path.join(SRC, "billing", "billing.service.ts")));
       const i = billing.indexOf("async createCheckoutSession(");
-      expect(billing.slice(i, i + 4500)).toMatch(/await assertNotPaymentOverdue\(/);
+      expect(billing.slice(i, i + 4500)).toMatch(/await assertTenantNotPaymentOverdue\(/);
+      const admin = code(read(path.join(SRC, "platform-admin", "platform-admin.service.ts")));
+      const j = admin.indexOf("private async updatePlanLocked(");
+      expect(admin.slice(j, j + 1200)).toMatch(
+        /await assertTenantNotPaymentOverdue\([\s\S]*"admin_plan_change"/,
+      );
     });
 
-    it("the guard answers with API_ERROR_CODES, never a bare string", () => {
+    it("the guard answers with API_ERROR_CODES, never a bare string, and dark logs a would-refuse line", () => {
       const src = code(read(path.join(SRC, "billing", "payment-overdue.ts")));
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_OVERDUE/);
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_STATE_UNKNOWN/);
       expect(src).toMatch(/hosted_invoice_url/);
+      expect(src).toMatch(/billing\.dunning\.would_refuse code=PAYMENT_OVERDUE/);
     });
   });
 

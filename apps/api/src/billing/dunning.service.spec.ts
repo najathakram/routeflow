@@ -309,6 +309,14 @@ describe("DunningService", () => {
       await d.svc.sweep(at(150));
       expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "d6"]]);
       expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
+      // neutral copy, with the date the card should be updated by (pastDueSince + 168 h), and no read-only line
+      const extra = d.notifications.notifyDunning.mock.calls[0][4];
+      expect(extra.readOnlyOn).toBeUndefined();
+      expect(extra.byDate).toBe("Nov 9, 2026");
+      expect(d.notifications.localDateLabel).toHaveBeenCalledWith(
+        "t1",
+        new Date(since.getTime() + 168 * 3_600_000),
+      );
     });
 
     it("an already-logged milestone is never re-sent (the sweep is hourly)", async () => {

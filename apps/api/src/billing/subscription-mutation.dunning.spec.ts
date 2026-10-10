@@ -148,6 +148,27 @@ describe("SubscriptionMutationService x dunning (SA-733r7 PR-B3)", () => {
     expect(d.stripe.getInvoiceFacts).not.toHaveBeenCalled();
   });
 
+  describe("dark: an ACTIVE tenant is allowed through, with a structured would-refuse line per entry point", () => {
+    it.each(routes.map((r) => r[0]))("%s", async (name) => {
+      process.env.BILLING_PAUSE_MODE = "dark";
+      const d = make({ tenantStatus: "ACTIVE" });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const call = routes.find((r) => r[0] === name)![1];
+      const e: any = await call(d.svc).catch((x: unknown) => x);
+      // not refused by the guard (it proceeds into the stubbed catalog and trips there)
+      expect(e instanceof ConflictException ? (e.getResponse() as any).code : null).not.toBe(
+        "PAYMENT_OVERDUE",
+      );
+      expect(
+        warn.mock.calls.some((c: any[]) =>
+          String(c[0]).startsWith(
+            `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=t1 entryPoint=${name}`,
+          ),
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe("cancel while paused", () => {
     it("a paused tenant (READ_ONLY) with a live subscription: Stripe is cancelled immediately, THEN the tenant lands on subscription_cancelled", async () => {
       const d = make({ sub: { stripeSubId: "sub_1", pastDueInvoiceId: "in_1" } });
