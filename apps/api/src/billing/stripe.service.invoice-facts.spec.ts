@@ -43,6 +43,16 @@ describe("StripeService.getInvoiceFacts (dahlia shape)", () => {
       subscriptionId: "sub_1",
       // SA-733r7: the 409 PAYMENT_OVERDUE body carries the hosted pay page; amount_remaining is read when present
       hostedInvoiceUrl: null,
+      invoiceNumber: null,
+      currency: null,
+    });
+  });
+
+  it("reads the invoice number and currency (the paused-still-owed notice names them)", async () => {
+    const { svc } = make(invoice({ number: "INV-0042", currency: "usd" }));
+    expect(await svc.getInvoiceFacts("in_1")).toMatchObject({
+      invoiceNumber: "INV-0042",
+      currency: "usd",
     });
   });
 

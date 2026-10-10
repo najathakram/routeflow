@@ -17,13 +17,14 @@ describe("dunning-config (SA-733r7 PR-B3)", () => {
     expect(PAUSE_LOCAL_HOUR).toBe(3);
   });
 
-  it("keys the reminders d0 / d3 / d6 plus the final and paused notices", () => {
+  it("keys the reminders d0 / d3 / d6 plus the final, paused and paused-still-owed notices", () => {
     expect(DUNNING_MILESTONES).toEqual({
       D0: "DUNNING_D0",
       D3: "DUNNING_D3",
       D6: "DUNNING_D6",
       FINAL: "DUNNING_FINAL",
       PAUSED: "DUNNING_PAUSED",
+      PAUSED_STILL_OWED: "DUNNING_PAUSED_STILL_OWED",
     });
   });
 

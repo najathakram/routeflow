@@ -320,6 +320,43 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       }
     });
 
+    it("ONE owed rule: only dunning-core defines it (age OR attempted); no other file has an age filter or a second predicate", () => {
+      const files = dunningFiles().map((f) => [path.basename(f), code(read(f))] as const);
+      const core = files.find(([n]) => n === "dunning-core.ts")![1];
+      expect(core).toMatch(/export function isOwedInvoice\(/);
+      expect(core).toMatch(/export function isOwed\(/);
+      const offenders = (re: RegExp) =>
+        files.filter(([n, c]) => n !== "dunning-core.ts" && re.test(c)).map(([n]) => n);
+      expect(offenders(/DISCOVERY_MIN_AGE_HOURS/)).toEqual([]);
+      expect(offenders(/function\s+isOwed\w*\s*\(/)).toEqual([]);
+      expect(files.map(([, c]) => c).join("\n")).not.toMatch(/isAgedOwedInvoice/);
+      // the list-row predicate is what resolve (resume + move) and discovery (stamp + phase 2 move) call
+      for (const f of ["dunning-resolve.ts", "dunning-discovery.ts"]) {
+        const src = files.find(([n]) => n === f)![1];
+        expect(src).toMatch(/\bisOwedInvoice\(/);
+      }
+    });
+
+    it("the pause CAS is pinned to the episode (pastDueSince), so a same-invoice re-stamp cannot pause under a newer episode", () => {
+      const src = code(read(path.join(SRC, "billing", "dunning-pause.ts")));
+      expect(src).toMatch(/pastDueInvoiceId:\s*invoiceId,\s*pastDueSince/);
+    });
+
+    it("a clock is never given `now` as a stand-in start: no `pastDueSince ?? now`", () => {
+      const all = dunningFiles()
+        .map((f) => code(read(f)))
+        .join("\n");
+      expect(all).not.toMatch(/pastDueSince\s*\?\?\s*now/);
+    });
+
+    it("PAUSED_STILL_OWED is sent by dunning-milestones only, and only through the episode key", () => {
+      const users = dunningFiles()
+        .filter((f) => /PAUSED_STILL_OWED/.test(code(read(f))))
+        .map((f) => path.basename(f))
+        .filter((n) => n !== "dunning-config.ts");
+      expect(users).toEqual(["dunning-milestones.ts"]);
+    });
+
     it("the d0-sentAt lookup is gone (a stamp is always the stamp time)", () => {
       const all = dunningFiles()
         .map((f) => code(read(f)))
@@ -391,6 +428,14 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(script).toMatch(/billing\.dunning\.would_refuse/);
       expect(script).toMatch(/cannot call Stripe/);
       expect(script).not.toMatch(/require\(["']stripe/i);
+    });
+
+    it("reads pastDueSince as UTC (TIMESTAMP(3) has no zone) and builds the episode key through the shared helper", () => {
+      expect(script).toMatch(/from "\.\/lib\/pause-report-keys\.mjs"/);
+      expect(script).toMatch(/new Client\(\{[^}]*\btypes\b/);
+      // the raw `new Date(since).toISOString()` key shifted on a non-UTC machine
+      expect(sql).not.toMatch(/\$\{new Date\(since\)\.toISOString\(\)\}/);
+      expect(sql).toMatch(/episodeKey\(/);
     });
 
     it("never hardcodes a tenant or a connection string", () => {
