@@ -79,3 +79,19 @@ describe("SignupPage — time zone (SA-738)", () => {
     spy.mockRestore();
   });
 });
+
+describe("SignupPage — unusable browser zone (SA-738)", () => {
+  it.each(["Etc/GMT+5", "EST", "+01:00"])("omits timezone for %s", async (zone) => {
+    const spy = jest
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ timeZone: zone } as Intl.ResolvedDateTimeFormatOptions);
+    mockFetch({ ok: false, body: { message: "stop here" } });
+    await fillAndSubmit();
+    await waitFor(() => expect(screen.getByText("stop here")).toBeInTheDocument());
+    const call = (global.fetch as jest.Mock).mock.calls.find(([u]) =>
+      String(u).includes("/public/tenants/register"),
+    );
+    expect(JSON.parse(call[1].body)).not.toHaveProperty("timezone");
+    spy.mockRestore();
+  });
+});
