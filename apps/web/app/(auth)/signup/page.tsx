@@ -217,6 +217,8 @@ function SignupInner() {
           adminEmail: data.adminEmail,
           adminUsername: data.adminUsername,
           adminPassword: data.adminPassword,
+          // SA-738: the business starts in the signer's own zone (the server defaults to UTC).
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
         }),
       });
 

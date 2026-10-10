@@ -63,3 +63,19 @@ describe("SignupPage — refused business name (B956)", () => {
     await waitFor(() => expect(screen.getByText("Slug already taken")).toBeInTheDocument());
   });
 });
+
+describe("SignupPage — time zone (SA-738)", () => {
+  it("sends the browser's IANA zone in the register payload", async () => {
+    const spy = jest
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ timeZone: "America/Chicago" } as Intl.ResolvedDateTimeFormatOptions);
+    mockFetch({ ok: false, body: { message: "stop here" } });
+    await fillAndSubmit();
+    await waitFor(() => expect(screen.getByText("stop here")).toBeInTheDocument());
+    const call = (global.fetch as jest.Mock).mock.calls.find(([u]) =>
+      String(u).includes("/public/tenants/register"),
+    );
+    expect(JSON.parse(call[1].body)).toMatchObject({ timezone: "America/Chicago" });
+    spy.mockRestore();
+  });
+});
