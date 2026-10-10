@@ -126,12 +126,14 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
       },
     });
     const final = new Date(NOW.getTime() - 30 * H);
+    // the notice key is the EPISODE key `<invoiceId>:<pastDueSince ISO>` (SA r-note 3)
+    const episode = `${invoiceId}:${SINCE.toISOString()}`;
     await prisma.billingNotificationLog.createMany({
       data: [
-        { tenantId: t.id, milestone: "DUNNING_D0", key: invoiceId, sentAt: SINCE },
-        { tenantId: t.id, milestone: "DUNNING_D3", key: invoiceId, sentAt: SINCE },
-        { tenantId: t.id, milestone: "DUNNING_D6", key: invoiceId, sentAt: final },
-        { tenantId: t.id, milestone: "DUNNING_FINAL", key: invoiceId, sentAt: final },
+        { tenantId: t.id, milestone: "DUNNING_D0", key: episode, sentAt: SINCE },
+        { tenantId: t.id, milestone: "DUNNING_D3", key: episode, sentAt: SINCE },
+        { tenantId: t.id, milestone: "DUNNING_D6", key: episode, sentAt: final },
+        { tenantId: t.id, milestone: "DUNNING_FINAL", key: episode, sentAt: final },
       ],
     });
     return { id: t.id, invoiceId, subId: `sub_${tag}_${run}` };
@@ -155,7 +157,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
       billing.transitionAndEmit(...a),
     mode: () => "enforced" as const,
     once: () => true,
-    cursors: new Map<string, number>(),
+    cursors: new Map<string, string>(),
   });
 
   it("two pause attempts racing: exactly one pauses, one -MRR row, pausedAt set once (CAS count 0 = no pause)", async () => {

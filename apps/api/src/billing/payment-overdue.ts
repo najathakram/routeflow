@@ -8,6 +8,7 @@ import {
   READ_ONLY_STATUS,
   SUBSCRIPTION_CANCELLED_REASON,
 } from "./dunning-config";
+import { isOwed } from "./dunning-core";
 import type { StripeService } from "./stripe.service";
 
 /**
@@ -77,9 +78,8 @@ export async function assertNotPaymentOverdue(
         "We couldn't confirm the status of your open invoice just now. Try again in a moment.",
     });
   }
-  const remaining = facts.amountRemaining ?? Math.max(0, facts.amountDue - facts.amountPaid);
-  // owed = status open with money remaining, nothing else (SA-733r M2, r7 r-note 2): uncollectible is a write-off
-  if (facts.status !== "open" || remaining <= 0) return;
+  // owed = status open with money remaining, nothing else (SA-733r M2, r7 r-note 2): ONE definition, in dunning-core
+  if (!isOwed(facts)) return;
 
   if (!refuseNow) {
     ctx.logger.warn(

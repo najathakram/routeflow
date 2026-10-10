@@ -28,7 +28,7 @@ import {
   type DiscoveryOutcome,
   discoverUnstamped,
 } from "./dunning-discovery";
-import { clockStartFor, logClockStarted } from "./dunning-clock";
+import { episodeKey, logClockStarted } from "./dunning-clock";
 import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
@@ -75,7 +75,7 @@ export class DunningService {
   /** Keys already logged by this process (a repeating hourly condition logs once). Bounded. */
   private readonly seen = new Set<string>();
   /** Process-local rotation cursors for the periodic sweeps (an empty map after a restart is fine). */
-  private readonly cursors = new Map<string, number>();
+  private readonly cursors = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -134,8 +134,8 @@ export class DunningService {
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts) || facts.paymentProcessing) return "not_owed";
 
-    // one full runway: the stamp time, unless this invoice's d0 already went out (r7 r-note 2)
-    const since = await clockStartFor(this.deps(), row.tenantId, invoiceId, now);
+    // r-note 3: the clock starts at the STAMP time, always (a re-stamp after an exit is a new episode)
+    const since = now;
     const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, since);
     if (!stamped) return "unchanged";
     this.logger.warn(`billing.dunning.stamped tenant=${row.tenantId} invoice=${invoiceId}`);
@@ -147,6 +147,8 @@ export class DunningService {
       stampAt: now,
       since,
       finalizedAt: typeof finalizedSec === "number" ? new Date(finalizedSec * 1000) : null,
+      attempts:
+        typeof invoice?.attempt_count === "number" ? invoice.attempt_count : facts.attemptCount,
       firstFailureAt: now,
     });
 
@@ -283,7 +285,16 @@ export class DunningService {
       }
       // void / uncollectible (the owner's write-off) / gone: it never keeps a clock, but there is NO new resume path
       // here - an ACTIVE tenant's clock is cleared or moved by the daily discovery, a PAUSED tenant exits through
-      // admin activation (or invoice.paid of the clocked invoice).
+      // admin activation (or invoice.paid of the clocked invoice). A paused tenant whose invoice closed is the
+      // operator's cue: one warn per tenant per day.
+      if (
+        (row.pausedAt || row.tenant.status === READ_ONLY_STATUS) &&
+        this.once(`paused_closed:${row.tenantId}:${Math.floor(now.getTime() / 86_400_000)}`)
+      ) {
+        this.logger.warn(
+          `billing.dunning.paused_on_closed_invoice tenant=${row.tenantId} invoice=${invoiceId} status=${facts.status ?? "gone"}`,
+        );
+      }
       return "noop";
     }
     if (facts.paymentProcessing) return "noop"; // N6: a bank debit in flight is not a failure
@@ -332,7 +343,7 @@ export class DunningService {
       await this.notifications.notifyDunning(
         row.tenantId,
         DUNNING_MILESTONES.PAUSED,
-        invoiceId,
+        episodeKey(invoiceId, since),
         "paused",
         { payUrl: facts.hostedInvoiceUrl ?? null },
       );
@@ -354,7 +365,14 @@ export class DunningService {
 
   discover(now: Date, opts: DiscoveryOptions = {}): Promise<DiscoveryOutcome> {
     if (!this.stripe.isConfigured)
-      return Promise.resolve({ tenants: 0, stamped: 0, failed: 0, cleared: 0, moved: 0 });
+      return Promise.resolve({
+        tenants: 0,
+        clocks: 0,
+        stamped: 0,
+        failed: 0,
+        cleared: 0,
+        moved: 0,
+      });
     return discoverUnstamped(this.deps(), now, opts);
   }
 

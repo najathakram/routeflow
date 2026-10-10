@@ -6,12 +6,13 @@ import {
   DUNNING_PAUSE_HOURS,
   HOUR_MS,
 } from "./dunning-config";
+import { episodeKey } from "./dunning-clock";
 import type { DunningDeps } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
 /**
  * SA-733r7 PR-B3 (brief item 2 / SA-733r M4): the d0 / d3 / d6 reminders, keyed in `BillingNotificationLog` by
- * (tenant, milestone, invoiceId) so an hourly sweep or a redelivered webhook sends each once per invoice.
+ * (tenant, milestone, episode key = `<invoiceId>:<pastDueSince ISO>`) so an hourly sweep or a redelivered webhook sends each once per invoice.
  *
  *   - They send in `dark` too; `off` sends nothing. The copy is truthful for the mode: `dark`'s d6 names no date.
  *   - In `enforced` the d6 notice IS the final notice ("read-only tomorrow") and also records `dunning_final` in
@@ -30,10 +31,12 @@ export async function runMilestones(
   const mode = deps.mode();
   if (mode === "off") return null;
   const { tenantId, pastDueInvoiceId: invoiceId } = row;
+  // the notice key of THIS episode (SA r-note 3): a re-stamp after an exit notifies afresh
+  const key = episodeKey(invoiceId, row.pastDueSince);
   const M = DUNNING_MILESTONES;
 
   const logged = await deps.prisma.billingNotificationLog.findMany({
-    where: { tenantId, key: invoiceId, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL] } },
+    where: { tenantId, key, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL] } },
     select: { milestone: true, sentAt: true },
   });
   const sent = new Map(logged.map((l) => [l.milestone, l.sentAt]));
@@ -44,7 +47,7 @@ export async function runMilestones(
     milestone: string,
     kind: "d0" | "d3" | "d6" | "final",
     dates: { readOnlyOn?: string; byDate?: string } = {},
-  ) => deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, ...dates });
+  ) => deps.notifications.notifyDunning(tenantId, milestone, key, kind, { payUrl, ...dates });
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
@@ -68,7 +71,7 @@ export async function runMilestones(
   const unsent = dueAll.filter(([m, h]) => elapsed >= h && !sent.has(m)).map(([m]) => m);
   const top = unsent[unsent.length - 1];
   for (const skipped of unsent.slice(0, -1)) {
-    await deps.notifications.recordDunningMilestone(tenantId, skipped, invoiceId);
+    await deps.notifications.recordDunningMilestone(tenantId, skipped, key);
     sent.set(skipped, now);
   }
 
@@ -95,7 +98,7 @@ export async function runMilestones(
       // enforced, first time: this d6 email is the final notice - record both.
       const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
       if (res.status === "sent" && !finalSentAt) {
-        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, invoiceId);
+        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
         finalSentAt = now;
       }
     }

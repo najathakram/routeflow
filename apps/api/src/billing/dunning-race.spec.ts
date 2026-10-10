@@ -158,7 +158,7 @@ function world(initial: Partial<State> = {}) {
     transition: transition as any,
     mode: () => "enforced" as const,
     once: () => true,
-    cursors: new Map<string, number>(),
+    cursors: new Map<string, string>(),
   };
   const pause = () => pauseTenantTx(deps, { tenantId: "t1" }, "in_1", PAUSED_AT);
   return { st, svc, hooks, stripeCalls, pause, prisma, deps, PAUSED_AT };

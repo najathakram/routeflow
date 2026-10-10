@@ -1,16 +1,17 @@
 import { lockTenantForLedger } from "./addon-ledger";
 import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
-import { clockStartFor, logClockStarted } from "./dunning-clock";
-import { type DunningDeps, type DunningRow, isOwedInvoice } from "./dunning-core";
+import { logClockStarted } from "./dunning-clock";
+import {
+  type DunningDeps,
+  type DunningRow,
+  invoiceOwedSince,
+  isAgedOwedInvoice,
+} from "./dunning-core";
 import { clearPauseCollection } from "./dunning-pause";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { DUNNING_CLEAR, type PauseExit } from "./transition-to-active";
 
-/** When an open invoice started to be owed: its finalization time, else its creation, else `fallback`. */
-export function invoiceOwedSince(inv: any, fallback: Date): Date {
-  const sec = inv?.status_transitions?.finalized_at ?? inv?.created;
-  return typeof sec === "number" && sec > 0 ? new Date(sec * 1000) : fallback;
-}
+export { invoiceOwedSince };
 
 export type ResolveOutcome =
   | "resumed" // paused (payment_overdue) -> ACTIVE, +MRR once
@@ -46,12 +47,12 @@ export async function resolveClockInvoice(
   // OWED = status `open` with money remaining, nothing else (SA-733r M2, r7 r-note 2). RUNBOOK: void or mark
   // uncollectible to stop chasing; leave open to keep chasing. An uncollectible invoice is the owner's write-off and
   // never counts here, so paying the newer invoice resumes the tenant.
-  const others = open.filter((i) => isOwedInvoice(i) && i.id !== paidInvoiceId);
+  const others = open.filter((i) => isAgedOwedInvoice(i, now) && i.id !== paidInvoiceId);
   if (others.length > 0) {
     const oldest = others[0];
     if (oldest.id === clockId) return "unchanged";
-    // every invoice gets one full runway: the stamp time, unless THIS invoice's d0 already went out
-    const since = await clockStartFor(deps, row.tenantId, oldest.id, now);
+    // r-note 3: the stamp time, always - a clock moved onto a sibling is a NEW episode with a full runway
+    const since = now;
     const moved = await deps.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, row.tenantId);
       const r = await tx.tenantSubscription.updateMany({
@@ -73,6 +74,7 @@ export async function resolveClockInvoice(
         finalizedAt: oldest?.status_transitions?.finalized_at
           ? new Date(oldest.status_transitions.finalized_at * 1000)
           : null,
+        attempts: oldest?.attempt_count,
       });
     }
     return moved ? "moved" : "unchanged";

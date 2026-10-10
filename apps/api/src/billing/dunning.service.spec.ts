@@ -636,10 +636,10 @@ describe("DunningService", () => {
       const s = new Date("2026-10-20T00:00:00Z");
       const sweepRow = row({ pastDueSince: s });
       const logged = [
-        { milestone: "DUNNING_D0", sentAt: s },
-        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-23T00:00:00Z") },
-        { milestone: "DUNNING_D6", sentAt: new Date("2026-10-26T00:00:00Z") },
-        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-10-26T00:00:00Z") },
+        { milestone: "DUNNING_D0", sentAt: s, key: ep(s) },
+        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-23T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_D6", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
       ];
       // +168 h = 2026-10-27 00:00Z. CDT is UTC-5: 07:59Z = 02:59 local, 08:00Z = 03:00 local.
       const a = make({ sweepRows: [sweepRow], logged, tz: "America/Chicago" });

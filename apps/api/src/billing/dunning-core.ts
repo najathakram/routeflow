@@ -47,7 +47,7 @@ export interface DunningDeps {
   /** True the FIRST time `key` is seen by this process: keeps a repeating condition to one log line. */
   once: (key: string) => boolean;
   /** Process-local rotation cursors of the periodic sweeps (see dunning-paging.ts); empty after a restart. */
-  cursors: Map<string, number>;
+  cursors: Map<string, string>;
 }
 
 /** The subscription + tenant columns every dunning decision reads. */
@@ -77,6 +77,28 @@ export function remainingCents(f: InvoiceFacts): number {
  */
 export function isOwed(f: InvoiceFacts): boolean {
   return f.status === "open" && remainingCents(f) > 0;
+}
+
+/** When an open invoice started to be owed: its finalization time, else its creation, else `fallback`. */
+export function invoiceOwedSince(inv: any, fallback: Date): Date {
+  const sec = inv?.status_transitions?.finalized_at ?? inv?.created;
+  return typeof sec === "number" && sec > 0 ? new Date(sec * 1000) : fallback;
+}
+
+/** A finalized open invoice younger than this is left alone: Stripe may still be about to collect it. */
+export const DISCOVERY_MIN_AGE_HOURS = 24;
+
+/**
+ * Owed AND old enough to chase: the ONE filter discovery (both phases) and the clock move share, so a sibling that
+ * Stripe is still collecting never starts or takes over a clock. (The resume test uses the same filter: a just-cut
+ * invoice that is still auto-collecting does not keep an old debt's tenant paused; if it fails, `payment_failed`
+ * stamps it.)
+ */
+export function isAgedOwedInvoice(i: any, now: Date): boolean {
+  return (
+    isOwedInvoice(i) &&
+    invoiceOwedSince(i, now).getTime() <= now.getTime() - DISCOVERY_MIN_AGE_HOURS * 3_600_000
+  );
 }
 
 /** The same predicate for a row of a Stripe invoice LIST (the lists are `open`-only; a stray status never counts). */

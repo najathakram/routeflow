@@ -336,11 +336,11 @@ export class BillingNotificationService {
   async notifyDunning(
     tenantId: string,
     milestone: string,
-    invoiceId: string,
+    key: string,
     kind: DunningEmailKind,
     extra: { payUrl: string | null; readOnlyOn?: string; byDate?: string },
   ): Promise<RfInvoiceSendResult> {
-    return this.sendIfClaimed(tenantId, milestone, invoiceId, (admin, businessName) =>
+    return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
       dunningTemplate({
         kind,
         businessName,
@@ -353,8 +353,8 @@ export class BillingNotificationService {
   }
 
   /** The claim alone (no email): records that a milestone's notice went out inside another milestone's email. */
-  recordDunningMilestone(tenantId: string, milestone: string, invoiceId: string): Promise<boolean> {
-    return this.claim(tenantId, milestone, invoiceId);
+  recordDunningMilestone(tenantId: string, milestone: string, key: string): Promise<boolean> {
+    return this.claim(tenantId, milestone, key);
   }
 
   /** The tenant-local date (and zone label) for a notice's calendar date. */

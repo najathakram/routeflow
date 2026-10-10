@@ -27,6 +27,8 @@
  *     by hand in the Stripe dashboard). In `off` / `dark` the reconciler and the invoice.paid heal do NOT remove
  *     them; each logs `billing.dunning.would_unpause tenant=<id> sub=<id>` instead. Those log lines are the signal;
  *     review them before flipping to `enforced`, which WILL remove an unknown pause.
+ *   - PAUSED tenants whose clocked invoice was voided / marked uncollectible afterwards: they stay paused until admin
+ *     activation; each logs `billing.dunning.paused_on_closed_invoice tenant=<id> invoice=<id> status=<status>` once a day.
  *   - ACTIVE tenants that tried a plan change while an invoice was owed: in `dark` each logs
  *     `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=<id> entryPoint=<name>`; count those lines.
  *
@@ -82,9 +84,12 @@ async function main() {
         [stampedIds],
       )
     : [];
-  const sentFor = (tenantId, invoiceId) =>
+  // notices are keyed per EPISODE: `<invoiceId>:<pastDueSince ISO>` (SA r-note 3)
+  const sentFor = (tenantId, invoiceId, since) =>
     logRows
-      .filter((l) => l.tenantId === tenantId && l.key === invoiceId)
+      .filter(
+        (l) => l.tenantId === tenantId && l.key === `${invoiceId}:${new Date(since).toISOString()}`,
+      )
       .map((l) => l.milestone.replace("DUNNING_", "").toLowerCase())
       .sort();
 
@@ -104,7 +109,9 @@ async function main() {
         slug: r.slug,
         status: r.status,
         hoursOverdue: hours == null ? "n/a" : Math.floor(hours),
-        remindersSent: sentFor(r.id, r.pastDueInvoiceId).join(",") || "none",
+        remindersSent:
+          (r.pastDueSince ? sentFor(r.id, r.pastDueInvoiceId, r.pastDueSince) : []).join(",") ||
+          "none",
         onFlip: action,
       };
     });
@@ -172,7 +179,9 @@ async function main() {
       " sweep will LIST (an upper bound for what it stamps). A Stripe pause_collection set by hand and not known" +
       " locally is invisible here: in off/dark the reconciler logs `billing.dunning.would_unpause`, and in dark the" +
       " plan changes that enforced would refuse log `billing.dunning.would_refuse` - read those log lines before" +
-      " flipping to enforced.",
+      " flipping to enforced. A PAUSED tenant whose clocked invoice was later voided or marked uncollectible stays" +
+      " paused until admin activation (no automatic resume): each logs `billing.dunning.paused_on_closed_invoice" +
+      " tenant=<id> invoice=<id> status=<status>` once a day - review those before and after the flip.",
   );
   console.log(
     `\n${wouldPause} tenant(s) would get the final notice on the first enforced sweep and be paused no sooner than 24 h later.\n`,
