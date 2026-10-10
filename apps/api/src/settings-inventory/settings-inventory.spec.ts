@@ -14,12 +14,13 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
-import { BUYER_OVERSELL_MODES } from "../policy/policy-registry";
+import { BUYER_BACKORDER_VISIBILITY_MODES, BUYER_OVERSELL_MODES } from "../policy/policy-registry";
 import { SettingsInventoryController } from "./settings-inventory.controller";
 import { UpdateInventorySettingsDto } from "./settings-inventory.dto";
 import {
   INVENTORY_SETTINGS_DEFAULT_REASON,
   INVENTORY_SETTINGS_INVALID_MESSAGE,
+  INVENTORY_VISIBILITY_INVALID_MESSAGE,
   SettingsInventoryService,
 } from "./settings-inventory.service";
 
@@ -27,15 +28,27 @@ const admin = { sub: "u1", username: "admin", role: "TENANT_ADMIN", tenantId: "t
 const operator = { sub: "u2", username: "op", role: "OPERATOR", tenantId: "t1" } as JwtPayload;
 
 /** In-memory stand-in for PolicyService: one TENANT value per tenant, default "off". */
-function fakePolicies(initial?: string, active: Array<{ key: string; scopeType: string }> = []) {
+const VISIBILITY_KEY = "orders.buyerBackorderVisibility";
+function fakePolicies(
+  initial?: string,
+  active: Array<{ key: string; scopeType: string }> = [],
+  initialVisibility?: string,
+) {
   const store = new Map<string, unknown>();
+  const visibility = new Map<string, unknown>();
   if (initial !== undefined) store.set("t1", initial);
+  if (initialVisibility !== undefined) visibility.set("t1", initialVisibility);
   return {
     store,
+    visibility,
     listActive: jest.fn(async () => active),
-    resolve: jest.fn(async (tenantId: string) => store.get(tenantId) ?? "off"),
-    set: jest.fn(async (p: { tenantId: string; value: unknown; [k: string]: any }) => {
-      store.set(p.tenantId, p.value);
+    resolve: jest.fn(async (tenantId: string, key: string) =>
+      key === VISIBILITY_KEY
+        ? (visibility.get(tenantId) ?? "show")
+        : (store.get(tenantId) ?? "off"),
+    ),
+    set: jest.fn(async (p: { tenantId: string; key: string; value: unknown; [k: string]: any }) => {
+      (p.key === VISIBILITY_KEY ? visibility : store).set(p.tenantId, p.value);
       return { id: "r1" };
     }),
   };
@@ -45,10 +58,11 @@ function build(
   opts: {
     tenantId?: string | null;
     initial?: string;
+    initialVisibility?: string;
     active?: Array<{ key: string; scopeType: string }>;
   } = {},
 ) {
-  const policies = fakePolicies(opts.initial, opts.active);
+  const policies = fakePolicies(opts.initial, opts.active, opts.initialVisibility);
   const tenantId = opts.tenantId === undefined ? "t1" : opts.tenantId;
   const prisma = { getTenantId: jest.fn(() => tenantId) };
   const service = new SettingsInventoryService(policies as any, prisma as any);
@@ -110,6 +124,7 @@ describe("GET /settings/inventory", () => {
     const { controller, policies } = build({ initial: "backorder" });
     expect(await controller.get(user)).toEqual({
       buyerOversell: "backorder",
+      buyerBackorderVisibility: "show",
       customerOverrides: 0,
     });
     expect(policies.resolve).toHaveBeenCalledWith("t1", "orders.buyerOversell", {});
@@ -117,7 +132,11 @@ describe("GET /settings/inventory", () => {
 
   it('is "off" when nothing is stored', async () => {
     const { controller } = build();
-    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 0 });
+    expect(await controller.get(admin)).toEqual({
+      buyerOversell: "off",
+      buyerBackorderVisibility: "show",
+      customerOverrides: 0,
+    });
   });
 
   it("N2: customerOverrides counts only active CUSTOMER rows of THIS key", async () => {
@@ -130,7 +149,11 @@ describe("GET /settings/inventory", () => {
         { key: "email.staffOrderMode", scopeType: "CUSTOMER" },
       ],
     });
-    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 2 });
+    expect(await controller.get(admin)).toEqual({
+      buyerOversell: "off",
+      buyerBackorderVisibility: "show",
+      customerOverrides: 2,
+    });
   });
 
   it("N2: the PATCH response carries the count too", async () => {
@@ -139,6 +162,7 @@ describe("GET /settings/inventory", () => {
     });
     expect(await controller.update({ buyerOversell: "backorder" } as never, admin)).toEqual({
       buyerOversell: "backorder",
+      buyerBackorderVisibility: "show",
       customerOverrides: 1,
     });
   });
@@ -146,7 +170,11 @@ describe("GET /settings/inventory", () => {
   it('never returns anything but "off" | "backorder" (a corrupt resolved value fails closed)', async () => {
     const { controller, policies } = build();
     policies.resolve.mockResolvedValueOnce("Backorder" as never);
-    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 0 });
+    expect(await controller.get(admin)).toEqual({
+      buyerOversell: "off",
+      buyerBackorderVisibility: "show",
+      customerOverrides: 0,
+    });
   });
 });
 
@@ -167,7 +195,11 @@ describe("PATCH /settings/inventory", () => {
       reason: INVENTORY_SETTINGS_DEFAULT_REASON,
       actor: { id: "u1", name: "admin", impersonatedBy: "sa1" },
     });
-    expect(res).toEqual({ buyerOversell: "backorder", customerOverrides: 0 });
+    expect(res).toEqual({
+      buyerOversell: "backorder",
+      buyerBackorderVisibility: "show",
+      customerOverrides: 0,
+    });
   });
 
   it("a client reason is trimmed and used; blank falls back to the fixed reason", async () => {
@@ -295,6 +327,86 @@ describe("saved value → what a buyer order does (PolicyOversellReader + resolv
   });
 });
 
+describe("buyerBackorderVisibility (OOS PR2)", () => {
+  it("GET resolves the TENANT value through the string-literal key; a stored hide reads as hide", async () => {
+    const { controller, policies } = build({ initial: "backorder", initialVisibility: "hide" });
+    expect(await controller.get(admin)).toEqual({
+      buyerOversell: "backorder",
+      buyerBackorderVisibility: "hide",
+      customerOverrides: 0,
+    });
+    expect(policies.resolve).toHaveBeenCalledWith("t1", "orders.buyerBackorderVisibility", {});
+  });
+
+  it('a corrupt stored value fails closed to "show" (today\'s truthful behaviour)', async () => {
+    const { controller } = build({ initialVisibility: "HIDE" });
+    expect((await controller.get(admin)).buyerBackorderVisibility).toBe("show");
+  });
+
+  it("PATCH with ONLY the visibility: one set(), TENANT scope, the visibility key; buyerOversell is not rewritten", async () => {
+    const { controller, policies } = build({ initial: "backorder" });
+    const res = await controller.update({ buyerBackorderVisibility: "hide" }, {
+      ...admin,
+      impersonatedBy: "sa1",
+    } as JwtPayload);
+    expect(policies.set).toHaveBeenCalledTimes(1);
+    expect(policies.set).toHaveBeenCalledWith({
+      tenantId: "t1",
+      key: "orders.buyerBackorderVisibility",
+      scopeType: "TENANT",
+      scopeId: null,
+      value: "hide",
+      reason: INVENTORY_SETTINGS_DEFAULT_REASON,
+      actor: { id: "u1", name: "admin", impersonatedBy: "sa1" },
+    });
+    expect(res).toEqual({
+      buyerOversell: "backorder",
+      buyerBackorderVisibility: "hide",
+      customerOverrides: 0,
+    });
+  });
+
+  it("PATCH with both: two audited set() calls, one per key", async () => {
+    const { controller, policies } = build();
+    await controller.update(
+      { buyerOversell: "backorder", buyerBackorderVisibility: "hide" },
+      admin,
+    );
+    expect(policies.set.mock.calls.map((c) => [c[0].key, c[0].value])).toEqual([
+      ["orders.buyerOversell", "backorder"],
+      ["orders.buyerBackorderVisibility", "hide"],
+    ]);
+  });
+
+  it.each([["Hide"], ["yes"], [null], [1], [true], [["hide"]]])(
+    "garbage buyerBackorderVisibility %p is a 400 on that field, nothing written",
+    async (v) => {
+      const { controller, policies } = build();
+      const err = await controller
+        .update({ buyerOversell: "backorder", buyerBackorderVisibility: v } as never, admin)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toEqual({
+        statusCode: 400,
+        code: "INVENTORY_SETTING_INVALID",
+        message: INVENTORY_VISIBILITY_INVALID_MESSAGE,
+        details: { field: "buyerBackorderVisibility" },
+      });
+      expect(policies.set).not.toHaveBeenCalled(); // validated before ANY write
+    },
+  );
+
+  it("the shared visibility list equals the registry's", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = require("@routeflow/types") as {
+      INVENTORY_BACKORDER_VISIBILITY_MODES: string[];
+    };
+    expect([...shared.INVENTORY_BACKORDER_VISIBILITY_MODES]).toEqual([
+      ...BUYER_BACKORDER_VISIBILITY_MODES,
+    ]);
+  });
+});
+
 describe("contract parity", () => {
   it("the shared mode list equals the registry's BUYER_OVERSELL_MODES", () => {
     // The API never value-imports @routeflow/types in source; a spec may read it (same as
@@ -336,6 +448,6 @@ describe("PATCH body is a validated DTO (N1)", () => {
       "swagger/apiModelPropertiesArray",
       UpdateInventorySettingsDto.prototype,
     );
-    expect(props).toEqual([":buyerOversell", ":reason"]);
+    expect(props).toEqual([":buyerOversell", ":buyerBackorderVisibility", ":reason"]);
   });
 });

@@ -158,8 +158,8 @@ export class ProductsController {
 
   @Delete(":id")
   @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.productsService.remove(id);
+  remove(@Param("id") id: string, @Query("confirmCascade") confirmCascade?: string) {
+    return this.productsService.remove(id, { confirmCascade: confirmCascade === "true" });
   }
 
   // ─── Image endpoints (declared after :id to avoid prefix collision) ──────────

@@ -187,7 +187,9 @@ export class UploadsController {
       // can't fetch another tenant's regulatory artifacts (filings / tobacco
       // reports) or tenant files by guessing the key. The signed-URL path is
       // exempt above — the signature is itself a per-key capability.
-      const tenantMatch = key.match(/^(?:tenants|regulated-filings|tobacco-reports)\/([^/]+)\//);
+      const tenantMatch = key.match(
+        /^(?:tenants|regulated-filings|tobacco-reports|packing-slips)\/([^/]+)\//,
+      );
       if (tenantMatch && caller?.role !== "SUPER_ADMIN") {
         if (!caller?.tenantId || tenantMatch[1] !== caller.tenantId) {
           this.denyFileAccess("tenant-prefix mismatch", key, caller);

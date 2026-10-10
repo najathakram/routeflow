@@ -27,10 +27,12 @@ import {
   useDeleteContactPerson,
   useUpdateContactPerson,
   type ContactPerson,
+  type ContactPersonInput,
 } from "../../../../lib/api/customers";
 import { FormSheet, FormField, FormSection, FormTextInput } from "../../../../components/FormSheet";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
+import { contactPersonPayload } from "../../../../lib/contact-person-payload";
 
 function ContactSheet({
   customerId,
@@ -58,14 +60,11 @@ function ContactSheet({
       showToast("First name is required.");
       return;
     }
-    const dto = {
-      firstName: firstName.trim(),
-      lastName: lastName.trim() || undefined,
-      email: email.trim() || undefined,
-      phone: phone.trim() || undefined,
-      mobile: mobile.trim() || undefined,
-      isPrimary,
-    };
+    // #3206 follow-up: on edit an emptied optional field that was stored is an explicit null (cleared).
+    const dto = contactPersonPayload(
+      { firstName, lastName, email, phone, mobile, isPrimary },
+      editing,
+    );
     const opts = {
       onSuccess: () => {
         showToast(editing ? "Contact updated" : "Contact added");
@@ -74,7 +73,7 @@ function ContactSheet({
       onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     };
     if (editing) updateMut.mutate({ contactId: editing.id, ...dto }, opts);
-    else addMut.mutate(dto, opts);
+    else addMut.mutate(dto as ContactPersonInput, opts); // add: never null (nothing stored)
   };
 
   return (

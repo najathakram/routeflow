@@ -67,6 +67,10 @@ function collect(): Found[] {
         if (ts.isJsxElement(c) && c.openingElement.tagName.getText() === "Button") {
           buttons.push(...labelsOf(c));
         }
+        // <CancelOrderButton> IS the "Cancel Order" button (or, when the server blocks the cancel, its note)
+        if (ts.isJsxSelfClosingElement(c) && c.tagName.getText() === "CancelOrderButton") {
+          buttons.push("Cancel Order");
+        }
         if (ts.isCallExpression(c) && c.expression.getText() === "renderDeleteOrderAction") {
           deleteCalls += 1;
         }
@@ -98,6 +102,7 @@ describe("order-detail action bar tiers (page wiring)", () => {
         "Confirm Order",
         "Mark shipped",
         "Out for Delivery",
+        "Ready for pickup",
         "Mark delivered",
         "Mark as Delivered",
       ]),

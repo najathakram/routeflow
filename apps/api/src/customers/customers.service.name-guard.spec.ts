@@ -121,7 +121,7 @@ describe("CustomersService name guard (B956)", () => {
       prisma.customer.findFirst.mockResolvedValue(stored());
       prisma.customer.findUnique.mockResolvedValue(stored());
       await expect(
-        service.updateMyProfile({ sub: "user-1" } as never, { displayName: "@evil" }),
+        service.updateMyProfile({ sub: "user-1" } as never, { contactName: "@evil" }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.customer.update).not.toHaveBeenCalled();
     });

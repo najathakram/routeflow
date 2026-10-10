@@ -471,3 +471,47 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 
 - `api/fulfilment.ts` (#3188) — NEW: `FULFILMENT_MODE_VALUES`/`FulfilmentMode`, `COUNTER_SALES_MODE_VALUES`/`CounterSalesMode`, `FulfilmentMethod`, `FulfilmentCapability`, `TenantCapabilities`; `api/features.ts` imports `TenantCapabilities` for the `capabilities` field of the effective-features response; `api/error-codes.ts` +`FULFILMENT_MODE_NEEDS_FLEET`.
 - `api/price-history.ts` (#3192) — NEW: `PriceHistorySource`, `PriceHistoryRow`, `PriceHistorySummary`, `PriceHistoryResponse`. Both files are re-exported from `index.ts`.
+
+## Landed 2026-10-05 (window 6)
+
+### `@routeflow/types`
+
+- `api/profiles.ts` (#3199) — NEW: `BUSINESS_PROFILE_KEYS`/`BusinessProfileKey`, `BusinessProfileSummary`, `BusinessProfileListResponse`, `BusinessProfilePlan`, `ApplyBusinessProfileRequest`, `ConfirmBusinessProfileRequest` (adds `planFingerprint`), `BusinessProfilePreviewResponse` (extends `FeaturePreviewResponse`), `BusinessProfileApplyResponse`; re-exported from `index.ts`.
+- `api/fulfilment.ts` (#3199) — +`FLEET_MODULE_KEYS` (for the web's setup copy; the api keeps its own `FLEET_KEYS` literal, pinned by `fleet-keys-parity.spec.ts`).
+- `api/error-codes.ts` — +`PRICE_ADJUSTMENT_PARTIAL` (#3161) and +`BUSINESS_PROFILE_UNKNOWN`, `BUSINESS_PROFILE_UNAVAILABLE`, `BUSINESS_PROFILE_BILLING_FAILED`, `PROFILE_PLAN_CHANGED` (#3199); mirrored in `apps/mobile/__tests__/__mocks__/@routeflow/types.js`.
+- `api/error-codes.ts` — +`ADDON_ANNUAL_NOT_SUPPORTED`, `ADDON_INCLUDED_IN_PLAN`, `ADDON_BILLING_PENDING_CHECKOUT` (#3129); +`ORDER_WITH_CARRIER_NO_REDUCE`, `INVOICE_WITH_CARRIER_NO_LINE_CHANGE` (#3219); both batches mirrored in the mobile types mock.
+- `api/order-cancel.ts` (#3219) — NEW: `OrderCancelBlockedReason` (`"WITH_CARRIER"`), `OrderCancelBlockedField`; re-exported from `index.ts`.
+- `api/error-codes.ts` + `api/invoices.ts` (#3225) — +`PRICE_ADJUSTMENT_OVERPAYS`, `PRICE_ADJUSTMENT_REFUSED` (mirrored in the mobile types mock); `invoices.ts` +`PriceAdjustmentOverpaidInvoice`, `PriceAdjustmentOverpaysBody`, `PriceAdjustmentPartialBody` (`applied`, one of `refused` / `syncFailed`, `skipped`). Used by `invoices/price-adjustment-ledger.ts` and web `lib/price-adjustment-failure.ts`.
+
+## Landed 2026-10-06 (windows 4 to 10)
+
+### `@routeflow/types`
+
+- `api/error-codes.ts` — +`FULFIL_METHOD_NOT_OFFERED` (#3210, :242), +`ORDER_INVOICES_NEED_REVIEW` (#3216, :172, with a doc comment at :19), +`ADDON_COMP_MANAGED_BY_SUPPORT` and `ADDON_UNCOMP_STRIPE_UNAVAILABLE` (#3231, :299-300), +`ORDER_WITH_CARRIER_NO_CHANGE_REQUEST` (#3238, :246); each mirrored in `apps/api/src/common/api-error-codes.ts` (parity spec) and in the mobile types mock.
+- `api/fulfilment.ts` (#3210) — +`UNSET_FULFILMENT_CAPABILITIES` (:57): the ONE copy of "no fulfilment mode set" (ROUTE and SHIP offered, `staffDefault` ROUTE, `fleet` true); the API's `deriveFulfilmentCapability` is pinned to it and the web's unset check reads it.
+- `api/orders.ts` (#3233) — +`OrderInvoicesNeedReview` (:37): `{ flagged, reason?, flaggedAtStop?: { by, at } }`, a STAFF-ONLY field of `GET /orders/:id`; web `lib/api/orders.ts` `Order.invoicesNeedReview`.
+- `api/order-suggestions.ts` (#3218) — NEW: `OrderSuggestionProduct`, `UsuallyBuysItem`, `RecentOrderLine`, `RecentOrderSummary`, `OrderSuggestionsResponse`; re-exported from `index.ts` (:176). No price field by design.
+- `api/billing.ts` (#3224) — +`AddonBillingMode` (`"STRIPE" | "MANUAL" | "UNBILLED"`, a type only) and `EnableAddonResult` (`proratedNow`, `billing`, `subscription`); the API aliases `AddonBilling` with `import type` only (L-261).
+
+## Landed 2026-10-06 (window 12 and pending)
+
+- `api/ship-state.ts` (#3223) — NEW: `SHIPPED_ORDER_STATUSES`, `ShippedOrderStatus`, `isShippedOrderStatus(status)`; re-exported from `index.ts`; pinned to the api's shipped statuses by `orders/shipped-statuses-parity.spec.ts`.
+- `api/buyer.ts` (#3235, B1122) — NEW `BuyerInvoiceListItem` (`total`, `balanceDue`, `paidAmount`, `creditApplied`, `advanceApplied`, `isOverdue`, `customer`); contract spec `buyer/buyer-shared-types.contract.spec.ts`.
+- `api/error-codes.ts` (#3226) — +`ADDON_CHECKOUT_ITEM_UNREADABLE`, `ADDON_CHECKOUT_ITEM_MISSING`; `api/billing.ts` addon rows gain optional `trial` (the add-on runs free on the trial, billed when the card is added).
+
+## Landed 2026-10-06 (windows 13 to 16)
+
+- `api/fulfilment.ts` (#3200) — NEW `BuyerSellerCapability` (a `Pick` of the seller capability; the `GET /buyer/capabilities` payload).
+- `api/counter-sale.ts` (#3211) — NEW `COUNTER_SALE_PAYMENT_METHOD_VALUES`, `CounterSalePaymentMethod`, `CounterSaleItem`, `CounterSalePayment`, `CounterSaleRequest`, `CounterSaleResponse`; re-exported from `index.ts`. `api/routes.ts` gains the pickup-stop fields.
+- `api/error-codes.ts` (#3211, #3244) — +`ORDER_WITH_CARRIER_NO_ADD`; counter-sale family `COUNTER_SALES_DISABLED`, `COUNTER_TENDER_SHORT`, `COUNTER_CHECK_NUMBER_REQUIRED`, `COUNTER_PAYMENT_EXCEEDS_TOTAL`, `COUNTER_PAYMENT_NOT_RECORDED`, `COUNTER_SALE_{ORDER_CHANGED,KEY_CONFLICT,NOT_FOUND,INCOMPLETE,VOIDED,CHANGED,METHOD_INVALID}`, the `WALK_IN_*` codes, and `IDEMPOTENCY_KEY_{OTHER_ORDER,CART_MISMATCH,REQUIRED}`. API literals are pinned by the parity spec (L-261).
+
+## Landed 2026-10-06 (W16 train)
+
+- `api/counter-sale.ts` (#3239) — pickup-complete request and response types added beside the #3211 counter-sale ones.
+- `api/error-codes.ts` (#3250, #3239) — batch-ship and pickup-complete codes added (API literals pinned by the parity spec, L-261).
+- `api/orders.ts` (#3250) — batch-ship and packing-slip request and result types.
+- `api/buyer.ts` (#3215) — buyer response shapes narrowed to the customer-facing fields.
+
+## Landed 2026-10-07 (W17)
+
+- `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master b22689aa8`).

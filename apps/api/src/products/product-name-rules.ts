@@ -1,3 +1,4 @@
+import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { CatalogTx } from "./product-catalog-sync";
@@ -74,27 +75,14 @@ export async function assertNameFree(
 
 /** A P2002 on either active-name partial unique (driver-adapter or native shape) -> the same 409; else rethrown. */
 export function mapNameUniqueViolation(e: unknown, name: string, hasParent: boolean): never {
-  const err = e as {
-    code?: string;
-    meta?: {
-      target?: unknown;
-      driverAdapterError?: { cause?: { constraint?: { index?: unknown } } };
-    };
-  };
-  if (err?.code === "P2002") {
-    const target = err.meta?.target;
-    const index = err.meta?.driverAdapterError?.cause?.constraint?.index;
-    if (
-      (typeof target === "string" && NAME_CONSTRAINT_NAMES.has(target)) ||
-      (typeof index === "string" && NAME_CONSTRAINT_NAMES.has(index))
-    ) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.NAME_TAKEN,
-        message: nameTakenMessage(name, hasParent),
-        field: "name",
-        value: name,
-      });
-    }
+  const names = uniqueViolationConstraints(e)?.names ?? []; // exact names only (B1186: one reader)
+  if (names.some((n) => NAME_CONSTRAINT_NAMES.has(n))) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.NAME_TAKEN,
+      message: nameTakenMessage(name, hasParent),
+      field: "name",
+      value: name,
+    });
   }
   throw e;
 }

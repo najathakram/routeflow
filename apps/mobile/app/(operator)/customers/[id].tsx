@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import {
+  canDeleteCustomer,
+  WALK_IN_PROTECTED_COPY,
+} from "../../../lib/customer-walk-in-protection";
+import {
   ActivityIndicator,
   Linking,
   Modal,
@@ -459,10 +463,18 @@ export default function CustomerDetailScreen() {
             </Pressable>
           </View>
 
-          <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
-            <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-            <Text style={styles.deleteBtnText}>Delete customer</Text>
-          </Pressable>
+          {canDeleteCustomer(customer) ? (
+            <Pressable
+              style={styles.deleteBtn}
+              onPress={handleDelete}
+              disabled={deleteMut.isPending}
+            >
+              <Ionicons name="trash-outline" size={18} color={ios.system.red} />
+              <Text style={styles.deleteBtnText}>Delete customer</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.actionListText}>{WALK_IN_PROTECTED_COPY}</Text>
+          )}
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>

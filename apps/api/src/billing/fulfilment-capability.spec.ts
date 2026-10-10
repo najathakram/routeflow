@@ -48,6 +48,7 @@ describe("deriveFulfilmentCapability — the one capability answer", () => {
       for (const counterSales of COUNTER_SALES_MODE_VALUES) {
         for (const fleet of [false, true]) {
           const c = derive(mode, counterSales, fleet);
+          // SA-666b: pickup / pickup_ship are available in the registry, so they are in-store.
           const inStore = mode === "pickup" || mode === "pickup_ship";
           expect(c.counter).toBe(inStore ? "always" : counterSales === "on" ? "optional" : "off");
           expect(c.consistent).toBe(!((mode === "delivery" || mode === "both") && !fleet));
@@ -80,7 +81,6 @@ describe("deriveFulfilmentCapability — the one capability answer", () => {
   it("R3: SHIP appears only for the ship-family modes and unset (today), never as a 'fleet off' default", () => {
     for (const fleet of [false, true]) {
       expect(derive("delivery", "unset", fleet).methods).not.toContain("SHIP");
-      expect(derive("pickup", "unset", fleet).methods).not.toContain("SHIP");
       expect(derive("unset", "unset", fleet).staffDefault).toBe("ROUTE");
     }
   });

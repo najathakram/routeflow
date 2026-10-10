@@ -120,6 +120,12 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
     "Someone changed this product's codes at the same time. Refresh and try again.",
   [API_ERROR_CODES.CATALOG_TOO_LARGE_FOR_CLEAR_ALL]:
     "Too many products to remove at once. Select fewer and try again.",
+  [API_ERROR_CODES.VARIANT_PARENT_INACTIVE]:
+    "Turn the family back on first, then reactivate this variant.",
+  [API_ERROR_CODES.PRODUCT_DELETE_CONFLICT]:
+    "Nothing was deleted because something changed at the same time. Reload and try again.",
+  [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
+    "A product family can't be priced or promoted. Use its variants instead.",
 };
 
 /** READ_ONLY's 403 already gets the global "workspace is read-only" toast: a caller must not add a second. */

@@ -20,6 +20,11 @@ import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { escapeHtml } from "../common/html-escape";
 import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  hasForeignAudience,
+} from "../auth/session-token";
 
 export interface BuyerDeviceInfo {
   userAgent?: string;
@@ -291,7 +296,7 @@ export class BuyerAuthService {
   async refresh(incomingToken: string, deviceInfo?: BuyerDeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type?: string };
+    let payload: { sub: string; type?: string; aud?: unknown };
     try {
       payload = this.jwtService.verify(incomingToken, {
         secret: jwtConfig.refreshSecret,
@@ -306,6 +311,12 @@ export class BuyerAuthService {
     // (grace) so live sessions are never force-logged-out. Defense-in-depth on
     // top of the per-table hash lookup below.
     if (payload.type && payload.type !== "buyer") {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+    // A refresh token that names an audience must name this realm's; one with no `aud`
+    // (minted before audiences existed) is still accepted.
+    // Remove in PR-4a; strict refresh is safe only 30 days after deploy.
+    if (hasForeignAudience(payload, BUYER_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
@@ -763,6 +774,7 @@ export class BuyerAuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -770,7 +782,11 @@ export class BuyerAuthService {
       // F5-003: tag buyer refresh tokens with a realm discriminator so a staff
       // refresh token can never be replayed on the buyer refresh path.
       { sub: buyerAccountId, type: "buyer" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: BUYER_REFRESH_AUDIENCE,
+      },
     );
 
     await this.storeBuyerRefreshToken(buyerAccountId, refreshToken, deviceInfo);

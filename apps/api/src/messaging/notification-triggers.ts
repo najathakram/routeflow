@@ -9,6 +9,9 @@ import type { NotificationAudience } from "@routeflow/types";
 export const NOTIFICATION_TRIGGERS: ReadonlySet<NotificationEvent> = new Set<NotificationEvent>([
   NotificationEvent.ORDER_CONFIRMED,
   NotificationEvent.OUT_FOR_DELIVERY,
+  NotificationEvent.ORDER_SHIPPED,
+  NotificationEvent.SHIPMENT_TRACKING_ADDED,
+  NotificationEvent.READY_FOR_PICKUP, // SA-655: orders.service.ts changeStatus fires it on a PICKUP handover
   NotificationEvent.DELIVERED,
   NotificationEvent.CANCELLED,
   NotificationEvent.ORDER_CHANGED_AT_DOOR,
@@ -21,6 +24,9 @@ export const NOTIFICATION_TRIGGERS: ReadonlySet<NotificationEvent> = new Set<Not
 export const NOTIFICATION_AUDIENCE: Record<NotificationEvent, NotificationAudience> = {
   [NotificationEvent.ORDER_CONFIRMED]: "CUSTOMER",
   [NotificationEvent.OUT_FOR_DELIVERY]: "CUSTOMER",
+  [NotificationEvent.ORDER_SHIPPED]: "CUSTOMER",
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: "CUSTOMER",
+  [NotificationEvent.READY_FOR_PICKUP]: "CUSTOMER",
   [NotificationEvent.DELIVERED]: "CUSTOMER",
   [NotificationEvent.CANCELLED]: "CUSTOMER",
   [NotificationEvent.ORDER_CHANGED_AT_DOOR]: "CUSTOMER",

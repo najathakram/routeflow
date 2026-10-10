@@ -209,12 +209,14 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     expect(r.capabilities.fulfilment.consistent).toBe(false);
   });
 
-  it("pickup_ship + counter_sales on: counter is always (in-store beats optional)", async () => {
+  it("SA-666b: a STORED pickup_ship (available) reads as the in-store capability on the wire: PICKUP/SHIP, PICKUP default, counter always", async () => {
     const r = await build({ mode: "pickup_ship", counterSales: "on" }).controller.getMyFeatures(
       caller,
     );
     expect(r.capabilities.fulfilment.counter).toBe("always");
     expect(r.capabilities.fulfilment.methods).toEqual(["PICKUP", "SHIP"]);
+    expect(r.capabilities.fulfilment.staffDefault).toBe("PICKUP");
+    expect(r.capabilities.fulfilment.portalMethods).toEqual(["PICKUP", "SHIP"]);
   });
 
   it("reads ONLY the caller's tenant (cross-tenant)", async () => {

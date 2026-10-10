@@ -11,6 +11,7 @@ import {
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
 import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
 import { NOTIFICATION_TRIGGERS, notificationAudience } from "./notification-triggers";
+import { upgradeLegacyDefaultBody } from "./order-confirmed-copy";
 
 const { INTERNAL, WHATSAPP, SMS, EMAIL, PORTAL } = MessageChannel;
 const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
@@ -20,6 +21,14 @@ const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
 export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.ORDER_CONFIRMED]: CUSTOMER_CHANNELS,
   [NotificationEvent.OUT_FOR_DELIVERY]: CUSTOMER_CHANNELS,
+  // Carrier-shipped (fulfillPath SHIP) orders: ORDER_SHIPPED replaces OUT_FOR_DELIVERY for them
+  // (unless the business customised its OUT_FOR_DELIVERY wording); SHIPMENT_TRACKING_ADDED is the
+  // one-time follow-up when tracking is first added after the order was already marked shipped.
+  [NotificationEvent.ORDER_SHIPPED]: CUSTOMER_CHANNELS,
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: CUSTOMER_CHANNELS,
+  // Pickup orders: fired by the pickup flow (not by this module's PR). {{pickupLine}} is "" or
+  // " Pick up at <address>. Hours: <hours>." built by the caller from the business's pickup settings.
+  [NotificationEvent.READY_FOR_PICKUP]: CUSTOMER_CHANNELS,
   [NotificationEvent.DELIVERED]: CUSTOMER_CHANNELS,
   // N1 (2026-09-16): real order-cancelled event, alongside the real EMAIL
   // channel — CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this
@@ -53,13 +62,29 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
  *  via extractVariables at seed time. Money-looking vars are PRE-FORMATTED
  *  STRINGS supplied by P6-5 callers — no money math in messaging. */
 export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body: string }> = {
+  // B1127: {{deliveryClause}} is " for delivery on <date>" / " and will ship by carrier" / "" — built by
+  // orderConfirmedVars() (order-confirmed-copy.ts); the pre-fix body is upgraded at render time.
   [NotificationEvent.ORDER_CONFIRMED]: {
     label: "Order confirmed",
-    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed for delivery on {{deliveryDate}}. Total: {{orderTotal}}.",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed{{deliveryClause}}. Total: {{orderTotal}}.",
   },
   [NotificationEvent.OUT_FOR_DELIVERY]: {
     label: "Out for delivery",
     body: "Hi {{customerName}}, your order {{orderNumber}} is out for delivery today with {{driverName}}.",
+  },
+  // Variables: carrier (label, or "the carrier"), trackingLine (" Tracking: <no> — <url>" when known,
+  // else ""). The 20261003120100 seed migration carries this exact body (pinned by a spec).
+  [NotificationEvent.ORDER_SHIPPED]: {
+    label: "Order shipped",
+    body: "Hi {{customerName}}, your order {{orderNumber}} has shipped with {{carrier}}.{{trackingLine}}",
+  },
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: {
+    label: "Tracking added",
+    body: "Hi {{customerName}}, tracking for order {{orderNumber}}: {{trackingNumber}} — {{trackingUrl}}",
+  },
+  [NotificationEvent.READY_FOR_PICKUP]: {
+    label: "Ready for pickup",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is ready for pickup.{{pickupLine}}",
   },
   [NotificationEvent.DELIVERED]: {
     label: "Delivered",
@@ -126,6 +151,11 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   },
 };
 
+/** The body to render/show for a stored template row: the current default when the row still holds a
+ *  superseded default verbatim (B1127), else the stored text. See `upgradeLegacyDefaultBody`. */
+export const effectiveTemplateBody = (eventKey: NotificationEvent, storedBody: string): string =>
+  upgradeLegacyDefaultBody(eventKey, storedBody, DEFAULT_TEMPLATES[eventKey].body);
+
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
  *  INTERNAL ops alert below (none is in NOTIFICATION_TRIGGERS) — seeding a key ON that can
@@ -142,6 +172,12 @@ export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.ORDER_CONFIRMED}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${PORTAL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${EMAIL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${PORTAL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${EMAIL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${PORTAL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${EMAIL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${PORTAL}`,
   `${NotificationEvent.DELIVERED}:${EMAIL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
   `${NotificationEvent.CANCELLED}:${EMAIL}`,
@@ -378,16 +414,19 @@ export class MessagingConfigService {
 
   private templateView(t: {
     id: string;
+    eventKey: NotificationEvent;
     body: string;
     variables: string[];
     waTemplateName: string | null;
     waApprovalStatus: WaApprovalStatus;
     isActive: boolean;
   }): TemplateView {
+    // B1127: show what notify() will actually send (a superseded default is upgraded at render time).
+    const body = effectiveTemplateBody(t.eventKey, t.body);
     return {
       id: t.id,
-      body: t.body,
-      variables: t.variables,
+      body,
+      variables: body === t.body ? t.variables : extractVariables(body),
       waTemplateName: t.waTemplateName,
       waApprovalStatus: t.waApprovalStatus,
       isActive: t.isActive,

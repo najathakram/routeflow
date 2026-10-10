@@ -98,6 +98,29 @@ describe("ProductsService", () => {
       expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
     });
 
+    it("the list selects the parent's kind and carries it through to the response", async () => {
+      const tenantId = prisma.getTenantId();
+      prisma.product.findMany.mockResolvedValue([
+        {
+          ...MOCK_PRODUCT,
+          parentProductId: "parent-1",
+          parent: { id: "parent-1", name: "Cola", kind: "STANDARD", portalVisible: true, tenantId },
+        },
+      ]);
+      prisma.product.count.mockResolvedValue(1);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            parent: { select: expect.objectContaining({ kind: true }) },
+          }),
+        }),
+      );
+      expect((result.data[0] as any).parent).toMatchObject({ id: "parent-1", kind: "STANDARD" });
+    });
+
     it("should apply search filter", async () => {
       prisma.product.findMany.mockResolvedValue([]);
       prisma.product.count.mockResolvedValue(0);
@@ -489,6 +512,9 @@ describe("ProductsService", () => {
     // Numbers stand in for Prisma Decimals — the service only calls .toString().
     const MOCK_PARENT = {
       id: "parent-1",
+      isActive: true,
+      kind: "STANDARD",
+      parentProductId: null,
       priceTier2: 24,
       priceTier3: 23,
       priceTier4: 22,
@@ -646,7 +672,12 @@ describe("ProductsService", () => {
     });
 
     it("isolates per-item failures — surfaces validation messages, masks raw errors (F8-003)", async () => {
-      prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue({
+        id: "parent-1",
+        isActive: true,
+        kind: "FAMILY",
+        parentProductId: null,
+      });
       const update = jest
         .spyOn(service, "update")
         .mockResolvedValueOnce({} as any)
@@ -1160,6 +1191,9 @@ describe("ProductsService", () => {
       // product.findFirst serves both the name/sku conflict checks (no where.id)
       // and the converted parent load (where.id === parentProductId).
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1339,6 +1373,9 @@ describe("ProductsService", () => {
 
     it("a variant inherits the parent's regulatory trio when the DTO omits the section", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1382,6 +1419,9 @@ describe("ProductsService", () => {
 
     it("an explicit DTO value on one field beats inheritance while the others still inherit", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -1840,6 +1880,9 @@ describe("ProductsService", () => {
 
     it("a variant inheriting the parent's regulated pair also gets the synced category name", async () => {
       const PARENT = {
+        isActive: true,
+        kind: "STANDARD",
+        parentProductId: null,
         priceTier2: 1,
         priceTier3: 1,
         priceTier4: 1,
@@ -2311,7 +2354,13 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
     expect(result).toEqual({
       deleted: 1,
       softDeleted: 1,
-      skipped: [{ id: "prod-a", reason: expect.stringContaining("Product A") }],
+      skipped: [
+        {
+          id: "prod-a",
+          code: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
+          reason: expect.stringContaining("Product A"),
+        },
+      ],
     });
 
     // A: skipped means untouched.
