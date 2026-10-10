@@ -43,6 +43,7 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -1195,18 +1196,15 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { amount: true },
         }),
-        this.prisma.forTenant().invoice.count({
-          where: {
-            status: {
-              in: [
-                InvoiceStatus.SENT,
-                InvoiceStatus.VIEWED,
-                InvoiceStatus.PARTIAL,
-                InvoiceStatus.OVERDUE,
-              ],
-            },
-            dueDate: { lt: overdueCutoff(now, tz) },
-          },
+        // SA-770 (row 294): overdue = past its due day AND a balance is owed (the one SQL predicate),
+        // so an overpaid or exactly-paid invoice that is not yet PAID is not counted.
+        overdueInvoiceCount(this.prisma, this.requireTenantId(), overdueCutoff(now, tz), {
+          statuses: [
+            InvoiceStatus.SENT,
+            InvoiceStatus.VIEWED,
+            InvoiceStatus.PARTIAL,
+            InvoiceStatus.OVERDUE,
+          ],
         }),
       ],
     );

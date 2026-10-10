@@ -64,6 +64,9 @@ const CODE_COPY: Record<string, string> = {
   // B987-B (#3053) registers them, then switch to the constants.
   [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
+  // SA-770: the overdue list refuses past its id cap. The server's text is never shown.
+  [API_ERROR_CODES.OVERDUE_FILTER_TOO_BROAD]:
+    "Too many invoices are overdue to list at once. Filter by customer, then try again.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:

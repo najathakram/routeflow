@@ -571,6 +571,12 @@ export const API_ERROR_CODES = {
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
   /** A tenant time zone write named something that is not an IANA zone (400, SA-738). Nothing was written. */
   INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
+  /**
+   * 422 from GET /invoices?isOverdue=true: more than 10 000 invoices owe a balance past their due day for the
+   * tenant (or the customer asked for), so the list is refused rather than silently truncated (SA-770).
+   * Narrow by customer and retry. Nothing was read.
+   */
+  OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

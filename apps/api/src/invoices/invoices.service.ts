@@ -111,6 +111,7 @@ import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import {
   applyInvoiceSearchAndDateFilters,
   applyInvoiceStatusFilters,
+  applyOverdueBalanceFilter,
   invoiceListOrderBy,
 } from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
@@ -2922,6 +2923,9 @@ export class InvoicesService {
       where.customerId = customerId;
     }
     applyInvoiceSearchAndDateFilters(where, query);
+    // SA-770: overdue = past due AND a balance is owed (the one SQL predicate); no tenant, no list.
+    if (!(await applyOverdueBalanceFilter(where, query, this.prisma, this.prisma.getTenantId())))
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     const orderBy = invoiceListOrderBy(sortBy, sortOrder);
 
     const [data, total] = await Promise.all([
