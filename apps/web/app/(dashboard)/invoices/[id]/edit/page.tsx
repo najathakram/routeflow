@@ -22,6 +22,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
+import { sellableFlat } from "@/lib/product-search-groups";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
@@ -126,8 +127,13 @@ function ProductSearchInput({
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true });
-  const products = data?.data ?? [];
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedQuery || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const products = sellableFlat<any>(data?.data ?? []);
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -217,14 +223,20 @@ function ProductSearchInput({
                     <button
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
-                        setQuery(p.name);
-                        onChange(p.name, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
+                        const label = displayProductName(p as any);
+                        setQuery(label);
+                        onChange(label, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
                         setOpen(false);
                       }}
                     >
                       <div>
-                        <span className="text-sm font-medium text-navy">{p.name}</span>
+                        <span className="text-sm font-medium text-navy">
+                          {displayProductName(p as any)}
+                        </span>
                         {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+                        {(p as any).unit && (
+                          <span className="ml-2 text-xs text-navy/70">{(p as any).unit}</span>
+                        )}
                       </div>
                       <span className="text-xs text-navy/70">
                         {fmt.format(Number(p.pricePerUnit))}

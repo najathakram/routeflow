@@ -130,7 +130,7 @@ function requireDbLocksMock(): any {
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "../buyer/buyer-product-visibility";
 import {
   BadRequestException,
   ConflictException,
@@ -196,6 +196,8 @@ const customerPayload = {
   role: "CUSTOMER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant.
+  tenantId: "tenant-a",
 };
 
 const MOCK_PRODUCT = { id: "prod-1", name: "Tomatoes", pricePerUnit: 4.99, unit: "punnet" };
@@ -477,7 +479,7 @@ describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B1
     );
 
     currentTenantId = "tenant-b";
-    const fromTenantB = await service.create(dto, customerPayload);
+    const fromTenantB = await service.create(dto, { ...customerPayload, tenantId: "tenant-b" });
 
     // The compound (tenantId, idempotencyKey) key means a different tenant
     // reusing the same client-generated uuid is NOT a replay.
@@ -1627,9 +1629,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     expect(candidates).toContain("012345678905");
     // M4a-1: the shared findScanMatches ANDs the caller's scope (the ONE buyer visibility builder) with the code OR.
     const where = scopedProductFindMany.mock.calls[0][0].where;
-    expect(where.AND[0]).toEqual(
-      buyerVisibleProductWhere({ ...NO_BUYER_RESTRICTIONS, tenantId: BUYER_CTX.tenantId }),
-    );
+    expect(where.AND[0]).toEqual(buyerVisibleProductWhere(noBuyerRestrictions(BUYER_CTX.tenantId)));
     expect(where.AND[1].OR).toEqual(
       expect.arrayContaining([
         { barcode: { in: candidates } },

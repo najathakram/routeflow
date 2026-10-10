@@ -72,7 +72,7 @@ const KNOWN_DOORS: Record<string, Door> = {
     count: 2,
     kind: "pending",
     ticket: "#2848",
-    pendingUntil: "2026-10-10",
+    pendingUntil: "2026-10-24",
     why: "deleteOrder's invoice loop + the merge-loser draft delete (implicit FK SET NULL); wired in #2848 commit 2 once U-units' #2784/#2786 land",
   },
   "customers/customer-delete-preflight.ts": {

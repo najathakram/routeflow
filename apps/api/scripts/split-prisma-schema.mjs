@@ -142,6 +142,7 @@ const MODEL_DOMAIN = {
   PurchaseOrder: "catalog",
   PurchaseOrderItem: "catalog",
   ProductUnit: "catalog",
+  TenantUnit: "catalog",
   ProductBarcode: "catalog",
   ProductImage: "catalog",
   Recipe: "catalog",

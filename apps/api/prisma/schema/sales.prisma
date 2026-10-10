@@ -906,6 +906,9 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 }
 
 // #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty
@@ -1228,6 +1231,9 @@ model ReturnItem {
   @@index([productId])
   @@index([tenantId])
   @@index([sourceOrderId, productId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────

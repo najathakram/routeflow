@@ -57,6 +57,13 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { applyTobaccoPlan, planTobaccoTenant, summarizePlans } from "./lib/recipe-locked.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195: `--execute` never writes a PROTECTED tenant (paying | stripe-linked |
+// PROTECTED_TENANT_SLUGS), with or without --live-tenant-override. Dry-run reads stay unrestricted.
+const { assertWritableTenant, ProtectedTenantError } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // ─── Connection (mirrors repair-receiving-units.mjs) ──────────────────────────
 function resolveDbUrl() {
@@ -125,7 +132,18 @@ if (execute) {
   }
 }
 
-const pool = new Pool({ connectionString: resolveDbUrl() });
+const dbUrl = resolveDbUrl();
+// Loaded ONCE, against the URL this script dials, before connecting (only a write needs it).
+let protectedSlugs = null;
+if (execute) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+  } catch (err) {
+    console.error(`\n${err.message} Nothing was written.\n`);
+    process.exit(1);
+  }
+}
+const pool = new Pool({ connectionString: dbUrl });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 const planForTenant = (tenant) => planTobaccoTenant(prisma, tenant);
@@ -213,11 +231,24 @@ function printPlan(plan) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
   });
   if (!tenant) {
     console.error(`Tenant "${tenantSlug}" not found. Nothing was written.`);
     process.exit(1);
+  }
+  if (execute) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenant.id },
+      select: { planKey: true, stripeSubId: true },
+    });
+    try {
+      assertWritableTenant(tenant, sub, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      console.error(`\n${err.message} Nothing was written.\n`);
+      process.exit(1);
+    }
   }
 
   console.log(`\n===== TOBACCO-CATEGORY BACKFILL (${execute ? "EXECUTE" : "DRY-RUN"}) =====`);
