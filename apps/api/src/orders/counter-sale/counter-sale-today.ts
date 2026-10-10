@@ -17,6 +17,8 @@ import type {
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf } from "./counter-sale-readback";
+import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
+import { refundTenderOfColumn } from "../../returns/refund-tender";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -34,13 +36,6 @@ export const TODAYS_SALES_MAX_LIMIT = 100;
 export const REFUND_METHOD_EXTERNAL = "EXTERNAL_REFUND";
 export const REFUND_METHOD_CREDIT_NOTE = "CREDIT_NOTE";
 
-/**
- * Is the TENDER of an external refund stored in a column? Not yet: it lives only in the audit row's meta. While
- * false the summary reports every refund by AMOUNT only (in `refunds.other`) and `cashExpectedInDrawer` does not
- * subtract it. Flip together with a `Return.refundTender` column (its own migration), then split the fold below.
- */
-export const REFUND_TENDER_KNOWN = false;
-
 export interface DayWindow {
   /** inclusive */
   start: Date;
@@ -50,7 +45,7 @@ export interface DayWindow {
 
 const DEAD_INVOICE_STATUSES = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
 /** Returns that moved no money and never will; shared with the invoice void guard (`CASH_REFUNDED_RETURN_WHERE`). */
-export const DEAD_RETURN_STATUSES = [ReturnStatus.REJECTED, ReturnStatus.CANCELLED];
+export { DEAD_RETURN_STATUSES };
 
 const isDeadInvoice = (status: string) =>
   (DEAD_INVOICE_STATUSES as readonly string[]).includes(status);
@@ -356,6 +351,8 @@ export interface PaidAggregate {
  */
 export interface WindowReturn extends ReturnMoney {
   refundMethod: string | null;
+  /** SA-740r2: `Return.refundTender` (PaymentMethod) of a recorded refund; null = no tender recorded. The ONLY tender source. */
+  refundTender?: string | null;
 }
 
 const countOf = (c: { _all?: number } | number | null | undefined): number =>
@@ -390,31 +387,29 @@ export function foldSummary(input: {
   };
   const salesTotal = roundMoney(num(input.sales._sum?.total));
 
-  let refundCount = 0;
-  let refundTotal = 0;
+  // SA-740r2: a refund's tender is READ ONLY from `Return.refundTender` (no audit-meta read). A null / unknown tender is
+  // `other`, never guessed to be cash; `tenderKnown` is computed per window: no refund in it lacks a tender.
+  const refunds = { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true };
   let creditCount = 0;
   let creditAmount = 0;
   for (const r of input.returns) {
     if (r.refundMethod === REFUND_METHOD_EXTERNAL) {
-      refundCount += 1;
-      refundTotal = roundMoney(refundTotal + num(r.refundAmount));
+      const amount = num(r.refundAmount);
+      const tender = refundTenderOfColumn(r.refundTender);
+      refunds.count += 1;
+      refunds.total = roundMoney(refunds.total + amount);
+      if (tender === "CASH") refunds.cash = roundMoney(refunds.cash + amount);
+      else if (tender === "CARD") refunds.card = roundMoney(refunds.card + amount);
+      else if (tender === "CHECK") refunds.check = roundMoney(refunds.check + amount);
+      else {
+        refunds.other = roundMoney(refunds.other + amount);
+        refunds.tenderKnown = false;
+      }
     } else if (r.refundMethod === REFUND_METHOD_CREDIT_NOTE) {
       creditCount += 1;
       creditAmount = roundMoney(creditAmount + returnAmount(r));
     }
   }
-  // Tender not stored (REFUND_TENDER_KNOWN): the whole refund is untendered, so `other`; the drawer figure
-  // below cannot subtract it and says so through `tenderKnown`.
-  const refunds = {
-    count: refundCount,
-    cash: 0,
-    card: 0,
-    check: 0,
-    other: refundTotal,
-    total: refundTotal,
-    tenderKnown: REFUND_TENDER_KNOWN,
-  };
-
   return {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,

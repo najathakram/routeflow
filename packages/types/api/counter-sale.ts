@@ -67,6 +67,33 @@ export interface CounterSaleResponse {
   replayed?: boolean;
 }
 
+// ─── Void a counter sale — POST /orders/counter-sale/:orderId/void ────────────────────────────────
+//
+// One call voids today's sale: its counter tender, its invoices and the order (stock goes back). `reason` is 3-200
+// characters (trimmed, control characters stripped). The call is idempotent: a second void of the same sale answers
+// 200 with `replayed: true` and the same `handBack`. Refusals are 409s with their own codes (COUNTER_SALE_VOIDED,
+// COUNTER_SALE_VOID_HAS_RETURN, COUNTER_SALE_VOID_FOREIGN_PAYMENT, COUNTER_SALE_VOID_NOT_TODAY, ORDER_HAS_CASH_REFUND)
+// and COUNTER_SALE_VOID_BUSY (503, nothing written: retry).
+
+export interface CounterSaleVoidRequest {
+  reason: string;
+}
+
+/** The PAID tender voided, per method (a method with nothing to hand back is absent). */
+export interface CounterSaleHandBack {
+  CASH?: number;
+  CARD?: number;
+  CHECK?: number;
+}
+
+export interface CounterSaleVoidResponse {
+  voided: true;
+  /** true when the sale was already voided by this endpoint: nothing was written, `handBack` is the first call's. */
+  replayed?: boolean;
+  /** UI copy: "Give back $X cash · Void the card payment on the card terminal". */
+  handBack: CounterSaleHandBack;
+}
+
 // ─── Pickup complete (order ahead, pick up) — POST /orders/:id/pickup-complete ────────────────
 //
 // Staff hand a PICKUP order over at the till: the order goes to DELIVERED, its invoice is issued and the
@@ -137,6 +164,10 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** SA-764: the cash handed over (null on a legacy or non-cash sale) */
+  cashTendered?: number | null;
+  /** SA-764: the sale's single stored tax rate in percent (8.25 = 8.25%); null when mixed or none */
+  taxRatePercent?: number | null;
   paymentState: TodaysSalePaymentState;
   returned: {
     amount: number;
@@ -162,8 +193,9 @@ export interface TodaysSalesSummary {
   onAccount: number;
   /**
    * Money given back, counted on the day it was given (an earlier day's sale included).
-   * `tenderKnown` is false while the refund tender is not stored: the whole amount then sits in `other`,
-   * cash / card / check are 0 and `cashExpectedInDrawer` does NOT subtract it.
+   * The tender is read from `Return.refundTender`. A refund with no recorded tender sits in `other` and is NOT subtracted
+   * from `cashExpectedInDrawer`; `tenderKnown` is false while ANY refund in the window has no recorded tender (true when
+   * every refund has one, and for a window with no refund at all).
    */
   refunds: {
     count: number;

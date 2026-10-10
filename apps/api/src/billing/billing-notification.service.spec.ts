@@ -54,7 +54,8 @@ function makeService(overrides?: {
         ),
     },
     tenantConfig: {
-      findFirst: jest
+      // SA-738: the zone is read through the one resolver, which uses findUnique.
+      findUnique: jest
         .fn()
         .mockResolvedValue(overrides?.tenantConfig === undefined ? null : overrides.tenantConfig),
     },

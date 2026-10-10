@@ -21,7 +21,7 @@ function setup(over: Partial<React.ComponentProps<typeof FamilyVariantsGrid>> = 
 describe("FamilyVariantsGrid", () => {
   it("one labelled input per cell, in rows", () => {
     setup();
-    for (const f of ["name", "SKU", "barcode", "unit code", "units per case", "price", "cost"]) {
+    for (const f of ["name", "SKU", "barcode", "unit code", "pieces per box", "price", "cost"]) {
       expect(screen.getByLabelText(new RegExp(`^Variant 1 ${f}$`, "i"))).toBeInTheDocument();
       expect(screen.getByLabelText(new RegExp(`^Variant 2 ${f}$`, "i"))).toBeInTheDocument();
     }

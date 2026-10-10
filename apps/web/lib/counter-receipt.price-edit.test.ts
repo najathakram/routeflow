@@ -59,9 +59,9 @@ describe("buildCounterReceipt: edited lines (POS-5)", () => {
     expect(m.lines[0].original).toBeNull();
     expect(m.subtotal).toBe(25); // 5 + 20 at the system price, before the discount
     expect(m.discounts).toBe(2);
-    expect(m.adjustment).toBe(0); // the server total equals the net subtotal: nothing unexplained
-    // what the paper shows: Subtotal - Discounts + Tax and adjustments = Total
-    expect(roundMoney(m.subtotal - m.discounts + m.adjustment)).toBe(m.total);
+    expect(m.adjustments).toBe(0); // the server total equals the net subtotal: nothing unexplained
+    // what the paper shows: Subtotal - Discounts + Tax + Adjustments = Total
+    expect(roundMoney(m.subtotal - m.discounts + m.tax + m.adjustments)).toBe(m.total);
   });
 
   it("a boxed edited line is prorated by computeLineSubtotal at both prices, never qty x price", () => {

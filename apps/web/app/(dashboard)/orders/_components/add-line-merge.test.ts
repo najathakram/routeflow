@@ -84,9 +84,9 @@ describe("mergedLineMessage", () => {
   it("a boxed line reads in cases, and cases + loose pieces when there are any", () => {
     expect(
       mergedLineMessage("Sample Cola", { qty: 24, unitsPerBox: 12, boxes: 2, pieces: 0 }),
-    ).toBe("Sample Cola — now 2 cases");
+    ).toBe("Sample Cola — now 2 boxes");
     expect(
       mergedLineMessage("Sample Cola", { qty: 15, unitsPerBox: 12, boxes: 1, pieces: 3 }),
-    ).toBe("Sample Cola — now 1 case + 3 pcs");
+    ).toBe("Sample Cola — now 1 box + 3 pcs");
   });
 });
