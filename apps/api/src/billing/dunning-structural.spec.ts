@@ -218,7 +218,9 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_OVERDUE/);
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_STATE_UNKNOWN/);
       expect(src).toMatch(/hosted_invoice_url/);
-      expect(src).toMatch(/billing\.dunning\.would_refuse code=PAYMENT_OVERDUE/);
+      expect(src).toMatch(
+        /billing\.dunning\.would_refuse code=\$\{API_ERROR_CODES\.PAYMENT_OVERDUE\}/,
+      );
     });
   });
 

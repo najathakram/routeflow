@@ -57,7 +57,8 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { DunningService } from "./dunning.service";
-import { assertNotPaymentOverdue } from "./payment-overdue";
+import { assertTenantNotPaymentOverdue, type OverdueEntryPoint } from "./payment-overdue";
+import { billingPauseMode } from "./dunning-config";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf, prorationAllowedFor } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
@@ -268,8 +269,13 @@ export class SubscriptionMutationService {
   private readonly logger = new Logger(SubscriptionMutationService.name);
 
   /** SA-733r M1: a tenant that owes an overdue invoice gets 409 PAYMENT_OVERDUE on every plan-mutation entry point. */
-  private assertNotOverdue(tenantId: string): Promise<void> {
-    return assertNotPaymentOverdue({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+  private assertNotOverdue(tenantId: string, entryPoint: OverdueEntryPoint): Promise<void> {
+    return assertTenantNotPaymentOverdue(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      tenantId,
+      entryPoint,
+      billingPauseMode(),
+    );
   }
 
   /**
@@ -314,7 +320,7 @@ export class SubscriptionMutationService {
 
   /** Commit a subscription / convert a trial by picking a plan (+ optional add-ons). */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
-    await this.assertNotOverdue(tenantId);
+    await this.assertNotOverdue(tenantId, "subscribe");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
@@ -1035,7 +1041,7 @@ export class SubscriptionMutationService {
   }
 
   private async upgradeLocked(tenantId: string, planKey: string, actorId?: string) {
-    await this.assertNotOverdue(tenantId);
+    await this.assertNotOverdue(tenantId, "upgrade");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
@@ -1253,7 +1259,7 @@ export class SubscriptionMutationService {
     retainedUserIds: string[],
     actorId?: string,
   ) {
-    await this.assertNotOverdue(tenantId);
+    await this.assertNotOverdue(tenantId, "downgrade");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
@@ -1497,7 +1503,7 @@ export class SubscriptionMutationService {
    * only self-service "keep my current plan"; it never touches planKey or the period.
    */
   async resume(tenantId: string, actorId?: string) {
-    await this.assertNotOverdue(tenantId);
+    await this.assertNotOverdue(tenantId, "resume");
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundException("No subscription.");
 

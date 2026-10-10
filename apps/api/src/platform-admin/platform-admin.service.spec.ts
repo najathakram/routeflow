@@ -4411,8 +4411,9 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
-      expect(prisma.tenant.updateMany.mock.calls.at(-1)?.[0]).toMatchObject({
-        where: { id: TENANT_ID },
+      // the first CAS: the row LEAVING a non-ACTIVE state (the second only keeps an already-ACTIVE row's plan current)
+      expect(prisma.tenant.updateMany.mock.calls[0]?.[0]).toMatchObject({
+        where: { id: TENANT_ID, status: { not: "ACTIVE" } },
         data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
       });
     });

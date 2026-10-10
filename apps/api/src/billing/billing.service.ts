@@ -58,7 +58,7 @@ import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import type { TransitionOpts } from "./dunning-core";
-import { assertNotPaymentOverdue } from "./payment-overdue";
+import { assertTenantNotPaymentOverdue } from "./payment-overdue";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import { claimRefusal, isCatchupSession, isCatchupSubscription } from "./catchup-claim";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
@@ -523,7 +523,11 @@ export class BillingService {
     const held = claimRefusal(existingSub?.catchupState);
     if (held) throw held;
     // SA-733r M1 (PR-B3): a tenant that owes an overdue invoice cannot buy its way out through a new checkout.
-    await assertNotPaymentOverdue({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+    await assertTenantNotPaymentOverdue(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      tenantId,
+      "checkout",
+    );
     // Ruling (item 8): a manual-pay (externalPayment) tenant completes card setup ONLY through the catch-up flow,
     // which prices the unpaid periods and voids exactly what it bills. No ordinary checkout for them.
     if (existingSub?.externalPayment === true && !existingSub.stripeSubId) {

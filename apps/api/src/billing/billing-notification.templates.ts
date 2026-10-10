@@ -432,6 +432,8 @@ export function dunningTemplate(params: {
   payUrl: string | null;
   /** `final` only: the tenant-local date the workspace becomes read-only. */
   readOnlyOn?: string;
+  /** `d6` (dark) only: the tenant-local date to update the card by. */
+  byDate?: string;
 }): BillingEmailTemplate {
   const link = params.payUrl || billingSettingsUrl();
   const biz = params.businessName;
@@ -446,10 +448,13 @@ export function dunningTemplate(params: {
       tagline: "Payment overdue",
       body: `The subscription invoice for ${biz} is still unpaid. Please pay it or update your payment method to avoid an interruption to your service.`,
     },
+    // dark's d6: nothing will happen, so it carries NO read-only threat (SA-733r7 r-note 2) - only the card ask + date.
     d6: {
-      subject: `Action needed: overdue payment — ${biz}`,
+      subject: `Your payment is still failing — ${biz}`,
       tagline: "Payment overdue",
-      body: `The subscription invoice for ${biz} is still unpaid. Please pay it today to avoid an interruption to your service.`,
+      body: `The subscription payment for ${biz} is still failing. Please update your card${
+        params.byDate ? ` by ${params.byDate}` : " today"
+      } to keep your subscription in good standing.`,
     },
     final: {
       subject: `Your workspace becomes read-only tomorrow — ${biz}`,

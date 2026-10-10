@@ -29,12 +29,21 @@ export interface PauseExit {
 }
 
 export interface ToActiveOptions {
-  /** Extra CAS predicate on the Tenant row (e.g. `{ status: { not: "ACTIVE" } }`). */
+  /**
+   * Extra CAS predicate on the Tenant row (e.g. `{ status: { not: "ACTIVE" } }`). A caller that passes one has already
+   * restricted the write to a row that is LEAVING a non-ACTIVE state.
+   */
   where?: Prisma.TenantWhereInput;
   /** Extra Tenant columns written in the same statement (plan, planVersionId, ...). */
   data?: Prisma.TenantUncheckedUpdateManyInput;
   /** The exit instant (defaults to now); injectable for deterministic keys in a spec. */
   now?: Date;
+  /**
+   * An explicit exit reason: clear the dunning clock + pause even when the row was ALREADY active (a manual-pay
+   * activation supersedes card dunning). Without it a where-less caller on an already-ACTIVE row leaves a live clock
+   * alone - `dark` must stay behaviour-neutral (Opus review).
+   */
+  clearDunning?: boolean;
 }
 
 /**
@@ -63,10 +72,49 @@ export async function transitionToActiveTx(
   tenantId: string,
   opts: ToActiveOptions = {},
 ): Promise<{ count: number; exit: PauseExit | null }> {
-  const { count } = await tx.tenant.updateMany({
-    where: { ...(opts.where ?? {}), id: tenantId },
-    data: { ...(opts.data ?? {}), status: "ACTIVE", readOnlyReason: null },
-  });
+  const to = { ...(opts.data ?? {}), status: "ACTIVE" as const, readOnlyReason: null };
+  let count: number;
+  let left: boolean; // did the row actually LEAVE a non-ACTIVE state?
+  if (opts.where) {
+    ({ count } = await tx.tenant.updateMany({ where: { ...opts.where, id: tenantId }, data: to }));
+    left = count === 1;
+  } else {
+    // A where-less caller (subscribe, admin activation) may hit a row that is ALREADY active. First try the real
+    // transition; when the row was already active, still write the plan columns (and null a stale reason) - but
+    // that is not an exit, so the dunning clock is left alone.
+    const first = await tx.tenant.updateMany({
+      where: { id: tenantId, status: { not: "ACTIVE" } },
+      data: to,
+    });
+    left = first.count === 1;
+    count = first.count;
+    if (!left) {
+      ({ count } = await tx.tenant.updateMany({
+        where: { id: tenantId, status: "ACTIVE" },
+        data: { ...(opts.data ?? {}), readOnlyReason: null },
+      }));
+    }
+  }
   if (count !== 1) return { count, exit: null };
+  if (!left && !opts.clearDunning) return { count, exit: null };
   return { count, exit: await clearDunningTx(tx, tenantId, opts.now) };
+}
+
+/**
+ * Local half of leaving a pause WITHOUT going back to ACTIVE (an admin moves a paused tenant to SUSPENDED /
+ * CANCELLED / ...): clears `pausedAt` only - the clock and the owed marker stay, the invoice is still owed - and returns
+ * the Stripe pause the caller clears after commit (null when the row was not paused). Tenant lock held by the caller.
+ */
+export async function releasePauseTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  now: Date = new Date(),
+): Promise<PauseExit | null> {
+  const sub = await tx.tenantSubscription.findUnique({
+    where: { tenantId },
+    select: { pausedAt: true, stripeSubId: true },
+  });
+  if (!sub?.pausedAt) return null;
+  await tx.tenantSubscription.updateMany({ where: { tenantId }, data: { pausedAt: null } });
+  return sub.stripeSubId ? { tenantId, stripeSubId: sub.stripeSubId, exitAt: now } : null;
 }

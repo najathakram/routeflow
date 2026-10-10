@@ -1,53 +1,67 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, type Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PrismaService } from "../prisma/prisma.service";
-import { billingPauseMode } from "./dunning-config";
+import { billingPauseMode, type BillingPauseMode } from "./dunning-config";
 import type { StripeService } from "./stripe.service";
 
 /**
- * SA-733r M1 / r2 N1 / r3 N1 (PR-B3): a tenant that owes an overdue invoice cannot buy its way out by changing
- * the plan. `subscribe`, `upgrade`, `downgrade`, `resume` and the Stripe checkout call
- * {@link assertNotPaymentOverdue} first; it answers 409 `PAYMENT_OVERDUE` carrying `hosted_invoice_url`.
+ * SA-733r M1 / r2 N1 / r3 N1 + the SA-733r7 r-note (1): a tenant that owes an overdue invoice cannot buy its way out
+ * by changing the plan. ONE helper, {@link assertNotPaymentOverdue}, is called by EVERY plan-mutation entry point
+ * (the closed list in {@link OVERDUE_ENTRY_POINTS}, pinned by `dunning-structural.spec.ts`):
+ * subscribe / upgrade / downgrade / resume / checkout and the B1 admin plan change. It answers 409 `PAYMENT_OVERDUE`
+ * carrying `hosted_invoice_url`.
  *
- * The check is the OWED MARKER (`pastDueInvoiceId`) plus a Stripe re-read - never the reason text, so it holds after
- * a cancel changes `readOnlyReason`. The re-read FAILS CLOSED: an unreadable Stripe is 409 `PAYMENT_STATE_UNKNOWN`
- * (retryable), never "go ahead". An invoice Stripe now shows paid or void is no longer owed and does not block (the
- * `invoice.paid` webhook clears the marker).
+ * WHEN IT REFUSES (the owed MARKER `pastDueInvoiceId` plus a Stripe re-read, never the reason text):
+ *   - a tenant that is not ACTIVE (READ_ONLY `payment_overdue`, or `subscription_cancelled` with the owed marker):
+ *     in every mode;
+ *   - an ACTIVE tenant: only in `enforced`. In `dark` the call is ALLOWED and a structured
+ *     `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=<id> entryPoint=<name>` warn is logged (the dark gate
+ *     pattern), so the blast-radius report can count what `enforced` would refuse. `dark` is behaviour-neutral.
+ *   - `off`: an ACTIVE tenant is never touched (no Stripe read, no log).
  *
- * `dark` changes nothing a tenant can see: in `off`/`dark` an ACTIVE tenant is never blocked. A tenant that is
- * already READ_ONLY (a pause, or a cancel while paused) is blocked in every mode - the marker is the debt.
+ * The re-read FAILS CLOSED wherever it would refuse: an unreadable Stripe is 409 `PAYMENT_STATE_UNKNOWN` (retryable),
+ * never "go ahead". An invoice Stripe now shows paid or void is no longer owed (the `invoice.paid` webhook clears
+ * the marker).
  */
 
-type GuardDeps = {
-  prisma: Pick<PrismaService, "tenantSubscription" | "tenant">;
+/** The closed list of entry points that call the helper. */
+export const OVERDUE_ENTRY_POINTS = [
+  "subscribe",
+  "upgrade",
+  "downgrade",
+  "resume",
+  "checkout",
+  "admin_plan_change",
+] as const;
+export type OverdueEntryPoint = (typeof OVERDUE_ENTRY_POINTS)[number];
+
+interface GuardCtx {
   stripe: Pick<StripeService, "getInvoiceFacts">;
-  /** Override for a spec; production reads `process.env`. */
-  mode?: ReturnType<typeof billingPauseMode>;
-};
+  logger: Pick<Logger, "warn">;
+}
 
 /** Stripe invoice statuses that still owe money. `uncollectible` stays owed (SA-733r3). */
 const OWED_STATUSES = new Set(["open", "uncollectible"]);
 
-export async function assertNotPaymentOverdue(deps: GuardDeps, tenantId: string): Promise<void> {
-  const sub = await deps.prisma.tenantSubscription.findUnique({
-    where: { tenantId },
-    select: { pastDueInvoiceId: true },
-  });
+export async function assertNotPaymentOverdue(
+  ctx: GuardCtx,
+  tenant: { id: string; status: string },
+  sub: { pastDueInvoiceId?: string | null } | null | undefined,
+  mode: BillingPauseMode,
+  entryPoint: OverdueEntryPoint,
+): Promise<void> {
   const invoiceId = sub?.pastDueInvoiceId;
   if (!invoiceId) return;
 
-  if ((deps.mode ?? billingPauseMode()) !== "enforced") {
-    const tenant = await deps.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { status: true },
-    });
-    if (tenant?.status === "ACTIVE") return; // dark: a failing payment blocks nothing
-  }
+  // Not ACTIVE (a pause, or a cancel while paused): the marker is the debt - refused in every mode.
+  const refuseNow = tenant.status !== "ACTIVE" || mode === "enforced";
+  if (!refuseNow && mode === "off") return;
 
   let facts: Awaited<ReturnType<StripeService["getInvoiceFacts"]>>;
   try {
-    facts = await deps.stripe.getInvoiceFacts(invoiceId);
+    facts = await ctx.stripe.getInvoiceFacts(invoiceId);
   } catch {
+    if (!refuseNow) return; // dark: nothing is enforced, so an unreadable Stripe changes nothing
     throw new ConflictException({
       code: API_ERROR_CODES.PAYMENT_STATE_UNKNOWN,
       message:
@@ -57,9 +71,44 @@ export async function assertNotPaymentOverdue(deps: GuardDeps, tenantId: string)
   const remaining = facts.amountRemaining ?? Math.max(0, facts.amountDue - facts.amountPaid);
   if (!facts.status || !OWED_STATUSES.has(facts.status) || remaining <= 0) return;
 
+  if (!refuseNow) {
+    ctx.logger.warn(
+      `billing.dunning.would_refuse code=${API_ERROR_CODES.PAYMENT_OVERDUE} tenant=${tenant.id} entryPoint=${entryPoint} invoice=${invoiceId}`,
+    );
+    return;
+  }
   throw new ConflictException({
     code: API_ERROR_CODES.PAYMENT_OVERDUE,
     message: "An invoice on this account is overdue. Pay it to continue.",
     hosted_invoice_url: facts.hostedInvoiceUrl ?? null,
   });
+}
+
+/**
+ * What every entry point calls: loads the owed marker (one cheap read) and, only when there is one, the tenant, then
+ * runs {@link assertNotPaymentOverdue}. `mode` is injectable for a spec; production reads `BILLING_PAUSE_MODE`.
+ */
+export async function assertTenantNotPaymentOverdue(
+  deps: GuardCtx & { prisma: Pick<PrismaService, "tenantSubscription" | "tenant"> },
+  tenantId: string,
+  entryPoint: OverdueEntryPoint,
+  mode: BillingPauseMode = billingPauseMode(),
+): Promise<void> {
+  const sub = await deps.prisma.tenantSubscription.findUnique({
+    where: { tenantId },
+    select: { pastDueInvoiceId: true },
+  });
+  if (!sub?.pastDueInvoiceId) return;
+  const tenant = await deps.prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, status: true },
+  });
+  if (!tenant) return; // the caller 404s
+  await assertNotPaymentOverdue(
+    deps,
+    { id: tenantId, status: tenant.status },
+    sub,
+    mode,
+    entryPoint,
+  );
 }

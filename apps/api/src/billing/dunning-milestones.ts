@@ -1,5 +1,11 @@
 import type { InvoiceFacts } from "./catchup-claim";
-import { DUNNING_D3_HOURS, DUNNING_D6_HOURS, DUNNING_MILESTONES, HOUR_MS } from "./dunning-config";
+import {
+  DUNNING_D3_HOURS,
+  DUNNING_D6_HOURS,
+  DUNNING_MILESTONES,
+  DUNNING_PAUSE_HOURS,
+  HOUR_MS,
+} from "./dunning-config";
 import type { DunningDeps } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
@@ -34,8 +40,11 @@ export async function runMilestones(
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
 
-  const send = (milestone: string, kind: "d0" | "d3" | "d6" | "final", readOnlyOn?: string) =>
-    deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, readOnlyOn });
+  const send = (
+    milestone: string,
+    kind: "d0" | "d3" | "d6" | "final",
+    dates: { readOnlyOn?: string; byDate?: string } = {},
+  ) => deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, ...dates });
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
@@ -54,17 +63,26 @@ export async function runMilestones(
   let finalSentAt = sent.get(M.FINAL) ?? null;
   if (elapsed >= DUNNING_D6_HOURS) {
     if (mode === "dark") {
-      if (!sent.has(M.D6)) warnUndeliverable(await send(M.D6, "d6"));
+      if (!sent.has(M.D6)) {
+        // dark: nothing will happen, so the copy names no read-only date - only when to update the card by
+        const byDate = await deps.notifications.localDateLabel(
+          tenantId,
+          new Date(row.pastDueSince.getTime() + DUNNING_PAUSE_HOURS * HOUR_MS),
+        );
+        warnUndeliverable(await send(M.D6, "d6", { byDate }));
+      }
     } else if (!sent.has(M.D6)) {
       // enforced, first time: this d6 email is the final notice - record both.
-      const res = warnUndeliverable(await send(M.D6, "final", await readOnlyOn()));
+      const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
       if (res.status === "sent" && !finalSentAt) {
         await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, invoiceId);
         finalSentAt = now;
       }
     } else if (!finalSentAt) {
       // enforced after a dark d6: a separate final notice, then the 24 h lead starts.
-      const res = warnUndeliverable(await send(M.FINAL, "final", await readOnlyOn()));
+      const res = warnUndeliverable(
+        await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }),
+      );
       if (res.status === "sent") finalSentAt = now;
     }
   }
