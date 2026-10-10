@@ -18,16 +18,18 @@
 //   Test tenant, local database (the only test-tenant path):
 //     node apps/api/scripts/wipe-tenant-fresh-start.js <test-slug> --local [--execute]
 //   Live tenant, client-requested fresh start — OWNER-RUN ONLY, Railway proxy only:
-//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-<slug>
+//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live
 //     railway run --service postgres node apps/api/scripts/wipe-tenant-fresh-start.js <slug> \
 //       --live-tenant-override --exclude-tenant <slug,...> [--execute --backup-taken]
 //
 // Dry run (row counts only) unless --execute. With --execute the operator types the slug back,
 // then every delete runs inside one Prisma $transaction.
 //
-// PROTECTED targets (#2639, SA-547): a paying tenant (the MRR paying set) or one whose subscription
-// is linked to Stripe is refused in EVERY mode unless --allow-paying-tenant; with the flag,
-// --execute also asks for the typed phrase `WIPE PAYING <slug>` after the slug type-back.
+// PROTECTED targets (#2639, SA-547, row 195): a paying tenant (the MRR paying set), one whose
+// subscription is linked to Stripe, or one named in PROTECTED_TENANT_SLUGS is refused in EVERY mode
+// unless `--allow-protected <tenantId> --backup-taken` AND the operator types `ALLOW PROTECTED
+// <tenantId>` at a real terminal (stdin and stdout both a TTY; no argv/env form). The retired
+// --allow-paying-tenant flag is an unknown argument.
 //
 // ONE target: the database URL is resolved once (lib/fresh-start-target.mjs) and that same value
 // feeds the pg Pool, the redacted "DB:" banner (with its source) and the guard — the banner can
@@ -44,13 +46,19 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { classifyDbTarget } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const {
+  assertWritableTenant,
+  confirmProtectedOverride,
+  ProtectedTenantError,
+} = require("./lib/live-target-guard.cjs");
 
 const USAGE =
   "Usage: node wipe-tenant-fresh-start.js <test-slug> --local [--execute]\n" +
   "   or (owner-run, under railway run): <slug> --live-tenant-override --exclude-tenant <slug,...> " +
   "[--execute --backup-taken]\n" +
-  "   A paying or Stripe-linked target is refused in every mode unless --allow-paying-tenant\n" +
-  "   (and --execute then also asks for the typed phrase WIPE PAYING <slug>).";
+  "   A paying, Stripe-linked or PROTECTED_TENANT_SLUGS target is refused in every mode unless\n" +
+  "   --allow-protected <tenantId> --backup-taken at a real terminal (plus a typed phrase).";
 
 // Assigned once main() has resolved THE target; nothing dials before that.
 let prisma;
@@ -174,7 +182,8 @@ async function confirm(slugToType, what = "the tenant slug") {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(
-      `\nType ${what} "${slugToType}" exactly to proceed (or anything else to abort): `,
+      // A live tenant's slug is a client identifier: ask for it without echoing it back.
+      `\nType ${what}${isTestTenant(slugToType) ? ` "${slugToType}"` : ""} exactly to proceed (or anything else to abort): `,
       (answer) => {
         rl.close();
         resolve(answer.trim() === slugToType);
@@ -306,13 +315,22 @@ async function nuke(tenantId) {
     if (target.exit === 2) console.error(USAGE);
     process.exit(target.exit);
   }
+  // Row 195: the operator-named protected slugs, validated against the URL this run will dial.
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, target.url);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
   slug = args.slug;
   execute = args.execute;
   prisma = new PrismaClient({ adapter: new PrismaPg(new Pool(target.poolConfig)) });
 
   console.log(`\n${target.banner}`);
   if (target.backupCommand) console.log(`Backup: ${target.backupCommand}`);
-  console.log(`Tenant: ${slug}`);
+  // A slug is a client identifier: echo it only for an approved test tenant.
+  console.log(`Tenant: ${isTestTenant(slug) ? slug : "(live — see id below)"}`);
   console.log(`Mode:   ${execute ? "EXECUTE (DESTRUCTIVE)" : "DRY-RUN (counts only)"}\n`);
 
   const tenant = await getTenant();
@@ -342,13 +360,33 @@ async function nuke(tenantId) {
     where: { tenantId: tenant.id },
     select: { planKey: true, stripeSubId: true, couponFull: true },
   });
-  const guard = checkProtectedTarget({ tenant, sub, allowPayingTenant: args.allowPayingTenant });
-  if (!guard.ok) {
-    console.error(guard.reason);
+  const guard = checkProtectedTarget({ tenant, sub, protectedSlugs });
+  let override = null;
+  if (guard.protected) {
+    try {
+      override = await confirmProtectedOverride({
+        tenantId: tenant.id,
+        argv: process.argv.slice(2),
+      });
+    } catch (err) {
+      console.error(guard.reason);
+      if (err instanceof ProtectedTenantError) console.error(err.message);
+      else console.error("override check failed");
+      await prisma.$disconnect();
+      process.exit(1);
+    }
+  }
+  try {
+    assertWritableTenant(tenant, sub, protectedSlugs, { allowProtected: override });
+  } catch (err) {
+    console.error(err.message);
     await prisma.$disconnect();
     process.exit(1);
   }
-  if (guard.line) console.log(`${guard.line}\n`);
+  if (guard.protected)
+    console.log(
+      `PROTECTED (${guard.arm}) — operator override confirmed for tenant ${tenant.id}.\n`,
+    );
 
   console.log("Row counts in nuke scope:");
   const rows = await countAll(tenant.id);
@@ -369,12 +407,6 @@ async function nuke(tenantId) {
   const ok = await confirm(slug);
   if (!ok) {
     console.log("\nAborted.");
-    await prisma.$disconnect();
-    process.exit(3);
-  }
-  // #2639 / SA-547: a protected target (flag given) needs a SECOND, distinct typed phrase.
-  if (guard.phrase && !(await confirm(guard.phrase, "the phrase"))) {
-    console.log("\nAborted: the protected-tenant confirmation did not match.");
     await prisma.$disconnect();
     process.exit(3);
   }

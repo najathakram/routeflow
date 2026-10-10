@@ -3,7 +3,7 @@
  * a server PREVIEW + CONFIRM; the confirm reads "Next invoice: X (currently Y). Existing invoices
  * keep their numbers." Cancel sends nothing.
  *
- * Role: OPERATOR (pre-authenticated). Tenant: the approved e2e-routeflow seed. READ-ONLY by design:
+ * Role: TENANT_ADMIN (pre-authenticated; the numbering card is admin-only). Tenant: the approved e2e-routeflow seed. READ-ONLY by design:
  * the spec never clicks Confirm, so no sequence is written; it asserts that no write request
  * (PUT /import/numbering/*, PATCH /settings*) leaves the page. Runs at 1440 / 768 / 390.
  */

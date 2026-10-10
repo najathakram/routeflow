@@ -10,6 +10,9 @@
 //   railway run --service postgres node <this script> --ids ID1,ID2 --apply
 //   ... a row owned by a LIVE (non-test) tenant additionally needs
 //       --live-tenant-override --confirm "STAMP <n> ROWS"
+//   ... a row owned by a PROTECTED tenant (paying, Stripe-linked or listed in PROTECTED_TENANT_SLUGS)
+//       is refused unless that ONE tenant's id is named: --allow-protected <tenantId> --backup-taken,
+//       at a real terminal, then the typed phrase "ALLOW PROTECTED <tenantId>".
 //   DATABASE_URL=postgresql://…@localhost:5432/<db> node <this script> --local --ids ID1 [--apply]
 //
 // Apply is ONE transaction: every named id must pass every check or NOTHING is written. Each stamped
@@ -22,8 +25,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import guardLib from "./lib/live-target-guard.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+
+const { assertWritableTenant, confirmProtectedOverride, ProtectedTenantError } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const SELF = resolve(dirname(fileURLToPath(import.meta.url)), "stamp-addon-comp.mjs");
 const ACTOR = "owner-stamp";
@@ -33,6 +41,16 @@ const argOf = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
+
+/** The tenant + subscription shape the protected-tenant guard reads off a joined plan row. */
+const tenantOf = (row) => ({
+  id: row.tenantId,
+  slug: row.slug,
+  status: row.tenantStatus,
+  class: row.tenantClass,
+  deletedAt: row.tenantDeletedAt,
+});
+const subOf = (row) => ({ planKey: row.subPlanKey, stripeSubId: row.subStripeSubId });
 
 /** Why a row may NOT be stamped, or null when it may. Pure: pinned by addon-comp-scripts.sa693.spec.ts. */
 export function refusalFor(row) {
@@ -68,10 +86,13 @@ async function main() {
   const local = process.argv.includes("--local");
   let url;
   let localCfg = null; // --local: the vetted explicit fields are the ones dialled
+  let protectedSlugs;
   try {
     url = local ? process.env.DATABASE_URL : resolveDatabaseUrl(process.env);
     if (!url) throw new Error("--local requires DATABASE_URL");
     if (local) localCfg = requireLocalPgConfig(url);
+    // Row 195: the protected list is loaded ONCE, before connecting, from the URL dialled below.
+    protectedSlugs = loadProtectedSlugs(process.env, url);
   } catch (e) {
     console.error(`stamp-addon-comp: ${e.message}`);
     return 2;
@@ -80,30 +101,73 @@ async function main() {
   const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
+    const selectRows = (lock) =>
+      client.query(
+        `SELECT a.id, a."tenantId", a."addonKey", a.sku, a.active, a."stripeItemId", a."isComp",
+                a."priceSnapshot", t.slug, t.status AS "tenantStatus", t.class AS "tenantClass",
+                t."deletedAt" AS "tenantDeletedAt", s."planKey" AS "subPlanKey",
+                s."stripeSubId" AS "subStripeSubId"
+           FROM "TenantAddon" a JOIN "Tenant" t ON t.id = a."tenantId"
+           LEFT JOIN "TenantSubscription" s ON s."tenantId" = a."tenantId"
+          WHERE a.id = ANY($1::text[]) ${lock ? "FOR UPDATE OF a" : ""}`,
+        [ids],
+      );
+    // Row 195: the operator's typed confirmation is taken BEFORE the transaction opens, from an
+    // unlocked pre-scan, so no row lock is held while a human types. Inside the transaction a
+    // protected tenant is only re-asserted against the token minted here.
+    const overrides = new Map();
+    if (apply) {
+      for (const r of (await selectRows(false)).rows) {
+        if (isTestTenant(r.slug) || overrides.has(r.tenantId)) continue;
+        try {
+          assertWritableTenant(tenantOf(r), subOf(r), protectedSlugs);
+        } catch (e) {
+          if (!(e instanceof ProtectedTenantError)) throw e;
+          try {
+            overrides.set(
+              r.tenantId,
+              await confirmProtectedOverride({ tenantId: r.tenantId, argv: process.argv }),
+            );
+          } catch (e2) {
+            if (e2 instanceof ProtectedTenantError) e2.refuse = true;
+            throw e2;
+          }
+        }
+      }
+    }
     await client.query(apply ? "BEGIN" : "BEGIN READ ONLY");
-    const { rows } = await client.query(
-      `SELECT a.id, a."tenantId", a."addonKey", a.sku, a.active, a."stripeItemId", a."isComp",
-              a."priceSnapshot", t.slug
-         FROM "TenantAddon" a JOIN "Tenant" t ON t.id = a."tenantId"
-        WHERE a.id = ANY($1::text[]) ${apply ? "FOR UPDATE OF a" : ""}`,
-      [ids],
-    );
+    const { rows } = await selectRows(apply);
     const byId = new Map(rows.map((r) => [r.id, r]));
     const plan = ids.map((id) => {
       const row = byId.get(id);
-      return { id, row, refusal: refusalFor(row), test: row ? isTestTenant(row.slug) : false };
+      const test = row ? isTestTenant(row.slug) : false;
+      // Row 195: an approved test tenant keeps its behaviour; any other row is checked.
+      let guarded = false;
+      if (row && !test) {
+        try {
+          assertWritableTenant(tenantOf(row), subOf(row), protectedSlugs, {
+            allowProtected: overrides.get(row.tenantId),
+          });
+        } catch (e) {
+          if (!(e instanceof ProtectedTenantError)) throw e;
+          guarded = true;
+        }
+      }
+      return { id, row, refusal: refusalFor(row), test, guarded };
     });
     for (const p of plan) {
       console.log(
         `  ${p.id}  ` +
           (p.row
-            ? `tenant ${p.row.tenantId} ${p.row.sku ?? p.row.addonKey} ${p.test ? "TEST" : "LIVE"}  `
+            ? `tenant ${p.row.tenantId} ${p.row.sku ?? p.row.addonKey} ${p.test ? "TEST" : "LIVE"}` +
+              `${p.guarded ? " PROTECTED" : ""}  `
             : "") +
           (p.refusal ? `REFUSED: ${p.refusal}` : "stampable"),
       );
     }
     const refused = plan.filter((p) => p.refusal);
     const live = plan.filter((p) => !p.refusal && !p.test);
+    const guardedTenants = [...new Set(plan.filter((p) => p.guarded).map((p) => p.row.tenantId))];
     const phrase = `STAMP ${plan.length} ROWS`;
 
     if (!apply) {
@@ -114,6 +178,11 @@ async function main() {
         );
         return 0;
       }
+      if (guardedTenants.length)
+        console.log(
+          `stamp-addon-comp: PROTECTED tenant(s) ${guardedTenants.join(", ")}: --apply needs ` +
+            "--allow-protected <tenantId> --backup-taken at a real terminal (one protected tenant per run)",
+        );
       const base = `railway run --service postgres node ${SELF.replace(/\\/g, "/")} --ids ${ids.join(",")} --apply`;
       console.log(
         live.length
@@ -140,6 +209,17 @@ async function main() {
         { refuse: true },
       );
     }
+    // Row 195: a protected tenant is stamped only with the token minted before BEGIN. One that has
+    // no token here (it turned protected after the pre-scan) refuses the whole batch: exit 1, nothing
+    // written.
+    if (guardedTenants.length)
+      throw Object.assign(
+        new Error(
+          `protected tenant(s) ${guardedTenants.join(", ")} lack a confirmed override: ` +
+            "--allow-protected <tenantId> --backup-taken at a real terminal",
+        ),
+        { refuse: true },
+      );
     for (const p of plan) {
       const r = await client.query(
         `UPDATE "TenantAddon" SET "isComp" = true, "updatedAt" = now()

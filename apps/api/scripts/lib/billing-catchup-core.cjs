@@ -163,9 +163,8 @@ function loadProtectedGuard(dir) {
 }
 
 /**
- * SEAM (#3344 is not on master): written against origin/feat/protected-tenant-guard. Throws to refuse.
- * Re-verify the three names used (loadProtectedSlugs / assertWritableTenant / confirmProtectedOverride) when the
- * guard lands. No slug is ever put in a message.
+ * The protected-tenant guard (#3344, on master since Train 2): loadProtectedSlugs / assertWritableTenant /
+ * confirmProtectedOverride. Throws to refuse. No slug is ever put in a message.
  */
 async function checkProtectedTenant({ guard, report, slug, env, argv, stdin, stdout, ask }) {
   const tenant = {
@@ -178,6 +177,9 @@ async function checkProtectedTenant({ guard, report, slug, env, argv, stdin, std
   const sub = {
     planKey: report.planKey,
     stripeSubId: report.hasStripeSubscription ? "present" : null,
+    // The guard REQUIRES the flag when a plan is set. The report does not carry it, so assume the conservative
+    // side: not coupon-unbilled = paying = protected (a coupon tenant is also protected via its Stripe link).
+    couponFull: false,
   };
   const slugs = guard.slugs.loadProtectedSlugs(env, null);
   try {

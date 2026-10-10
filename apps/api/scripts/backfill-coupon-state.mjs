@@ -21,6 +21,10 @@
 // Report-only extras: subscriptions whose next invoice previews at $0 but that are NOT `couponFull` (a credit
 // or balance, not a discount) are listed beside the count; they are never changed.
 //
+// PROTECTED-TENANT GUARD (row 195, #3344): after the checks above, every non-test tenant also passes
+// assertWritableTenant with its own operator override (--allow-protected <tenantId> --backup-taken + typed phrase);
+// PROTECTED_TENANT_SLUGS must be set unless the target is provably local.
+//
 // Output carries tenant ids only - never a slug, a name or a Stripe customer.
 
 import { createRequire } from "node:module";
@@ -327,6 +331,60 @@ async function main() {
       console.error(
         `${SCRIPT}: refusing to write - the type-back did not match (or there is no TTY).`,
       );
+      process.exitCode = 1;
+      return;
+    }
+    // Row 195 (#3344): the SAME protected-tenant guard every live-capable script uses. A card-billed tenant is
+    // protected by its Stripe link, so each non-test tenant needs its own operator override (--allow-protected
+    // <tenantId>, --backup-taken and the typed phrase) BEFORE any write, on top of the type-back above.
+    // couponFull comes from the row itself: it is selected below, never defaulted.
+    const protectedGuard = requireCjs("./lib/live-target-guard.cjs");
+    const { protectedArm } = requireCjs("./lib/paying-tenant.cjs");
+    const { loadProtectedSlugs } = requireCjs("./lib/protected-slugs.cjs");
+    let protectedSlugs;
+    try {
+      protectedGuard.refuseRetiredFlags(process.argv.slice(2));
+      protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+    } catch (err) {
+      console.error(`${SCRIPT}: refusing to write - ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const rowById = new Map(rows.map((r) => [r.tenantId, r]));
+    const guardInputs = new Map();
+    for (const c of guard.selected) {
+      const r = rowById.get(c.tenantId);
+      if (!r || isTestTenant(r.tenant.slug)) continue;
+      guardInputs.set(c.tenantId, {
+        tenant: {
+          id: r.tenantId,
+          slug: r.tenant.slug,
+          status: r.tenant.status,
+          class: r.tenant.class,
+          deletedAt: null,
+        },
+        sub: { planKey: r.planKey, stripeSubId: r.stripeSubId, couponFull: r.couponFull },
+      });
+    }
+    const overrides = new Map();
+    try {
+      for (const [id, g] of guardInputs) {
+        if (protectedArm(g.tenant, g.sub, protectedSlugs) === null) continue;
+        overrides.set(
+          id,
+          await protectedGuard.confirmProtectedOverride({
+            tenantId: id,
+            argv: process.argv.slice(2),
+          }),
+        );
+      }
+      for (const [id, g] of guardInputs) {
+        protectedGuard.assertWritableTenant(g.tenant, g.sub, protectedSlugs, {
+          allowProtected: overrides.get(id),
+        });
+      }
+    } catch (err) {
+      console.error(`${SCRIPT}: refusing to write - ${err.message}`);
       process.exitCode = 1;
       return;
     }

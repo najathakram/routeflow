@@ -39,6 +39,15 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+import liveTargetGuard from "./lib/live-target-guard.cjs";
+import payingTenant from "./lib/paying-tenant.cjs";
+import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+
+const { loadProtectedSlugs } = protectedSlugsLib;
+const { assertWritableTenant, confirmProtectedOverride, refuseRetiredFlags, ProtectedTenantError } =
+  liveTargetGuard;
+const { protectedArm } = payingTenant;
 
 // Hoisted to module scope (not `main()`-local) so the top-level `.catch` below can scrub a
 // connection string out of an error message even when the failure happens before or after
@@ -146,6 +155,18 @@ async function main() {
     process.exit(1);
   }
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
+  // Row 195: every row this script can write belongs to a paying / Stripe-linked tenant, i.e. a
+  // PROTECTED one. It therefore refuses by default; a write needs `--allow-protected <tenantId>`
+  // (repeatable) AND a typed "ALLOW PROTECTED <tenantId>" per tenant at a real terminal.
+  let protectedSlugs;
+  try {
+    refuseRetiredFlags(process.argv.slice(2));
+    // The dry run writes nothing, so it needs no list; the apply refuses to start without one.
+    protectedSlugs = apply ? loadProtectedSlugs(process.env, databaseUrl) : null;
+  } catch (err) {
+    console.error(scrubSecrets(err.message, databaseUrl));
+    process.exit(1);
+  }
   const pool = new Pool({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
@@ -318,6 +339,46 @@ async function main() {
     if (!apply) {
       console.log("\nDry run only — pass --apply to write these changes.");
       return;
+    }
+
+    // Row 195: mint one operator override per protected tenant BEFORE any write (a prompt must not
+    // sit between the scan and the writes it describes).
+    const tenantById = new Map(tenants.map((t) => [t.id, t]));
+    const overrides = new Map();
+    const guardTenant = (t) => ({
+      id: t.id,
+      slug: t.slug,
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    for (const r of rows) {
+      const t = tenantById.get(r.tenantId);
+      // An approved test tenant (qa-*, e2e-*, ...) holds no client data and can never be env-listed:
+      // no operator override is asked for it (the db spec drives --apply against qa-* fixtures).
+      if (!t || isTestTenant(t.slug) || overrides.has(r.tenantId)) continue;
+      if (protectedArm(guardTenant(t), t.subscription, protectedSlugs) === null) continue;
+      try {
+        overrides.set(
+          r.tenantId,
+          await confirmProtectedOverride({ tenantId: r.tenantId, argv: process.argv.slice(2) }),
+        );
+      } catch (err) {
+        console.error(err instanceof ProtectedTenantError ? err.message : "override check failed");
+        process.exit(1);
+      }
+    }
+    for (const r of rows) {
+      const t = tenantById.get(r.tenantId);
+      if (isTestTenant(t.slug)) continue;
+      try {
+        assertWritableTenant(guardTenant(t), t.subscription, protectedSlugs, {
+          allowProtected: overrides.get(r.tenantId),
+        });
+      } catch (err) {
+        console.error(err.message);
+        process.exit(1);
+      }
     }
 
     // F2: an unscoped --apply (no --slug-prefix) writes prices and ledger rows on live
