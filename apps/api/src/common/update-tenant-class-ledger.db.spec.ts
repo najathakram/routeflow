@@ -59,7 +59,6 @@ describeDb(
         noop, // tenantMirror
         noop, // featureOverrides
         noop, // planTransition
-        noop, // stripe
       );
     });
 

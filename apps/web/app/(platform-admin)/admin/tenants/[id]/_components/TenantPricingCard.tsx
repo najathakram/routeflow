@@ -10,26 +10,10 @@ import {
   platformPricingErrorMessage,
   type TenantPricingResponse,
   type BillingInterval,
-  type PriceOverrideEffective,
-  type PriceSyncResult,
 } from "@/lib/api/platform-pricing";
 
 const usd = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-
-/** What the admin is told after a save: the chosen mode, and what Stripe actually did with it. */
-function savedMessage(sync: PriceSyncResult, asked: PriceOverrideEffective): string {
-  if (!sync.synced) return `Saved (${sync.reason ?? "no live subscription to sync"}).`;
-  if (sync.unchanged)
-    return "Saved - Stripe already billed this amount, so nothing was sent to it.";
-  if (asked === "now_prorated" && sync.proration === "none") {
-    return "Saved - this subscription isn't active (trial, past due or unpaid), so the change was not prorated: it applies from the next invoice.";
-  }
-  if (sync.proration === "create_prorations") {
-    return "Saved - the live Stripe subscription was repriced now; the prorated adjustment lands on the next invoice.";
-  }
-  return "Saved - the live Stripe subscription will bill the new price at the next billing date.";
-}
 
 /**
  * Resolved tenant pricing (catalog vs custom fee) + Stripe checkout, mounted on the
@@ -44,7 +28,6 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
 
   const [monthlyInput, setMonthlyInput] = React.useState("");
   const [annualInput, setAnnualInput] = React.useState("");
-  const [effective, setEffective] = React.useState<PriceOverrideEffective>("next_cycle");
   const [saving, setSaving] = React.useState(false);
   const [confirmAction, setConfirmAction] = React.useState<"set" | "clear" | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -78,17 +61,19 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     setSaving(true);
     setMsg(null);
     try {
-      // Without a live subscription there is nothing to prorate: always the default.
-      const asked: PriceOverrideEffective = hasLiveSubscription ? effective : "next_cycle";
       const body = clear
-        ? { monthly: null, annual: null, effective: asked }
+        ? { monthly: null, annual: null }
         : {
             monthly: monthlyInput.trim() === "" ? null : Number(monthlyInput),
             annual: annualInput.trim() === "" ? null : Number(annualInput),
-            effective: asked,
           };
       const result = await updateTenantPriceOverride(tenantId, body);
-      setMsg({ type: "success", text: savedMessage(result.sync, asked) });
+      setMsg({
+        type: "success",
+        text: result.sync.synced
+          ? "Saved — the live Stripe subscription will pick up the new price at the next billing cycle."
+          : `Saved (${result.sync.reason ?? "no live subscription to sync"}).`,
+      });
       load();
     } catch (err) {
       setMsg({
@@ -118,7 +103,6 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     }
   };
 
-  const hasLiveSubscription = pricing != null && pricing.subscription.status !== "none";
   const hasOverride =
     pricing != null && (pricing.override.monthly != null || pricing.override.annual != null);
   // A plan the catalog can't price (ENTERPRISE / isCustom, no custom fee yet) has no
@@ -183,7 +167,8 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                     {pricing.subscription.stripeSubId}
                   </span>
                   {" — "}
-                  {pricing.subscription.status}. Choose below when a price change takes effect.
+                  {pricing.subscription.status}. Price changes below apply from the{" "}
+                  <strong className="text-slate-300">next billing cycle</strong> (no proration).
                 </>
               ) : (
                 "No live Stripe subscription yet — changes below only update the resolved price shown here."
@@ -243,33 +228,6 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                 />
               </div>
             </div>
-            {hasLiveSubscription && (
-              <fieldset className="mt-3">
-                <legend className="mb-1 text-xs font-medium text-slate-400">
-                  When should the new price apply?
-                </legend>
-                <div className="flex flex-col gap-1.5 sm:flex-row sm:gap-5">
-                  <label className="flex items-center gap-2 text-sm text-slate-200">
-                    <input
-                      type="radio"
-                      name="price-override-effective"
-                      checked={effective === "next_cycle"}
-                      onChange={() => setEffective("next_cycle")}
-                    />
-                    Next billing date
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-slate-200">
-                    <input
-                      type="radio"
-                      name="price-override-effective"
-                      checked={effective === "now_prorated"}
-                      onChange={() => setEffective("now_prorated")}
-                    />
-                    Now, prorated
-                  </label>
-                </div>
-              </fieldset>
-            )}
             <div className="mt-3 flex items-center gap-3">
               <button
                 type="button"
@@ -371,17 +329,8 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                     ? ""
                     : ` and ${usd(Number(monthlyInput) * 10)}/yr (10× monthly — the annual custom fee is cleared)`
               }.`}{" "}
-          {hasLiveSubscription && effective === "now_prorated" ? (
-            <>
-              It applies <strong className="text-white">now</strong>, prorated for the rest of the
-              current period (the adjustment lands on the next invoice).
-            </>
-          ) : (
-            <>
-              It applies from the <strong className="text-white">next billing date</strong> - the
-              current period is never prorated.
-            </>
-          )}
+          It applies from the <strong className="text-white">next billing cycle</strong> — the
+          current period is never prorated.
         </p>
       </AdminModal>
     </AdminCard>

@@ -28,7 +28,6 @@ import { FeatureOverrideExpiryJob } from "./feature-override-expiry.job";
 import { BillingNotificationService } from "./billing-notification.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
-import { ScheduledPriceChangeService } from "./scheduled-price-change";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -53,8 +52,6 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
-    // R1 option B: a scheduled downgrade's price reaches Stripe before the renewal (invoice.upcoming + a backup sweep).
-    ScheduledPriceChangeService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -79,7 +76,6 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
   ],
   exports: [
     StripeService,
-    ScheduledPriceChangeService,
     BillingService,
     PlatformPricingService,
     AddonService,

@@ -408,8 +408,6 @@ function make(opts: Opts = {}) {
     transactionOptions: jest.fn().mockReturnValue(undefined),
     invalidateCaches: jest.fn(),
   } as any;
-  // R1 option B: resume() asks it to undo a pre-renewal downgrade price push.
-  const scheduledPrice = { restoreAfterScheduleCleared: jest.fn().mockResolvedValue(undefined) };
   const svc = new SubscriptionMutationService(
     prisma,
     cat,
@@ -421,7 +419,6 @@ function make(opts: Opts = {}) {
     stripe,
     billingNotification,
     planTransition,
-    scheduledPrice as any,
   );
   return {
     svc,
@@ -434,7 +431,6 @@ function make(opts: Opts = {}) {
     stripe,
     billingNotification,
     planTransition,
-    scheduledPrice,
   };
 }
 
@@ -3060,54 +3056,6 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     });
     await expect(svc.cancel("t1", "admin")).resolves.toEqual({ cancelled: "trial" });
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
-  });
-
-  it("R1 option B: resume() of a SCHEDULED DOWNGRADE on a Stripe tenant asks for the pushed lower price to be put back (after the local write)", async () => {
-    const { svc, tx, scheduledPrice } = make({
-      tenantStatus: "ACTIVE",
-      sub: activeSub({ stripeSubId: "sub_x", downgradeToPlanKey: "STARTER" }),
-    });
-    await svc.resume("t1", "admin");
-    expect(scheduledPrice.restoreAfterScheduleCleared).toHaveBeenCalledWith("t1", "STARTER");
-    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
-      scheduledPrice.restoreAfterScheduleCleared.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("review: cancel() of a SCHEDULED DOWNGRADE on a Stripe tenant asks for the pushed lower price to be put back (after the local write)", async () => {
-    const { svc, tx, scheduledPrice } = make({
-      tenantStatus: "ACTIVE",
-      sub: activeSub({ stripeSubId: "sub_x", downgradeToPlanKey: "STARTER" }),
-    });
-    await svc.cancel("t1", "admin");
-    expect(scheduledPrice.restoreAfterScheduleCleared).toHaveBeenCalledWith("t1", "STARTER");
-    expect(tx.tenantSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
-      scheduledPrice.restoreAfterScheduleCleared.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("review: cancel() with no downgrade, or no Stripe subscription, restores nothing", async () => {
-    const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
-    await a.svc.cancel("t1", "admin");
-    const b = make({
-      tenantStatus: "ACTIVE",
-      sub: activeSub({ stripeSubId: null, downgradeToPlanKey: "STARTER" }),
-    });
-    await b.svc.cancel("t1", "admin");
-    expect(a.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
-    expect(b.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
-  });
-
-  it("R1 option B: resume() with no downgrade, or no Stripe subscription, restores nothing", async () => {
-    const a = make({ tenantStatus: "ACTIVE", sub: activeSub({ stripeSubId: "sub_x" }) });
-    await a.svc.resume("t1", "admin");
-    const b = make({
-      tenantStatus: "ACTIVE",
-      sub: activeSub({ stripeSubId: null, downgradeToPlanKey: "STARTER" }),
-    });
-    await b.svc.resume("t1", "admin");
-    expect(a.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
-    expect(b.scheduledPrice.restoreAfterScheduleCleared).not.toHaveBeenCalled();
   });
 
   it("resume() with a stripeSubId un-schedules the Stripe cancellation BEFORE the local write, then writes + emits", async () => {
