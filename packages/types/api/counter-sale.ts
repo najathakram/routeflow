@@ -174,10 +174,6 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
-  /** SA-764: the cash handed over (null on a legacy or non-cash sale) */
-  cashTendered?: number | null;
-  /** SA-764: the sale's single stored tax rate in percent (8.25 = 8.25%); null when mixed or none */
-  taxRatePercent?: number | null;
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;

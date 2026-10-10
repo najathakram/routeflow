@@ -101,6 +101,10 @@ export interface CounterReceiptModel {
  * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else
  * plain "Tax" (a reprint whose rate is unknown, or a rate that does not account for the stored tax).
  */
+/** Per-line rounding can put the stored tax a cent off subtotal * rate: allow +/- 0.01 when naming the rate. */
+export const taxMatches = (tax: number, subtotal: number, ratePercent: number): boolean =>
+  Math.abs(roundMoney(tax - roundMoney((subtotal * ratePercent) / 100))) <= 0.01;
+
 export const adjustmentLabel = (taxRatePercent: number | null | undefined): string =>
   taxRatePercent == null ? "Tax" : `Tax (${Number(taxRatePercent.toFixed(3))}%)`;
 
@@ -224,8 +228,7 @@ export function buildCounterReceipt(input: {
   // difference between the server total and the lines (Tax (8.25%)); anything else prints as Adjustments, never as tax.
   const difference = roundMoney(receipt.total - netSubtotal) || 0; // never -0
   const rate = profile?.taxRate ?? 0;
-  const rateExplains =
-    rate > 0 && difference !== 0 && difference === roundMoney((netSubtotal * rate) / 100);
+  const rateExplains = rate > 0 && difference !== 0 && taxMatches(difference, netSubtotal, rate);
 
   return {
     header: receiptHeader(profile),
@@ -294,6 +297,8 @@ export interface ReprintSaleFacts {
   cashTendered?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** the server-owned change (the row's `change`); null/absent: no Change line */
+  change?: number | null;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
@@ -332,7 +337,7 @@ export function formatSaleTime(at: string | Date, timeZone?: string): string {
 
 /**
  * The reprint's receipt model, built from the stored order. Same shape (and same line math) as `buildCounterReceipt`; the
- * differences are the facts that are never stored: no Tendered, no Change. The date is the sale's own time, not "now".
+ * differences are the facts that are never stored: Tendered and Change come from the sale row (server-owned). The date is the sale's own time, not "now".
  */
 export function receiptModelFromOrder(input: {
   order: ReprintOrderLike;
@@ -381,11 +386,7 @@ export function receiptModelFromOrder(input: {
   const adjustments = roundMoney(orderTotal - subtotal - tax) || 0; // never -0
   const rate = sale.taxRatePercent;
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
-  const taxRatePercent =
-    rate != null && tax !== 0 && tax === roundMoney((subtotal * rate) / 100) ? rate : null;
-  const cashApplied = roundMoney(
-    sale.methods.filter((m) => m.method === "CASH").reduce((sum, m) => sum + m.amount, 0),
-  );
+  const taxRatePercent = rate != null && tax !== 0 && taxMatches(tax, subtotal, rate) ? rate : null;
   const tendered = sale.cashTendered ?? null;
   return {
     header: receiptHeader(profile),
@@ -411,7 +412,7 @@ export function receiptModelFromOrder(input: {
       : null,
     tendered,
     tenderedAsEntered: false,
-    change: tendered == null ? null : Math.max(0, roundMoney(tendered - cashApplied)),
+    change: sale.change ?? null,
     changeAsEntered: false,
     taxRatePercent,
     customerName: clean(sale.customerName) || null,

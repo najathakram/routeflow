@@ -42,6 +42,7 @@ const reprint = (
     customerName?: string | null;
     taxRatePercent?: number | null;
     cashTendered?: number | null;
+    change?: number | null;
   } = {},
   profile: ReceiptBusinessProfile | null = null,
 ) =>
@@ -83,6 +84,11 @@ describe("Tax and Adjustments are separate rows", () => {
     expect(m.adjustments).toBe(0);
   });
 
+  it("live: a cent of per-line rounding still names the rate (+/- 0.01), like the reprint", () => {
+    expect(live(43.31).taxRatePercent).toBe(8.25);
+    expect(live(43.32).taxRatePercent).toBeNull();
+  });
+
   it("live: a difference the rate does not explain is Adjustments, never tax", () => {
     const m = live(44);
     expect(m.tax).toBe(0);
@@ -113,8 +119,8 @@ describe("Tax and Adjustments are separate rows", () => {
     expect(m.adjustments).toBe(3.3);
   });
 
-  it("reprint with a cash tender: Tendered + Change = tendered - the cash applied (SA-764 still holds)", () => {
-    const m = reprint(43.3, 3.3, { cashTendered: 50 });
+  it("reprint with a cash tender: Tendered and the server's Change pass through (SA-764)", () => {
+    const m = reprint(43.3, 3.3, { cashTendered: 50, change: 6.7 });
     expect(m.tendered).toBe(50);
     expect(m.change).toBe(6.7);
   });

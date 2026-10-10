@@ -149,6 +149,7 @@ function Reprint({
             cashTendered: row.cashTendered,
             customerName: row.isWalkIn ? null : row.customerName,
             taxRatePercent: row.taxRatePercent,
+            change: row.change,
             timezone,
           },
         })
