@@ -27,6 +27,8 @@ import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transit
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { markNeedsReconcile } from "./plan-change-stripe";
+import { resolvePlanPrice } from "./plan-price";
+import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
 import { stripeBaseItem } from "./stripe-period";
 import { lockTenantPrice } from "./price-lock";
 
@@ -466,7 +468,8 @@ export class BillingCronService {
         await this.verifyStripeBillsDowngrade(
           s.tenantId,
           cur.stripeSubId,
-          override ?? targetDef.monthlyPrice,
+          targetDef,
+          { monthly: cur.priceOverrideMonthly, annual: cur.priceOverrideAnnual },
           target,
         );
 
@@ -551,26 +554,30 @@ export class BillingCronService {
    * monthly price? A mismatch means the tenant is still billed the old plan (the pre-renewal push from
    * scheduled-price-change.ts that should have prevented it did not happen), so it is ALERTED (`markNeedsReconcile`), never fixed here. Best-effort:
    * a Stripe read failure is logged and never fails the sweep; annual items are not compared.
+   *
+   * L-167, one rule: the expected price is `resolvePlanPrice` and the add-on item set is
+   * `stripeAddonItemIds` - the very two the push (`ScheduledPriceChangeService.apply`) uses - so the push and its
+   * verification can never disagree about what Stripe should bill or which item is the base.
    */
   private async verifyStripeBillsDowngrade(
     tenantId: string,
     stripeSubId: string | null | undefined,
-    expectedMonthly: unknown,
+    targetDef: { monthlyPrice?: unknown; annualPrice?: unknown } | null | undefined,
+    override: { monthly?: unknown; annual?: unknown },
     target: string,
   ): Promise<void> {
-    if (!stripeSubId || !this.stripe?.isConfigured || expectedMonthly == null) return;
+    if (!stripeSubId || !this.stripe?.isConfigured) return;
+    const price = resolvePlanPrice(targetDef, override);
+    if (!price.ok) return;
+    const expectedMonthly = price.monthly;
     try {
-      const sub = await this.stripe.getSubscription(stripeSubId);
-      const addons = await this.prisma.tenantAddon.findMany({
-        where: { tenantId, stripeItemId: { not: null } },
-        select: { stripeItemId: true },
+      const sub = await this.stripe.getSubscription(stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
       });
-      const ids = new Set(
-        (addons as { stripeItemId: string | null }[]).map((a) => a.stripeItemId as string),
-      );
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, sub);
       const base = stripeBaseItem(sub, ids);
       if (!base || ids.has(base.id) || base.price?.recurring?.interval !== "month") return;
-      const expectedCents = toCents(Number(expectedMonthly));
+      const expectedCents = toCents(expectedMonthly);
       if (base.price?.unit_amount === expectedCents) return;
       markNeedsReconcile(this.logger, {
         tenantId,

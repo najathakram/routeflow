@@ -740,6 +740,54 @@ describe("BillingCronService", () => {
       error.mockRestore();
     });
 
+    it("N2 (L-167 one rule): a checkout-made add-on item no row owns yet is NOT mistaken for the base item -> no false alert", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const checkoutAddon = {
+        id: "si_checkout_addon",
+        quantity: 1,
+        price: {
+          unit_amount: 2900,
+          currency: "usd",
+          recurring: { interval: "month" },
+          product: { id: "prod_addon", metadata: { addonSku: "EXTRA_SEATS" } },
+        },
+      };
+      // the add-on line comes FIRST: the old verify (owned rows only) took it for the base and alerted
+      const stripe = fakeStripeSubscription([checkoutAddon, item(5900)]);
+      const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+      expect(alerts(error)).toHaveLength(0);
+      // and it reads the subscription the way the push does (add-on products expanded)
+      expect(stripe.getSubscription).toHaveBeenCalledWith("sub_1", {
+        expand: ["items.data.price.product"],
+      });
+      error.mockRestore();
+    });
+
+    it("N2: a REAL mismatch is still alerted when a checkout add-on line is present", async () => {
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      const checkoutAddon = {
+        id: "si_checkout_addon",
+        quantity: 1,
+        price: {
+          unit_amount: 2900,
+          currency: "usd",
+          recurring: { interval: "month" },
+          product: { id: "prod_addon", metadata: { addonSku: "EXTRA_SEATS" } },
+        },
+      };
+      const stripe = fakeStripeSubscription([checkoutAddon, item(34900)]);
+      const { svc, catalog } = make({ downgrades: [row("t1")], stripe });
+      withVersionId(catalog);
+      await svc.applyScheduledDowngrades();
+      const [alert] = alerts(error);
+      expect(JSON.parse(alert.slice(alert.indexOf("{")))).toMatchObject({
+        stripeState: { billedCents: 34900, expectedCents: 5900 },
+      });
+      error.mockRestore();
+    });
+
     it("read-only verification: Stripe still bills the OLD price -> a needs-reconcile ALERT, still no push", async () => {
       const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
       const stripe = fakeStripeSubscription([item(34900)]);

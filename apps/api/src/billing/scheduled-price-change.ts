@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import {
   BadRequestException,
   Injectable,
@@ -12,7 +13,7 @@ import { PlanCatalogService } from "./plan-catalog.service";
 import { markNeedsReconcile, PLAN_CHANGE_BILLING_FAILED } from "./plan-change-stripe";
 import { resolvePlanPrice } from "./plan-price";
 import { underTenantPriceLock } from "./price-lock";
-import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
+import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
 import {
   isLiveStripeSubscriptionStatus,
   isTerminalStripeSubscriptionStatus,
@@ -196,14 +197,7 @@ export class ScheduledPriceChangeService {
       expand: CHECKOUT_ADDON_EXPAND,
     });
     if (!isLiveStripeSubscriptionStatus(stripeSub?.status)) return;
-    const owned = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, stripeItemId: { not: null } },
-      select: { stripeItemId: true },
-    });
-    const addonIds = new Set<string>([
-      ...(owned as { stripeItemId: string | null }[]).map((r) => r.stripeItemId as string),
-      ...checkoutAddonItems(stripeSub).map((i) => i.itemId),
-    ]);
+    const addonIds = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
     const base = stripeBaseItem(stripeSub, addonIds);
     const recurring = base?.price?.recurring;
     if (
@@ -303,14 +297,7 @@ export class ScheduledPriceChangeService {
     if (!isLiveStripeSubscriptionStatus(stripeSub?.status))
       return noop(`subscription_${stripeSub?.status}`);
 
-    const ownedItems = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, stripeItemId: { not: null } },
-      select: { stripeItemId: true },
-    });
-    const addonIds = new Set<string>([
-      ...(ownedItems as { stripeItemId: string | null }[]).map((r) => r.stripeItemId as string),
-      ...checkoutAddonItems(stripeSub).map((i) => i.itemId),
-    ]);
+    const addonIds = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
     const base = stripeBaseItem(stripeSub, addonIds);
     if (!base || addonIds.has(base.id)) return this.refuse(tenantId, "no_base_item", target);
 
@@ -340,7 +327,12 @@ export class ScheduledPriceChangeService {
     // The key names the STATE it moves from and to: the (prior, new) amounts AND the item's current Price id. A
     // push, a restore and a re-push of the same schedule repeat the amounts but not the Price id (an inline
     // price_data mints a new Price every update), so Stripe never replays the first one's cached result.
-    const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}`;
+    // A per-apply() NONCE ends the key: Stripe caches even a 5xx under a key for 24 h, so a key that repeats
+    // ACROSS requests (the same state read again after a failed push) would replay the cached error and the
+    // renewal would go out at the old price. The nonce is minted once here, so the in-attempt retry below
+    // (lost response) still reuses the SAME key and is replayed, not applied twice.
+    const nonce = randomUUID();
+    const key = `${sub.stripeSubId}:scheduled-price:${sub.downgradeEffectiveAt.toISOString()}:${version.id}:${target}:${priorAmountCents}-${amountCents}:${base.price?.id ?? "-"}:${nonce}`;
     try {
       const product = await this.stripe.client.products.create(
         { name: `RouteFlow ${targetDef.name} — monthly` },
