@@ -5,8 +5,6 @@ import {
   FlatList,
   Platform,
   Pressable,
-  StyleSheet,
-  Switch,
   Text,
   View,
 } from "react-native";
@@ -147,14 +145,11 @@ import { LinePriceModal } from "./new-order/LinePriceModal";
 import { useScanPriceEdit } from "../lib/use-scan-price-edit";
 import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
 import { styles } from "./new-order/styles";
+import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
-import { usePosFinish, usePosModePreference, PosFinishError } from "../lib/api/pos-orders";
-import {
-  POS_COPY,
-  posFinishFailureMessage,
-  posFinishSuccessMessage,
-  posMergePrompt,
-} from "../lib/pos-mode";
+import { usePosModeState } from "../lib/use-pos-mode";
+import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
+import { posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
 import {
   savedOrderDestination,
   creditsPendingFromError,
@@ -201,37 +196,6 @@ function newLocalId(): string {
 }
 
 const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
-
-function RowSpacer() {
-  return <View style={styles.rowSpacer} />;
-}
-
-/** Separator label between the on-this-order section and the catalogue. */
-function CatalogSectionLabel({ label }: { label: string }) {
-  return (
-    <View style={sectionStyles.wrap}>
-      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
-      <View style={sectionStyles.rule} />
-    </View>
-  );
-}
-
-const sectionStyles = StyleSheet.create({
-  wrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingTop: 6,
-    paddingBottom: 2,
-  },
-  text: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.6,
-  },
-  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
-});
 
 export function NewOrderScreen({
   customerId: initialCustomerId,
@@ -1706,33 +1670,12 @@ function ProductPickView({
 
   const createOrder = useCreateOrderAsDriver();
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
-  // SA-763r P-2 POS mode: staff only, never on a driver's at-door cart. Seeded from
-  // GET /users/me/preferences and written with PATCH on flip (never AsyncStorage).
+  // POS mode (SA-763r P-2): staff only, never a driver's at-door cart (lib/use-pos-mode.ts).
   const showPosSwitch = isStaff && !runId && !stopId;
-  const posPref = usePosModePreference();
-  const [posOverride, setPosOverride] = useState<boolean | null>(null);
-  const [posFailed, setPosFailed] = useState(false);
-  const posMode = showPosSwitch && (posOverride ?? posPref.seeded);
-  const posFinish = usePosFinish();
-  // Which finishing action was pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
-  const posFinishRef = useRef<"invoice" | "confirm">("invoice");
-  const flipPosMode = (next: boolean) => {
-    const previous = posOverride ?? posPref.seeded;
-    setPosOverride(next);
-    setPosFailed(false);
-    posPref.save.mutate(next, {
-      onError: () => {
-        setPosOverride(previous);
-        setPosFailed(true);
-      },
-    });
-  };
-  // TODO(API P-1a): GET /orders/active only parses SHIP/ROUTE until P-1a lands; until then the PICKUP
-  // preview is ignored server-side and the 409 MERGE_CHOICE_REQUIRED branch below is the backstop.
-  const { data: activeOrder } = useActiveOrderForCustomer(
-    customerId,
-    posMode ? "PICKUP" : undefined,
-  );
+  const pos = usePosModeState(showPosSwitch);
+  const posMode = pos.posMode;
+  // TODO(API P-1a): /orders/active ignores PICKUP until P-1a; the 409 MERGE_CHOICE_REQUIRED path backstops.
+  const { data: activeOrder } = useActiveOrderForCustomer(customerId, pos.activePath);
 
   // A screen instance IS a cart session: mint a fresh Idempotency-Key for it
   // (F30/R8). The key then survives every FAILED attempt on this cart — a
@@ -1859,7 +1802,6 @@ function ProductPickView({
         routeRunStopId: stopId,
         ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
-        // POS mode: the delivery-only fields step aside (their values are kept, so POS off restores them).
         ...(orderUrgent && !posMode ? { urgent: true } : {}),
         ...(deliveryTrim && !posMode ? { requestedDeliveryDate: deliveryTrim } : {}),
         ...(orderDateTrim ? { orderDate: orderDateTrim } : {}),
@@ -1906,15 +1848,9 @@ function ProductPickView({
             return;
           }
           if (posMode && !asDraft && order.id) {
-            // Confirm (+ invoice), then land on the new order's screen (Hand over / Print live there).
-            const finish = posFinishRef.current;
-            try {
-              await posFinish.mutateAsync({ orderId: order.id, invoice: finish === "invoice" });
-              showToast(posFinishSuccessMessage(finish === "invoice"));
-            } catch (e) {
-              showToast(posFinishFailureMessage(e instanceof PosFinishError ? e.step : "confirm"));
-            }
-            router.replace(`/(operator)/orders/${order.id}` as any);
+            await pos.finishAndOpen(order.id, showToast, () =>
+              router.replace(`/(operator)/orders/${order.id}` as any),
+            );
             return;
           }
           onSaved(order.orderNumber);
@@ -2058,16 +1994,8 @@ function ProductPickView({
     asDraft = false,
   ) => {
     if (posMode) {
-      const copy = posMergePrompt(!!orderDate.trim());
-      chooseAction(copy.title, copy.message, [
-        { label: "Cancel", style: "cancel" },
-        // A backdated order cannot be added to an existing one: only "Start a new one" is offered.
-        ...(orderDate.trim()
-          ? []
-          : [{ label: copy.addLabel, onPress: () => void submitOrder("merge", asDraft) }]),
-        { label: copy.newLabel, onPress: () => void submitOrder("separate", asDraft) },
-      ]);
-      return;
+      const a = posMergeAlert(!!orderDate.trim(), (c) => void submitOrder(c, asDraft));
+      return chooseAction(a.title, a.message, a.buttons);
     }
     chooseAction(
       "Open order exists",
@@ -2081,7 +2009,7 @@ function ProductPickView({
   };
 
   const onSave = (asDraft = false, finish: "invoice" | "confirm" = "invoice") => {
-    posFinishRef.current = finish;
+    pos.finishRef.current = finish;
     const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
     if (!gate.ok) {
       alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
@@ -2196,31 +2124,7 @@ function ProductPickView({
           </Text>
           {customerLocked ? null : <Text style={styles.customerChipChange}>Change</Text>}
         </Pressable>
-        {showPosSwitch ? (
-          <View style={{ marginTop: 8 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label }}>
-                  {POS_COPY.switchLabel}
-                </Text>
-                <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 }}>
-                  {POS_COPY.switchHint}
-                </Text>
-              </View>
-              <Switch
-                value={posMode}
-                onValueChange={flipPosMode}
-                disabled={posPref.prefs.isPending || posPref.save.isPending}
-                accessibilityLabel={POS_COPY.switchLabel}
-              />
-            </View>
-            {posFailed ? (
-              <Text style={{ fontSize: 12, fontFamily: "Inter_400Regular", color: ios.system.red }}>
-                {POS_COPY.switchFailed}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+        {showPosSwitch ? <PosModeSwitch pos={pos} /> : null}
       </View>
 
       {/* Find: search + categories, pinned so they never scroll away.
@@ -2416,11 +2320,7 @@ function ProductPickView({
             accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
-              {createOrder.isPending || submitting
-                ? "Saving…"
-                : posMode
-                  ? POS_COPY.confirmAndInvoice
-                  : "Confirm"}
+              {posConfirmLabel(posMode, createOrder.isPending || submitting)}
             </Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
@@ -2438,11 +2338,7 @@ function ProductPickView({
           ) : (
             <View style={{ flex: 1 }} />
           )}
-          {posMode && canSave ? (
-            <Pressable onPress={() => onSave(false, "confirm")} hitSlop={6}>
-              <Text style={styles.footerDraftText}>{POS_COPY.confirmOnly}</Text>
-            </Pressable>
-          ) : null}
+          {posMode && canSave ? <PosConfirmOnly onPress={() => onSave(false, "confirm")} /> : null}
           {canSaveDraft || createOrder.isPending || submitting ? (
             <Pressable onPress={() => onSave(true)} disabled={!canSaveDraft} hitSlop={6}>
               <Text style={[styles.footerDraftText, !canSaveDraft && { opacity: 0.4 }]}>

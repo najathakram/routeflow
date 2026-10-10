@@ -348,3 +348,23 @@ export function posCartSaveLabel(posMode: boolean, saving: boolean): string {
   if (saving) return "Saving…";
   return posMode ? POS_COPY.confirmAndInvoice : "Save order";
 }
+
+/** NewOrderScreen's POS merge prompt: counter-order wording; a backdated order can only start a new one. */
+export function posMergeAlert(backdated: boolean, submit: (choice: "merge" | "separate") => void) {
+  const copy = posMergePrompt(backdated);
+  return {
+    title: copy.title,
+    message: copy.message,
+    buttons: [
+      { label: "Cancel", style: "cancel" as const },
+      ...(backdated ? [] : [{ label: copy.addLabel, onPress: () => submit("merge") }]),
+      { label: copy.newLabel, onPress: () => submit("separate") },
+    ],
+  };
+}
+
+/** The footer primary label on NewOrderScreen. */
+export function posConfirmLabel(posMode: boolean, saving: boolean): string {
+  if (saving) return "Saving…";
+  return posMode ? POS_COPY.confirmAndInvoice : "Confirm";
+}
