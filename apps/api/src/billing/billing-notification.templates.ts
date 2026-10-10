@@ -86,6 +86,8 @@ export interface BillingEmailTemplate {
   subject: string;
   html: string;
   text: string;
+  /** Set only by rfInvoiceEmail (PLATFORM_BILLING_REPLY_TO); absent everywhere else. */
+  replyTo?: string;
 }
 
 export type TrialEndingMilestone = "TRIAL_ENDING_7D" | "TRIAL_ENDING_1D" | "TRIAL_ENDING_EXPIRY";
@@ -286,4 +288,128 @@ export function checkoutPlanNotAppliedTemplate(params: {
     html,
     text,
   };
+}
+
+// ─── RouteFlow's own invoice to a manual-pay tenant (manual invoices due, PR3) ─────────────────────────
+
+/** Why the email goes out: the issue email, a d0/d7/d14 reminder, or a super-admin resend. */
+export type RfInvoiceEmailKind = "manual" | "issue" | "d0" | "d7" | "d14";
+
+/** The stored invoice fields the email shows. Amounts are the STORED ones: nothing here re-derives money. */
+export interface RfInvoiceEmailInput {
+  number: string;
+  amount: number;
+  currency: string;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  dueDate: Date | null;
+  lines: unknown;
+  /** Whole UTC days past the due date; read only by a `manual` resend (the stage kinds imply their own). */
+  overdueDays?: number;
+}
+
+const rfDate = (d: Date | null, withYear: boolean): string =>
+  d
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        ...(withYear ? { year: "numeric" } : {}),
+        timeZone: "UTC",
+      }).format(d)
+    : "-";
+
+/** Formats a STORED amount in its own currency; an unknown currency code falls back to "149.00 XYZ". */
+function rfMoney(n: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+interface RfEmailLine {
+  label: string;
+  quantity: number;
+  amount: number;
+}
+
+function rfLines(raw: unknown): RfEmailLine[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RfEmailLine[] = [];
+  for (const l of raw) {
+    if (!l || typeof l !== "object") continue;
+    const o = l as Record<string, unknown>;
+    out.push({
+      label: typeof o.label === "string" ? o.label : typeof o.code === "string" ? o.code : "",
+      quantity: Number(o.quantity ?? 1),
+      amount: Number(o.amount ?? 0),
+    });
+  }
+  return out;
+}
+
+function overdueDaysFor(kind: RfInvoiceEmailKind, inv: RfInvoiceEmailInput): number {
+  if (kind === "d7") return 7;
+  if (kind === "d14") return 14;
+  if (kind === "manual") return Math.max(0, Math.floor(inv.overdueDays ?? 0));
+  return 0;
+}
+
+/** The invoice email: subject by kind, a period + line table + stored total, and how to pay. Never throws. */
+export function rfInvoiceEmail(
+  kind: RfInvoiceEmailKind,
+  inv: RfInvoiceEmailInput,
+  tenantName: string,
+): BillingEmailTemplate {
+  const overdue = overdueDaysFor(kind, inv);
+  const total = rfMoney(inv.amount, inv.currency);
+  const due = rfDate(inv.dueDate, false);
+  const subject =
+    kind === "d0"
+      ? `Reminder: RouteFlow invoice ${inv.number} is due today`
+      : overdue > 0
+        ? `Reminder: RouteFlow invoice ${inv.number} is ${overdue} ${overdue === 1 ? "day" : "days"} overdue`
+        : `RouteFlow invoice ${inv.number}: ${total} due ${due}`;
+
+  const period = `${rfDate(inv.periodStart, true)} to ${rfDate(inv.periodEnd, true)}`;
+  const lines = rfLines(inv.lines);
+  const payLine = `Pay the way you usually do and include ${inv.number} as the reference. Questions? Reply to this email.`;
+  const instructions = process.env.RF_INVOICE_PAY_INSTRUCTIONS?.trim() || "";
+
+  const rows = lines
+    .map(
+      (l) =>
+        `<tr><td style="padding:6px 0;font-size:14px;color:#374151;">${escapeHtml(l.label)}</td>` +
+        `<td style="padding:6px 12px;font-size:14px;color:#374151;text-align:right;">${escapeHtml(String(l.quantity))}</td>` +
+        `<td style="padding:6px 0;font-size:14px;color:#374151;text-align:right;">${escapeHtml(rfMoney(l.amount, inv.currency))}</td></tr>`,
+    )
+    .join("");
+  const html = baseLayout({
+    tagline: "Invoice",
+    bodyHtml: `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Invoice <strong>${escapeHtml(inv.number)}</strong> for <strong>${escapeHtml(tenantName)}</strong></p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">Period: ${escapeHtml(period)}</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;border-top:1px solid #f0f0f0;">
+        <tr><th align="left" style="padding:6px 0;font-size:12px;color:#9ca3af;">Item</th><th align="right" style="padding:6px 12px;font-size:12px;color:#9ca3af;">Qty</th><th align="right" style="padding:6px 0;font-size:12px;color:#9ca3af;">Amount</th></tr>
+        ${rows}
+        <tr><td colspan="2" style="padding:10px 0;font-size:15px;font-weight:700;color:#111827;border-top:1px solid #f0f0f0;">Total</td><td style="padding:10px 0;font-size:15px;font-weight:700;color:#111827;text-align:right;border-top:1px solid #f0f0f0;">${escapeHtml(total)}</td></tr>
+      </table>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">Due ${escapeHtml(due)}.</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(payLine)}</p>
+      ${instructions ? `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(instructions)}</p>` : ""}
+    `,
+  });
+  const text = [
+    `Invoice ${inv.number} for ${tenantName}`,
+    `Period: ${period}`,
+    "",
+    ...lines.map((l) => `${l.label}  x${l.quantity}  ${rfMoney(l.amount, inv.currency)}`),
+    `Total: ${total}`,
+    `Due ${due}.`,
+    "",
+    payLine,
+    ...(instructions ? ["", instructions] : []),
+  ].join("\n");
+  const replyTo = process.env.PLATFORM_BILLING_REPLY_TO?.trim();
+  return { subject, html, text, ...(replyTo ? { replyTo } : {}) };
 }

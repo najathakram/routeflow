@@ -90,3 +90,67 @@ export interface LineComponentView {
   displayUnitPrice4: number | null;
   position: number;
 }
+
+// ─── Batch ship + packing slips (#3168) ────────────────────────────────────────────────────────
+// "Mark shipped" for several carrier (fulfillPath SHIP) orders in one action, and one printable
+// packing slip per order. The api keeps a literal copy of BATCH_SHIP_OUTCOMES (it cannot value-import
+// this raw-TS package, L-072); apps/api/src/orders/order-batch-ship.spec.ts pins the two equal.
+
+/** The per-order result of a batch ship. Refusals (everything but SHIPPED*) write nothing. */
+export const BATCH_SHIP_OUTCOMES = [
+  "SHIPPED",
+  "SHIPPED_INVOICE_PENDING",
+  "NOT_CARRIER_ORDER",
+  "ALREADY_SHIPPED",
+  "NOT_CONFIRMED",
+  "CREDIT_HOLD",
+  "ORDER_CHANGED",
+  "INVALID_TRACKING",
+  "NOT_FOUND",
+  "FAILED",
+] as const;
+export type BatchShipOutcome = (typeof BATCH_SHIP_OUTCOMES)[number];
+
+/** Most orders one batch ship / packing-slip request may carry. */
+export const BATCH_SHIP_MAX_ORDERS = 50;
+
+export interface BatchShipOrderInput {
+  orderId: string;
+  carrier?: string;
+  trackingNumber?: string;
+}
+
+export interface BatchShipRequest {
+  orders: BatchShipOrderInput[];
+}
+
+export interface BatchShipResultRow {
+  orderId: string;
+  orderNumber: string | null;
+  outcome: BatchShipOutcome;
+  message: string;
+  /** True when the tracking was written but the order did not ship (the tracking stays saved). */
+  trackingSaved?: boolean;
+}
+
+export interface BatchShipResult {
+  results: BatchShipResultRow[];
+}
+
+export interface PackingSlipsRequest {
+  orderIds: string[];
+}
+
+export interface PackingSlipsResult {
+  /** Signed URL of ONE pdf with a page per included order. Null when nothing could be included. */
+  url: string | null;
+  included: string[];
+  skipped: { orderId: string; outcome: BatchShipOutcome }[];
+}
+
+/**
+ * B1201/B1205: the fixed sentence shown (web toast, mobile toast/alert) when an order was SAVED but
+ * its credit notes were not applied. The server's own text is never shown. Shared by web and mobile.
+ */
+export const CREDITS_PENDING_COPY =
+  "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.";

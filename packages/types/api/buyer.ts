@@ -240,6 +240,12 @@ export interface BuyerProduct {
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
   stockLeft: number | null;
+  /**
+   * OOS PR2: this buyer may order the item even when it is out of stock (the seller's setting,
+   * resolved server-side once per request). Absent/false = an out-of-stock item is not orderable.
+   * Where the seller hides backorders, `inStock` / `stockStatus` already read as in stock.
+   */
+  canBackorder?: boolean;
 }
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
@@ -257,6 +263,10 @@ export interface BuyerFavoriteAvailable {
   unitsPerBox: number | null;
   createdAt: string;
   unavailable: false;
+  /** OOS PR2: the same stock status the catalog row carries (masked where the seller hides backorders). */
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** OOS PR2: this buyer may order the item even when it is out of stock (server-resolved). */
+  canBackorder?: boolean;
 }
 
 /** A favourite the tenant hid from the buyer portal (SA-606 M3): name only, no price, not orderable. */
@@ -375,6 +385,20 @@ export interface BuyerOrder extends BuyerOrderListItem {
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
+  /**
+   * Business profiles 1B: SHIP orders show a shipment (carrier + tracking), never a route. The
+   * server's `FulfillPath` ("ROUTE" | "SHIP"); narrows to the shared `FULFILL_PATH_VALUES` type
+   * once that export lands (feat/fulfil-path-pickup) — no hand-typed mirror here (L-072).
+   */
+  fulfillPath: string;
+  /** Free-text carrier label and tracking number, set when the seller ships the order. */
+  shippingCarrier: string | null;
+  shippingTrackingNumber: string | null;
+  /**
+   * The SHIP transition's stamp (OrdersService.changeStatus), kept through an unmark. Saving
+   * tracking never stamps it, except `updateShipment` backfilling a legacy already-shipped order.
+   */
+  shippedAt: string | null;
 }
 
 // ─── Invoice list rows (B1122) ──────────────────────────────────────────────────

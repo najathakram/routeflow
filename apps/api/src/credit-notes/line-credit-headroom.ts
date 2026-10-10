@@ -218,6 +218,47 @@ export function addCredits(
 }
 
 /**
+ * SA-727 (M4): a STANDARD return resolved by an EXTERNAL_REFUND (money returned outside RouteFlow, `processRefund`'s other
+ * method) mints NO credit note, so neither the credit-note-item term nor the legacy itemless-note term sees it: the
+ * line it refunded would have its full headroom back for a credit note (a double pay-out). It counts like the legacy
+ * term does: its returned qty per product x the line's linear value (`planProductRefund`, "count" mode), pooled across
+ * the lines. An INLINE return's EXTERNAL_REFUND needs nothing here: the INLINE term already counts every non-cancelled,
+ * non-rejected INLINE return's items whatever its resolution.
+ */
+async function externalRefundQtyByProduct(
+  db: any,
+  where: Record<string, unknown>,
+): Promise<Map<string, number>> {
+  const rows: Array<{
+    orderId?: string | null;
+    refundMethod?: string | null;
+    items?: Array<{ productId: string; qty: unknown }>;
+  }> =
+    (await db.return?.findMany?.({
+      where: {
+        kind: { not: "INLINE" },
+        refundMethod: "EXTERNAL_REFUND",
+        creditNoteId: null,
+        status: "REFUNDED",
+        ...where,
+      },
+      select: {
+        orderId: true,
+        refundMethod: true,
+        items: { select: { productId: true, qty: true } },
+      },
+    })) ?? [];
+  const qtyByProduct = new Map<string, number>();
+  for (const ret of rows) {
+    // re-asserted on the row: the query's own filter is the contract, this keeps a row of any other resolution out
+    if (!ret.orderId || ret.refundMethod !== "EXTERNAL_REFUND") continue;
+    for (const it of ret.items ?? [])
+      qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + Number(it.qty));
+  }
+  return qtyByProduct;
+}
+
+/**
  * The credited amount + qty per invoice line (see the header). `lines` are the invoice's items; `db` is the caller's client
  * (a `tx` inside create(), `forTenant()` for the pre-checks). `excludeCreditNoteId` leaves one note out (the reissue dry run).
  */
@@ -229,7 +270,7 @@ export async function loadLineCredits(
   opts: { excludeCreditNoteId?: string; skipLegacy?: boolean } = {},
 ): Promise<Map<string, LineCredit>> {
   const notThis = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
-  const credited = new Map<string, LineCredit>();
+  let credited = new Map<string, LineCredit>();
   const ids = lines.map((l) => l.id);
   if (ids.length === 0) return credited;
 
@@ -297,7 +338,25 @@ export async function loadLineCredits(
     for (const [productId, qty] of qtyByProduct) {
       acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
     }
-    return new Map(acc);
+    credited = new Map(acc);
+  }
+
+  // SA-727 (M4): external refunds of STANDARD returns, attributed to this invoice only when it is its order's SOLE
+  // creditable invoice (with 2+ the order pool carries them: a return is not tied to one of several invoices).
+  const external = await externalRefundQtyByProduct(db, {
+    order: { invoices: { some: { id: invoiceId } } },
+  });
+  if (external.size > 0) {
+    const inv: { orderId: string | null } | null =
+      (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) ??
+      null;
+    if (inv?.orderId && (await countCreditableInvoices(db, inv.orderId)) === 1) {
+      let acc: ReadonlyMap<string, LineCredit> = credited;
+      for (const [productId, qty] of external) {
+        acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
+      }
+      credited = new Map(acc);
+    }
   }
   return credited;
 }
@@ -389,6 +448,14 @@ export async function loadOrderPool(
         qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + Number(it.qty));
     let acc: ReadonlyMap<string, LineCredit> = credited;
     for (const [productId, qty] of qtyByProduct)
+      acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
+    credited = new Map(acc);
+  }
+  // SA-727 (M4): the order's EXTERNAL_REFUND STANDARD returns (no credit note), pooled like the legacy term above.
+  const external = await externalRefundQtyByProduct(db, { orderId });
+  if (external.size > 0) {
+    let acc: ReadonlyMap<string, LineCredit> = credited;
+    for (const [productId, qty] of external)
       acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
     credited = new Map(acc);
   }

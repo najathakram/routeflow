@@ -38,7 +38,27 @@ export function formatDocumentNumber(prefix: string, nextNumber: number, padding
   return `${prefix}${padding > 0 ? digits.padStart(padding, "0") : digits}`;
 }
 
-const KEY = ["import", "numbering"] as const;
+/** `GET /import/numbering/:docType/preview` — what a prefix change would mint next (B1188). */
+export interface NumberingPrefixPreview {
+  docType: DocumentNumberType;
+  prefix: string;
+  /** The server's true next number under the NEW prefix (max-first); never derived client-side. */
+  preview: string;
+  /** The version token the save must echo; the server 409s if the sequence moved since. */
+  expectedNextNumber: number;
+}
+
+export function previewNumberingPrefix(
+  docType: DocumentNumberType,
+  prefix: string,
+): Promise<NumberingPrefixPreview> {
+  return apiClient
+    .get(`/import/numbering/${docType}/preview`, { params: { prefix } })
+    .then((r) => r.data);
+}
+
+export const NUMBERING_QUERY_KEY = ["import", "numbering"] as const;
+const KEY = NUMBERING_QUERY_KEY;
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 

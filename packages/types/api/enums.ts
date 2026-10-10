@@ -542,3 +542,18 @@ export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
 // in-store pickup; the API refuses it on every write DTO until the counter-sale API lands.
 export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
 export type FulfillPath = (typeof FULFILL_PATH_VALUES)[number];
+
+// Per-operator feature groups (Prisma `OperatorPermissionGroup`, `User.deniedPermissionGroups`). The
+// order here is the display order of the switches (see `PERMISSION_GROUPS` in ./permissions).
+export const OPERATOR_PERMISSION_GROUP_VALUES = [
+  "ORDERS",
+  "DISPATCH",
+  "CUSTOMERS",
+  "CATALOG",
+  "PRICING",
+  "REGULATED",
+  "FINANCE",
+  "NOTIFICATIONS",
+  "REPORTS",
+] as const;
+export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];

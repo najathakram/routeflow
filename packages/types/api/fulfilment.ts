@@ -68,3 +68,96 @@ export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }
+
+/**
+ * `GET /buyer/capabilities` (business profiles 1B): the ONLY fulfilment facts a buyer gets about
+ * its seller — how portal orders ship and whether the seller runs its own fleet. No staff fields
+ * (`methods`, `staffDefault`, `staffOpensAs`, `counter`) and no `consistent`.
+ */
+export type BuyerSellerCapability = Pick<
+  FulfilmentCapability,
+  "portalMethods" | "portalDefault" | "fleet"
+>;
+
+// ─── Settings → Fulfillment (tenant-admin self-serve toggle) ─────────────────────────────────
+//
+// `GET/POST preview/PATCH /settings/fulfilment`. Dark behind the API's FULFILMENT_SELF_SERVE flag:
+// the web shows the tab only when `selfServe` is true.
+
+export type FulfilmentCounterSetting = "on" | "off";
+export type FulfilmentCounterEffective = "always" | "optional" | "off";
+
+export interface FulfilmentModeOption {
+  key: FulfilmentMode;
+  label: string;
+  /** False when the mode cannot be chosen now; `blockedBy` says why. */
+  selectable: boolean;
+  /** "plan": needs Routes or Order delivery. "proposed": an in-store mode not yet open to this account. */
+  blockedBy?: "plan" | "proposed";
+}
+
+export interface FulfilmentLastChange {
+  at: string;
+  /** "business": a user of this account; "routeflow": RouteFlow support or a platform tool. */
+  by: "business" | "routeflow";
+  name: string | null;
+}
+
+export interface FulfilmentSettings {
+  fulfilmentModel: {
+    /** The stored mode ("unset" when none). */
+    value: FulfilmentMode;
+    /** What the account actually runs on after fleet rules. */
+    effective: FulfilmentMode;
+    options: FulfilmentModeOption[];
+  };
+  counterSales: { value: FulfilmentCounterSetting; effective: FulfilmentCounterEffective };
+  capability: FulfilmentCapability;
+  selfServe: boolean;
+  canEdit: boolean;
+  /** Opaque 16-hex token of the stored values and the fleet; send it back with a change. */
+  fingerprint: string;
+  lastChange: FulfilmentLastChange | null;
+}
+
+export interface UpdateFulfilmentSettingsRequest {
+  fulfilmentModel?: FulfilmentMode;
+  counterSales?: FulfilmentCounterSetting;
+}
+
+export interface FulfilmentSettingsPatchRequest extends UpdateFulfilmentSettingsRequest {
+  fingerprint: string;
+}
+
+export interface FulfilmentChange {
+  key: "fulfilmentModel" | "counterSales";
+  from: string;
+  to: string;
+}
+
+export type FulfilmentEffectCode =
+  | "OPEN_ROUTE_ORDERS"
+  | "TEMPLATES_PATH_CHANGES"
+  | "BILLING_MOMENT"
+  | "PORTAL_CHOICE"
+  | "NEW_ORDER_OPENS"
+  | "COUNTER_CLOSES"
+  | "COUNTER_OPENS";
+
+export interface FulfilmentEffect {
+  code: FulfilmentEffectCode;
+  count: number;
+  /** Ready-to-show sentence, built by the server. */
+  text: string;
+}
+
+export interface FulfilmentPreview {
+  changes: FulfilmentChange[];
+  effects: FulfilmentEffect[];
+  notChanged: string[];
+  fingerprint: string;
+}
+
+export interface FulfilmentSettingsUpdated extends FulfilmentSettings {
+  changed: boolean;
+}

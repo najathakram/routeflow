@@ -23,16 +23,13 @@ import {
   invoicesNeedReview,
   orderInvoicesNeedReviewError,
 } from "../invoices/invoice-partition";
-import { SHIP_STATE_REOPENED } from "./order-ship-state";
+import { SHIPPING_FULFILMENT_MODES } from "./shipping-fulfilment-modes";
+import { SHIP_STATE_REOPENED } from "./ship-state-markers"; // a leaf: order-ship-state.ts imports THIS file
 import type { OrdersService } from "./orders.service";
 
 export const FULFILMENT_MODEL_KEY = "fulfilment_model";
 /** Effective `fulfilment_model` modes under which the business ships (and so bills at shipment). */
-export const SHIPPING_FULFILMENT_MODES: ReadonlySet<string> = new Set([
-  "ship",
-  "both",
-  "pickup_ship",
-]);
+export { SHIPPING_FULFILMENT_MODES };
 
 /** True when this order is billed at SHIPMENT: a carrier (SHIP) order of a business whose effective
  *  `fulfilment_model` ships (ship / both / pickup_ship). The ONE billing-moment predicate: the
@@ -113,10 +110,12 @@ export async function settleOrderInvoice(
     } catch (err: any) {
       // The status write and the customer email never depend on the invoice: report it afterwards.
       logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
-      return new ConflictException(
-        `The order was marked ${moment}, but its invoice could not be updated ` +
+      return new ConflictException({
+        code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+        message:
+          `The order was marked ${moment}, but its invoice could not be updated ` +
           `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
-      );
+      });
     }
   }
   // SA-687: the remainder create below trusts OrderItem.invoicedQty. After a replace-all edit (it
@@ -130,10 +129,12 @@ export async function settleOrderInvoice(
     }
   } catch (err: any) {
     logger.error(`Failed to check invoices for order ${id}: ${err?.message ?? err}`);
-    return new ConflictException(
-      `The order was marked ${moment}, but its invoice could not be checked ` +
+    return new ConflictException({
+      code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+      message:
+        `The order was marked ${moment}, but its invoice could not be checked ` +
         `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
-    );
+    });
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;
@@ -154,11 +155,13 @@ export async function settleOrderInvoice(
   logger.error(
     `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
   );
-  return new ConflictException(
-    `The order was marked ${moment}, but its invoice could not be created ` +
+  return new ConflictException({
+    code: API_ERROR_CODES.ORDER_INVOICE_SETTLE_FAILED,
+    message:
+      `The order was marked ${moment}, but its invoice could not be created ` +
       `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
       `the order page to retry — the order stays ${moment} and nothing has been billed yet.`,
-  );
+  });
 }
 
 /**
@@ -168,6 +171,8 @@ export async function settleOrderInvoice(
  * (PENDING / CONFIRMED) with `shippedAt` set AND its last ship-state change a REOPEN from delivery
  * (`order-ship-state.ts`). A deliberate "Unmark shipped" is NOT with the carrier (the parcel never left,
  * so the stock comes back): the unmarked order is cancellable again. `shippedAt` itself survives both.
+ * KNOWN: a reopen that predates the markers has none, so it reads as unmarked (cancellable); pinned in
+ * `carrier-cancel.spec.ts` ("KNOWN: legacy reopen without marker"), see `order-ship-state.ts`.
  * GATED on the billing moment (`billsAtShipment`: ship / both / pickup_ship businesses only), so an
  * unset-mode business is untouched. Returns the reason the web reads to disable Cancel, or null.
  */

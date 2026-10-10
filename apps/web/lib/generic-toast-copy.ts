@@ -40,6 +40,8 @@ const CODE_COPY: Record<string, string> = {
     "This order is already with the carrier. Use a return instead of cancelling.",
   ORDER_WITH_CARRIER_NO_REDUCE:
     "This order is already with the carrier. Record a return instead of reducing or removing lines.",
+  ORDER_WITH_CARRIER_NO_ADD:
+    "This order is already with the carrier. Create a new order for the extra items.",
   INVOICE_WITH_CARRIER_NO_LINE_CHANGE:
     "This order is already with the carrier, so its invoice lines and quantities can't change. Price, discount and notes still can.",
   [API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST]: SHIPPED_ORDER_MESSAGE,
@@ -50,7 +52,11 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
+  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
+    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
+  [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
+    "A product family can't be priced or promoted. Use its variants instead.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
@@ -86,6 +92,10 @@ const CODE_COPY: Record<string, string> = {
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
     "This invoice has unspent credit. Release or use it first, then try again.",
+  [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
+    "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
+  [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
+    "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

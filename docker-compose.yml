@@ -5,7 +5,7 @@
 #
 #   Full stack (API + Web in containers) — the pre-PR local test target:
 #       npm run local:up        # build + start postgres, redis, migrate, api, web
-#       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123)
+#       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123; tenant_admin / TenantAdmin1!)
 #       npm run local:validate  # smoke + post-deploy-check + drift check @ :3000
 #       npm run local:down
 #

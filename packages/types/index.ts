@@ -140,6 +140,8 @@ export * from "./order-applied-credits";
 // Prisma-enum mirrors live in `./api/enums.ts`, pinned set-equal to
 // `@prisma/client` by `apps/api/src/common/enum-parity.spec.ts`.
 
+export * from "./order-line-backorder";
+export * from "./invoice-line-code";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";
@@ -170,8 +172,10 @@ export * from "./api/messaging-delivery";
 export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/counter-sale";
 export * from "./api/import";
 export * from "./api/analytics-insights";
+export * from "./api/fulfilment-methods";
 export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";
@@ -184,6 +188,8 @@ export * from "./api/policies";
 export * from "./api/inventory-settings";
 export * from "./api/preferences";
 export * from "./api/settings-registry";
+export * from "./api/rf-invoices";
+export * from "./api/permissions";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

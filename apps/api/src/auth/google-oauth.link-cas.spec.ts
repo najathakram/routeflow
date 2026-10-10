@@ -24,7 +24,7 @@ const PROFILE = { linkUserId: "user-1", googleId: "google-1", email: "alice@exam
 function build() {
   const config = {
     get: (key: string) =>
-      key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state" } : undefined,
+      key === "jwt" ? { secret: "test-jwt-secret-for-oauth-state-0123456789" } : undefined,
   } as unknown as ConfigService;
   const emailService = { send: jest.fn().mockResolvedValue({ delivered: true }) };
   const prisma = {

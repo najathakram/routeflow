@@ -80,7 +80,7 @@ describe("TenantsService", () => {
           useValue: {
             get: jest.fn((key: string) => {
               if (key === "WEB_URL") return "https://app.test";
-              if (key === "jwt.secret") return "test-secret";
+              if (key === "jwt.secret") return "test-jwt-secret-0123456789-abcdefghijklmnop";
               return undefined;
             }),
           },
@@ -136,6 +136,24 @@ describe("TenantsService", () => {
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("ECONNREFUSED"));
     });
 
+    // Row 195: the test-tenant slug patterns are reserved; a real signup can never land on one.
+    it.each(["qa-foods", "e2e-run-1", "ux-audit-7", "test", "e2e-routeflow", "routeflow-demo"])(
+      "row 195 refuses the reserved test slug %s with a neutral 400 and writes nothing",
+      async (slug) => {
+        const err = await service.register({ ...REGISTER_DTO, slug }).catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toMatch(/not available/);
+        expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+        expect(email.send).not.toHaveBeenCalled();
+      },
+    );
+
+    it("row 195 the availability check reports a reserved test slug as unavailable", async () => {
+      await expect(service.isSlugAvailable("qa-foods")).resolves.toBe(false);
+      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+    });
+
     it("rejects a taken slug before touching email", async () => {
       (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "existing" });
       await expect(service.register(REGISTER_DTO)).rejects.toBeInstanceOf(ConflictException);
@@ -177,9 +195,16 @@ describe("TenantsService", () => {
       email: "owner@acme.example",
       username: "acme_admin",
       status: "INACTIVE",
+      role: "TENANT_ADMIN",
+      lastLoginAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
       deletedAt: null,
       tenant: { id: "tenant-1", name: "Acme Distribution", slug: "acme-distribution" },
     };
+
+    beforeEach(() => {
+      (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
+    });
 
     it("returns true and dispatches the email for a real pending account", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);

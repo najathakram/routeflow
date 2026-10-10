@@ -23,6 +23,8 @@ function make(
     planKey?: string;
     billing?: string;
     refusal?: { code: string; message: string } | null;
+    /** SA-690: the tenant's status is TRIAL. */
+    trial?: boolean;
   } = {},
 ) {
   const subscription = {
@@ -39,6 +41,7 @@ function make(
   const mutations = {
     addonBillingMode: jest.fn().mockResolvedValue(opts.billing ?? "STRIPE"),
     addonEnableRefusal: jest.fn().mockResolvedValue(opts.refusal ?? null),
+    isTrialTenant: jest.fn().mockResolvedValue(opts.trial ?? false),
     planChangePreview: jest
       .fn()
       .mockResolvedValue(opts.change ?? { action: "UPGRADE", proratedNow: 12.3 }),
@@ -192,6 +195,38 @@ describe("SettingsBillingController.prorationPreview — says how the add-on is 
       const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
       expect(res).toMatchObject({ proratedToday: 6.4, billing, billed: true, refusal: null });
     }
+  });
+
+  describe("SA-690 — `trial` says the tenant is still on its trial (the add-on is billed at the card checkout)", () => {
+    it("a TRIAL tenant: trial true, on every shape of the answer", async () => {
+      for (const billing of ["UNBILLED", "STRIPE", "MANUAL"]) {
+        const { controller, mutations } = make({ billing, trial: true });
+        const res: any = await controller.prorationPreview(
+          { tenantId: "t1" } as any,
+          "FORECASTING",
+        );
+        expect(res.trial).toBe(true);
+        expect(mutations.isTrialTenant).toHaveBeenCalledWith("t1");
+      }
+    });
+
+    it("a tenant that is not on its trial: trial false", async () => {
+      const { controller } = make({ billing: "STRIPE", trial: false });
+      const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+      expect(res.trial).toBe(false);
+    });
+
+    it("a refused enable still carries trial (the confirm sheet reads it either way)", async () => {
+      const { controller } = make({
+        trial: true,
+        refusal: {
+          code: "ADDON_INCLUDED_IN_PLAN",
+          message: "Forecasting is already included in your plan.",
+        },
+      });
+      const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+      expect(res).toMatchObject({ billing: "REFUSED", trial: true });
+    });
   });
 
   it.each([

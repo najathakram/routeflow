@@ -15,8 +15,10 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
+import { useFleetAccess } from "@/lib/api/addons";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
+import { BuyerOversellCard } from "./BuyerOversellCard";
 
 /**
  * Settings hub — the grouped-card landing for /settings (full-hub redesign). Every
@@ -50,6 +52,7 @@ const RESTRICTIONS_ITEM: HubItem = {
 };
 
 const ROUTE_DEFAULTS_HREF = "#route-defaults";
+const OVERSELL_HREF = "#out-of-stock-ordering";
 
 const GROUPS: HubGroup[] = [
   {
@@ -103,13 +106,18 @@ const GROUPS: HubGroup[] = [
   {
     key: "orders",
     title: "Orders & stock",
-    blurb: "How orders, routes and bills are handled day to day.",
+    blurb: "How orders, stock and bills are handled day to day.",
     icon: Truck,
     items: [
       {
         label: "Route defaults",
         desc: "Service time, start time, speed & depot location",
         href: ROUTE_DEFAULTS_HREF,
+      },
+      {
+        label: "Out-of-stock ordering",
+        desc: "Let customers order items that are out of stock",
+        href: OVERSELL_HREF,
       },
       {
         label: "Batch invoice import",
@@ -219,36 +227,55 @@ function HubLink({ item }: { item: HubItem }) {
 }
 
 /** The card shows exactly when its hub item is listed: same label + description + group title. */
-function routeDefaultsMatches(q: string): boolean {
-  const group = GROUPS.find((g) => g.items.some((it) => it.href === ROUTE_DEFAULTS_HREF))!;
-  const item = group.items.find((it) => it.href === ROUTE_DEFAULTS_HREF)!;
+function cardMatches(href: string, q: string): boolean {
+  const group = GROUPS.find((g) => g.items.some((it) => it.href === href))!;
+  const item = group.items.find((it) => it.href === href)!;
   // Per field, like the hub's own filter — a query spanning two fields matches neither.
   return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
+/** A carrier-only account has no drivers: the user-management card must not promise them. */
+const USERS_HREF = "/settings?tab=users";
+const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
+
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+  // Fleet-off (fulfilment model set, no routes / delivery module): no route defaults to configure.
+  const { fleet } = useFleetAccess();
+
+  // A hub tile that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is
+  // a plain hash link, but the cards are client-rendered: a page LOADED with the hash has nothing
+  // to scroll to until now, so bring the card into view once it is mounted.
+  React.useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
+  }, []);
 
   const canShow = React.useCallback(
-    (item: HubItem) => (item.show === "admin" ? isAdmin : true),
-    [isAdmin],
+    (item: HubItem) =>
+      item.href === ROUTE_DEFAULTS_HREF && !fleet ? false : item.show === "admin" ? isAdmin : true,
+    [isAdmin, fleet],
   );
 
   const q = query.trim().toLowerCase();
   const groups = React.useMemo(
     () =>
       GROUPS.map((g) => {
-        const items = g.items.filter(
-          (it) =>
-            canShow(it) &&
-            (!q ||
-              it.label.toLowerCase().includes(q) ||
-              it.desc.toLowerCase().includes(q) ||
-              g.title.toLowerCase().includes(q)),
-        );
+        const items = g.items
+          .map((it) =>
+            it.href === USERS_HREF && !fleet ? { ...it, desc: USERS_DESC_NO_FLEET } : it,
+          )
+          .filter(
+            (it) =>
+              canShow(it) &&
+              (!q ||
+                it.label.toLowerCase().includes(q) ||
+                it.desc.toLowerCase().includes(q) ||
+                g.title.toLowerCase().includes(q)),
+          );
         return { ...g, items };
       }).filter((g) => g.items.length > 0),
-    [q, canShow],
+    [q, canShow, fleet],
   );
 
   return (
@@ -345,9 +372,15 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || routeDefaultsMatches(q)) && (
+      {fleet && (!q || cardMatches(ROUTE_DEFAULTS_HREF, q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
+        </div>
+      )}
+
+      {(!q || cardMatches(OVERSELL_HREF, q)) && (
+        <div id="out-of-stock-ordering" className="max-w-3xl">
+          <BuyerOversellCard canEdit={isAdmin} />
         </div>
       )}
 

@@ -137,7 +137,7 @@ describe("fresh-start target planner (#2500)", () => {
       banner: "DB:     R(postgresql://proxy-host/db)  (source: Railway proxy)",
       poolConfig: { connectionString: "postgresql://proxy-host/db" },
       backupCommand:
-        "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-acme",
+        "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live",
     });
   });
 
@@ -164,7 +164,7 @@ describe("fresh-start target planner (#2500)", () => {
     expect(r.liveNoExclude.reason).toMatch(/needs --exclude-tenant/);
     expect(r.liveNoBackup.reason).toMatch(/needs --backup-taken/);
     expect(r.liveNoBackup.reason).toContain(
-      "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-acme",
+      "railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live",
     );
     expect(r.liveBackup.ok).toBe(true);
   });

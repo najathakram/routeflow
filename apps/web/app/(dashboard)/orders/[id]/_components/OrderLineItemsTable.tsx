@@ -4,6 +4,7 @@ import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
 import { computeLineSubtotal } from "@routeflow/pricing";
+import { BACKORDER_TAG_LABEL, lineBackorderPieces } from "@routeflow/types";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
 import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
@@ -58,6 +59,15 @@ export function OrderLineItemsTable({
                     >
                       {orderLineName(li) ?? "Custom item"}
                     </span>
+                    {lineBackorderPieces(li, orderStatus) > 0 && (
+                      <span
+                        data-testid="line-backorder-tag"
+                        title={`${lineBackorderPieces(li, orderStatus)} pcs sold past stock`}
+                        className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+                      >
+                        {BACKORDER_TAG_LABEL}
+                      </span>
+                    )}
                     {li.notes && (
                       <p className="mt-0.5 whitespace-pre-line text-xs italic text-navy/60">
                         {li.notes}

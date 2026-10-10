@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { assertSellableLines } from "./sellable-lines";
+import { assertNoFamilyProducts, assertSellableLines } from "./sellable-lines";
 
 describe("assertSellableLines (WS8: a FAMILY is never a line)", () => {
   it("passes STANDARD / VARIANT / RECIPE products and rows with no kind loaded", () => {
@@ -40,5 +40,38 @@ describe("assertSellableLines (WS8: a FAMILY is never a line)", () => {
       return;
     }
     throw new Error("expected a throw");
+  });
+});
+
+describe("assertNoFamilyProducts (B1216: no price override or promotion on a family)", () => {
+  it("passes when no product is a FAMILY", () => {
+    expect(() =>
+      assertNoFamilyProducts(
+        [
+          { id: "a", kind: "STANDARD" },
+          { id: "b", kind: "VARIANT" },
+        ],
+        "promotion",
+      ),
+    ).not.toThrow();
+  });
+
+  it("a 400 FAMILY_NOT_PRICEABLE naming every family, shaped like the sellable-line refusal", () => {
+    let body: Record<string, unknown> | null = null;
+    try {
+      assertNoFamilyProducts(
+        [
+          { id: "f1", name: "Acme Soda", kind: "FAMILY" },
+          { id: "v", name: "Cherry", kind: "VARIANT" },
+          { id: "f2", name: "Acme Tea", kind: "FAMILY" },
+        ],
+        "customer price",
+      );
+    } catch (e) {
+      expect(e).toBeInstanceOf(BadRequestException);
+      body = (e as BadRequestException).getResponse() as Record<string, unknown>;
+    }
+    expect(body).toMatchObject({ code: "FAMILY_NOT_PRICEABLE", productIds: ["f1", "f2"] });
+    expect(String(body?.message)).toMatch(/customer price/);
   });
 });

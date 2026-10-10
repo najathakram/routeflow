@@ -117,10 +117,21 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
     expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
   });
 
-  it("D2: an increase on it goes through and re-syncs the shipment invoice in place (never a revert)", async () => {
+  it("SA-696 (was D2): an increase on it is ORDER_WITH_CARRIER_NO_ADD, never a revert or a re-sync", async () => {
     seed(order());
     reopened();
-    await edit(6);
+    await expect(edit(6)).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_ADD" }),
+    });
+    expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    expect(invoices.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+  });
+
+  it("D2: a same-quantity (price / note) save re-syncs the shipment invoice in place (never a revert)", async () => {
+    seed(order());
+    reopened();
+    await edit(4);
     expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
     expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
   });

@@ -46,7 +46,7 @@ import { Test } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "../products/scan-match";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -63,6 +63,7 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { ProductsService } from "../products/products.service";
 import { ProductPortalVisibilityService } from "../products/product-portal-visibility.service";
 import { OrdersService } from "../orders/orders.service";
+import { NO_BACKORDER_VIEW } from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -201,6 +202,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       orders,
       replenishment,
       promotions,
+      // OOS PR2: this spec is about portal visibility; the buyer cannot backorder here.
+      { resolve: async () => NO_BACKORDER_VIEW } as any,
     );
     dashboard = new BuyerDashboardService(prisma, storage as any, visibility);
     // scanProduct only touches prisma + the catalog + stock-alert services.
@@ -511,7 +514,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     return inTenant(f, async () => {
       const search = await catalog.getCatalog({ search: p.name, limit: 100 }, f.customerId);
       const scan = (code: string) =>
-        asBool(() => controller.scanProduct(code, { customerId: f.customerId }));
+        asBool(() =>
+          controller.scanProduct(code, { customerId: f.customerId, tenantId: f.tenantId }),
+        );
       return {
         search: search.data.some((r: any) => r.id === p.id),
         detail: await asBool(() => catalog.getProductDetail(p.id, f.customerId)),
@@ -525,7 +530,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           (await findScanMatches(
             prisma.forTenant(),
             normalizeScanCode(f.rowCodes[p.id]),
-            buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+            buyerVisibleProductWhere(noBuyerRestrictions(f.tenantId)),
           )) !== null,
         ...(opts.write
           ? {
