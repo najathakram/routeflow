@@ -221,7 +221,12 @@ import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
-import { markLinesRecreated, markSaleDelivered, stampDeliveredAfterEdit } from "./delivered-stamp";
+import {
+  heldAtBookedFloor,
+  markLinesRecreated,
+  markSaleDelivered,
+  stampDeliveredAfterEdit,
+} from "./delivered-stamp";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -4172,7 +4177,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
-          await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
+          const settleHeld = await heldAtBookedFloor(tx, orderId, heldItems); // SA-763r: input only
+          await this.settleStockForEdit(tx, order, settleHeld, activeItems, user, undefined, {
             allowOversell,
             blockCredits: carrierLocked,
             lineIdentity,

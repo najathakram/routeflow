@@ -46,6 +46,7 @@ export type HeldLine = {
   productId: string | null;
   qty: unknown;
   deliveredQty?: unknown;
+  status?: string;
 };
 
 /**
@@ -195,6 +196,31 @@ export async function captureRecreatedCarry(
       deliveredQty: Number(h.deliveredQty ?? 0),
     })),
   };
+}
+
+/**
+ * The pre-edit lines AS THE STOCK SETTLE MUST SEE THEM (an input to `settleStockForEdit` only; no row is written
+ * here). On a DELIVERED, non-route order, a held line with no delivery record has `deliveredQty = max(d, qty)`:
+ * the units that left. A legacy line (never stamped, d 0) cut from 12 to 10 would otherwise book `max(10, 0)` and
+ * put 2 back on the shelf, which the stamp then undoes (d := 12): a later void would credit those 2 again. The
+ * same booked-floor pattern as the void's `bookedFloor`. Any other order: `held` unchanged (one head read).
+ */
+export async function heldAtBookedFloor<T extends HeldLine>(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  held: T[],
+): Promise<T[]> {
+  const head = await tx.order.findFirst({
+    where: { id: orderId },
+    select: { status: true, routeRunStopId: true },
+  });
+  if (!head || head.status !== OrderStatus.DELIVERED || head.routeRunStopId) return held;
+  const basis = await deliveredBasisByLine(tx, orderId);
+  return held.map((h) =>
+    hasDeliveryEvidence(basis, h.id) || h.status === "CANCELLED"
+      ? h
+      : { ...h, deliveredQty: Math.max(Number(h.deliveredQty ?? 0), Number(h.qty)) },
+  );
 }
 
 // The carry travels from the replace-all site (before its delete) to the stamp (after the lines are

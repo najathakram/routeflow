@@ -127,6 +127,26 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(h.prisma.product.update).not.toHaveBeenCalled(); // the 12 that left stay booked: nothing restocks
   });
 
+  it("a legacy line (d 0, qty 12) cut to 10 puts NOTHING back on the shelf and ends at d 12", async () => {
+    seed([lineA({ qty: 12, deliveredQty: 0 })]);
+    await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
+    expect(h.prisma.product.update).not.toHaveBeenCalled(); // red on base: increment 2, then d set to 12
+    expect(d("li-A")).toBe(12);
+  });
+
+  it("a route-stop order keeps today's settle: a cut restocks (its columns are never touched)", async () => {
+    seed([lineA({ qty: 12, deliveredQty: 0 })]);
+    h.prisma.order.findFirst.mockResolvedValue({
+      ...order([lineA({ qty: 12, deliveredQty: 0 })]),
+      routeRunStopId: "stop-1",
+    } as never);
+    await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
+    expect(h.prisma.product.update).toHaveBeenCalledWith({
+      where: { id: "prod-A" },
+      data: { currentStock: { increment: 2 } },
+    });
+  });
+
   it("12, cut to 10, raise to 11: d stays 12 and stock moves 0; raise to 14: d is 14 and stock moves 2", async () => {
     seed([lineA({ qty: 12, deliveredQty: 12 })]);
     await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
