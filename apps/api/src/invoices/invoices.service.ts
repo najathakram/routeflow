@@ -161,6 +161,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
+import { counterPay } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -4980,11 +4981,11 @@ export class InvoicesService {
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
-      // already row-locks the invoice before reading its payments; updatePayment had
-      // no equivalent, so two concurrent edits could both read a stale remaining
-      // balance and jointly overshoot the invoice total.
+      // PR-2 (B1, m3): row-lock the invoice before reading its payments, like recordPayment, so two
+      // concurrent edits cannot jointly overshoot the total. SA-750r3: a counter sale's shared close lock comes first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
@@ -4996,6 +4997,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment.paidAt, dto.paidAt); // old AND new date
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -5087,13 +5089,11 @@ export class InvoicesService {
   async deletePayment(invoiceId: string, paymentId: string) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     let imageKey: string | null = null;
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     const updated = await withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
-      // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
-      // the same order — deletePayment and voidPayment previously took no lock at
-      // all, so a concurrent updatePayment/recordPayment on the same invoice could
-      // deadlock against them (each waiting on a row the other already touched) or
-      // simply race on a stale remaining-balance read.
+      // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as
+      // updatePayment/recordPayment. SA-750r3: a counter sale's shared close lock comes first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
@@ -5105,6 +5105,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment.paidAt);
       imageKey = payment.imageKey;
       if ((payment.method as any) === "CREDIT_NOTE") {
         throw new BadRequestException(
@@ -5444,17 +5445,17 @@ export class InvoicesService {
 
   async voidPayment(invoiceId: string, paymentId: string) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
-      // updatePayment/recordPayment/deletePayment, taken BEFORE touching the
-      // payment row, and in the same order — voidPayment previously took no lock
-      // at all, so a concurrent updatePayment/recordPayment/deletePayment on the
-      // same invoice could deadlock against it or race on a stale balance read.
+      // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as
+      // updatePayment/recordPayment/deletePayment. SA-750r3: a counter sale's shared close lock comes first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment.paidAt);
       if (payment.status === "VOID") throw new BadRequestException("Payment already voided");
       if ((payment.method as any) === "CREDIT_NOTE") {
         throw new BadRequestException(
@@ -5557,17 +5558,17 @@ export class InvoicesService {
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
+    const till = await counterPay.scope(this.prisma, invoiceId, dto.status === "BOUNCED"); // SA-750r3
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
-      // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
-      // touching the payment row, and in the same order — setCheckStatus
-      // previously took no lock at all, so a BOUNCED transition racing a
-      // concurrent void or edit on the same invoice could deadlock against it.
+      // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as the
+      // other payment writers. SA-750r3: a BOUNCED counter payment takes the shared close lock first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment.paidAt);
       if (payment.method !== "CHECK")
         throw new BadRequestException("Check status can only be set on CHECK payments");
       if (payment.status === "VOID")

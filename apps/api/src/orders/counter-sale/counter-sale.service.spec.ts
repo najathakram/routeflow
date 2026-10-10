@@ -526,6 +526,7 @@ describe("CounterSaleService.ring", () => {
         amount: 37.25,
         method: "CASH",
         reference: undefined,
+        paidAt: expect.any(String), // SA-750r3: dated from the database clock
       });
       expect(r).toEqual({
         orderId: "ord-1",
@@ -548,6 +549,7 @@ describe("CounterSaleService.ring", () => {
         amount: 37.25,
         method: "CREDIT_CARD",
         reference: "auth-77",
+        paidAt: expect.any(String), // SA-750r3: dated from the database clock
       });
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
@@ -566,6 +568,7 @@ describe("CounterSaleService.ring", () => {
         amount: 20,
         method: "CASH",
         reference: undefined,
+        paidAt: expect.any(String), // SA-750r3: dated from the database clock
       });
       expect(r).toMatchObject({
         paid: 20,

@@ -44,6 +44,7 @@ import {
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
+import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
 const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
@@ -176,6 +177,7 @@ export class CounterSaleService {
       select: {
         id: true,
         orderNumber: true,
+        registerKey: true, // SA-750r3: the till this sale is counted on
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
           where: { overriddenBy: { not: null } },
@@ -202,9 +204,17 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     } else {
       try {
+        // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
+        // -> Invoice FOR UPDATE), so a close waits for a tender in flight and the tender never lands behind its cutoff.
+        const till = { counterSale: true, registerKey: order?.registerKey };
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(dto, orderId),
+          {
+            family: "counter-tender",
+            key: orderId,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), till),
+          },
+          () => this.tender(dto, orderId, till),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -287,6 +297,7 @@ export class CounterSaleService {
   private async tender(
     dto: CounterSaleDto,
     orderId: string,
+    till: { counterSale: boolean; registerKey?: string | null },
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -311,8 +322,8 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
+      const writes = allocateOldestFirst(balances, plan.amount)
+        .map((part) => {
           const row = invoices.find((i) => i.id === part.invoiceId)!;
           const stored = roundMoney(
             (row.payments ?? [])
@@ -322,11 +333,22 @@ export class CounterSaleService {
           const due = roundMoney(
             Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
           );
-          if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
+          return { invoiceId: part.invoiceId, due };
+        })
+        .filter((w) => w.due > 0);
+      // SA-750r3: with the shared close lock held, the instant the payment is dated (the DATABASE clock) must not sit in a
+      // closed window: 409 COUNTER_SALE_DAY_CLOSED, nothing written. Outside the try below so it is not mapped to
+      // "not recorded"; a replay with nothing left to record writes nothing and is never refused.
+      const paidAt = writes.length
+        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
+        : undefined;
+      try {
+        for (const { invoiceId, due } of writes) {
+          await this.invoices.recordPayment(invoiceId, {
             amount: due,
             method: toPrismaMethod(method)!,
             reference: dto.payment.reference,
+            ...(paidAt ? { paidAt } : {}),
           } as never);
         }
       } catch (e) {

@@ -30,6 +30,7 @@ import {
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
+import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 type OrderRow = {
   id: string;
@@ -39,6 +40,8 @@ type OrderRow = {
   deliveredAt: Date | null;
   customerId: string | null;
   customer: { isWalkIn: boolean | null } | null;
+  counterSale?: boolean | null; // SA-750r3: a COUNTER order's tender is a till event (the day-close lock + window)
+  registerKey?: string | null;
 };
 
 /**
@@ -197,9 +200,16 @@ export class PickupCompleteService {
       if (owedNow) planError = API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED;
     } else if (sent && sent.method !== "ON_ACCOUNT" && owedNow) {
       try {
+        // SA-750r3: a COUNTER order's tender also takes the SHARED end-of-day close lock on this pinned connection; any
+        // other PICKUP order is not a till event and takes none.
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: id, mode: "wait" },
-          () => this.tender(id, sent, handedOverAt, walkIn),
+          {
+            family: "counter-tender",
+            key: id,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), order),
+          },
+          () => this.tender(id, sent, handedOverAt, walkIn, order),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", id, 0);
         ({ invoices, planError } = locked.value);
@@ -340,6 +350,7 @@ export class PickupCompleteService {
     payment: CounterPaymentInput,
     handedOverAt: Date | null,
     walkIn: boolean,
+    till: OrderRow,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -369,8 +380,8 @@ export class PickupCompleteService {
       // A refusal only stands when this hand-over took nothing yet: a stored tender means a payment went in.
       if (!invoices.some((i) => (i.payments ?? []).some(mine))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
+      const writes = allocateOldestFirst(balances, plan.amount)
+        .map((part) => {
           const row = invoices.find((i) => i.id === part.invoiceId)!;
           const stored = roundMoney(
             (row.payments ?? []).filter(mine).reduce((sum, p) => sum + Number(p.amount), 0),
@@ -378,11 +389,22 @@ export class PickupCompleteService {
           const due = roundMoney(
             Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
           );
-          if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
+          return { invoiceId: part.invoiceId, due };
+        })
+        .filter((w) => w.due > 0);
+      // SA-750r3: a COUNTER order's payment is dated from the DATABASE clock read with the shared close lock held, and a
+      // closed window refuses it (409 COUNTER_SALE_DAY_CLOSED, nothing recorded). Outside the try below so it is not mapped
+      // to "not recorded"; a replay with nothing left to record writes nothing and is never refused.
+      const paidAt = writes.length
+        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
+        : undefined;
+      try {
+        for (const { invoiceId, due } of writes) {
+          await this.invoices.recordPayment(invoiceId, {
             amount: due,
             method: toPrismaMethod(payment.method)!,
             reference: payment.reference,
+            ...(paidAt ? { paidAt } : {}),
           } as never);
         }
       } catch (e) {
@@ -426,6 +448,8 @@ export class PickupCompleteService {
         deliveredAt: true,
         customerId: true,
         customer: { select: { isWalkIn: true } },
+        counterSale: true,
+        registerKey: true,
       },
     });
   }
