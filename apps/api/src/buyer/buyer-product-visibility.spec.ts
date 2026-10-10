@@ -4,42 +4,57 @@ import {
   buyerVisibleProductWhere,
   assertBuyerMayOrder,
   isBuyerVisibleProduct,
-  NO_BUYER_RESTRICTIONS,
+  noBuyerRestrictions,
+  PORTAL_PARENT_SELECT,
 } from "./buyer-product-visibility";
 import { sellableProductWhere } from "../products/sellable-product-where";
 
+// B1211: the tenant is part of every buyer visibility context.
+const CTX = noBuyerRestrictions("t-1");
+
 const BASE = [
-  { AND: [{ isActive: true }, { kind: { not: "FAMILY" } }] },
+  {
+    AND: [
+      { isActive: true },
+      { kind: { not: "FAMILY" } },
+      { OR: [{ parentProductId: null }, { parent: { isActive: true, tenantId: "t-1" } }] },
+    ],
+  },
   { portalVisible: true },
-  { OR: [{ parentProductId: null }, { parent: { portalVisible: true } }] },
+  { OR: [{ parentProductId: null }, { parent: { portalVisible: true, tenantId: "t-1" } }] },
 ];
 
 describe("buyerVisibleProductWhere", () => {
   it("is sellable (active, not a FAMILY) AND portal-visible AND (standalone OR visible parent)", () => {
-    expect(buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS)).toEqual({ AND: BASE });
+    expect(buyerVisibleProductWhere(CTX)).toEqual({ AND: BASE });
   });
 
   it("composes the ONE sellable builder, not a copy", () => {
-    const w = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS) as { AND: unknown[] };
-    expect(w.AND[0]).toEqual(sellableProductWhere());
+    const w = buyerVisibleProductWhere(CTX) as { AND: unknown[] };
+    expect(w.AND[0]).toEqual(sellableProductWhere(undefined, "t-1"));
   });
 
   it("excludes the buyer's blocked ids; an empty set adds no clause (switch off)", () => {
-    const w = buyerVisibleProductWhere({ restrictedIds: new Set(["b1", "b2"]) }) as {
+    const w = buyerVisibleProductWhere({
+      restrictedIds: new Set(["b1", "b2"]),
+      tenantId: "t-1",
+    }) as {
       AND: unknown[];
     };
     expect(w.AND).toContainEqual({ id: { notIn: ["b1", "b2"] } });
-    expect(buyerVisibleProductWhere({ restrictedIds: new Set() })).toEqual({ AND: BASE });
+    expect(buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" })).toEqual({
+      AND: BASE,
+    });
   });
 
   it("AND-merges extra as its own trailing clause", () => {
-    expect(buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { category: "Drinks" })).toEqual({
+    expect(buyerVisibleProductWhere(CTX, { category: "Drinks" })).toEqual({
       AND: [...BASE, { category: "Drinks" }],
     });
   });
 
   it("extra can never override portalVisible/isActive (nested, not spread)", () => {
-    const w = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, {
+    const w = buyerVisibleProductWhere(CTX, {
       portalVisible: false,
       isActive: false,
     }) as { AND: unknown[] };
@@ -49,19 +64,49 @@ describe("buyerVisibleProductWhere", () => {
     expect(w.AND[3]).toEqual({ portalVisible: false, isActive: false });
   });
 
-  it("B1211: with a tenant id the parent-visibility filter also requires the parent to be in that tenant; without one it is unchanged", () => {
+  it("B1211: the parent-visibility filter requires the parent to be in the context tenant", () => {
     const scoped = buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" }) as {
       AND: unknown[];
     };
     expect(scoped.AND[2]).toEqual({
       OR: [{ parentProductId: null }, { parent: { portalVisible: true, tenantId: "t-1" } }],
     });
-    expect(buyerVisibleProductWhere({ restrictedIds: new Set() })).toEqual({ AND: BASE });
+    expect(buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" })).toEqual({
+      AND: BASE,
+    });
+  });
+
+  it("a tenant id also scopes the sellable clause's parent-active filter (cross-tenant parent)", () => {
+    const scoped = buyerVisibleProductWhere({ restrictedIds: new Set(), tenantId: "t-1" }) as {
+      AND: Array<{ AND?: unknown[] }>;
+    };
+    expect(scoped.AND[0].AND?.[2]).toEqual({
+      OR: [{ parentProductId: null }, { parent: { isActive: true, tenantId: "t-1" } }],
+    });
+  });
+
+  it("the loaded-parent select carries tenantId so the twin can judge it", () => {
+    expect(PORTAL_PARENT_SELECT).toMatchObject({ tenantId: true });
+  });
+
+  it("the twin refuses a variant whose active, visible parent belongs to another tenant", () => {
+    const v = {
+      id: "v1",
+      isActive: true,
+      kind: "VARIANT",
+      portalVisible: true,
+      parent: { portalVisible: true, isActive: true, tenantId: "t-2" },
+    };
+    const ctx = { restrictedIds: new Set<string>(), tenantId: "t-1" };
+    expect(isBuyerVisibleProduct(ctx, v)).toBe(false);
+    expect(isBuyerVisibleProduct(ctx, { ...v, parent: { ...v.parent, tenantId: "t-1" } })).toBe(
+      true,
+    );
   });
 
   it("id helper is the builder with { id }", () => {
-    expect(buyerVisibleProductByIdWhere(NO_BUYER_RESTRICTIONS, "p1")).toEqual(
-      buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: "p1" }),
+    expect(buyerVisibleProductByIdWhere(CTX, "p1")).toEqual(
+      buyerVisibleProductWhere(CTX, { id: "p1" }),
     );
   });
 });
@@ -72,29 +117,43 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
     isActive: true,
     kind: "STANDARD",
     portalVisible: true,
-    parent: null as { portalVisible: boolean } | null,
+    parent: null as { portalVisible: boolean; isActive: boolean; tenantId: string | null } | null,
   };
 
   it("visible only when sellable, not hidden, parent not hidden, not blocked", () => {
-    expect(isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, row)).toBe(true);
-    expect(isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, isActive: false })).toBe(false);
-    expect(isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, portalVisible: false })).toBe(
-      false,
-    );
+    expect(isBuyerVisibleProduct(CTX, row)).toBe(true);
+    expect(isBuyerVisibleProduct(CTX, { ...row, isActive: false })).toBe(false);
+    expect(isBuyerVisibleProduct(CTX, { ...row, portalVisible: false })).toBe(false);
     expect(
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, parent: { portalVisible: false } }),
+      isBuyerVisibleProduct(CTX, {
+        ...row,
+        parent: { portalVisible: false, isActive: true, tenantId: "t-1" },
+      }),
     ).toBe(false);
     expect(
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, parent: { portalVisible: true } }),
+      isBuyerVisibleProduct(CTX, {
+        ...row,
+        parent: { portalVisible: true, isActive: true, tenantId: "t-1" },
+      }),
     ).toBe(true);
   });
 
+  it("a variant under an INACTIVE parent family is not visible to a buyer (B1213)", () => {
+    expect(
+      isBuyerVisibleProduct(CTX, {
+        ...row,
+        kind: "VARIANT",
+        parent: { portalVisible: true, isActive: false, tenantId: "t-1" },
+      }),
+    ).toBe(false);
+  });
+
   it("a FAMILY container is never visible", () => {
-    expect(isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...row, kind: "FAMILY" })).toBe(false);
+    expect(isBuyerVisibleProduct(CTX, { ...row, kind: "FAMILY" })).toBe(false);
   });
 
   it("a blocked id is not visible", () => {
-    expect(isBuyerVisibleProduct({ restrictedIds: new Set(["p1"]) }, row)).toBe(false);
+    expect(isBuyerVisibleProduct({ ...CTX, restrictedIds: new Set(["p1"]) }, row)).toBe(false);
   });
 
   it("every field is REQUIRED: a partial select is a compile error, not a silently visible product", () => {
@@ -104,11 +163,11 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
       const noKind = { id: "p", isActive: true, portalVisible: true, parent: null };
       const noParent = { id: "p", isActive: true, kind: "STANDARD", portalVisible: true };
       // @ts-expect-error portalVisible missing: used to count as visible (fail-open)
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noFlag);
+      isBuyerVisibleProduct(CTX, noFlag);
       // @ts-expect-error kind missing
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noKind);
+      isBuyerVisibleProduct(CTX, noKind);
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, noParent);
+      isBuyerVisibleProduct(CTX, noParent);
     };
     expect(typeof compileOnly).toBe("function");
   });
@@ -124,7 +183,12 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
     parent: null,
   };
   const hidden = { ...ok, id: "h", name: "Hidden One", portalVisible: false };
-  const underHidden = { ...ok, id: "v", name: "Variant Two", parent: { portalVisible: false } };
+  const underHidden = {
+    ...ok,
+    id: "v",
+    name: "Variant Two",
+    parent: { portalVisible: false, isActive: true, tenantId: "t-1" },
+  };
   const family = { ...ok, id: "f", name: "Family", kind: "FAMILY" };
   const bodyOf = (fn: () => void) => {
     try {
@@ -148,21 +212,23 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
         portalVisible: true,
       };
       // @ts-expect-error portalVisible missing
-      assertBuyerMayOrder([noFlag], new Set());
+      assertBuyerMayOrder([noFlag], new Set(), "t-1");
       // @ts-expect-error kind missing
-      assertBuyerMayOrder([noKind], new Set());
+      assertBuyerMayOrder([noKind], new Set(), "t-1");
       // @ts-expect-error parent missing (null = standalone must be explicit)
-      assertBuyerMayOrder([noParent], new Set());
+      assertBuyerMayOrder([noParent], new Set(), "t-1");
     };
     expect(typeof compileOnly).toBe("function");
   });
 
   it("a visible product passes", () => {
-    expect(() => assertBuyerMayOrder([ok], new Set())).not.toThrow();
+    expect(() => assertBuyerMayOrder([ok], new Set(), "t-1")).not.toThrow();
   });
 
   it("names EVERY new hidden product in the existing buyer envelope, with reason only HIDDEN_FROM_PORTAL", () => {
-    const body = bodyOf(() => assertBuyerMayOrder([ok, hidden, underHidden, family], new Set()));
+    const body = bodyOf(() =>
+      assertBuyerMayOrder([ok, hidden, underHidden, family], new Set(), "t-1"),
+    );
     expect(body).toMatchObject({ code: "SELLING_RESTRICTED" });
     expect(body!.blockedLines).toEqual([
       { productId: "h", productName: "Hidden One", reason: "HIDDEN_FROM_PORTAL" },
@@ -178,17 +244,33 @@ describe("assertBuyerMayOrder (WS6 refusal: 409 SELLING_RESTRICTED, reason HIDDE
     ]);
   });
 
+  it("a variant whose parent family is inactive is refused like a hidden one (B1213)", () => {
+    const orphan = {
+      ...ok,
+      id: "o2",
+      name: "Orphan Variant",
+      kind: "VARIANT",
+      parent: { portalVisible: true, isActive: false, tenantId: "t-1" },
+    };
+    const body = bodyOf(() => assertBuyerMayOrder([orphan], new Set(), "t-1"));
+    expect(body!.blockedLines).toEqual([
+      { productId: "o2", productName: "Orphan Variant", reason: "HIDDEN_FROM_PORTAL" },
+    ]);
+  });
+
   it("is a 409 ConflictException, not a 400", () => {
-    expect(() => assertBuyerMayOrder([hidden], new Set())).toThrow(ConflictException);
+    expect(() => assertBuyerMayOrder([hidden], new Set(), "t-1")).toThrow(ConflictException);
   });
 
   it("a line the order already holds can be echoed (replace-all keeps held hidden lines)", () => {
-    expect(() => assertBuyerMayOrder([hidden, underHidden], new Set(["h", "v"]))).not.toThrow();
+    expect(() =>
+      assertBuyerMayOrder([hidden, underHidden], new Set(["h", "v"]), "t-1"),
+    ).not.toThrow();
   });
 
   it("archived products are not judged here (the archived 400 rules stay as they were)", () => {
     expect(() =>
-      assertBuyerMayOrder([{ ...ok, id: "a", isActive: false }], new Set()),
+      assertBuyerMayOrder([{ ...ok, id: "a", isActive: false }], new Set(), "t-1"),
     ).not.toThrow();
   });
 });

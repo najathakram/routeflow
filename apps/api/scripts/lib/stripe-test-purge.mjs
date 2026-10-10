@@ -133,7 +133,7 @@ export function confirmationCount(plan) {
 }
 
 const ALLOWED_FLAGS = new Set(["--apply", "--local", "--backup-taken", "--help", "-h"]);
-const VALUED_FLAGS = new Set(["--confirm", "--exclude-tenant"]);
+const VALUED_FLAGS = new Set(["--confirm", "--exclude-tenant", "--allow-protected"]);
 
 /** Strict argv parsing: an unknown flag is an error, never ignored (cf. #2284). */
 export function parseArgs(argv) {
@@ -144,6 +144,7 @@ export function parseArgs(argv) {
     help: false,
     confirm: null,
     excludeTenants: [],
+    allowProtected: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -151,7 +152,11 @@ export function parseArgs(argv) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith("--")) return { error: `${a} needs a value` };
       if (a === "--confirm") out.confirm = v;
-      else {
+      else if (a === "--allow-protected") {
+        // Row 195: one tenant id per flag (repeatable); each protected tenant it names still needs its
+        // own typed confirmation at a real terminal — never a bulk list.
+        if (!out.allowProtected.includes(v)) out.allowProtected.push(v);
+      } else {
         // --exclude-tenant a,b and repeated --exclude-tenant a --exclude-tenant b both work.
         const slugs = v.split(",").map((x) => x.trim());
         if (slugs.some((x) => !x)) return { error: `${a} has an empty slug` };

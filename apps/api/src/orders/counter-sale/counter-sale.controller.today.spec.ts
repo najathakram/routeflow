@@ -17,6 +17,7 @@ import { OrdersController } from "../orders.controller";
 import { CounterSaleController } from "./counter-sale.controller";
 import { CounterSaleService } from "./counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
+import { QuickKeysService } from "./quick-keys.service";
 import { PickupCompleteController } from "./pickup-complete.controller";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -92,6 +93,7 @@ describe("GET /orders/counter-sale/today over HTTP (test 6, roles and pipe)", ()
       providers: [
         { provide: CounterSaleService, useValue: {} },
         { provide: CounterSaleTodayService, useValue: todays },
+        { provide: QuickKeysService, useValue: {} },
       ],
     })
       .overrideGuard(JwtAuthGuard)

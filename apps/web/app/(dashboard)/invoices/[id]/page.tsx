@@ -94,6 +94,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { voidFailureDescription } from "@/lib/invoice-void-copy";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -1698,8 +1699,7 @@ export default function InvoiceDetailPage() {
         // it behind "Please try again" left the operator with no way forward.
         toast({
           title: "Couldn't void this invoice",
-          description:
-            err?.response?.data?.message ?? "Please try again, or check this invoice's payments.",
+          description: voidFailureDescription(err),
           variant: "error",
         });
       },

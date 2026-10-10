@@ -64,11 +64,13 @@ function QtyField({
   value,
   locked,
   onCommit,
+  onEnter,
 }: {
   label: string;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
+  onEnter?: () => void;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => {
@@ -93,6 +95,7 @@ function QtyField({
         if (e.key === "Enter") {
           e.preventDefault();
           commit();
+          onEnter?.();
         } else if (e.key === "Escape") {
           e.preventDefault();
           setDraft(null);
@@ -107,10 +110,12 @@ function LineQtyEditor({
   line,
   locked,
   onQty,
+  onEnter,
 }: {
   line: SaleLine;
   locked: boolean;
   onQty: (tempId: string, typed: TypedQty) => boolean;
+  onEnter?: () => void;
 }) {
   return isBoxedLine(line) ? (
     <span className="flex items-center gap-1">
@@ -119,12 +124,14 @@ function LineQtyEditor({
         value={line.boxes ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { boxes: t })}
+        onEnter={onEnter}
       />
       <QtyField
         label={`Pieces of ${line.name}`}
         value={line.pieces ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
+        onEnter={onEnter}
       />
     </span>
   ) : (
@@ -133,6 +140,7 @@ function LineQtyEditor({
       value={line.qty}
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
+      onEnter={onEnter}
     />
   );
 }
@@ -154,6 +162,7 @@ export function CounterLineRow({
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
+  onQtyEnter,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -169,6 +178,8 @@ export function CounterLineRow({
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
+  /** Enter on a typed quantity: the screen hands focus back to the scan field. */
+  onQtyEnter?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
   const hasNote = !!l.note?.trim();
@@ -201,7 +212,7 @@ export function CounterLineRow({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
-        <LineQtyEditor line={l} locked={locked} onQty={onQty} />
+        <LineQtyEditor line={l} locked={locked} onQty={onQty} onEnter={onQtyEnter} />
         <CounterLinePriceEdit
           canEditPrices={canEditPrices}
           name={l.name}

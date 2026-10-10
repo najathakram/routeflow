@@ -44,6 +44,14 @@ interface ImageRow {
   focalY: number | null;
 }
 
+/** The fake's code filter: an exact string, or `{ in: [...] }` (B1214: every equivalent spelling of a label). */
+function matchesCode(value: unknown, filter: unknown): boolean {
+  if (filter && typeof filter === "object" && "in" in (filter as object)) {
+    return (filter as { in: unknown[] }).in.includes(value);
+  }
+  return value === filter;
+}
+
 function makeTx(
   seed: { barcodes?: BarcodeRow[]; products?: ProductRow[]; images?: ImageRow[] } = {},
 ) {
@@ -76,7 +84,7 @@ function makeTx(
         const match = barcodeRows.find(
           (r) =>
             r.tenantId === where.tenantId &&
-            r.code === where.code &&
+            matchesCode(r.code, where.code) &&
             matchesIdFilter(r.productId, where.productId),
         );
         return Promise.resolve(match ? { productId: match.productId } : null);
@@ -115,7 +123,7 @@ function makeTx(
         const match = productRows.find(
           (r) =>
             r.tenantId === where.tenantId &&
-            r.barcode === where.barcode &&
+            matchesCode(r.barcode, where.barcode) &&
             matchesIdFilter(r.id, where.id),
         );
         return Promise.resolve(match ? { id: match.id } : null);

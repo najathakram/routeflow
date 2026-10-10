@@ -1624,7 +1624,7 @@ export class OrdersService implements OnApplicationBootstrap {
       catalogIds.length > 0
         ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
-    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
+    assertBuyerLines(user, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     assertSellableLines(products); // WS8: a FAMILY is never a line
@@ -3190,7 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany(portalGateArgs(productIds));
-          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
+          assertBuyerLines(user, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3605,7 +3605,7 @@ export class OrdersService implements OnApplicationBootstrap {
               addProductIds.length > 0
                 ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
-            assertBuyerLines(user?.role, addProducts);
+            assertBuyerLines(user, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —

@@ -310,6 +310,7 @@ describe("genericToastCopy: codes users rely on", () => {
         "INVOICE_TOTAL_BELOW_PAID",
         /total below what is already paid or credited.*change the lines or discount/,
       ],
+      ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);

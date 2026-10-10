@@ -83,7 +83,7 @@ export function profileErrorCopy(err: unknown, fallback: string): string {
     case API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN:
       return "That business profile does not exist.";
     case API_ERROR_CODES.BUSINESS_PROFILE_UNAVAILABLE:
-      return "That business profile is not available yet. In-store profiles open when counter sales launch.";
+      return "This business profile isn't available for this tenant.";
     case API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET: {
       const named = Array.isArray(body.missing)
         ? body.missing.filter((k): k is string =>

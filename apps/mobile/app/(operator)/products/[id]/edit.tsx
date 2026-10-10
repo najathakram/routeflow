@@ -18,6 +18,7 @@ import {
 import { showToast } from "../../../../lib/toast";
 import { productSaveErrorCopy } from "../../../../lib/product-save-error-copy";
 import { alertInfo, confirm } from "../../../../lib/confirm";
+import { getFamilyCascadePrompt } from "../../../../lib/product-family-cascade";
 import {
   getProductConflictRefusal,
   reactivationResolveLabel,
@@ -71,11 +72,20 @@ export default function EditProductScreen() {
     );
   }
 
-  const finalize = (payload: SubmitPayload, deactivateHolderIds?: string[]) => {
+  const finalize = (
+    payload: SubmitPayload,
+    deactivateHolderIds?: string[],
+    confirmCascade?: boolean,
+  ) => {
     if (!id) return;
     const { reorderPoint, reorderQty, ...productDto } = payload;
     mut.mutate(
-      { id, ...productDto, ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}) },
+      {
+        id,
+        ...productDto,
+        ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
+        ...(confirmCascade ? { confirmCascade: true } : {}),
+      },
       {
         onSuccess: () => {
           // Save reorder settings separately (PATCH /inventory/products/:id/reorder-settings)
@@ -86,6 +96,20 @@ export default function EditProductScreen() {
           router.back();
         },
         onError: (e: unknown) => {
+          // A family with active variants: ask once, then resend with confirmCascade (never auto-confirmed).
+          const cascade = getFamilyCascadePrompt(e);
+          if (cascade && !confirmCascade) {
+            confirm(
+              cascade.title,
+              cascade.body,
+              () => finalize(payload, deactivateHolderIds, true),
+              {
+                confirmText: cascade.confirmText,
+                destructive: true,
+              },
+            );
+            return;
+          }
           // Fixed copy only: the server message is never shown.
           // Resolve (deactivate holders) only for a reactivation; an ordinary edit's clash is info only.
           const refusal = getProductConflictRefusal(e, {

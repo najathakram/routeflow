@@ -53,12 +53,20 @@ export function getCounterLeaveRequest(): boolean {
   return leaveRequest !== null;
 }
 
-/** Discard: run the parked leave once. */
+let discardHook: (() => void) | null = null;
+
+/** The counter screen registers what "Discard" must clean up (its stored live cart); null on unmount. */
+export function setCounterDiscardHook(fn: (() => void) | null): void {
+  discardHook = fn;
+}
+
+/** Discard: drop the cart's stored copy, then run the parked leave once. */
 export function confirmCounterLeave(): void {
   const go = leaveRequest;
   if (!go) return;
   leaveRequest = null;
   listeners.forEach((fn) => fn());
+  discardHook?.(); // a left-behind stored cart would be restored next visit
   go();
 }
 

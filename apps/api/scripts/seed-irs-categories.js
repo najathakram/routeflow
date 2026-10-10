@@ -9,6 +9,8 @@
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { filterWritableTenants } = require("./lib/live-target-guard.cjs");
 
 const IRS = [
   ["ADVERTISING", "Advertising"],
@@ -34,9 +36,22 @@ const IRS = [
 ];
 
 (async () => {
+  // Row 195: never write a protected tenant (paying | stripe-linked | PROTECTED_TENANT_SLUGS).
+  // Loaded once, from the URL this script dials, before connecting.
+  const slugs = loadProtectedSlugs(process.env, process.env.DATABASE_URL);
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  const tenants = await prisma.tenant.findMany({ select: { id: true, slug: true } });
+  const allTenants = await prisma.tenant.findMany({
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
+  });
+  const subs = new Map(
+    (
+      await prisma.tenantSubscription.findMany({
+        select: { tenantId: true, planKey: true, stripeSubId: true },
+      })
+    ).map((s) => [s.tenantId, s]),
+  );
+  const { writable: tenants } = filterWritableTenants(allTenants, subs, slugs);
   let total = 0;
   for (const t of tenants) {
     const existing = await prisma.expenseCategory.findMany({
@@ -52,10 +67,10 @@ const IRS = [
     }));
     if (rows.length) {
       await prisma.expenseCategory.createMany({ data: rows, skipDuplicates: true });
-      console.log(`tenant ${t.slug}: inserted ${rows.length}`);
+      console.log(`tenant ${t.id}: inserted ${rows.length}`);
       total += rows.length;
     }
   }
-  console.log(`Done. Inserted ${total} category rows across ${tenants.length} tenants.`);
+  console.log(`Done. Inserted ${total} category rows across ${tenants.length} writable tenants.`);
   await prisma.$disconnect();
 })();

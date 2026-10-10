@@ -20,6 +20,8 @@ export function productSaveErrorCopy(err: unknown): string {
     case API_ERROR_CODES.FAMILY_ROWS_CONFLICT:
     case API_ERROR_CODES.FAMILY_NOT_FOUND:
       return "Some of those products changed. Reload and try again.";
+    case API_ERROR_CODES.VARIANT_PARENT_INACTIVE:
+      return "Turn the family back on first, then reactivate this variant.";
     default:
       return PRODUCT_SAVE_FALLBACK;
   }
