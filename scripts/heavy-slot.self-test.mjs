@@ -30,6 +30,8 @@ import {
   historyRecord,
   nextGrant,
   orderTickets,
+  holderOverCap,
+  parseMaxHoldMs,
   parseMaxWaitMs,
   parseSlots,
   pidAlive,
@@ -137,9 +139,23 @@ check(
   [1, 1, 2, 1, 1, 1, 1, 1],
 );
 check(
-  "P2 parseMaxWaitMs: default 120 min; fractions allowed; junk and negatives fall back",
+  "P2 parseMaxWaitMs: default 720 min (12 h backstop); fractions allowed; junk and negatives fall back",
   [undefined, "0.02", "5", "-1", "abc", ""].map(parseMaxWaitMs),
-  [7_200_000, 1200, 300_000, 7_200_000, 7_200_000, 7_200_000],
+  [43_200_000, 1200, 300_000, 43_200_000, 43_200_000, 43_200_000],
+);
+check(
+  "P2b parseMaxHoldMs: default 180 min; fractions allowed; junk and negatives fall back",
+  [undefined, "0.02", "5", "-1", "abc", ""].map(parseMaxHoldMs),
+  [10_800_000, 1200, 300_000, 10_800_000, 10_800_000, 10_800_000],
+);
+check(
+  "P2c holderOverCap: strictly longer than the cap; no holder is never over",
+  [
+    holderOverCap({ startedAt: 1000 }, 1000 + 500, 500),
+    holderOverCap({ startedAt: 1000 }, 1000 + 501, 500),
+    holderOverCap(undefined, 1e12, 500),
+  ],
+  [false, true, false],
 );
 check(
   "P3 resolveDir: RF_HEAVY_SLOT_DIR wins, else <home>/.routeflow/heavy-slot",
@@ -374,6 +390,101 @@ for (const [name, over] of [
       history(dir).length,
     ],
     [false, true, true, true, [], 0],
+  );
+}
+{
+  // A long queue behind a HEALTHY holder keeps waiting past the old 120 min total-wait point: the
+  // clock is injected (skewed by 130 min) so the proof is on the slot's own decision, not on time.
+  const dir = mkTmp();
+  ghost(dir, { startedAt: Date.now() - 60_000 });
+  let skew = 0;
+  const clock = () => Date.now() + skew;
+  let ran = false;
+  let err = null;
+  const waiter = withHeavySlot(
+    // default caps from env {}: 720 min total wait, 180 min hold. staleMs huge: the ghost has no
+    // heartbeat timer, and a 130 min skew would otherwise make it look dead.
+    { label: "patient", branch: "b", dir, env: {}, now: clock, staleMs: 1e12, ...FAST, ...NO_LOG },
+    async () => {
+      ran = true;
+    },
+  ).catch((e) => {
+    err = e;
+  });
+  await sleep(60);
+  skew = 130 * 60_000; // past the old 120 min cap; the holder is at ~131 min, under the 180 min hold cap
+  await sleep(100);
+  const stillWaiting =
+    !ran && err === null && existsSync(lockFile(dir)) && queued(dir).length === 1;
+  rmSync(lockFile(dir), { force: true }); // the healthy holder finishes
+  await waiter;
+  check(
+    "I5b a healthy holder under the hold cap: the waiter is still queued 130 min in, then gets the slot",
+    [stillWaiting, ran, err],
+    [true, true, null],
+  );
+}
+{
+  // A holder past the hold cap that is still heartbeating (wedged but alive) makes the waiter fail
+  // closed, naming the holder and its hold age; the holder's lock is left alone.
+  const dir = mkTmp();
+  ghost(dir, { startedAt: Date.now() - 200 * 60_000 });
+  let ran = false;
+  let err = null;
+  try {
+    await withHeavySlot(
+      { label: "impatient", branch: "b", dir, env: {}, ...FAST, ...NO_LOG },
+      async () => {
+        ran = true;
+      },
+    );
+  } catch (e) {
+    err = e;
+  }
+  check(
+    "I5c a holder over the hold cap (200 min > 180) fails the waiter closed: names the holder and its " +
+      "hold age, never runs fn, keeps the holder's lock, withdraws the ticket",
+    [
+      ran,
+      err instanceof HeavySlotTimeout,
+      (err?.message ?? "").includes("held by ghost on feat/ghost"),
+      /for 200\.\d min, over the 180\.00 min hold cap/.test(err?.message ?? ""),
+      existsSync(lockFile(dir)),
+      queued(dir),
+    ],
+    [false, true, true, true, true, []],
+  );
+  check(
+    "I5d status flags a holder over the hold cap, and only that one",
+    [
+      formatStatus(dir).includes("OVER HOLD CAP"),
+      formatStatus(dir, { maxHoldMs: 300 * 60_000 }).includes("OVER HOLD CAP"),
+    ],
+    [true, false],
+  );
+  // The env knob reaches the decision: a 1 s old holder is over a 0.0005 min (30 ms) cap.
+  const dir2 = mkTmp();
+  ghost(dir2, { startedAt: Date.now() - 1000 });
+  let err2 = null;
+  try {
+    await withHeavySlot(
+      {
+        label: "knob",
+        branch: "b",
+        dir: dir2,
+        env: { RF_HEAVY_SLOT_MAX_HOLD_MIN: "0.0005" },
+        ...FAST,
+        ...NO_LOG,
+      },
+      async () => {},
+    );
+  } catch (e) {
+    err2 = e;
+  }
+  check(
+    "I5e RF_HEAVY_SLOT_MAX_HOLD_MIN is honoured",
+    err2 instanceof HeavySlotTimeout && /hold cap/.test(err2.message),
+    true,
   );
 }
 {

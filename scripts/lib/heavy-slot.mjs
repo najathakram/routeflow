@@ -13,11 +13,13 @@
 // An entry is STALE when its pid is dead, its heartbeat is older than STALE_MS, or it was written by
 // another host; whoever sees a stale entry removes it. A hard kill therefore frees the slot ~2 min
 // later. Nested use (`heavy-slot run -- git push` -> pre-push -> verify) is a no-op through
-// RF_HEAVY_SLOT_TOKEN. The wait is capped; on expiry the caller FAILS CLOSED (nothing runs without
-// the slot, no test is skipped).
+// RF_HEAVY_SLOT_TOKEN. A waiter FAILS CLOSED (nothing runs without the slot, no test is skipped) in
+// two cases: the current holder has held the slot past MAX_HOLD while still heartbeating (wedged but
+// alive), or the total wait passed the long MAX_WAIT backstop. A queue of several healthy jobs is
+// NOT a reason to give up.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
-// 120), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
+// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
 // knobs: RF_HEAVY_SLOT_POLL_MS, RF_HEAVY_SLOT_HEARTBEAT_MS.
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
@@ -31,7 +33,8 @@ import path from "node:path";
 export const DEFAULT_SLOTS = 1;
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
-export const DEFAULT_MAX_WAIT_MIN = 120;
+export const DEFAULT_MAX_WAIT_MIN = 720;
+export const DEFAULT_MAX_HOLD_MIN = 180;
 export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
@@ -49,11 +52,25 @@ export function parseSlots(raw) {
     : DEFAULT_SLOTS;
 }
 
-/** RF_HEAVY_SLOT_MAX_WAIT_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 120 min. */
-export function parseMaxWaitMs(raw) {
+function parseMinutesMs(raw, fallbackMin) {
   const m = Number(raw);
   const ok = typeof raw === "string" && raw.trim() !== "" && Number.isFinite(m) && m >= 0;
-  return (ok ? m : DEFAULT_MAX_WAIT_MIN) * 60_000;
+  return (ok ? m : fallbackMin) * 60_000;
+}
+
+/** RF_HEAVY_SLOT_MAX_WAIT_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 720 min. */
+export function parseMaxWaitMs(raw) {
+  return parseMinutesMs(raw, DEFAULT_MAX_WAIT_MIN);
+}
+
+/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 180 min. */
+export function parseMaxHoldMs(raw) {
+  return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
+}
+
+/** A (live, heartbeating) holder that has held its slot longer than the hold cap. */
+export function holderOverCap(holder, now, maxHoldMs) {
+  return Boolean(holder) && now - holder.startedAt > maxHoldMs;
 }
 
 /** A positive-number env knob in ms (test-only timing knobs), else the default. */
@@ -343,6 +360,7 @@ function resolveConfig(opts, env) {
     dir: opts.dir ?? resolveDir(env),
     slots: opts.slots ?? parseSlots(env.RF_HEAVY_SLOTS),
     maxWaitMs: opts.maxWaitMs ?? parseMaxWaitMs(env.RF_HEAVY_SLOT_MAX_WAIT_MIN),
+    maxHoldMs: opts.maxHoldMs ?? parseMaxHoldMs(env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
@@ -443,6 +461,23 @@ async function acquire(cfg, state) {
           state.cleanup = null;
           return makeLease(cfg, lock, free);
         }
+      }
+      // Wedged but alive: every slot is held by a live holder past the hold cap, so waiting longer
+      // cannot end by itself. (A queue of healthy jobs under the cap keeps waiting.)
+      if (
+        free < 0 &&
+        snap.holders.length &&
+        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs))
+      ) {
+        const holder = snap.holders[0].entry;
+        throw new HeavySlotTimeout(
+          `heavy-slot: gave up waiting for a slot (position ${g.position} of ${g.total}); ` +
+            `held by ${describeHolder(holder)} for ${((now - holder.startedAt) / 60_000).toFixed(1)} min, ` +
+            `over the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min hold cap (RF_HEAVY_SLOT_MAX_HOLD_MIN) ` +
+            `while still heartbeating (wedged but alive?). Nothing was run. ` +
+            `Check \`node scripts/heavy-slot.mjs status\`, then retry.`,
+          holder,
+        );
       }
       if (now - queuedAt >= cfg.maxWaitMs) {
         const holder = snap.holders[0]?.entry;
@@ -593,7 +628,14 @@ export async function withHeavySlot(opts, fn) {
 const min = (ms) => (ms / 60_000).toFixed(1);
 
 /** Human-readable snapshot (read-only: stale entries are flagged, not removed). */
-export function formatStatus(dir, { now = Date.now(), hostname = os.hostname() } = {}) {
+export function formatStatus(
+  dir,
+  {
+    now = Date.now(),
+    hostname = os.hostname(),
+    maxHoldMs = parseMaxHoldMs(process.env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+  } = {},
+) {
   const st = readState(dir, { now, hostname }, false);
   const out = [`heavy-slot dir: ${dir}`];
   if (!st.holders.length) out.push("holder: none (slot free)");
@@ -601,7 +643,10 @@ export function formatStatus(dir, { now = Date.now(), hostname = os.hostname() }
     const e = h.entry;
     out.push(
       `holder: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, ${min(now - e.startedAt)} min, ` +
-        `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})`,
+        `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})` +
+        (holderOverCap(e, now, maxHoldMs)
+          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; waiters will give up)`
+          : ""),
     );
   }
   if (!st.tickets.length) out.push("queue: empty");

@@ -21,8 +21,8 @@ Usage:
   node scripts/heavy-slot.mjs run --label <x> [--branch <b>] -- <command> [args...]
   node scripts/heavy-slot.mjs status
 
-Env: RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default 120),
-     RF_HEAVY_SLOT=off (run unguarded, loud warning), CI (no slot).
+Env: RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default 720),
+     RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180), RF_HEAVY_SLOT=off (run unguarded, loud warning), CI (no slot).
 `;
 
 /** { help } | { status } | { label, branch, cmd, args }; throws on bad usage. */

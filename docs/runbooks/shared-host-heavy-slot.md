@@ -29,13 +29,14 @@ on entry and once a minute. State lives in `~/.routeflow/heavy-slot/` (`slot-*.l
 
 ## Knobs
 
-| Env                                      | Default                   | Meaning                                                   |
-| ---------------------------------------- | ------------------------- | --------------------------------------------------------- |
-| `RF_HEAVY_SLOTS`                         | `1`                       | concurrent heavy jobs per host                            |
-| `RF_HEAVY_SLOT_MAX_WAIT_MIN`             | `120`                     | then **fail closed** (exit 75, holder named, nothing ran) |
-| `RF_HEAVY_SLOT_DIR`                      | `~/.routeflow/heavy-slot` | slot directory (never the git dir or tmpdir)              |
-| `RF_HEAVY_SLOT=off`                      | unset                     | run unguarded with a loud WARNING (owner/lead only)       |
-| `JEST_MAX_WORKERS`, `VERIFY_CONCURRENCY` | unset                     | explicit values always win over the budget below          |
+| Env                                      | Default                   | Meaning                                                                                                                                                           |
+| ---------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RF_HEAVY_SLOTS`                         | `1`                       | concurrent heavy jobs per host                                                                                                                                    |
+| `RF_HEAVY_SLOT_MAX_WAIT_MIN`             | `720`                     | total-wait backstop, then **fail closed** (exit 75, holder named, nothing ran)                                                                                    |
+| `RF_HEAVY_SLOT_MAX_HOLD_MIN`             | `180`                     | a waiter gives up (exit 75) when the current holder, still heartbeating, has held the slot longer than this (wedged but alive); `status` flags it `OVER HOLD CAP` |
+| `RF_HEAVY_SLOT_DIR`                      | `~/.routeflow/heavy-slot` | slot directory (never the git dir or tmpdir)                                                                                                                      |
+| `RF_HEAVY_SLOT=off`                      | unset                     | run unguarded with a loud WARNING (owner/lead only)                                                                                                               |
+| `JEST_MAX_WORKERS`, `VERIFY_CONCURRENCY` | unset                     | explicit values always win over the budget below                                                                                                                  |
 
 On a non-CI host with >= 24 GB and no `JEST_MAX_WORKERS`, verify budgets
 `max(2, floor(cpus × 0.75 / concurrency))` jest workers per task (14 cpus → 5) and prints one line.
