@@ -821,6 +821,70 @@ describe("OWNER RULING (money, tier 1): switching OFF a module the tenant PAYS f
   });
 });
 
+describe("SA-769: a COMP switch-off that fails never claims billing was (or could not be) stopped", () => {
+  const compTenant = (over: Parameters<typeof fakeTenant>[0] = {}) =>
+    fakeTenant({
+      comped: ["recurring_routes", "order_delivery", "driver_payments"],
+      modes: { fulfilment_model: "delivery" },
+      ...over,
+    });
+
+  it("the first comp disable fails: the message says it could not be switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "driver_payments" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    const body = err.getResponse();
+    expect(body).toMatchObject({
+      code: "BUSINESS_PROFILE_BILLING_FAILED",
+      featureKey: "driver_payments",
+      alreadyDisabled: [],
+    });
+    expect(body.message).toContain("At-door payment collection could not be switched off");
+    expect(body.message).not.toMatch(/billing/i);
+    expect(t.writes).toEqual([]);
+  });
+
+  it("a later comp disable fails: the earlier ones are named as switched off, with no billing wording", async () => {
+    const t = compTenant({ disableFails: "recurring_routes" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.alreadyDisabled).toEqual(["driver_payments", "order_delivery"]);
+    expect(body.message).toContain(
+      "Already switched off: At-door payment collection, Ad hoc order delivery.",
+    );
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("a mode failure after comp switch-offs: the partial-apply copy says add-ons were switched off, not that billing stopped", async () => {
+    const t = compTenant({ setFails: "fulfilment_model" });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    const body = err.getResponse();
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+    expect(body.message).toContain("failed after the add-ons were switched off");
+    expect(body.message).not.toMatch(/billing/i);
+  });
+
+  it("when a PAID add-on was stopped the billing wording stays (the existing contract)", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getResponse().message).toContain("Already switched off with billing stopped:");
+    expect(err.getResponse().message).toContain("failed after billing was stopped");
+  });
+});
+
 describe("SA MUST: a failure AFTER a successful billing disable returns the SAME coded 503", () => {
   it("disable ok, then set() rejects → 503 BUSINESS_PROFILE_BILLING_FAILED naming what was stopped and the failing step; a second confirm completes with NO further billing call", async () => {
     const t = fakeTenant({
