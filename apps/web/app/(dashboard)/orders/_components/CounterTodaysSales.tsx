@@ -21,6 +21,7 @@ import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
   formatSaleTime,
+  receiptCustomerName,
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
@@ -196,7 +197,10 @@ function Reprint({
             createdAt: row.createdAt,
             cashTendered: row.cashTendered,
             change: row.change,
-            customerName: row.isWalkIn ? null : row.customerName,
+            customerName: receiptCustomerName({
+              businessName: row.customerName,
+              isWalkIn: row.isWalkIn,
+            }),
             taxRatePercent: row.taxRatePercent,
             timezone,
           },

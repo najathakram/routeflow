@@ -65,11 +65,12 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
-import type { ReceiptBusinessProfile } from "@/lib/counter-receipt";
+import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -105,6 +106,8 @@ interface PickedCustomer {
   email?: string | null;
   pricingTier?: number | null;
   fulfillPath?: string | null;
+  /** the system walk-in customer record (a pick of it is still a walk-in on the receipt) */
+  isWalkIn?: boolean | null;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -270,6 +273,46 @@ export function CounterSaleScreen() {
   };
   const lineLocked = locked || salePosting || parkBusy;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
+  // One scan-focus owner (row 237): a digit typed while a NON-text control holds focus (a button, a checkbox, <body>)
+  // is a scan or the start of one, so it goes to the scan box instead of starting an Enter on "Add note" or a stray shortcut.
+  // Text fields, Ctrl/Meta/Alt combos and open dialogs are never redirected.
+  React.useEffect(() => {
+    if (receipt || locked) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      if (!/^[0-9]$/.test(e.key)) return; // digits only: letters are the g-then-x navigation shortcuts
+      const scanEl = scanRef.current;
+      if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      // a Radix Select / Menu typeahead owns the digits while its list or trigger holds focus
+      if (
+        document.activeElement?.closest(
+          '[role="listbox"],[role="menu"],[role="combobox"],[data-radix-popper-content-wrapper],[data-radix-select-viewport],[data-radix-menu-content]',
+        )
+      )
+        return;
+      scanEl.focus();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [receipt, locked]);
+  // Row 112: the sticky checkout bar floats over the page below md; the screen reserves its measured height at the bottom so
+  // the last cart line and the Cash/Card buttons can always scroll clear of it (the bar grows with an error or a change line).
+  const [barHeight, setBarHeight] = React.useState(0);
+  const barObserver = React.useRef<ResizeObserver | null>(null);
+  // A CALLBACK ref: the bar mounts after the gate's loading render and again after the receipt view, so the observer is
+  // attached whenever the element appears and torn down whenever it goes.
+  const barRef = React.useCallback((el: HTMLDivElement | null) => {
+    barObserver.current?.disconnect();
+    barObserver.current = null;
+    if (!el) return;
+    const measure = () => setBarHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    barObserver.current = new ResizeObserver(measure);
+    barObserver.current.observe(el);
+  }, []);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -797,7 +840,7 @@ export function CounterSaleScreen() {
           enteredTender={enteredTender}
           profile={settings}
           fallbackMethod={method}
-          customerName={customer?.businessName}
+          customerName={receiptCustomerName(customer)}
           headingRef={receiptHeadingRef}
         />
         <CounterReceiptActions
@@ -811,7 +854,8 @@ export function CounterSaleScreen() {
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl space-y-4 p-4"
+      className="mx-auto w-full max-w-5xl space-y-4 p-4 pb-[calc(1rem+var(--counter-bar-h,0px))] md:pb-4"
+      style={{ "--counter-bar-h": `${barHeight}px` } as React.CSSProperties}
       data-testid="counter-sale-screen"
       data-counter-screen
     >
@@ -1222,12 +1266,6 @@ export function CounterSaleScreen() {
             Print receipt automatically
           </label>
 
-          {error ? (
-            <p role="alert" className="text-sm text-red-700">
-              {error}
-            </p>
-          ) : null}
-
           {outcomeUnknown ? (
             <div
               role="alert"
@@ -1297,6 +1335,7 @@ export function CounterSaleScreen() {
           ) : null}
 
           <div
+            ref={barRef}
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
@@ -1316,6 +1355,13 @@ export function CounterSaleScreen() {
                 {amountDue(totals.total, tenderedNum) > 0
                   ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
                   : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+              </p>
+            ) : null}
+
+            {/* The payment / sale error lives in the bar: below the fold it was out of sight at 390px (row 238). */}
+            {error ? (
+              <p role="alert" className="text-sm text-red-700">
+                {error}
               </p>
             ) : null}
 

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
 import {
@@ -185,6 +186,194 @@ describe("CounterSaleScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("less than the total");
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
     expect(screen.queryByText(/less than the total/)).toBeNull();
+  });
+
+  it("row 238: the underpaid error renders INSIDE the sticky checkout bar, next to Complete (never off-screen below the fold)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("less than the total");
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(alert);
+    // and it sits before the actions, so the cashier reads why before the buttons
+    const actions = screen.getByTestId("counter-checkout-actions");
+    expect(alert.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe("row 112: the scroll area ends below the sticky bar", () => {
+    const realDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    let roCallbacks: Array<() => void> = [];
+    beforeEach(() => {
+      roCallbacks = [];
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 180 : 0;
+        },
+      });
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+        constructor(cb: () => void) {
+          roCallbacks.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      };
+    });
+    afterEach(() => {
+      if (realDescriptor)
+        Object.defineProperty(HTMLElement.prototype, "offsetHeight", realDescriptor);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+      delete (globalThis as unknown as Record<string, unknown>).ResizeObserver;
+    });
+
+    it("the screen reserves the bar's height at its bottom (below md), so line 2 and Cash/Card can scroll clear of it", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+    });
+
+    it("a cold load (gate loading first) still measures the bar once it mounts", async () => {
+      const loaded = gate;
+      gate = { ...loaded, loading: true };
+      const view = renderWithProviders(<CounterSaleScreen />);
+      expect(screen.getByTestId("counter-sale-loading")).toBeInTheDocument();
+      gate = loaded;
+      view.rerender(<CounterSaleScreen />);
+      const root = await screen.findByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+    });
+
+    it("follows the bar when it grows (an error appears in it)", async () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const root = screen.getByTestId("counter-sale-screen");
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).dataset.testid === "counter-checkout-bar" ? 232 : 0;
+        },
+      });
+      act(() => roCallbacks.forEach((cb) => cb()));
+      await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("232px"));
+    });
+  });
+
+  describe("row 237: one scan-focus owner", () => {
+    const addNoteBtn = () => screen.getByRole("button", { name: /Add a note to Cola/ });
+    const scanField = () => screen.getByLabelText("Scan or search items");
+
+    async function withCola() {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("012345678905");
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    }
+
+    it("Enter in the note saves it, closes the editor and hands focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      fireEvent.keyDown(note, { key: "Enter" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Clear note hands focus to the scan box (not <body>)", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "cold" } });
+      fireEvent.keyDown(screen.getByLabelText("Note for Cola"), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("button", { name: /Clear the note on Cola/ }));
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(document.body).not.toHaveFocus();
+    });
+
+    it("leaving the note field to nowhere (blur) saves it and returns focus to the scan box", async () => {
+      await withCola();
+      fireEvent.click(addNoteBtn());
+      const note = screen.getByLabelText("Note for Cola");
+      fireEvent.change(note, { target: { value: "cold" } });
+      note.focus();
+      note.blur();
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+    });
+
+    it("Tab out of the last quantity field goes to the scan box, not to Add note", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.change(qty, { target: { value: "2" } });
+      fireEvent.keyDown(qty, { key: "Tab" });
+      await waitFor(() => expect(scanField()).toHaveFocus());
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$5.00");
+    });
+
+    it("a plain Tab (no typed draft) is NOT hijacked: the default Tab proceeds", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      // fireEvent returns false when the handler called preventDefault
+      const notPrevented = fireEvent.keyDown(qty, { key: "Tab" });
+      expect(notPrevented).toBe(true);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
+    it("Shift+Tab out of the quantity field is left alone", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "Tab", shiftKey: true });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(scanField()).not.toHaveFocus();
+    });
+
+    it("a digit typed while a button holds focus goes to the scan box", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "5" });
+      expect(scanField()).toHaveFocus();
+    });
+
+    it("a digit is left alone while a listbox / menu / combobox typeahead holds focus", async () => {
+      await withCola();
+      for (const role of ["listbox", "menu", "combobox"]) {
+        const host = document.createElement("div");
+        host.setAttribute("role", role);
+        const item = document.createElement("div");
+        item.tabIndex = 0;
+        host.appendChild(item);
+        document.body.appendChild(host);
+        item.focus();
+        expect(item).toHaveFocus();
+        fireEvent.keyDown(item, { key: "5" });
+        expect(scanField()).not.toHaveFocus();
+        host.remove();
+      }
+    });
+
+    it("a letter is left alone (g-then-x navigation shortcuts keep working)", async () => {
+      await withCola();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "g" });
+      expect(addNoteBtn()).toHaveFocus();
+    });
+
+    it("typing in a text field, or with Ctrl, is never redirected", async () => {
+      await withCola();
+      const qty = screen.getByLabelText("Set quantity of Cola");
+      qty.focus();
+      fireEvent.keyDown(qty, { key: "5" });
+      expect(qty).toHaveFocus();
+      addNoteBtn().focus();
+      fireEvent.keyDown(addNoteBtn(), { key: "c", ctrlKey: true });
+      expect(addNoteBtn()).toHaveFocus();
+    });
   });
 
   it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
@@ -391,6 +580,23 @@ describe("CounterSaleScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
     fireEvent.click(screen.getByRole("button", { name: "Ship this order instead" }));
     expect(push).toHaveBeenCalledWith("/orders?action=new&ship=1&preselect=SHIP");
+  });
+
+  it.each([
+    ["the system walk-in record", { isWalkIn: true }, false],
+    ["a named customer", { isWalkIn: false }, true],
+  ])("receipt Customer line when %s was picked", async (_n, flag, shown) => {
+    customersFor = [{ id: "c1", businessName: "Walk-in customer", ...flag }];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "walk" } });
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in customer" }));
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await screen.findByTestId("counter-sale-receipt");
+    if (shown) expect(screen.getByTestId("receipt-customer")).toBeInTheDocument();
+    else expect(screen.queryByTestId("receipt-customer")).toBeNull();
   });
 
   it("a business with the counter off shows nothing to sell with", () => {

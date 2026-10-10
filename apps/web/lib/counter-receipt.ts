@@ -12,6 +12,7 @@ import type {
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
+import { priceUnitWord } from "@/lib/product-unit-label";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
@@ -26,6 +27,8 @@ export interface ReceiptLineInput {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** Row 298: the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent: no word. */
+  unit?: string | null;
   /** POS-3: the cashier's optional per-line note, printed under the line. */
   note?: string | null;
   /**
@@ -80,7 +83,10 @@ const isBoxed = (l: ReceiptLineInput) => (l.unitsPerBox ?? 0) > 1;
 
 function lineDetail(l: ReceiptLineInput): string {
   const price = formatReceiptMoney(l.unitPrice);
-  if (!isBoxed(l)) return `${l.qty} × ${price}`;
+  if (!isBoxed(l)) {
+    const unit = (l.unit ?? "").trim() ? ` / ${priceUnitWord(l.unit)}` : "";
+    return `${l.qty} × ${price}${unit}`;
+  }
   const boxes = l.boxes ?? 0;
   const pieces = l.pieces ?? 0;
   const parts = [`${boxes} box${boxes === 1 ? "" : "es"}`];
@@ -106,6 +112,17 @@ export function receiptHeader(profile: ReceiptBusinessProfile | null | undefined
     addressLines: [street, cityLine].filter(Boolean),
     phone: clean(profile?.phone) || null,
   };
+}
+
+/**
+ * The ONE rule for the receipt's customer name, shared by the live receipt and the reprint: nothing for no customer or
+ * the system walk-in record (`isWalkIn`), else the trimmed business name.
+ */
+export function receiptCustomerName(
+  customer: { businessName?: string | null; isWalkIn?: boolean | null } | null | undefined,
+): string | null {
+  if (!customer || customer.isWalkIn) return null;
+  return clean(customer.businessName) || null;
 }
 
 /** The footer as printed: trimmed; blank = none. (The server already stripped control characters.) */
@@ -238,12 +255,15 @@ export interface ReprintOrderLike {
       variantName?: string | null;
       parentProductId?: string | null;
       parent?: { name: string } | null;
+      unit?: string | null;
     } | null;
     qty: number;
     unitPrice: number;
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
+    /** The line note the cashier typed (OrderItem.notes). */
+    notes?: string | null;
     status?: string;
   }>;
 }
@@ -324,12 +344,13 @@ export function receiptModelFromOrder(input: {
         unitsPerBox: l.unitsPerBox == null ? undefined : num(l.unitsPerBox),
         boxes: l.boxes == null ? undefined : num(l.boxes),
         pieces: l.pieces == null ? undefined : num(l.pieces),
+        unit: l.product?.unit ?? null,
       };
       return {
         key: line.tempId,
         name: line.name,
         detail: lineDetail(line),
-        note: null,
+        note: clean(l.notes) || null,
         // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
         original: null,
         discount: 0,
