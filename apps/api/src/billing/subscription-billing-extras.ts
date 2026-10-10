@@ -14,8 +14,8 @@ import { StripeService } from "./stripe.service";
  * Stripe failure yields null for that field - the banner then says less, the view never throws.
  */
 
-/** Stripe invoice statuses that still owe money (mirrors payment-overdue.ts). */
-const OWED_STATUSES = new Set(["open", "uncollectible"]);
+/** Stripe invoice statuses that still owe money (mirrors payment-overdue.ts: open only; uncollectible is a write-off). */
+const OWED_STATUSES = new Set(["open"]);
 const INVOICE_TTL_MS = 60_000;
 const CARD_TTL_MS = 5 * 60_000;
 
