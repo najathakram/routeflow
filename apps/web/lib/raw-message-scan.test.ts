@@ -9,7 +9,7 @@ import ALLOWLIST from "./raw-message-allowlist.json";
  * `raw-message-allowlist.json`. A RATCHET: each file's count must EQUAL its entry (a new read anywhere fails, and removing a
  * read without lowering the entry fails too). There is NO hand-edited pending total (two PRs that each remove an entry used to
  * clash on it): the pending sum is DERIVED from the allowlist and checked against the scan. The PERMANENT entries are pinned
- * exactly (file + count); a PENDING entry must carry a bug-id (B###) reason, so the allowlist cannot grow silently.
+ * exactly (file + count); a PENDING entry must carry a tracked-id (B### or SA-###) reason, so the allowlist cannot grow silently.
  */
 const WEB = path.resolve(__dirname, "..");
 
@@ -60,10 +60,10 @@ describe("no raw server message in apps/web UI (B986 ratchet)", () => {
     expect(scanned).toBe(allowed);
   });
 
-  it("the allowlist cannot grow without a reason: every PENDING entry names its bug (B###)", () => {
+  it("the allowlist cannot grow without a reason: every PENDING entry names its tracked id (B### or SA-###)", () => {
     for (const [f, e] of Object.entries(allow))
       if (!e.permanent)
-        expect({ f, why: e.why }).toEqual({ f, why: expect.stringMatching(/^B\d{3}/) });
+        expect({ f, why: e.why }).toEqual({ f, why: expect.stringMatching(/^(B|SA-)\d{3}/) });
   });
 });
 
