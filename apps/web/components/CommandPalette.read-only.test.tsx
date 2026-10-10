@@ -30,41 +30,70 @@ beforeEach(() => mockPush.mockClear());
 afterEach(cleanup);
 
 describe("CommandPalette in a read-only workspace", () => {
+  const renderRO = (onClose = () => {}) =>
+    render(
+      <ReadOnlyGateProvider view={view("READ_ONLY")}>
+        <CommandPalette open onClose={onClose} />
+      </ReadOnlyGateProvider>,
+    );
+
+  // The rows use aria-disabled (not the disabled attribute) so they stay focusable and describable AND so the click
+  // handler really runs - these tests exercise the handler guards, deleting either one fails them.
   it.each(["New Order", "New counter sale", "New Invoice"])(
-    "%s is listed, disabled, and says why; selecting it goes nowhere",
+    "%s is listed, aria-disabled, says why; a CLICK goes nowhere and keeps the palette open",
     (label) => {
-      render(
-        <ReadOnlyGateProvider view={view("READ_ONLY")}>
-          <CommandPalette open onClose={() => {}} />
-        </ReadOnlyGateProvider>,
-      );
+      const onClose = jest.fn();
+      renderRO(onClose);
       const row = screen.getByText(label).closest("button")!;
-      expect(row).toBeDisabled();
+      expect(row).toHaveAttribute("aria-disabled", "true");
       expect(row).toHaveTextContent(LINE);
       fireEvent.click(row);
       expect(mockPush).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
     },
   );
 
-  it("navigation and non-write actions still work", () => {
-    render(
-      <ReadOnlyGateProvider view={view("READ_ONLY")}>
-        <CommandPalette open onClose={() => {}} />
-      </ReadOnlyGateProvider>,
-    );
+  it.each([
+    ["New Order", "new order"],
+    ["New counter sale", "counter sale"],
+    ["New Invoice", "new invoice"],
+  ])("%s: pressing ENTER on it goes nowhere and keeps the palette open", (_label, query) => {
+    const onClose = jest.fn();
+    renderRO(onClose);
+    const input = screen.getByPlaceholderText("palette.placeholder");
+    fireEvent.change(input, { target: { value: query } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("navigation and non-write actions still work (click and Enter)", () => {
+    const onClose = jest.fn();
+    renderRO(onClose);
     fireEvent.click(screen.getByText("Reports"));
+    expect(mockPush).toHaveBeenCalledWith("/finance/reports");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    mockPush.mockClear();
+    const input = screen.getByPlaceholderText("palette.placeholder");
+    fireEvent.change(input, { target: { value: "reports" } });
+    fireEvent.keyDown(input, { key: "Enter" });
     expect(mockPush).toHaveBeenCalledWith("/finance/reports");
   });
 
-  it("an ACTIVE workspace: the create actions work as before", () => {
+  it("an ACTIVE workspace: the create actions work as before (click and Enter)", () => {
     render(
       <ReadOnlyGateProvider view={view("ACTIVE")}>
         <CommandPalette open onClose={() => {}} />
       </ReadOnlyGateProvider>,
     );
     const row = screen.getByText("New Invoice").closest("button")!;
-    expect(row).toBeEnabled();
+    expect(row).not.toHaveAttribute("aria-disabled");
     fireEvent.click(row);
+    expect(mockPush).toHaveBeenCalledWith("/invoices/new");
+    mockPush.mockClear();
+    const input = screen.getByPlaceholderText("palette.placeholder");
+    fireEvent.change(input, { target: { value: "new invoice" } });
+    fireEvent.keyDown(input, { key: "Enter" });
     expect(mockPush).toHaveBeenCalledWith("/invoices/new");
   });
 });

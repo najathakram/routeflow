@@ -615,7 +615,6 @@ export function CommandPalette({ open, onClose }: Props) {
                   return (
                     <button
                       key={item.id}
-                      disabled={blocked}
                       aria-disabled={blocked || undefined}
                       onClick={() => {
                         if (blocked) return;
@@ -629,6 +628,7 @@ export function CommandPalette({ open, onClose }: Props) {
                       onMouseEnter={() => setActiveIndex(flatIndex)}
                       className={cn(
                         "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
+                        blocked && "cursor-not-allowed opacity-60",
                         isActive
                           ? "bg-[var(--primary-mist)] text-navy shadow-[inset_2.5px_0_0_var(--accent-strong)]"
                           : "text-navy/70 hover:bg-surface-raised",

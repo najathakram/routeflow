@@ -13,7 +13,7 @@ import * as path from "path";
  */
 const WEB = path.resolve(__dirname, "..");
 const LABEL =
-  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale)|Mark (cleared|bounced)/i;
+  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale)|Mark (cleared|bounced)|Apply Advance|Write Off/i;
 /** Elements that are controls (headings, paragraphs and spans that merely mention a label are not). */
 const CONTROL_TAGS = new Set(["Button", "button", "Link", "a", "WriteButton", "WriteLink"]);
 const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
@@ -21,8 +21,8 @@ const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
 /** file (posix, from apps/web) -> the exact label texts reviewed as intentionally NOT gated, with why. */
 const EXEMPT: Record<string, { labels: string[]; why: string }> = {
   "app/(dashboard)/invoices/[id]/page.tsx": {
-    labels: ["Mark Bounced", "Record Payment"],
-    why: "(1) the mark-bounced and record-payment MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record Payment trigger, a deliberately disabled button",
+    labels: ["Mark Bounced", "Record Payment", "Write Off"],
+    why: "(1) the mark-bounced, record-payment and write-off MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record Payment trigger, a deliberately disabled button",
   },
   "app/(dashboard)/bookkeeping/[transactionId]/page.tsx": {
     labels: ["Record Payment"],

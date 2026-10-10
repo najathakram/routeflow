@@ -2171,9 +2171,20 @@ export default function InvoiceDetailPage() {
                 // only mobile could. Same gate as Record Payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
-                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  ? [
+                      {
+                        label: "Apply Advance",
+                        onClick: () => setIsAdvanceOpen(true),
+                        disabled: readOnlyGate.readOnly,
+                      },
+                    ]
                   : []),
-                { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
+                {
+                  label: "Write Off",
+                  onClick: () => setIsWriteOffOpen(true),
+                  danger: true,
+                  disabled: readOnlyGate.readOnly,
+                },
               ]}
             />
           )}
