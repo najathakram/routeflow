@@ -6,11 +6,16 @@ import { SubscriptionBillingExtras } from "./subscription-billing-extras";
  * read yields null (the banner then simply has less to say), never a thrown view.
  */
 
-const SUB = {
+const SUB: any = {
   pastDueSince: new Date("2026-11-01T14:00:00Z"),
   pastDueInvoiceId: "in_1",
   stripeCustomerId: "cus_1",
-  stripeSubscriptionId: "sub_1",
+  // The REAL column name (platform.prisma: `stripeSubId`), alongside the other columns a real row carries.
+  stripeSubId: "sub_1",
+  cancelAtPeriodEnd: false,
+  failedPaymentCount: 1,
+  cancelAtPeriodEnd: false,
+  failedPaymentCount: 1,
   periodEnd: new Date("2026-12-01T00:00:00Z"),
 };
 
@@ -23,9 +28,14 @@ function make(
     cardError?: boolean;
     preview?: any;
     configured?: boolean;
+    zone?: string | null;
   } = {},
 ) {
   const prisma = {
+    getTenantId: () => null,
+    tenantConfig: {
+      findUnique: jest.fn().mockResolvedValue({ timezone: over.zone ?? null }),
+    },
     user: {
       findFirst: jest
         .fn()
@@ -124,7 +134,18 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
       expMonth: 10,
       expYear: 2026,
     });
-    expect(out.nextCharge).toEqual({ amount: 149, date: "2026-12-01T00:00:00.000Z" });
+    expect(out.nextCharge).toEqual({
+      amount: 149,
+      date: "2026-12-01T00:00:00.000Z",
+      dateLabel: "Dec 1",
+    });
+  });
+
+  it("S1: nextCharge renders for a real-shaped row (the column is stripeSubId, not stripeSubscriptionId)", async () => {
+    const { extras, stripe } = make();
+    const out = await extras.read("t1", { ...SUB, pastDueInvoiceId: null, pastDueSince: null });
+    expect(stripe.previewNextInvoice).toHaveBeenCalledWith("sub_1");
+    expect(out.nextCharge?.amount).toBe(149);
   });
 
   it("a tenant with no Stripe customer has no card and no next charge, and Stripe is not asked", async () => {
@@ -132,7 +153,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     const out = await extras.read("t1", {
       ...SUB,
       stripeCustomerId: null,
-      stripeSubscriptionId: null,
+      stripeSubId: null,
     });
     expect(out.paymentMethodSummary).toBeNull();
     expect(out.nextCharge).toBeNull();
@@ -173,5 +194,168 @@ describe("SubscriptionBillingExtras.hostedInvoiceUrl (the admin's Pay link)", ()
   it("is null when Stripe fails or the invoice has no hosted page", async () => {
     expect(await make({ factsError: true }).extras.hostedInvoiceUrl("in_1")).toBeNull();
     expect(await make().extras.hostedInvoiceUrl("in_1")).toBeNull();
+  });
+});
+
+describe("SubscriptionBillingExtras labels (S4: the TENANT zone, never the browser's)", () => {
+  // Nov 1 2026 03:00Z is Oct 31 22:00 in Chicago (CDT) but Nov 1 in UTC: the month the invoice is "for" differs.
+  const edge = { ...SUB, pastDueSince: new Date("2026-11-01T03:00:00Z") };
+
+  it("America/Chicago: the failed charge was Oct 31 local, so the month is October and grace ends Nov 7", async () => {
+    const { extras } = make({ zone: "America/Chicago" });
+    const out = await extras.read("t1", edge);
+    expect(out.pastDueMonthLabel).toBe("October");
+    expect(out.graceEndsLabel).toBe("Nov 7");
+  });
+
+  it("no zone configured: falls back to UTC (Nov 1 -> November, Nov 8)", async () => {
+    const { extras } = make({ zone: null });
+    const out = await extras.read("t1", edge);
+    expect(out.pastDueMonthLabel).toBe("November");
+    expect(out.graceEndsLabel).toBe("Nov 8");
+  });
+
+  it("the next-charge date label is the renewal date in the tenant zone", async () => {
+    const { extras } = make({ zone: "America/Chicago" });
+    const out = await extras.read("t1", {
+      ...SUB,
+      pastDueInvoiceId: null,
+      pastDueSince: null,
+      periodEnd: new Date("2026-12-01T03:00:00Z"),
+    });
+    expect(out.nextCharge?.dateLabel).toBe("Nov 30");
+  });
+
+  it("nothing owed: no month / deadline labels", async () => {
+    const { extras } = make();
+    const out = await extras.read("t1", { ...SUB, pastDueInvoiceId: null, pastDueSince: null });
+    expect(out.pastDueMonthLabel).toBeNull();
+    expect(out.graceEndsLabel).toBeNull();
+  });
+});
+
+describe("SubscriptionBillingExtras.hostedInvoiceUrl owed check (S2)", () => {
+  const paid = {
+    status: "paid",
+    amountDue: 14900,
+    amountPaid: 14900,
+    hostedInvoiceUrl: "https://x/i",
+  };
+  const zero = {
+    status: "open",
+    amountDue: 0,
+    amountPaid: 0,
+    amountRemaining: 0,
+    hostedInvoiceUrl: "https://x/i",
+  };
+
+  it("is null for an invoice that is no longer owed (paid, void, or nothing remaining)", async () => {
+    expect(await make({ facts: paid }).extras.hostedInvoiceUrl("in_1")).toBeNull();
+    expect(
+      await make({ facts: { ...paid, status: "void" } }).extras.hostedInvoiceUrl("in_1"),
+    ).toBeNull();
+    expect(await make({ facts: zero }).extras.hostedInvoiceUrl("in_1")).toBeNull();
+  });
+
+  it("an uncollectible write-off is not owed either (B3's single predicate)", async () => {
+    const { extras } = make({
+      facts: {
+        status: "uncollectible",
+        amountDue: 100,
+        amountPaid: 0,
+        hostedInvoiceUrl: "https://x/i",
+      },
+    });
+    expect(await extras.hostedInvoiceUrl("in_1")).toBeNull();
+  });
+
+  it("a Stripe call that hangs is cut off (no unbounded wait on the portal route)", async () => {
+    jest.useFakeTimers();
+    try {
+      const { extras, stripe } = make();
+      stripe.getInvoiceFacts = jest.fn(() => new Promise(() => undefined));
+      const pending = extras.hostedInvoiceUrl("in_1");
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(await pending).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe("SubscriptionBillingExtras labels (S4: the TENANT zone, never the browser)", () => {
+  // Nov 1 2026 03:00Z is Oct 31 22:00 in Chicago (CDT) but Nov 1 in UTC: the month the invoice is "for" differs.
+  const edge = { ...SUB, pastDueSince: new Date("2026-11-01T03:00:00Z") };
+
+  it("America/Chicago: the failed charge was Oct 31 local, so the month is October and grace ends Nov 7", async () => {
+    const { extras } = make({ zone: "America/Chicago" });
+    const out = await extras.read("t1", edge);
+    expect(out.pastDueMonthLabel).toBe("October");
+    expect(out.graceEndsLabel).toBe("Nov 7");
+  });
+
+  it("no zone configured: falls back to UTC (Nov 1 -> November, Nov 8)", async () => {
+    const { extras } = make({ zone: null });
+    const out = await extras.read("t1", edge);
+    expect(out.pastDueMonthLabel).toBe("November");
+    expect(out.graceEndsLabel).toBe("Nov 8");
+  });
+
+  it("the next-charge date label is the renewal date in the tenant zone", async () => {
+    const { extras } = make({ zone: "America/Chicago" });
+    const out = await extras.read("t1", {
+      ...SUB,
+      pastDueInvoiceId: null,
+      pastDueSince: null,
+      periodEnd: new Date("2026-12-01T03:00:00Z"),
+    });
+    expect(out.nextCharge?.dateLabel).toBe("Nov 30");
+  });
+
+  it("nothing owed: no month or deadline labels", async () => {
+    const { extras } = make();
+    const out = await extras.read("t1", { ...SUB, pastDueInvoiceId: null, pastDueSince: null });
+    expect(out.pastDueMonthLabel).toBeNull();
+    expect(out.graceEndsLabel).toBeNull();
+  });
+});
+
+describe("SubscriptionBillingExtras.hostedInvoiceUrl owed check (S2)", () => {
+  const url = "https://x.example/i";
+  const paid = { status: "paid", amountDue: 14900, amountPaid: 14900, hostedInvoiceUrl: url };
+  const zero = {
+    status: "open",
+    amountDue: 0,
+    amountPaid: 0,
+    amountRemaining: 0,
+    hostedInvoiceUrl: url,
+  };
+
+  it("is null for an invoice that is no longer owed (paid, void, or nothing remaining)", async () => {
+    expect(await make({ facts: paid }).extras.hostedInvoiceUrl("in_1")).toBeNull();
+    expect(
+      await make({ facts: { ...paid, status: "void" } }).extras.hostedInvoiceUrl("in_1"),
+    ).toBeNull();
+    expect(await make({ facts: zero }).extras.hostedInvoiceUrl("in_1")).toBeNull();
+  });
+
+  it("an uncollectible write-off is not owed either (B3's single predicate)", async () => {
+    const { extras } = make({
+      facts: { status: "uncollectible", amountDue: 100, amountPaid: 0, hostedInvoiceUrl: url },
+    });
+    expect(await extras.hostedInvoiceUrl("in_1")).toBeNull();
+  });
+
+  it("a Stripe call that hangs is cut off (no unbounded wait on the portal route)", async () => {
+    jest.useFakeTimers();
+    try {
+      const { extras, stripe } = make();
+      stripe.getInvoiceFacts = jest.fn(() => new Promise(() => undefined));
+      const pending = extras.hostedInvoiceUrl("in_1");
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(await pending).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

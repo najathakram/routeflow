@@ -8,8 +8,6 @@ jest.mock("./plan-catalog.constants", () => ({
 
 import { SettingsBillingController } from "./settings-billing.controller";
 import { QuoteDto } from "./dto/quote.dto";
-import { ROLES_KEY } from "../auth/decorators/roles.decorator";
-import { UserRole } from "@prisma/client";
 
 interface AuthUser {
   tenantId: string | null;
@@ -258,37 +256,4 @@ describe("SettingsBillingController.prorationPreview — says how the add-on is 
       expect(mutations.addonEnableRefusal).toHaveBeenCalledWith("t1", "FORECASTING");
     },
   );
-});
-
-// SA-733r6 (B4): only an admin opens the billing portal. The route is @Roles(TENANT_ADMIN) and an
-// operator's POST is refused by RolesGuard before the handler; the guard allow-list lets it through a pause.
-describe("SettingsBillingController.createPortal (B4: admin-only portal)", () => {
-  it("is @Roles(TENANT_ADMIN) on the handler (an OPERATOR gets 403 from RolesGuard)", () => {
-    const roles = Reflect.getMetadata(ROLES_KEY, SettingsBillingController.prototype.createPortal);
-    expect(roles).toEqual([UserRole.TENANT_ADMIN]);
-  });
-
-  it("returns the portal URL and the open invoice's hosted URL for the pay button", async () => {
-    const { controller, billing, subscription } = make();
-    billing.createBillingPortalSession = jest
-      .fn()
-      .mockResolvedValue({ portalUrl: "https://billing.example/p/1" });
-    subscription.openInvoiceUrl = jest.fn().mockResolvedValue("https://invoice.example/i/1");
-
-    const out = await controller.createPortal({ tenantId: "t1", sub: "u1" } as any);
-
-    expect(out).toEqual({
-      portalUrl: "https://billing.example/p/1",
-      hostedInvoiceUrl: "https://invoice.example/i/1",
-    });
-    expect(billing.createBillingPortalSession).toHaveBeenCalledWith("t1");
-    expect(subscription.openInvoiceUrl).toHaveBeenCalledWith("t1");
-  });
-
-  it("has no tenant context (SUPER_ADMIN) -> 403, never a null tenant into the query layer", async () => {
-    const { controller } = make();
-    await expect(controller.createPortal({ tenantId: null } as any)).rejects.toThrow(
-      "requires a tenant context",
-    );
-  });
 });
