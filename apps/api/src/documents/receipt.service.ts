@@ -15,6 +15,8 @@ import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RECEIPT_CHANNELS } from "./receipt-channels";
 import {
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT,
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY,
   RECEIPT_EMAIL_PER_ORDER_DEFAULT,
   RECEIPT_EMAIL_PER_ORDER_KEY,
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
@@ -33,6 +35,7 @@ const ORDER_ENTITY = "Order";
 const SETTING_KEYS = [
   RECEIPT_EMAIL_PER_ORDER_KEY,
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY,
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY,
   "settings.businessName",
   "settings.street",
   "settings.city",
@@ -78,6 +81,8 @@ export class ReceiptService {
     dto: SendReceiptDto,
     now: Date = new Date(),
   ): Promise<SendReceiptResponse> {
+    // the address as typed, trimmed: it is what is sent and logged. Only the cap's count key is normalised.
+    const to = dto.to.trim();
     const tenantId = this.prisma.getTenantId();
     // forTenant() is UNSCOPED without a tenant: refuse, like the Today's-sales read.
     if (!tenantId) throw new ForbiddenException("Receipts need a tenant-scoped session");
@@ -201,6 +206,27 @@ export class ReceiptService {
       );
     }
 
+    // per address: the same (trimmed, lower-cased) address in the tenant's day, ALL statuses, so a stranger's inbox cannot be flooded
+    // by changing the order or by retrying failures
+    const perAddressCap = resolveReceiptLimit(
+      settings[RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY],
+      RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT,
+    );
+    const sentToAddress = await db.emailDelivery.count({
+      where: {
+        tenantId,
+        kind: RECEIPT_KIND,
+        toAddress: { equals: to.toLowerCase(), mode: "insensitive" },
+        createdAt: { gte: dayStart },
+      },
+    });
+    if (sentToAddress >= perAddressCap) {
+      throw tooMany(
+        API_ERROR_CODES.RECEIPT_EMAIL_ADDRESS_LIMIT,
+        "This address has reached today's receipt limit",
+      );
+    }
+
     const payments: ReceiptPaymentInput[] = order.invoices.flatMap((i) =>
       i.payments.map((p) => ({
         invoiceId: i.id,
@@ -223,7 +249,7 @@ export class ReceiptService {
       await RECEIPT_CHANNELS[dto.channel](
         { email: this.email },
         {
-          to: dto.to,
+          to,
           subject,
           html,
           text,
@@ -240,6 +266,6 @@ export class ReceiptService {
         message: "The receipt could not be sent",
       });
     }
-    return { channel: dto.channel, to: dto.to };
+    return { channel: dto.channel, to };
   }
 }

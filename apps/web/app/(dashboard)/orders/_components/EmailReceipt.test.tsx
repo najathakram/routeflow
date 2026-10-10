@@ -312,6 +312,27 @@ describe("Email receipt: failures", () => {
     expect(screen.queryByRole("button", { name: /Send|Try again/ })).toBeNull();
   });
 
+  it("the per-address cap: its copy, Send is off for THIS address, and a different address can be sent in one press", async () => {
+    const user = userEvent.setup();
+    post.mockRejectedValueOnce(refuse(API_ERROR_CODES.RECEIPT_EMAIL_ADDRESS_LIMIT));
+    renderWithProviders(<Harness prefill="buyer@example.com" />);
+    openRow();
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This address reached today's receipt limit.",
+    );
+    expect(sendButton()).toBeDisabled(); // the same address would be refused again
+    expect(field()).not.toHaveAttribute("readonly"); // but the cashier may type another
+    fireEvent.submit(field().closest("form")!);
+    expect(post).toHaveBeenCalledTimes(1);
+    await user.clear(field());
+    await user.type(field(), "other@example.com");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(sendButton());
+    expect(await screen.findByText("Sent to other@example.com.")).toBeInTheDocument();
+    expect(post.mock.calls[1][1]).toEqual({ channel: "email", to: "other@example.com" });
+  });
+
   it("a limit stays after the row is closed and reopened (it is about the order, not the attempt)", async () => {
     post.mockRejectedValueOnce(refuse(API_ERROR_CODES.RECEIPT_EMAIL_ORDER_LIMIT));
     renderWithProviders(<Harness prefill="buyer@example.com" />);

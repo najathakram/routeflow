@@ -124,7 +124,11 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("remittance.config", "/settings?tab=remittance"),
   cfg("pricing.tierLabels", "/settings"),
   // Receipt email limits (SA-751r change 4): read with their defaults (3 per order, 100 per tenant per day); no editor yet.
-  ...["receipts.email.perOrder", "receipts.email.perTenantPerDay"].map((key): SettingRow => ({
+  ...[
+    "receipts.email.perOrder",
+    "receipts.email.perTenantPerDay",
+    "receipts.email.perAddressPerDay",
+  ].map((key): SettingRow => ({
     key,
     home: "systemConfig",
     kind: "config",

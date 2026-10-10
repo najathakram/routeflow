@@ -4,11 +4,14 @@
  */
 export const RECEIPT_EMAIL_PER_ORDER_KEY = "receipts.email.perOrder";
 export const RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY = "receipts.email.perTenantPerDay";
+export const RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY = "receipts.email.perAddressPerDay";
 
 /** How many times one order's receipt may be emailed. */
 export const RECEIPT_EMAIL_PER_ORDER_DEFAULT = 3;
 /** How many receipt emails a tenant may send in its own calendar day. */
 export const RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT = 100;
+/** How many receipt emails one address may get from a tenant in the tenant's day (any order, any status): a stranger's inbox cannot be flooded. */
+export const RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT = 5;
 
 /** A cap above this is not a limit anyone meant; it reads as unusable and falls back to the default. */
 const MAX_LIMIT = 100_000;

@@ -77,7 +77,14 @@ export function useEmailReceipt({ orderId, prefill }: { orderId: string; prefill
   }, []);
 
   const send = React.useCallback(async () => {
-    if (sendingRef.current || !valid || !online || isFinalReceiptEmailPhase(phase)) return;
+    if (
+      sendingRef.current ||
+      !valid ||
+      !online ||
+      phase === "addressLimit" ||
+      isFinalReceiptEmailPhase(phase)
+    )
+      return;
     const to = trimmed;
     sendingRef.current = true;
     setPhase("sending");
@@ -97,7 +104,7 @@ export function useEmailReceipt({ orderId, prefill }: { orderId: string; prefill
     setAddress(value);
     setEdited(true);
     // a new address is a new attempt: a sent / failed line about the old one no longer applies (a limit is about the order, so it stays)
-    setPhase((p) => (p === "sent" || p === "failed" ? "idle" : p));
+    setPhase((p) => (p === "sent" || p === "failed" || p === "addressLimit" ? "idle" : p));
   }, []);
 
   return {
@@ -111,6 +118,8 @@ export function useEmailReceipt({ orderId, prefill }: { orderId: string; prefill
     online,
     /** a limit, or a sale voided since the view opened, is final: no retry control is shown */
     atLimit: isFinalReceiptEmailPhase(phase),
+    /** the cap is on THIS address: Send stays off until the cashier types another */
+    addressCapped: phase === "addressLimit",
     buttonRef,
     inputRef,
     sendRef,

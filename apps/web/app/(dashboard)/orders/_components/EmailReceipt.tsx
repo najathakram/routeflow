@@ -98,7 +98,7 @@ export function EmailReceiptRow({ email: e }: { email: EmailReceiptState }) {
             ref={e.sendRef}
             type="submit"
             className={cn(BTN, "w-full sm:w-auto")}
-            disabled={!e.valid || sending || !e.online}
+            disabled={!e.valid || sending || !e.online || e.addressCapped}
           >
             {sending ? <Spinner /> : null}
             {sendLabel}
@@ -133,6 +133,11 @@ export function EmailReceiptRow({ email: e }: { email: EmailReceiptState }) {
       {e.phase === "dayLimit" ? (
         <p role="alert" className="text-sm text-red-700">
           {COPY.dayLimit}
+        </p>
+      ) : null}
+      {e.phase === "addressLimit" ? (
+        <p role="alert" className="text-sm text-red-700">
+          {COPY.addressLimit}
         </p>
       ) : null}
       {e.phase === "unavailable" ? (

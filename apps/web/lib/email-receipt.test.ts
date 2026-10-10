@@ -21,6 +21,7 @@ describe("RECEIPT_EMAIL_COPY (the UX brief's words, exactly)", () => {
     expect(RECEIPT_EMAIL_COPY.orderLimit).toBe("This receipt reached its email limit.");
     expect(RECEIPT_EMAIL_COPY.dayLimit).toBe("Today's email limit is reached. Print instead.");
     expect(RECEIPT_EMAIL_COPY.unavailable).toBe("This sale can't be emailed any more.");
+    expect(RECEIPT_EMAIL_COPY.addressLimit).toBe("This address reached today's receipt limit.");
     expect(RECEIPT_EMAIL_COPY.offline).toBe(
       "You're offline. Print it, or send it later from Today's sales.",
     );
@@ -78,6 +79,12 @@ describe("receiptEmailFailureOf (an error is told by its code, never its text)",
       "orderLimit",
     );
     expect(receiptEmailFailureOf(err(API_ERROR_CODES.RECEIPT_EMAIL_DAY_LIMIT))).toBe("dayLimit");
+  });
+  it("the per-address cap maps to its own phase, which is NOT final (another address still works)", () => {
+    expect(receiptEmailFailureOf(err(API_ERROR_CODES.RECEIPT_EMAIL_ADDRESS_LIMIT))).toBe(
+      "addressLimit",
+    );
+    expect(isFinalReceiptEmailPhase("addressLimit")).toBe(false);
   });
   it("a sale voided after the view opened (RECEIPT_NOT_AVAILABLE) is final: it can never be sent, so it is not a retryable failure", () => {
     expect(receiptEmailFailureOf(err(API_ERROR_CODES.RECEIPT_NOT_AVAILABLE, "x"))).toBe(

@@ -1,6 +1,8 @@
 import { ForbiddenException, HttpException, NotFoundException } from "@nestjs/common";
 import { ReceiptService } from "./receipt.service";
 import {
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT,
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY,
   RECEIPT_EMAIL_PER_ORDER_DEFAULT,
   RECEIPT_EMAIL_PER_ORDER_KEY,
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
@@ -34,6 +36,7 @@ function setup(opts: {
   order?: unknown;
   sentOnOrder?: number;
   sentToday?: number;
+  sentToAddress?: number;
   settings?: Record<string, string>;
   delivered?: boolean;
   timezone?: string | null;
@@ -53,10 +56,11 @@ function setup(opts: {
   prisma.systemConfig.findMany.mockResolvedValue(
     Object.entries(opts.settings ?? {}).map(([key, value]) => ({ key, value })),
   );
-  // order count first, then the day count (the service asks in that order)
+  // order count first, then the tenant's day count, then the address count (the service asks in that order)
   prisma.emailDelivery.count
     .mockResolvedValueOnce(opts.sentOnOrder ?? 0)
-    .mockResolvedValueOnce(opts.sentToday ?? 0);
+    .mockResolvedValueOnce(opts.sentToday ?? 0)
+    .mockResolvedValueOnce(opts.sentToAddress ?? 0);
   const email = {
     send: jest
       .fn()
@@ -135,7 +139,9 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     it("counts only this tenant's RECEIPT rows (both counts carry tenantId and kind)", async () => {
       const { prisma, send } = setup({});
       await send();
-      const [perOrder, perDay] = prisma.emailDelivery.count.mock.calls.map((c) => c[0].where);
+      const [perOrder, perDay, perAddress] = prisma.emailDelivery.count.mock.calls.map(
+        (c) => c[0].where,
+      );
       expect(perOrder).toMatchObject({
         tenantId: T,
         kind: "RECEIPT",
@@ -145,6 +151,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       });
       expect(perDay).toMatchObject({ tenantId: T, kind: "RECEIPT", status: "SENT" });
       expect(perDay.createdAt.gte).toBeInstanceOf(Date);
+      expect(perAddress).toMatchObject({ tenantId: T, kind: "RECEIPT" });
     });
   });
 
@@ -223,6 +230,80 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
         sentToday: RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
       });
       expect((await codeOf(send())).code.code).toBe("RECEIPT_EMAIL_ORDER_LIMIT");
+    });
+  });
+
+  describe("per-address daily cap (default 5)", () => {
+    it("the 5th receipt to one address in the day goes (4 already)", async () => {
+      const { email, send } = setup({
+        sentToAddress: RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT - 1,
+      });
+      await send();
+      expect(email.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("the 6th is a coded 429 RECEIPT_EMAIL_ADDRESS_LIMIT and nothing is sent", async () => {
+      const { email, send } = setup({ sentToAddress: RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT });
+      const { status, code } = await codeOf(send());
+      expect(status).toBe(429);
+      expect(code.code).toBe("RECEIPT_EMAIL_ADDRESS_LIMIT");
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it("a different address still goes when one address is at its cap (the count is per address)", async () => {
+      const { prisma, email, send } = setup({});
+      const counts: Record<string, number> = { "full@example.com": 5 };
+      prisma.emailDelivery.count.mockReset();
+      prisma.emailDelivery.count.mockImplementation(async (args: any) =>
+        args.where.toAddress ? (counts[args.where.toAddress.equals] ?? 0) : 0,
+      );
+      expect((await codeOf(send("full@example.com"))).code.code).toBe(
+        "RECEIPT_EMAIL_ADDRESS_LIMIT",
+      );
+      expect(email.send).not.toHaveBeenCalled();
+      await send("other@example.com");
+      expect(email.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("counts ALL statuses (a failed or queued attempt used the address too), this tenant's RECEIPT rows, from the tenant's day start", async () => {
+      const { prisma, send } = setup({});
+      await send("buyer@example.com");
+      const where = prisma.emailDelivery.count.mock.calls[2][0].where;
+      expect(where).not.toHaveProperty("status");
+      expect(where).toMatchObject({ tenantId: T, kind: "RECEIPT" });
+      expect((where.createdAt.gte as Date).toISOString()).toBe("2026-10-07T04:00:00.000Z");
+    });
+
+    it("the count key is the NORMALISED address (trim + lowercase, case-insensitive), the address sent and logged is the one typed (trimmed)", async () => {
+      const { prisma, email, service } = setup({});
+      await service.send("ord-1", { channel: "email", to: "  A.Buyer@Example.COM " }, NOW);
+      const where = prisma.emailDelivery.count.mock.calls[2][0].where;
+      expect(where.toAddress).toEqual({ equals: "a.buyer@example.com", mode: "insensitive" });
+      expect(email.send.mock.calls[0][0].to).toBe("A.Buyer@Example.COM");
+    });
+
+    it("reads the cap from receipts.email.perAddressPerDay, and an unusable value falls back to the default", async () => {
+      const a = setup({
+        sentToAddress: 2,
+        settings: { [RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY]: "2" },
+      });
+      expect((await codeOf(a.send())).code.code).toBe("RECEIPT_EMAIL_ADDRESS_LIMIT");
+      for (const raw of ["0", "-1", "abc", "2.5", ""]) {
+        const b = setup({
+          sentToAddress: 4,
+          settings: { [RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY]: raw },
+        });
+        await b.send();
+        expect(b.email.send).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it("is checked after the per-order and per-day limits", async () => {
+      const { send } = setup({
+        sentToday: RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
+        sentToAddress: RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_DEFAULT,
+      });
+      expect((await codeOf(send())).code.code).toBe("RECEIPT_EMAIL_DAY_LIMIT");
     });
   });
 

@@ -454,6 +454,8 @@ export const API_ERROR_CODES = {
   RECEIPT_EMAIL_ORDER_LIMIT: "RECEIPT_EMAIL_ORDER_LIMIT",
   /** 429 from POST /orders/:id/receipt: the tenant's receipt emails for today reached the per-day maximum (default 100). Final for the day. */
   RECEIPT_EMAIL_DAY_LIMIT: "RECEIPT_EMAIL_DAY_LIMIT",
+  /** 429 from POST /orders/:id/receipt: this address already received its per-day maximum of receipt emails from the tenant (default 5, counted across all statuses). Final for that address today; another address still works. */
+  RECEIPT_EMAIL_ADDRESS_LIMIT: "RECEIPT_EMAIL_ADDRESS_LIMIT",
   /** 502 from POST /orders/:id/receipt: the email did not go out (no transport, a rejected address, a provider error). Nothing counted; the cashier may try again. */
   RECEIPT_EMAIL_NOT_SENT: "RECEIPT_EMAIL_NOT_SENT",
   /** 409 from POST /orders/:id/receipt: the order is cancelled or has no live invoice (every one VOID / WRITTEN_OFF, or none), so there is no receipt to send. */

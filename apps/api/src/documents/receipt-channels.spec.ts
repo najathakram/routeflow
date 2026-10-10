@@ -1,5 +1,6 @@
 import { RECEIPT_CHANNELS, RECEIPT_CHANNEL_VALUES } from "./receipt-channels";
 import {
+  RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY,
   RECEIPT_EMAIL_PER_ORDER_KEY,
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY,
   resolveReceiptLimit,
@@ -49,6 +50,8 @@ describe("receipt email limits as settings (SA-751r change 4)", () => {
   it("the two keys are registered in the settings registry (no setting without a row)", () => {
     expect(shared.isRegisteredSettingKey(RECEIPT_EMAIL_PER_ORDER_KEY)).toBe(true);
     expect(shared.isRegisteredSettingKey(RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY)).toBe(true);
+    expect(shared.isRegisteredSettingKey(RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY)).toBe(true);
+    expect(RECEIPT_EMAIL_PER_ADDRESS_PER_DAY_KEY).toBe("receipts.email.perAddressPerDay");
     expect(RECEIPT_EMAIL_PER_ORDER_KEY).toBe("receipts.email.perOrder");
     expect(RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY).toBe("receipts.email.perTenantPerDay");
   });
