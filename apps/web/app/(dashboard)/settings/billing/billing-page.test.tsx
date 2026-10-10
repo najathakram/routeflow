@@ -27,6 +27,7 @@ let mockSubscriptionView: SubscriptionView;
 const mockCancelMutate = jest.fn();
 // WP9: mutable per-test fixture for useCreateCheckout, same pattern as mockCancelMutate.
 const mockCheckoutMutate = jest.fn();
+const mockPortalMutate = jest.fn();
 let mockCheckoutPending = false;
 // Add-on fixtures: the catalog the page lists, and the mutations/preview the confirm sheet drives.
 const mockEnableMutate = jest.fn();
@@ -52,6 +53,7 @@ jest.mock("@/lib/api/billing", () => ({
       ? mockProrationPreview
       : { data: undefined, isLoading: false, isFetching: false, isError: false },
   useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
+  useBillingPortal: () => ({ mutate: mockPortalMutate, isPending: false }),
 }));
 
 // Mutable per-test fixture, same pattern as `mockSubscriptionView` above: the real
@@ -1035,5 +1037,73 @@ describe("BillingSettingsPage — checkout errors", () => {
     expect(
       await screen.findByText("We couldn't start checkout. Nothing was changed. Please try again."),
     ).toBeInTheDocument();
+  });
+});
+
+// SA-733r6 (B4): the Billing card while an invoice is owed - Pay $X primary at the top (admins only), no plan
+// purchase path, the autopay line when nothing is owed, and none of it in an operator's DOM.
+describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
+  const T0 = Date.now() - 2 * 86_400_000;
+  const owed = (over: Partial<SubscriptionView> = {}): SubscriptionView =>
+    subscriptionView({
+      pastDueSince: new Date(T0).toISOString(),
+      pastDueInvoiceId: "in_1",
+      openInvoiceAmount: 149,
+      billingContactName: "Dana",
+      ...over,
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+  });
+
+  it("admin: Pay $149.00 is a primary button that opens the pay link; no Change plan / Choose a plan", async () => {
+    mockSubscriptionView = owed();
+    renderWithProviders(<BillingSettingsPage />);
+    const pay = await screen.findByRole("button", { name: "Pay $149.00" });
+    await userEvent.click(pay);
+    expect(mockPortalMutate).toHaveBeenCalledWith({ intent: "pay" });
+    expect(screen.queryByRole("button", { name: /change plan/i })).toBeNull();
+    expect(screen.queryByText(/choose a plan|subscribe/i)).toBeNull();
+  });
+
+  it("paused admin: the read-only sentence with the money, Pay $149.00, and no old read-only banner", async () => {
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "Your workspace is read-only until the " +
+          new Date(T0).toLocaleDateString("en-US", { month: "long" }) +
+          " payment of $149.00 goes through. Your data is safe.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
+  });
+
+  it("operator: the sentence names the admin and there is no pay control in the DOM", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /update payment/i })).toBeNull();
+  });
+
+  it("nothing owed: the admin sees the autopay line with the next charge", async () => {
+    mockSubscriptionView = subscriptionView({
+      paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2099 },
+      nextCharge: { amount: 149, date: "2099-12-01T12:00:00.000Z" },
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText("Autopay is on. Next charge: $149.00 on Dec 1."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
   });
 });

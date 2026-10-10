@@ -39,7 +39,8 @@ import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
-import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { BillingShellBanner } from "@/components/BillingShellBanner";
+import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -1006,7 +1007,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     data: subscriptionStatus,
     isSuccess: subscriptionResolved,
     isError: subscriptionFailed,
-  } = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  } = useSubscription({
+    staleTime: 60_000,
+    enabled: isStaff,
+    // SA-733r6: while a billing state is showing, re-read every 30 s so a payment clears the strip <= 60 s.
+    refetchInterval: (q) => subscriptionPollInterval(q.state.data),
+  });
   const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
     { active: true },
     { enabled: isStaff },
@@ -1346,11 +1352,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         {subscriptionStatus && (
-          <ReadOnlyBanner
-            status={subscriptionStatus.status}
-            readOnlyReason={subscriptionStatus.readOnlyReason}
-            compact
-          />
+          <BillingShellBanner view={subscriptionStatus} userRole={user?.role} />
         )}
         {register ? (
           <RegisterHeader

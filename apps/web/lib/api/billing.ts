@@ -3,9 +3,11 @@ import {
   API_ERROR_CODES,
   type AddonBillingMode,
   type EnableAddonResult,
+  type BillingPortalResult,
   type SubscriptionView,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { guardCounterLeave } from "../counter-cart-signal";
 
 export type { SubscriptionView };
 
@@ -165,7 +167,13 @@ export function usePlans() {
  *  one so it doesn't refetch on every navigation. `enabled` lets a caller that renders for
  *  every role (e.g. the dashboard shell) skip the request for roles the endpoint 403s
  *  (CUSTOMER/DRIVER — `GET /billing/subscription` is `@Roles(OPERATOR)`-gated). */
-export function useSubscription(options?: { staleTime?: number; enabled?: boolean }) {
+export function useSubscription(options?: {
+  staleTime?: number;
+  enabled?: boolean;
+  /** SA-733r6: poll while a billing state is showing so a payment clears the strip <= 60 s (no websocket). */
+  refetchInterval?:
+    number | false | ((query: { state: { data?: SubscriptionView } }) => number | false);
+}) {
   return useQuery<SubscriptionView>({
     queryKey: [...KEY, "subscription"],
     queryFn: () => apiClient.get("/billing/subscription").then((r) => r.data),
@@ -284,6 +292,22 @@ export function useResumeSubscription() {
  *  Takes no body (server pins the plan); on success, navigates the browser straight to the
  *  returned Stripe-hosted URL rather than invalidating the billing query — there is nothing to
  *  refetch until the tenant returns from Stripe. */
+/**
+ * SA-733r6 (B4): `POST /billing/portal` (TENANT_ADMIN only - the server refuses an operator). "Update payment"
+ * opens the Stripe billing portal; "Pay $X" opens the owed invoice's hosted page (portal as the fallback).
+ * Leaving to Stripe goes through the counter's leave guard so an open cart is never dropped silently.
+ */
+export function useBillingPortal() {
+  return useMutation<BillingPortalResult, Error, { intent: "update-payment" | "pay" }>({
+    mutationFn: () => apiClient.post("/billing/portal").then((r) => r.data),
+    onSuccess: (r, { intent }) => {
+      const url = intent === "pay" ? (r.hostedInvoiceUrl ?? r.portalUrl) : r.portalUrl;
+      if (guardCounterLeave(() => window.location.assign(url))) return;
+      window.location.assign(url);
+    },
+  });
+}
+
 export function useCreateCheckout() {
   return useMutation<{ checkoutUrl: string }, Error, void>({
     mutationFn: () => apiClient.post("/billing/subscription/checkout").then((r) => r.data),
